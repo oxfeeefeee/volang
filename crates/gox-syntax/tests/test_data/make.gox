@@ -1,0 +1,59 @@
+// Make builtin test
+package main;
+
+// Make slices
+func makeSlices() {
+    s1 := make([]int, 10);           // length 10, capacity 10
+    s2 := make([]int, 10, 20);       // length 10, capacity 20
+    s3 := make([]string, 5);
+    s4 := make([]bool, 0, 100);
+}
+
+// Make maps
+func makeMaps() {
+    m1 := make(map[string]int);
+    m2 := make(map[int]string);
+    m3 := make(map[string][]int);
+}
+
+// Make channels
+func makeChannels() {
+    ch1 := make(chan int);           // unbuffered
+    ch2 := make(chan int, 10);       // buffered with capacity 10
+    ch3 := make(chan string, 5);
+}
+
+// Use make in expressions
+func useMake() {
+    s := make([]int, 10);
+    s[0] = 42;
+    println(s[0]);
+    
+    m := make(map[string]int);
+    m["key"] = 123;
+    
+    ch := make(chan int, 1);
+    ch <- 42;
+    x := <-ch;
+    println(x);
+}
+
+// Nested types in make
+func nestedTypes() {
+    // Slice of slices
+    matrix := make([][]int, 3);
+    
+    // Map of slices
+    groups := make(map[string][]int);
+    
+    // Channel of maps
+    updates := make(chan map[string]int, 5);
+}
+
+func main() {
+    makeSlices();
+    makeMaps();
+    makeChannels();
+    useMake();
+    nestedTypes();
+}

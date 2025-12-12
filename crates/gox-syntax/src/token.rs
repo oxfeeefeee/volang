@@ -1,48 +1,35 @@
-//! Token types for the GoX lexer.
-//!
-//! Based on GoX Language Specification §3 (Lexical Structure).
+//! Token definitions for GoX lexer.
 
-use gox_common::Span;
 use std::fmt;
 
-/// A token produced by the lexer.
+pub use gox_common::Span;
+
+/// A token with its kind and source span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    /// The kind of token.
     pub kind: TokenKind,
-    /// The source span of this token.
     pub span: Span,
 }
 
 impl Token {
-    /// Create a new token.
     pub fn new(kind: TokenKind, span: Span) -> Self {
         Self { kind, span }
     }
-
-    /// Check if this is an EOF token.
-    pub fn is_eof(&self) -> bool {
-        matches!(self.kind, TokenKind::Eof)
-    }
 }
 
-/// Token kinds based on GoX specification.
+/// Token kinds for GoX.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // ═══════════════════════════════════════════════════════════════════════
-    // Literals (§3.5)
+    // Literals
     // ═══════════════════════════════════════════════════════════════════════
-    /// Identifier: `[a-zA-Z_][a-zA-Z0-9_]*`
     Ident(String),
-    /// Integer literal: `[0-9]+`
     Int(i64),
-    /// Float literal: `[0-9]+.[0-9]+`
     Float(f64),
-    /// String literal: `"..."`
     String(String),
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Keywords (§3.2)
+    // Keywords
     // ═══════════════════════════════════════════════════════════════════════
 
     // Declaration keywords
@@ -56,17 +43,26 @@ pub enum TokenKind {
     Implements,
     Struct,
     Map,
+    Chan,
 
     // Control flow keywords
     If,
     Else,
     For,
+    Range,
     Switch,
     Case,
     Default,
     Return,
     Break,
     Continue,
+    Goto,
+    Fallthrough,
+    Select,
+
+    // Concurrency keywords
+    Go,
+    Defer,
 
     // Literal keywords
     True,
@@ -74,7 +70,7 @@ pub enum TokenKind {
     Nil,
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Operators (§3.4)
+    // Operators
     // ═══════════════════════════════════════════════════════════════════════
 
     // Arithmetic
@@ -97,7 +93,15 @@ pub enum TokenKind {
     Or,  // ||
     Not, // !
 
+    // Channel
+    Arrow, // <-
+
+    // Misc
+    Ellipsis, // ...
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Assignment
+    // ═══════════════════════════════════════════════════════════════════════
     Assign,        // =
     ColonAssign,   // :=
     PlusAssign,    // +=
@@ -107,7 +111,7 @@ pub enum TokenKind {
     PercentAssign, // %=
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Delimiters (§3.4)
+    // Delimiters
     // ═══════════════════════════════════════════════════════════════════════
     LParen,   // (
     RParen,   // )
@@ -123,16 +127,13 @@ pub enum TokenKind {
     // ═══════════════════════════════════════════════════════════════════════
     // Special
     // ═══════════════════════════════════════════════════════════════════════
-    /// End of file.
     Eof,
-    /// Invalid character.
     Invalid(char),
-    /// Unterminated string literal.
     UnterminatedString,
 }
 
 impl TokenKind {
-    /// Get a human-readable name for error messages.
+    /// Get a human-readable name for this token kind.
     pub fn name(&self) -> &'static str {
         match self {
             TokenKind::Ident(_) => "identifier",
@@ -149,15 +150,22 @@ impl TokenKind {
             TokenKind::Implements => "implements",
             TokenKind::Struct => "struct",
             TokenKind::Map => "map",
+            TokenKind::Chan => "chan",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::For => "for",
+            TokenKind::Range => "range",
             TokenKind::Switch => "switch",
             TokenKind::Case => "case",
             TokenKind::Default => "default",
             TokenKind::Return => "return",
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
+            TokenKind::Goto => "goto",
+            TokenKind::Fallthrough => "fallthrough",
+            TokenKind::Select => "select",
+            TokenKind::Go => "go",
+            TokenKind::Defer => "defer",
             TokenKind::True => "true",
             TokenKind::False => "false",
             TokenKind::Nil => "nil",
@@ -175,6 +183,8 @@ impl TokenKind {
             TokenKind::And => "&&",
             TokenKind::Or => "||",
             TokenKind::Not => "!",
+            TokenKind::Arrow => "<-",
+            TokenKind::Ellipsis => "...",
             TokenKind::Assign => "=",
             TokenKind::ColonAssign => ":=",
             TokenKind::PlusAssign => "+=",

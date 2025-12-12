@@ -30,10 +30,9 @@ The parser uses a **hybrid approach**:
 ```
 crates/gox-syntax/src/parser/
 ├── mod.rs      # Parser struct, entry point, helpers
-├── decl.rs     # TopDecl, VarDecl, TypeDecl, FuncDecl, InterfaceDecl
+├── decl.rs     # TopDecl, VarDecl, TypeDecl, FuncDecl, InterfaceDecl, Types
 ├── stmt.rs     # Statements, blocks, control flow
-├── expr.rs     # Pratt expression parser
-└── types.rs    # Type parsing (optional, can be in decl.rs)
+└── expr.rs     # Pratt expression parser
 ```
 
 ---
@@ -45,14 +44,14 @@ crates/gox-syntax/src/parser/
 ```rust
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
-    current_token: Token,
-    peek_token: Token,
+    current: Token,
+    peek: Token,
     
     // Disambiguation flag
     allow_composite_lit: bool,
     
-    // Error collection (if supporting recovery)
-    diagnostics: Vec<Diagnostic>,
+    // Type switch detection flag
+    saw_type_switch: bool,
 }
 ```
 
@@ -62,35 +61,43 @@ pub struct Parser<'a> {
 impl Parser<'_> {
     /// Advance to next token
     fn next_token(&mut self) {
-        self.current_token = std::mem::replace(
-            &mut self.peek_token,
-            self.lexer.next_token()
-        );
+        self.current = std::mem::replace(&mut self.peek, self.lexer.next_token());
     }
     
     /// Check current token kind without consuming
-    fn cur_token_is(&self, kind: &TokenKind) -> bool {
-        &self.current_token.kind == kind
+    fn cur_is(&self, kind: &TokenKind) -> bool {
+        &self.current.kind == kind
     }
     
     /// Check peek token kind without consuming
-    fn peek_token_is(&self, kind: &TokenKind) -> bool {
-        &self.peek_token.kind == kind
+    fn peek_is(&self, kind: &TokenKind) -> bool {
+        &self.peek.kind == kind
     }
     
-    /// Expect and consume peek token, error if mismatch
-    fn expect_peek(&mut self, kind: TokenKind) -> Result<(), ParseError> {
-        if self.peek_token_is(&kind) {
+    /// Expect current token, consume and return span
+    fn expect(&mut self, kind: &TokenKind) -> ParseResult<Span> {
+        if self.cur_is(kind) {
+            let span = self.current.span;
             self.next_token();
-            Ok(())
+            Ok(span)
         } else {
-            Err(self.error_expected(&kind))
+            Err(self.error(&format!("expected {:?}", kind)))
+        }
+    }
+    
+    /// Consume current token if it matches, return true if consumed
+    fn eat(&mut self, kind: &TokenKind) -> bool {
+        if self.cur_is(kind) {
+            self.next_token();
+            true
+        } else {
+            false
         }
     }
 }
 ```
 
-**Invariant**: After parsing any complete construct, `current_token` should be the last token of that construct (i.e., we've "consumed past" it).
+**Invariant**: After parsing any complete construct, `current` points to the next token to be parsed.
 
 ---
 
@@ -105,24 +112,33 @@ File ::= PackageClause? ImportDecl* TopDecl* EOF ;
 ```
 
 ```rust
-fn parse_file(&mut self) -> Result<File, ParseError> {
-    let package = if self.cur_token_is(&TokenKind::Package) {
-        Some(self.parse_package_clause()?)
+fn parse_file(&mut self) -> ParseResult<SourceFile> {
+    let start = self.current.span;
+    
+    // Parse package declaration
+    let package = if self.cur_is(&TokenKind::Package) {
+        self.next_token();
+        let name = self.parse_ident()?;
+        self.expect_semi()?;
+        Some(name)
     } else {
         None
     };
     
-    let mut imports = vec![];
-    while self.cur_token_is(&TokenKind::Import) {
+    // Parse import declarations
+    let mut imports = Vec::new();
+    while self.cur_is(&TokenKind::Import) {
         imports.push(self.parse_import_decl()?);
     }
     
-    let mut decls = vec![];
-    while !self.cur_token_is(&TokenKind::EOF) {
+    // Parse top-level declarations
+    let mut decls = Vec::new();
+    while !self.at_eof() {
+        if self.eat(&TokenKind::Semi) { continue; }
         decls.push(self.parse_top_decl()?);
     }
     
-    Ok(File { package, imports, decls })
+    Ok(SourceFile { package, imports, decls, span: start.to(&end) })
 }
 ```
 
@@ -146,7 +162,7 @@ TopDecl ::= VarDecl | ConstDecl | TypeDecl | InterfaceDecl | ImplementsDecl | Fu
 ### 3.3 Type Parsing
 
 ```ebnf
-Type ::= Ident | ArrayType | SliceType | MapType | FuncType | StructType ;
+Type ::= Ident | ArrayType | SliceType | MapType | ChanType | FuncType | StructType ;
 ```
 
 **Dispatch by prefix**:
@@ -157,22 +173,27 @@ Type ::= Ident | ArrayType | SliceType | MapType | FuncType | StructType ;
 | `[` + `IntLit` + `]` | Array (e.g., `[4]int`) |
 | `[` + `]` | Slice (e.g., `[]int`) |
 | `map` | Map (e.g., `map[string]int`) |
+| `chan` | Channel (e.g., `chan int`) |
 | `func` | Function type |
 | `struct` | Inline struct |
 
 ```rust
-fn parse_type(&mut self) -> Result<Type, ParseError> {
-    match &self.current_token.kind {
-        TokenKind::Ident(_) => self.parse_named_type(),
+fn parse_type(&mut self) -> ParseResult<Type> {
+    match &self.current.kind {
+        TokenKind::Ident(_) => {
+            let id = self.parse_ident()?;
+            Ok(Type::Named(id))
+        }
         TokenKind::LBracket => {
             self.next_token(); // consume [
-            if self.cur_token_is(&TokenKind::RBracket) {
+            if self.cur_is(&TokenKind::RBracket) {
                 self.parse_slice_type()
             } else {
                 self.parse_array_type()
             }
         }
         TokenKind::Map => self.parse_map_type(),
+        TokenKind::Chan => self.parse_chan_type(),
         TokenKind::Func => self.parse_func_type(),
         TokenKind::Struct => self.parse_struct_type(),
         _ => Err(self.error("expected type")),
@@ -451,10 +472,16 @@ Sync tokens:
 Key AST types (defined in `ast.rs`):
 
 ```rust
-pub struct File {
-    pub package: Option<PackageClause>,
+pub struct SourceFile {
+    pub package: Option<Ident>,
     pub imports: Vec<ImportDecl>,
     pub decls: Vec<TopDecl>,
+    pub span: Span,
+}
+
+pub struct ImportDecl {
+    pub path: String,
+    pub span: Span,
 }
 
 pub enum TopDecl {
@@ -472,34 +499,54 @@ pub enum Stmt {
     Const(ConstDecl),
     ShortVar(ShortVarDecl),
     Assign(Assignment),
-    Expr(Expr),
+    Expr(ExprStmt),
     Return(ReturnStmt),
-    If(IfStmt),
-    For(ForStmt),
-    Switch(SwitchStmt),
-    Break,
-    Continue,
-    Empty,
+    If(Box<IfStmt>),
+    For(Box<ForStmt>),
+    ForRange(Box<ForRangeStmt>),
+    Switch(Box<SwitchStmt>),
+    TypeSwitch(Box<TypeSwitchStmt>),
+    Select(Box<SelectStmt>),
+    Go(GoStmt),
+    Defer(DeferStmt),
+    Send(SendStmt),
+    Goto(GotoStmt),
+    Labeled(Box<LabeledStmt>),
+    Fallthrough(Span),
+    Break(BreakStmt),
+    Continue(ContinueStmt),
+    Empty(Span),
 }
 
 pub enum Expr {
     Ident(Ident),
-    Literal(Literal),
-    Binary(BinaryExpr),
-    Unary(UnaryExpr),
-    Call(CallExpr),
-    Index(IndexExpr),
-    Selector(SelectorExpr),
-    CompositeLit(CompositeLit),
+    Int(i64, Span),
+    Float(f64, Span),
+    String(String, Span),
+    Bool(bool, Span),
+    Nil(Span),
+    Binary(Box<BinaryExpr>),
+    Unary(Box<UnaryExpr>),
+    Call(Box<CallExpr>),
+    Index(Box<IndexExpr>),
+    Slice(Box<SliceExpr>),
+    Selector(Box<SelectorExpr>),
+    TypeAssert(Box<TypeAssertExpr>),
+    CompositeLit(Box<CompositeLit>),
+    FuncLit(Box<FuncLit>),
+    Paren(Box<ParenExpr>),
+    Recv(Box<RecvExpr>),
+    Make(Box<MakeExpr>),
 }
 
 pub enum Type {
     Named(Ident),
-    Array(ArrayType),
-    Slice(SliceType),
-    Map(MapType),
-    Func(FuncType),
-    Struct(StructType),
+    Array(Box<ArrayType>),
+    Slice(Box<SliceType>),
+    Map(Box<MapType>),
+    Chan(Box<ChanType>),
+    Func(Box<FuncType>),
+    Struct(Box<StructType>),
 }
 ```
 
@@ -509,26 +556,33 @@ pub enum Type {
 
 ### 9.1 Data-Driven Tests
 
-Place `.gox` files in `src/test_data/`:
+Place `.gox` files in `tests/test_data/`:
 
 ```
-src/test_data/
-├── expr_binary.gox
-├── stmt_if.gox
-├── decl_func.gox
+crates/gox-syntax/tests/test_data/
+├── hello.gox
+├── fibonacci.gox
+├── control_flow.gox
+├── structs.gox
+├── interfaces.gox
+├── type_switch.gox
 └── ...
 ```
 
-Use `insta::glob!` to run all:
+Integration tests in `tests/parser_integration.rs`:
 
 ```rust
 #[test]
-fn test_parser() {
-    insta::glob!("test_data/*.gox", |path| {
-        let input = std::fs::read_to_string(path).unwrap();
-        let result = parse(&input);
-        insta::assert_debug_snapshot!(result);
-    });
+fn test_parse_all_test_files() {
+    let test_dir = Path::new("tests/test_data");
+    for entry in fs::read_dir(test_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension() == Some("gox".as_ref()) {
+            let source = fs::read_to_string(&path).unwrap();
+            let result = parser::parse(&source);
+            assert!(result.is_ok(), "Failed to parse {:?}", path);
+        }
+    }
 }
 ```
 
@@ -547,38 +601,43 @@ Expected: `ParseError { message: "expected ';'" }`
 
 ## 10. Implementation Checklist
 
-### Phase 1: Foundation
-- [ ] `Parser` struct with token management
-- [ ] `parse_file()` entry point
-- [ ] Basic error reporting
+### Phase 1: Foundation ✅
+- [x] `Parser` struct with token management
+- [x] `parse_file()` entry point
+- [x] Basic error reporting with spans
 
-### Phase 2: Types
-- [ ] `parse_type()` dispatcher
-- [ ] Named types, arrays, slices
-- [ ] Map types, function types
-- [ ] Struct types with field tags
+### Phase 2: Types ✅
+- [x] `parse_type()` dispatcher
+- [x] Named types, arrays, slices
+- [x] Map types, channel types, function types
+- [x] Struct types with field tags and anonymous fields
 
-### Phase 3: Expressions
-- [ ] Precedence enum
-- [ ] `parse_expr()` Pratt loop
-- [ ] Binary, unary, call, index, selector
-- [ ] Composite literals with `allow_composite_lit`
+### Phase 3: Expressions ✅
+- [x] Precedence-based Pratt parsing
+- [x] Binary, unary, call, index, slice, selector
+- [x] Composite literals with `allow_composite_lit`
+- [x] Type assertions, receive expressions
+- [x] Function literals, make expressions
 
-### Phase 4: Statements
-- [ ] `parse_stmt()` dispatcher
-- [ ] Block, return, break, continue
-- [ ] If, for, switch
-- [ ] Assignment, ShortVarDecl
+### Phase 4: Statements ✅
+- [x] `parse_stmt()` dispatcher
+- [x] Block, return, break, continue, goto, fallthrough
+- [x] If with init, for (all forms), for-range
+- [x] Switch, type switch, select
+- [x] Assignment, ShortVarDecl, send
+- [x] Go, defer, labeled statements
 
-### Phase 5: Declarations
-- [ ] VarDecl, ConstDecl, TypeDecl
-- [ ] FuncDecl with receiver
-- [ ] InterfaceDecl with embedding
-- [ ] ImplementsDecl
+### Phase 5: Declarations ✅
+- [x] VarDecl, ConstDecl with grouped syntax
+- [x] TypeDecl
+- [x] FuncDecl with receiver and variadic params
+- [x] InterfaceDecl with method specs and embedding
+- [x] ImplementsDecl
+- [x] ImportDecl
 
-### Phase 6: Polish
-- [ ] Semicolon handling
-- [ ] Comprehensive error messages
-- [ ] Span tracking for all nodes
-- [ ] Test coverage
+### Phase 6: Polish ✅
+- [x] Automatic semicolon insertion in lexer
+- [x] Comprehensive error messages with location
+- [x] Span tracking for all AST nodes
+- [x] 100+ unit tests and integration tests
 

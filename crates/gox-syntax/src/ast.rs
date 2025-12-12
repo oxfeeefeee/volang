@@ -1,37 +1,21 @@
-//! Abstract Syntax Tree types for GoX.
-//!
-//! Based on GoX Language Specification v2.2.
-//!
-//! The AST is organized into:
-//! - **File structure**: Package, imports, top-level declarations
-//! - **Declarations**: var, const, type, func, interface, implements
-//! - **Types**: Named, array, slice, map, func, struct
-//! - **Statements**: Block, control flow, assignments
-//! - **Expressions**: Literals, binary, unary, calls, composite literals
+//! Abstract Syntax Tree definitions for GoX.
 
-use gox_common::Span;
+use crate::token::Span;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// File Structure (§4)
+// Source File
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// A complete GoX source file.
 #[derive(Debug, Clone)]
-pub struct File {
-    pub package: Option<PackageClause>,
+pub struct SourceFile {
+    pub package: Option<Ident>,
     pub imports: Vec<ImportDecl>,
     pub decls: Vec<TopDecl>,
     pub span: Span,
 }
 
-/// Package clause: `package name;`
-#[derive(Debug, Clone)]
-pub struct PackageClause {
-    pub name: Ident,
-    pub span: Span,
-}
-
-/// Import declaration: `import "path";`
+/// Import declaration.
 #[derive(Debug, Clone)]
 pub struct ImportDecl {
     pub path: String,
@@ -39,7 +23,7 @@ pub struct ImportDecl {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Top-Level Declarations (§4.2, §5)
+// Top-Level Declarations
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Top-level declarations.
@@ -53,20 +37,7 @@ pub enum TopDecl {
     Func(FuncDecl),
 }
 
-impl TopDecl {
-    pub fn span(&self) -> Span {
-        match self {
-            TopDecl::Var(d) => d.span,
-            TopDecl::Const(d) => d.span,
-            TopDecl::Type(d) => d.span,
-            TopDecl::Interface(d) => d.span,
-            TopDecl::Implements(d) => d.span,
-            TopDecl::Func(d) => d.span,
-        }
-    }
-}
-
-/// Variable declaration: `var x int = 1;` (§5.1)
+/// Variable declaration.
 #[derive(Debug, Clone)]
 pub struct VarDecl {
     pub specs: Vec<VarSpec>,
@@ -75,13 +46,13 @@ pub struct VarDecl {
 
 #[derive(Debug, Clone)]
 pub struct VarSpec {
-    pub name: Ident,
+    pub names: Vec<Ident>,
     pub ty: Option<Type>,
-    pub value: Option<Expr>,
+    pub values: Vec<Expr>,
     pub span: Span,
 }
 
-/// Constant declaration: `const PI = 3.14;` (§5.2)
+/// Constant declaration.
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub specs: Vec<ConstSpec>,
@@ -90,13 +61,13 @@ pub struct ConstDecl {
 
 #[derive(Debug, Clone)]
 pub struct ConstSpec {
-    pub name: Ident,
+    pub names: Vec<Ident>,
     pub ty: Option<Type>,
-    pub value: Expr,
+    pub values: Vec<Expr>,
     pub span: Span,
 }
 
-/// Type declaration: `type User struct { ... };` (§5.4)
+/// Type declaration.
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: Ident,
@@ -104,7 +75,7 @@ pub struct TypeDecl {
     pub span: Span,
 }
 
-/// Interface declaration (§7.1)
+/// Interface declaration.
 #[derive(Debug, Clone)]
 pub struct InterfaceDecl {
     pub name: Ident,
@@ -126,7 +97,7 @@ pub struct MethodSpec {
     pub span: Span,
 }
 
-/// Implements declaration: `implements User : Reader, Writer;` (§7.5)
+/// Implements declaration.
 #[derive(Debug, Clone)]
 pub struct ImplementsDecl {
     pub type_name: Ident,
@@ -134,7 +105,7 @@ pub struct ImplementsDecl {
     pub span: Span,
 }
 
-/// Function declaration (§7.4)
+/// Function declaration.
 #[derive(Debug, Clone)]
 pub struct FuncDecl {
     pub receiver: Option<Receiver>,
@@ -148,18 +119,18 @@ pub struct FuncDecl {
 #[derive(Debug, Clone)]
 pub struct Receiver {
     pub name: Ident,
-    pub ty: Ident, // Must be a named type (§7.4)
+    pub ty: Ident,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    pub name: Ident,
+    pub names: Vec<Ident>,
     pub ty: Type,
+    pub variadic: bool,
     pub span: Span,
 }
 
-/// Result type: single type or tuple of types
 #[derive(Debug, Clone)]
 pub enum ResultType {
     Single(Type),
@@ -176,23 +147,17 @@ impl ResultType {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Types (§6)
+// Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Type representations.
 #[derive(Debug, Clone)]
 pub enum Type {
-    /// Named type (e.g., `int`, `User`)
     Named(Ident),
-    /// Array type: `[N]T`
     Array(Box<ArrayType>),
-    /// Slice type: `[]T`
     Slice(Box<SliceType>),
-    /// Map type: `map[K]V`
     Map(Box<MapType>),
-    /// Function type: `func(T) R`
+    Chan(Box<ChanType>),
     Func(Box<FuncType>),
-    /// Inline struct type
     Struct(Box<StructType>),
 }
 
@@ -200,11 +165,12 @@ impl Type {
     pub fn span(&self) -> Span {
         match self {
             Type::Named(id) => id.span,
-            Type::Array(t) => t.span,
-            Type::Slice(t) => t.span,
-            Type::Map(t) => t.span,
-            Type::Func(t) => t.span,
-            Type::Struct(t) => t.span,
+            Type::Array(a) => a.span,
+            Type::Slice(s) => s.span,
+            Type::Map(m) => m.span,
+            Type::Chan(c) => c.span,
+            Type::Func(f) => f.span,
+            Type::Struct(s) => s.span,
         }
     }
 }
@@ -230,6 +196,12 @@ pub struct MapType {
 }
 
 #[derive(Debug, Clone)]
+pub struct ChanType {
+    pub elem: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct FuncType {
     pub params: Vec<Type>,
     pub result: Option<Box<ResultType>>,
@@ -244,44 +216,39 @@ pub struct StructType {
 
 #[derive(Debug, Clone)]
 pub struct FieldDecl {
-    pub name: Ident,
+    pub names: Vec<Ident>,
     pub ty: Type,
     pub tag: Option<String>,
     pub span: Span,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Statements (§8)
+// Statements
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Statements.
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    /// Block statement
     Block(Block),
-    /// Variable declaration
     Var(VarDecl),
-    /// Constant declaration
     Const(ConstDecl),
-    /// Short variable declaration: `x := 1`
     ShortVar(ShortVarDecl),
-    /// Assignment: `x = 1` or `x += 1`
     Assign(Assignment),
-    /// Expression statement
     Expr(ExprStmt),
-    /// Return statement
     Return(ReturnStmt),
-    /// If statement
     If(Box<IfStmt>),
-    /// For statement
     For(Box<ForStmt>),
-    /// Switch statement
+    ForRange(Box<ForRangeStmt>),
     Switch(Box<SwitchStmt>),
-    /// Break statement
-    Break(Span),
-    /// Continue statement
-    Continue(Span),
-    /// Empty statement (`;`)
+    TypeSwitch(Box<TypeSwitchStmt>),
+    Select(Box<SelectStmt>),
+    Go(GoStmt),
+    Defer(DeferStmt),
+    Send(SendStmt),
+    Goto(GotoStmt),
+    Labeled(Box<LabeledStmt>),
+    Fallthrough(Span),
+    Break(BreakStmt),
+    Continue(ContinueStmt),
     Empty(Span),
 }
 
@@ -297,9 +264,18 @@ impl Stmt {
             Stmt::Return(r) => r.span,
             Stmt::If(i) => i.span,
             Stmt::For(f) => f.span,
+            Stmt::ForRange(f) => f.span,
             Stmt::Switch(s) => s.span,
-            Stmt::Break(s) => *s,
-            Stmt::Continue(s) => *s,
+            Stmt::TypeSwitch(t) => t.span,
+            Stmt::Select(s) => s.span,
+            Stmt::Go(g) => g.span,
+            Stmt::Defer(d) => d.span,
+            Stmt::Send(s) => s.span,
+            Stmt::Goto(g) => g.span,
+            Stmt::Labeled(l) => l.span,
+            Stmt::Fallthrough(s) => *s,
+            Stmt::Break(b) => b.span,
+            Stmt::Continue(c) => c.span,
             Stmt::Empty(s) => *s,
         }
     }
@@ -311,7 +287,6 @@ pub struct Block {
     pub span: Span,
 }
 
-/// Short variable declaration: `x := expr` (§5.3)
 #[derive(Debug, Clone)]
 pub struct ShortVarDecl {
     pub names: Vec<Ident>,
@@ -319,7 +294,6 @@ pub struct ShortVarDecl {
     pub span: Span,
 }
 
-/// Assignment statement (§8.3)
 #[derive(Debug, Clone)]
 pub struct Assignment {
     pub left: Vec<Expr>,
@@ -330,31 +304,29 @@ pub struct Assignment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignOp {
-    Assign,        // =
-    PlusAssign,    // +=
-    MinusAssign,   // -=
-    StarAssign,    // *=
-    SlashAssign,   // /=
-    PercentAssign, // %=
+    Assign,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+    PercentAssign,
 }
 
-/// Expression statement
 #[derive(Debug, Clone)]
 pub struct ExprStmt {
     pub expr: Expr,
     pub span: Span,
 }
 
-/// Return statement (§8.4)
 #[derive(Debug, Clone)]
 pub struct ReturnStmt {
     pub values: Vec<Expr>,
     pub span: Span,
 }
 
-/// If statement (§8.5)
 #[derive(Debug, Clone)]
 pub struct IfStmt {
+    pub init: Option<Box<Stmt>>,
     pub cond: Expr,
     pub then_block: Block,
     pub else_clause: Option<ElseClause>,
@@ -367,7 +339,6 @@ pub enum ElseClause {
     If(Box<IfStmt>),
 }
 
-/// For statement (§8.6)
 #[derive(Debug, Clone)]
 pub struct ForStmt {
     pub init: Option<Box<Stmt>>,
@@ -377,10 +348,19 @@ pub struct ForStmt {
     pub span: Span,
 }
 
-/// Switch statement (§8.7)
+#[derive(Debug, Clone)]
+pub struct ForRangeStmt {
+    pub vars: Option<Vec<Ident>>,
+    pub is_define: bool,
+    pub expr: Expr,
+    pub body: Block,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct SwitchStmt {
-    pub expr: Expr,
+    pub init: Option<Box<Stmt>>,
+    pub expr: Option<Expr>,
     pub cases: Vec<CaseClause>,
     pub default: Option<DefaultClause>,
     pub span: Span,
@@ -399,31 +379,127 @@ pub struct DefaultClause {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
+pub struct TypeSwitchStmt {
+    pub binding: Option<Ident>,
+    pub expr: Expr,
+    pub cases: Vec<TypeCaseClause>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeCaseClause {
+    pub types: Option<Vec<TypeOrNil>>,
+    pub stmts: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeOrNil {
+    Type(Type),
+    Nil(Span),
+}
+
+impl TypeOrNil {
+    pub fn span(&self) -> Span {
+        match self {
+            TypeOrNil::Type(t) => t.span(),
+            TypeOrNil::Nil(s) => *s,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectStmt {
+    pub cases: Vec<SelectCase>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectCase {
+    pub comm: Option<CommClause>,
+    pub stmts: Vec<Stmt>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum CommClause {
+    Send(SendStmt),
+    Recv(RecvStmt),
+}
+
+#[derive(Debug, Clone)]
+pub struct RecvStmt {
+    pub vars: Option<Vec<Ident>>,
+    pub is_define: bool,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GoStmt {
+    pub expr: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeferStmt {
+    pub expr: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct SendStmt {
+    pub chan: Expr,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GotoStmt {
+    pub label: Ident,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct LabeledStmt {
+    pub label: Ident,
+    pub stmt: Stmt,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct BreakStmt {
+    pub label: Option<Ident>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContinueStmt {
+    pub label: Option<Ident>,
+    pub span: Span,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
-// Expressions (§9)
+// Expressions
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Expressions.
 #[derive(Debug, Clone)]
 pub enum Expr {
-    /// Identifier
     Ident(Ident),
-    /// Literal value
     Literal(Literal),
-    /// Binary expression: `a + b`
     Binary(Box<BinaryExpr>),
-    /// Unary expression: `-x`, `!x`
     Unary(Box<UnaryExpr>),
-    /// Function call: `f(x, y)`
     Call(Box<CallExpr>),
-    /// Index expression: `a[i]`
     Index(Box<IndexExpr>),
-    /// Selector expression: `a.b`
+    Slice(Box<SliceExpr>),
     Selector(Box<SelectorExpr>),
-    /// Composite literal: `T{...}`
     CompositeLit(Box<CompositeLit>),
-    /// Grouped expression: `(expr)`
     Grouped(Box<Expr>, Span),
+    Receive(Box<ReceiveExpr>),
+    TypeAssert(Box<TypeAssertExpr>),
+    FuncLit(Box<FuncLit>),
+    Make(Box<MakeExpr>),
 }
 
 impl Expr {
@@ -435,30 +511,24 @@ impl Expr {
             Expr::Unary(u) => u.span,
             Expr::Call(c) => c.span,
             Expr::Index(i) => i.span,
+            Expr::Slice(s) => s.span,
             Expr::Selector(s) => s.span,
             Expr::CompositeLit(c) => c.span,
             Expr::Grouped(_, s) => *s,
+            Expr::Receive(r) => r.span,
+            Expr::TypeAssert(t) => t.span,
+            Expr::FuncLit(f) => f.span,
+            Expr::Make(m) => m.span,
         }
     }
 }
 
-/// Identifier
 #[derive(Debug, Clone)]
 pub struct Ident {
     pub name: String,
     pub span: Span,
 }
 
-impl Ident {
-    pub fn new(name: impl Into<String>, span: Span) -> Self {
-        Self {
-            name: name.into(),
-            span,
-        }
-    }
-}
-
-/// Literal values
 #[derive(Debug, Clone)]
 pub enum Literal {
     Int(i64, Span),
@@ -480,7 +550,6 @@ impl Literal {
     }
 }
 
-/// Binary expression
 #[derive(Debug, Clone)]
 pub struct BinaryExpr {
     pub left: Expr,
@@ -491,25 +560,21 @@ pub struct BinaryExpr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
-    // Arithmetic
-    Add, // +
-    Sub, // -
-    Mul, // *
-    Div, // /
-    Mod, // %
-    // Comparison
-    Eq,    // ==
-    NotEq, // !=
-    Lt,    // <
-    LtEq,  // <=
-    Gt,    // >
-    GtEq,  // >=
-    // Logical
-    And, // &&
-    Or,  // ||
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    And,
+    Or,
 }
 
-/// Unary expression
 #[derive(Debug, Clone)]
 pub struct UnaryExpr {
     pub op: UnaryOp,
@@ -519,20 +584,19 @@ pub struct UnaryExpr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Neg, // -
-    Not, // !
-    Pos, // + (rarely used)
+    Neg,
+    Not,
+    Pos,
 }
 
-/// Function call expression
 #[derive(Debug, Clone)]
 pub struct CallExpr {
     pub func: Expr,
     pub args: Vec<Expr>,
+    pub spread: bool,
     pub span: Span,
 }
 
-/// Index expression: `a[i]`
 #[derive(Debug, Clone)]
 pub struct IndexExpr {
     pub expr: Expr,
@@ -540,7 +604,14 @@ pub struct IndexExpr {
     pub span: Span,
 }
 
-/// Selector expression: `a.b`
+#[derive(Debug, Clone)]
+pub struct SliceExpr {
+    pub expr: Expr,
+    pub low: Option<Box<Expr>>,
+    pub high: Option<Box<Expr>>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct SelectorExpr {
     pub expr: Expr,
@@ -548,10 +619,9 @@ pub struct SelectorExpr {
     pub span: Span,
 }
 
-/// Composite literal (§9.4)
 #[derive(Debug, Clone)]
 pub struct CompositeLit {
-    pub ty: Type,
+    pub ty: Option<Type>,
     pub elements: Vec<Element>,
     pub span: Span,
 }
@@ -559,15 +629,47 @@ pub struct CompositeLit {
 #[derive(Debug, Clone)]
 pub struct Element {
     pub key: Option<ElementKey>,
-    pub value: Expr,
+    pub value: ElementValue,
     pub span: Span,
 }
 
-/// Element key in composite literal
 #[derive(Debug, Clone)]
 pub enum ElementKey {
-    /// Field name (for structs)
-    Name(Ident),
-    /// Expression (for maps, arrays)
+    Ident(Ident),
     Expr(Expr),
+}
+
+#[derive(Debug, Clone)]
+pub enum ElementValue {
+    Expr(Expr),
+    Lit(Vec<Element>, Span),
+}
+
+#[derive(Debug, Clone)]
+pub struct ReceiveExpr {
+    pub chan: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeAssertExpr {
+    pub expr: Expr,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncLit {
+    pub params: Vec<Param>,
+    pub result: Option<ResultType>,
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct MakeExpr {
+    pub ty: Type,
+    pub size: Option<Expr>,
+    pub cap: Option<Expr>,
+    pub span: Span,
 }

@@ -1,0 +1,50 @@
+// Concurrency features test
+package main;
+
+// Channel type declarations
+var ch chan int;
+var buffered chan string;
+
+// Function with channel parameters
+func worker(id int, jobs chan int, results chan int) {
+    x := <-jobs;
+    results <- x * 2;
+}
+
+// Goroutine usage
+func startWorker() {
+    go worker(1, ch, ch);
+}
+
+// Anonymous function goroutine
+func startAnonymous() {
+    go func() {
+        println("anonymous goroutine");
+    }();
+}
+
+// Select statement
+func selectExample(ch1 chan int, ch2 chan string) {
+    select {
+    case n := <-ch1:
+        println(n);
+    case ch2 <- "hello":
+        println("sent");
+    default:
+        println("no communication");
+    }
+}
+
+// Channel send and receive
+func channelOps() {
+    ch <- 42;
+    x := <-ch;
+    println(x);
+}
+
+func main() {
+    go worker(1, ch, ch);
+    ch <- 10;
+    result := <-ch;
+    println(result);
+}

@@ -1,0 +1,56 @@
+// Goto, labels, and fallthrough test
+package main;
+
+// Goto statement
+func gotoExample() {
+    x := 0;
+    goto end;
+    x = 1;
+end:
+    println(x);
+}
+
+// Fallthrough in switch
+func fallthroughExample(n int) {
+    switch n {
+    case 1:
+        println("one");
+        fallthrough;
+    case 2:
+        println("one or two");
+    default:
+        println("other");
+    }
+}
+
+// Labeled break
+func labeledBreak() {
+outer:
+    for i := 0; i < 10; i = i + 1 {
+        for j := 0; j < 10; j = j + 1 {
+            if i * j > 50 {
+                break outer;
+            }
+        }
+    }
+}
+
+// Labeled continue
+func labeledContinue() {
+outer:
+    for i := 0; i < 10; i = i + 1 {
+        for j := 0; j < 10; j = j + 1 {
+            if j == 5 {
+                continue outer;
+            }
+            println(j);
+        }
+    }
+}
+
+func main() {
+    gotoExample();
+    fallthroughExample(1);
+    labeledBreak();
+    labeledContinue();
+}

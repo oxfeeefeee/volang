@@ -16,17 +16,12 @@ GoX is a statically typed, Go-like language designed for compilation to LLVM, WA
 - Explicit interface implementation via `implements` declarations
 - Multiple backend targets (LLVM, WASM, VM)
 
-### 1.2 Non-Goals (v2)
+### 1.2 Non-Goals
 
 The following are explicitly out of scope:
 
 - Generics
-- Goroutines, channels, `select`
-- `defer`, `panic`, `recover`
-- Type assertions `x.(T)`, type switches
-- `goto`, `fallthrough`
 - Explicit pointer types (`*T`), address-of (`&x`)
-- Variadic functions (except compiler built-ins)
 
 ---
 
@@ -155,12 +150,15 @@ Identifiers are case-sensitive.
 The following are reserved keywords:
 
 ```
-break     case      const     continue  default
-else      false     for       func      if
-implements import   interface map
-nil       package   return    struct
+break     case      chan      const     continue
+default   defer     else      fallthrough false
+for       func      go        goto      if
+implements import   interface map       nil
+package   range     return    select    struct
 switch    true      type      var
 ```
+
+> **Note**: `panic` and `recover` are **built-in functions**, not keywords. See §10.
 
 ### 3.3 Predefined Identifiers
 
@@ -170,8 +168,26 @@ The following are predeclared but can be shadowed:
 // Types
 int  float  bool  string  byte
 
+// Constants
+iota
+
+// Zero value
+nil
+
+// Blank identifier
+_
+
 // Functions (compiler built-ins)
-len  cap  append  make  print  println
+len  cap  append  make  close  panic  recover  print  println
+```
+
+**Blank identifier `_`**: Used to discard values or declare unused variables. It can appear on the left side of assignments and short variable declarations.
+
+```gox
+_, err := doSomething();   // discard first return value
+for _, v := range slice {  // discard index
+    println(v);
+}
 ```
 
 ### 3.4 Operators and Punctuation
@@ -180,9 +196,10 @@ len  cap  append  make  print  println
 +    -    *    /    %
 ==   !=   <    <=   >    >=
 &&   ||   !
+<-                              // channel send/receive
 =    :=   +=   -=   *=   /=   %=
 (    )    [    ]    {    }
-,    :    ;    .
+,    :    ;    .    ...
 ```
 
 ### 3.5 Literals
@@ -244,8 +261,18 @@ TopDecl ::= VarDecl
 ### 5.1 Variables
 
 ```ebnf
-VarDecl  ::= "var" VarSpec ( "," VarSpec )* ";" ;
-VarSpec  ::= Ident Type? ( "=" Expr )? ;
+VarDecl     ::= "var" ( VarSpec ";" | "(" VarSpecList ")" ";" ) ;
+VarSpecList ::= ( VarSpec ";" )* ;
+VarSpec     ::= IdentList Type? ( "=" ExprList )? ;
+```
+
+**Grouped declarations** use parentheses:
+```gox
+var (
+    x int;
+    y = 42;
+    a, b = 1, 2;
+);
 ```
 
 **Static Rules**:
@@ -264,11 +291,37 @@ var z = nil;         // ERROR: cannot infer type
 ### 5.2 Constants
 
 ```ebnf
-ConstDecl  ::= "const" ConstSpec ( "," ConstSpec )* ";" ;
-ConstSpec  ::= Ident Type? "=" Expr ;
+ConstDecl     ::= "const" ( ConstSpec ";" | "(" ConstSpecList ")" ";" ) ;
+ConstSpecList ::= ( ConstSpec ";" )* ;
+ConstSpec     ::= IdentList Type? ( "=" ExprList )? ;
 ```
 
-Constants require initializers. `nil` is not a valid constant value.
+Constants require initializers (except when using `iota` continuation). `nil` is not a valid constant value.
+
+**Grouped declarations** use parentheses:
+```gox
+const (
+    Pi = 3.14159;
+    E  = 2.71828;
+);
+```
+
+**iota**: A predeclared identifier representing successive untyped integer constants. It resets to 0 at each `const` block and increments by 1 for each ConstSpec.
+
+```gox
+const (
+    Sunday = iota;   // 0
+    Monday;          // 1 (implicit = iota)
+    Tuesday;         // 2
+);
+
+const (
+    _  = iota;             // 0, ignored
+    KB = 1 << (10 * iota); // 1 << 10 = 1024
+    MB;                    // 1 << 20
+    GB;                    // 1 << 30
+);
+```
 
 ```gox
 const Pi = 3.14159;
@@ -310,9 +363,11 @@ The new type inherits the category (value/object), zero value, and comparability
 ```gox
 type User struct {
     name string;
-    age  int;
+    age  int "json:\"name\"";
 };
 ```
+
+> **Note**: Struct field tags are metadata strings. Their semantics are defined by tooling/standard library (e.g., JSON serialization). The compiler preserves them in the AST but does not interpret them.
 
 ---
 
@@ -325,6 +380,7 @@ Type ::= Ident
        | ArrayType
        | SliceType
        | MapType
+       | ChanType
        | FuncType
        | StructType ;
 ```
@@ -392,7 +448,34 @@ m["key"] = 42;
 var bad map[User]int;      // ERROR: User (struct) not a valid key type
 ```
 
-### 6.6 Functions
+### 6.6 Channels
+
+```ebnf
+ChanType ::= "chan" Type ;
+```
+
+Channels are object types used for communication between goroutines. Zero value is `nil`.
+
+> **Note**: GoX only supports bidirectional channels. Unlike Go, there are no directional channel types (`<-chan T` or `chan<- T`).
+
+```gox
+var ch chan int;           // ch == nil
+ch = make(chan int);       // unbuffered channel
+ch = make(chan int, 10);   // buffered channel with capacity 10
+```
+
+**Operations**:
+- `ch <- value` — send value to channel (blocks if unbuffered and no receiver)
+- `value := <-ch` — receive from channel (blocks if no value available)
+- `value, ok := <-ch` — receive with closed check (`ok` is `false` if channel closed and empty)
+
+```gox
+ch <- 42;           // send
+x := <-ch;          // receive
+close(ch);          // close channel (no more sends allowed)
+```
+
+### 6.7 Functions
 
 ```ebnf
 FuncType      ::= "func" "(" ParamTypeList? ")" ResultType? ;
@@ -406,21 +489,56 @@ Function types are object types. Zero value is `nil`.
 var f func(int) int;  // f == nil
 ```
 
-### 6.7 Structs
+### 6.8 Variadic Functions
+
+```ebnf
+VariadicParam ::= Ident "..." Type ;
+```
+
+A function may have a variadic final parameter. The caller may pass zero or more arguments of that type.
+
+```gox
+func sum(nums ...int) int {
+    total := 0;
+    for i := 0; i < len(nums); i += 1 {
+        total += nums[i];
+    }
+    return total;
+}
+
+sum(1, 2, 3);        // nums = []int{1, 2, 3}
+sum();               // nums = []int{}
+
+s := []int{1, 2, 3};
+sum(s...);           // spread slice as arguments
+```
+
+### 6.9 Structs
 
 ```ebnf
 StructType ::= "struct" "{" FieldDecl* "}" ;
-FieldDecl  ::= Ident Type Tag? ";" ;
+FieldDecl  ::= ( IdentList Type | Type ) Tag? ";" ;
 Tag        ::= StringLit ;
 ```
 
 Structs are **object types** (see §2.3). Fields may have optional tags for metadata.
+
+**Anonymous fields** (embedding): A field can be just a type name, creating an embedded field. The type must be a named type or pointer to named type.
 
 ```gox
 type User struct {
     id   int    "json:\"id\"";
     name string "json:\"name\"";
 };
+
+type Employee struct {
+    User;           // anonymous/embedded field
+    department string;
+};
+
+// Access embedded fields directly:
+e := Employee{};
+e.name = "Alice";   // accesses User.name
 ```
 
 > **Note**: Tags use double-quoted strings with escaped inner quotes.
@@ -437,7 +555,7 @@ InterfaceElem ::= MethodSpec | EmbeddedIface ;
 MethodSpec    ::= Ident "(" ParamList? ")" ResultType? ";" ;
 EmbeddedIface ::= Ident ";" ;
 ParamList     ::= Param ( "," Param )* ;
-Param         ::= Ident Type ;
+Param         ::= IdentList Type ;   // Type sharing: x, y int
 ```
 
 ```gox
@@ -547,8 +665,15 @@ Stmt ::= Block
        | IfStmt
        | ForStmt
        | SwitchStmt
+       | SelectStmt
+       | GoStmt
+       | DeferStmt
+       | SendStmt
        | BreakStmt
        | ContinueStmt
+       | GotoStmt
+       | FallthroughStmt
+       | LabeledStmt
        | EmptyStmt ;
 
 EmptyStmt ::= ";" ;
@@ -612,10 +737,11 @@ func j() { return 1; }            // ERROR
 ### 8.5 If
 
 ```ebnf
-IfStmt ::= "if" Expr Block ( "else" ( IfStmt | Block ) )? ;
+IfStmt     ::= "if" SimpleStmt? ";"? Expr Block ( "else" ( IfStmt | Block ) )? ;
+SimpleStmt ::= ExprStmt | Assignment | ShortVarDecl ;
 ```
 
-No init clause. Condition must be type `bool`.
+Optional init statement before condition. Condition must be type `bool`.
 
 ```gox
 if x > 0 {
@@ -625,34 +751,83 @@ if x > 0 {
 } else {
     // ...
 }
+
+// With init statement:
+if x := compute(); x > 0 {
+    println(x);
+}
+
+if err := doSomething(); err != nil {
+    return err;
+}
 ```
 
 ### 8.6 For
 
 ```ebnf
 ForStmt        ::= "for" ForClause Block ;
-ForClause      ::= Expr | ForThreeClause ;
+ForClause      ::= Expr | ForThreeClause | ForRangeClause ;
 ForThreeClause ::= SimpleStmt? ";" Expr? ";" SimpleStmt? ;
+ForRangeClause ::= ( IdentList ( ":=" | "=" ) )? "range" Expr ;
 SimpleStmt     ::= ExprStmt | Assignment | ShortVarDecl ;
 ```
 
-**Parsing Note**: The parser distinguishes forms by the presence of `;`. If the first non-whitespace after `for` leads to a `;`, it's a three-clause form.
+**Parsing Note**: The parser distinguishes forms by the presence of `;` or `range` keyword.
 
 ```gox
 for x < 10 { ... }                    // while-style
 for i := 0; i < 10; i += 1 { ... }    // C-style
 for ; ; { ... }                       // infinite
+for i, v := range slice { ... }      // range over slice
+for k, v := range m { ... }          // range over map
+for i := range slice { ... }         // range with index only
+for range ch { ... }                  // range with no variables
 ```
+
+**Range Semantics**:
+- For slices/arrays: `i` is index (int), `v` is element value
+- For maps: `k` is key, `v` is value
+- For strings: `i` is byte index, `v` is rune (int)
+- For channels: `v` is received value (single variable only)
 
 ### 8.7 Switch
 
 ```ebnf
-SwitchStmt    ::= "switch" Expr "{" CaseClause* DefaultClause? "}" ;
+SwitchStmt    ::= "switch" ( SimpleStmt ";" )? Expr? "{" CaseClause* DefaultClause? "}" ;
 CaseClause    ::= "case" ExprList ":" Stmt* ;
 DefaultClause ::= "default" ":" Stmt* ;
 ```
 
-No init clause. No `fallthrough`. Cases implicitly break.
+Optional init statement and optional tag expression. If no tag expression, cases are evaluated as boolean conditions.
+
+Cases implicitly break unless `fallthrough` is used.
+
+```gox
+switch x {
+case 1:
+    println("one");
+case 2, 3:
+    println("two or three");
+default:
+    println("other");
+}
+
+// With init statement:
+switch x := getValue(); x {
+case 1:
+    println("one");
+}
+
+// Without tag (boolean cases):
+switch {
+case x > 0:
+    println("positive");
+case x < 0:
+    println("negative");
+default:
+    println("zero");
+}
+```
 
 **Type Rule**: If any case expression is `nil`, the switch expression must have an object type.
 
@@ -665,14 +840,127 @@ default:
 }
 ```
 
-### 8.8 Break and Continue
+### 8.8 Select
 
 ```ebnf
-BreakStmt    ::= "break" ";" ;
-ContinueStmt ::= "continue" ";" ;
+SelectStmt   ::= "select" "{" SelectCase* "}" ;
+SelectCase   ::= ( "case" ( SendStmt | RecvStmt ) | "default" ) ":" Stmt* ;
+RecvStmt     ::= ( IdentList ( ":=" | "=" ) )? "<-" Expr ;
 ```
 
-`break` exits innermost `for` or `switch`. `continue` advances to next `for` iteration.
+`select` waits on multiple channel operations. One ready case is chosen at random. If no case is ready and there's a `default`, it executes immediately.
+
+```gox
+select {
+case msg := <-ch1:
+    println("received", msg);
+case ch2 <- value:
+    println("sent");
+default:
+    println("no communication ready");
+}
+```
+
+### 8.9 Go
+
+```ebnf
+GoStmt ::= "go" Expr ";" ;
+```
+
+Starts a new goroutine executing the function call. The expression must be a function or method call.
+
+```gox
+go handleRequest(conn);
+go func() {
+    // anonymous function
+}();
+```
+
+### 8.10 Defer
+
+```ebnf
+DeferStmt ::= "defer" Expr ";" ;
+```
+
+Defers execution of a function call until the surrounding function returns. Arguments are evaluated immediately, but the call is deferred. Multiple defers execute in LIFO order.
+
+```gox
+func readFile(path string) {
+    f := open(path);
+    defer close(f);       // called when function returns
+    // ... use f ...
+}
+```
+
+### 8.11 Send
+
+```ebnf
+SendStmt ::= Expr "<-" Expr ";" ;
+```
+
+Sends a value to a channel. The first expression must be a channel type, the second is the value to send.
+
+```gox
+ch <- 42;
+```
+
+### 8.12 Goto and Labels
+
+```ebnf
+GotoStmt    ::= "goto" Ident ";" ;
+LabeledStmt ::= Ident ":" Stmt ;
+```
+
+`goto` transfers control to the labeled statement. Labels are scoped to the function body.
+
+```gox
+func example() {
+    if condition {
+        goto cleanup;
+    }
+    // ... normal code ...
+cleanup:
+    // cleanup code
+}
+```
+
+### 8.13 Fallthrough
+
+```ebnf
+FallthroughStmt ::= "fallthrough" ";" ;
+```
+
+In a `switch` case, `fallthrough` transfers control to the first statement of the next case. It must be the last statement in a case.
+
+```gox
+switch x {
+case 1:
+    println("one");
+    fallthrough;
+case 2:
+    println("one or two");
+}
+```
+
+### 8.14 Break and Continue
+
+```ebnf
+BreakStmt    ::= "break" Ident? ";" ;
+ContinueStmt ::= "continue" Ident? ";" ;
+```
+
+`break` exits innermost `for`, `switch`, or `select`. `continue` advances to next `for` iteration. Optional label targets a specific enclosing statement.
+
+```gox
+outer:
+for i := 0; i < 10; i += 1 {
+    for j := 0; j < 10; j += 1 {
+        if condition {
+            break outer;   // breaks outer loop
+        }
+    }
+}
+```
 
 ---
 
@@ -694,24 +982,34 @@ UnaryExpr ::= ( "+" | "-" | "!" ) UnaryExpr | Primary ;
 ### 9.2 Primary Expressions
 
 ```ebnf
-Primary ::= Operand ( Selector | Index | Call )* ;
-Operand ::= Ident | Literal | "(" Expr ")" | CompositeLit | Conversion ;
+Primary ::= Operand ( Selector | Index | Call | TypeAssertion )* ;
+Operand ::= Ident | Literal | "(" Expr ")" | CompositeLit | Conversion | FuncLit ;
 Literal ::= IntLit | FloatLit | StringLit | BoolLit | NilLit ;
+FuncLit ::= "func" "(" ParamList? ")" ResultType? Block ;
 ```
 
-### 9.3 Selectors and Indexing
+### 9.3 Selectors, Indexing, and Slicing
 
 ```ebnf
-Selector ::= "." Ident ;
-Index    ::= "[" Expr "]" ;
-Call     ::= "(" ( Expr ( "," Expr )* )? ")" ;
+Selector    ::= "." Ident ;
+Index       ::= "[" Expr "]" ;
+SliceExpr   ::= "[" Expr? ":" Expr? "]" ;
+Call        ::= "(" ( Expr ( "," Expr )* "..."? )? ")" ;
 ```
+
+**Slice Expressions**: Create a sub-slice from an array or slice.
+- `a[low:high]` — elements from `low` to `high-1` (inclusive)
+- `a[:high]` — elements from start to `high-1`
+- `a[low:]` — elements from `low` to end
+- `a[:]` — copy of entire slice
 
 ```gox
 user.name       // field access (runtime error if user is nil)
 arr[i]          // array/slice index
 m["key"]        // map access
 f(x, y)         // function call
+s[1:3]          // slice expression
+s[:len(s)-1]    // slice from start
 ```
 
 ### 9.4 Composite Literals
@@ -719,8 +1017,9 @@ f(x, y)         // function call
 ```ebnf
 CompositeLit ::= Type "{" ElementList? "}" ;
 ElementList  ::= Element ( "," Element )* ;
-Element      ::= ( Key ":" )? Expr ;
+Element      ::= ( Key ":" )? Value ;
 Key          ::= Ident | Expr ;
+Value        ::= Expr | "{" ElementList? "}" ;
 ```
 
 **Semantics**:
@@ -728,11 +1027,17 @@ Key          ::= Ident | Expr ;
 - For `map`: `Key` is an expression of the key type
 - For `array`/`slice`: `Key` is an optional integer index
 
+**Nested literal type elision**: For nested composite literals, the inner type can be omitted when it can be inferred from the outer type:
+
 ```gox
 u := User{name: "Alice", age: 30};     // struct
 a := [3]int{1, 2, 3};                  // array
 s := []int{10, 20};                    // slice
 m := map[string]int{"a": 1, "b": 2};   // map (key is Expr)
+
+// Nested with type elision:
+matrix := [][]int{{1, 2}, {3, 4}};     // inner []int elided
+points := []Point{{1, 2}, {3, 4}};     // inner Point elided
 ```
 
 ### 9.5 Type Conversions
@@ -746,6 +1051,39 @@ i := int(f);
 s := string(65);  // implementation-defined
 ```
 
+### 9.6 Type Assertions
+
+```ebnf
+TypeAssertion ::= Expr "." "(" Type ")" ;
+```
+
+A type assertion extracts the concrete value from an interface value.
+
+```gox
+var i interface{} = "hello";
+
+s := i.(string);       // panics if i is not a string
+s, ok := i.(string);   // ok is false if i is not a string, no panic
+```
+
+**Rules**:
+- The expression must be of interface type
+- If the assertion fails and no `ok` variable is used, a runtime panic occurs
+- With the `ok` form, the zero value is returned and `ok` is `false`
+
+### 9.7 Receive Expression
+
+```ebnf
+RecvExpr ::= "<-" Expr ;
+```
+
+Receives a value from a channel. Can be used in expressions or statements.
+
+```gox
+x := <-ch;            // receive value
+x, ok := <-ch;        // receive with closed check
+```
+
 ---
 
 ## 10. Built-in Functions
@@ -754,10 +1092,13 @@ The following functions are **compiler built-ins**. Their signatures use meta-no
 
 | Function | Behavior |
 |----------|----------|
-| `len(s)` | Returns length of slice, map, string, or array |
-| `cap(s)` | Returns capacity of slice |
+| `len(s)` | Returns length of slice, map, string, array, or channel |
+| `cap(s)` | Returns capacity of slice or channel |
 | `append(s, elems...)` | Returns new slice with elements appended |
-| `make(T, size?)` | Allocates and initializes slice or map |
+| `make(T, size?, cap?)` | Allocates and initializes slice, map, or channel |
+| `close(ch)` | Closes a channel (no more sends allowed) |
+| `panic(v)` | Stops normal execution and begins panicking |
+| `recover()` | Captures a panic value during deferred function execution |
 | `print(args...)` | Debug output (no newline) |
 | `println(args...)` | Debug output (with newline) |
 
@@ -769,11 +1110,76 @@ s = append(s, 42);         // returns new slice
 n := len(s);               // length
 ```
 
-> **Note**: These functions have special compiler treatment. User code cannot define variadic functions.
+### 10.1 Panic and Recover
+
+`panic` stops normal execution and begins unwinding the stack. Deferred functions still execute. `recover` can capture the panic value if called within a deferred function.
+
+```gox
+func safeCall(f func()) (err string) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = "caught panic";
+        }
+    }();
+    f();
+    return "";
+}
+
+func dangerous() {
+    panic("something went wrong");
+}
+
+result := safeCall(dangerous);  // result = "caught panic"
+```
+
+### 10.2 Make
+
+`make` creates and initializes slices, maps, and channels:
+
+```gox
+s := make([]int, 10);         // slice with length 10, capacity 10
+s := make([]int, 10, 20);     // slice with length 10, capacity 20
+m := make(map[string]int);    // empty map
+ch := make(chan int);         // unbuffered channel
+ch := make(chan int, 10);     // buffered channel with capacity 10
+```
 
 ---
 
-## 11. Example Program
+## 11. Type Switches
+
+```ebnf
+TypeSwitchStmt ::= "switch" ( Ident ":=" )? Expr "." "(" "type" ")" "{" TypeCaseClause* "}" ;
+TypeCaseClause ::= "case" TypeList ":" Stmt* | "default" ":" Stmt* ;
+TypeList       ::= Type ( "," Type )* ;
+```
+
+A type switch compares the dynamic type of an interface value against multiple types.
+
+```gox
+func describe(i interface{}) {
+    switch v := i.(type) {
+    case int:
+        println("int:", v);
+    case string:
+        println("string:", v);
+    case nil:
+        println("nil");
+    default:
+        println("unknown type");
+    }
+}
+```
+
+**Rules**:
+- The expression must be of interface type
+- `v` is bound to the asserted type in each case
+- Multiple types can be listed: `case int, float:`
+- `default` handles unmatched types
+
+---
+
+## 12. Example Program
 
 ```gox
 package main;

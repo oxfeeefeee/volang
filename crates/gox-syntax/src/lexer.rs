@@ -1,39 +1,13 @@
-//! Lexer for the GoX language.
-//!
-//! Converts source text into a stream of tokens according to GoX Language Specification §3.
-//!
-//! # Features
-//! - Single-line (`//`) and multi-line (`/* */`) comments
-//! - Automatic semicolon insertion (§3.6)
-//! - All operators and keywords from the specification
-//! - String escape sequences: `\n`, `\t`, `\\`, `\"`
-//!
-//! # Example
-//! ```
-//! use gox_syntax::lexer::Lexer;
-//! use gox_syntax::token::TokenKind;
-//!
-//! let mut lexer = Lexer::new("var x = 42;");
-//! let token = lexer.next_token();
-//! assert!(matches!(token.kind, TokenKind::Var));
-//! ```
+//! Lexer for GoX source code.
 
-use crate::token::{Token, TokenKind};
-use gox_common::Span;
+use crate::token::{Span, Token, TokenKind};
 
-/// The GoX lexer.
+/// Lexer for GoX source code with automatic semicolon insertion.
 pub struct Lexer<'a> {
-    /// The source code being lexed.
     input: &'a str,
-    /// Current byte position in the input.
     pos: usize,
-    /// Next byte position to read.
-    read_pos: usize,
-    /// Current character (None if at EOF).
     ch: Option<char>,
-    /// Previous token kind (for semicolon insertion).
     prev_kind: Option<TokenKind>,
-    /// Whether we just passed a newline (for semicolon insertion).
     at_newline: bool,
 }
 
@@ -43,7 +17,6 @@ impl<'a> Lexer<'a> {
         let mut lexer = Self {
             input,
             pos: 0,
-            read_pos: 0,
             ch: None,
             prev_kind: None,
             at_newline: false,
@@ -52,21 +25,20 @@ impl<'a> Lexer<'a> {
         lexer
     }
 
-    /// Read the next character, advancing positions.
+    /// Read the next character.
     fn read_char(&mut self) {
-        self.ch = self.input[self.read_pos..].chars().next();
-        self.pos = self.read_pos;
+        self.ch = self.input[self.pos..].chars().next();
         if let Some(c) = self.ch {
-            self.read_pos += c.len_utf8();
+            self.pos += c.len_utf8();
         }
     }
 
     /// Peek at the next character without consuming.
     fn peek_char(&self) -> Option<char> {
-        self.input[self.read_pos..].chars().next()
+        self.input[self.pos..].chars().next()
     }
 
-    /// Skip whitespace, tracking newlines for semicolon insertion.
+    /// Skip whitespace and track newlines for semicolon insertion.
     fn skip_whitespace(&mut self) {
         while let Some(c) = self.ch {
             if c == '\n' {
@@ -74,50 +46,37 @@ impl<'a> Lexer<'a> {
                 self.read_char();
             } else if c.is_whitespace() {
                 self.read_char();
+            } else if c == '/' && self.peek_char() == Some('/') {
+                // Line comment
+                while self.ch.is_some() && self.ch != Some('\n') {
+                    self.read_char();
+                }
+            } else if c == '/' && self.peek_char() == Some('*') {
+                // Block comment
+                self.read_char(); // consume /
+                self.read_char(); // consume *
+                while self.ch.is_some() {
+                    if self.ch == Some('*') && self.peek_char() == Some('/') {
+                        self.read_char(); // consume *
+                        self.read_char(); // consume /
+                        break;
+                    }
+                    if self.ch == Some('\n') {
+                        self.at_newline = true;
+                    }
+                    self.read_char();
+                }
             } else {
                 break;
             }
         }
     }
 
-    /// Skip a single-line comment (`// ...`).
-    fn skip_line_comment(&mut self) {
-        while let Some(c) = self.ch {
-            self.read_char();
-            if c == '\n' {
-                self.at_newline = true;
-                break;
-            }
-        }
-    }
-
-    /// Skip a multi-line comment (`/* ... */`).
-    fn skip_block_comment(&mut self) {
-        self.read_char(); // consume '*' after '/'
-        loop {
-            match self.ch {
-                None => break, // EOF inside comment
-                Some('*') if self.peek_char() == Some('/') => {
-                    self.read_char(); // consume '*'
-                    self.read_char(); // consume '/'
-                    break;
-                }
-                Some('\n') => {
-                    self.at_newline = true;
-                    self.read_char();
-                }
-                _ => self.read_char(),
-            }
-        }
-    }
-
-    /// Check if the previous token should trigger automatic semicolon insertion.
-    /// Per GoX spec §3.6: semicolon inserted after identifiers, literals,
-    /// keywords (break, continue, return, true, false, nil), and closing delimiters.
+    /// Check if automatic semicolon should be inserted.
     fn should_insert_semi(&self) -> bool {
         match &self.prev_kind {
-            Some(kind) => matches!(
-                kind,
+            Some(k) => matches!(
+                k,
                 TokenKind::Ident(_)
                     | TokenKind::Int(_)
                     | TokenKind::Float(_)
@@ -128,6 +87,7 @@ impl<'a> Lexer<'a> {
                     | TokenKind::Break
                     | TokenKind::Continue
                     | TokenKind::Return
+                    | TokenKind::Fallthrough
                     | TokenKind::RParen
                     | TokenKind::RBracket
                     | TokenKind::RBrace
@@ -137,8 +97,8 @@ impl<'a> Lexer<'a> {
     }
 
     /// Read an identifier or keyword.
-    fn read_identifier(&mut self) -> String {
-        let start = self.pos;
+    fn read_ident(&mut self) -> TokenKind {
+        let start = self.pos - self.ch.unwrap().len_utf8();
         while let Some(c) = self.ch {
             if c.is_alphanumeric() || c == '_' {
                 self.read_char();
@@ -146,43 +106,46 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        self.input[start..self.pos].to_string()
+        // self.pos points to the character AFTER self.ch, but self.ch is the first
+        // non-ident character. So we need to calculate the end correctly.
+        let end = match self.ch {
+            Some(c) => self.pos - c.len_utf8(),
+            None => self.pos,
+        };
+        let text = &self.input[start..end];
+        Self::lookup_ident(text)
     }
 
     /// Read a number (integer or float).
     fn read_number(&mut self) -> TokenKind {
-        let start = self.pos;
+        let start = self.pos - self.ch.unwrap().len_utf8();
         let mut is_float = false;
 
-        // Read integer part
         while let Some(c) = self.ch {
             if c.is_ascii_digit() {
                 self.read_char();
+            } else if c == '.' && !is_float {
+                if let Some(next) = self.peek_char() {
+                    if next.is_ascii_digit() {
+                        is_float = true;
+                        self.read_char(); // consume .
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
         }
 
-        // Check for decimal point followed by digit
-        if self.ch == Some('.') {
-            if let Some(next) = self.peek_char() {
-                if next.is_ascii_digit() {
-                    is_float = true;
-                    self.read_char(); // consume '.'
-
-                    // Read fractional part
-                    while let Some(c) = self.ch {
-                        if c.is_ascii_digit() {
-                            self.read_char();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        let text = &self.input[start..self.pos];
+        // Calculate end position correctly
+        let end = match self.ch {
+            Some(c) => self.pos - c.len_utf8(),
+            None => self.pos,
+        };
+        let text = &self.input[start..end];
         if is_float {
             TokenKind::Float(text.parse().unwrap_or(0.0))
         } else {
@@ -190,20 +153,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Read a string literal with escape sequence support.
+    /// Read a string literal.
     fn read_string(&mut self) -> TokenKind {
-        self.read_char(); // consume opening '"'
+        self.read_char(); // consume opening "
         let mut result = String::new();
 
         loop {
             match self.ch {
                 None => return TokenKind::UnterminatedString,
                 Some('"') => {
-                    self.read_char(); // consume closing '"'
+                    self.read_char();
                     return TokenKind::String(result);
                 }
                 Some('\\') => {
-                    self.read_char(); // consume '\'
+                    self.read_char();
                     match self.ch {
                         Some('n') => {
                             result.push('\n');
@@ -228,10 +191,7 @@ impl<'a> Lexer<'a> {
                         None => return TokenKind::UnterminatedString,
                     }
                 }
-                Some('\n') => {
-                    // Newline in string literal is an error
-                    return TokenKind::UnterminatedString;
-                }
+                Some('\n') => return TokenKind::UnterminatedString,
                 Some(c) => {
                     result.push(c);
                     self.read_char();
@@ -243,7 +203,6 @@ impl<'a> Lexer<'a> {
     /// Look up keyword or return identifier.
     fn lookup_ident(ident: &str) -> TokenKind {
         match ident {
-            // Declaration keywords
             "package" => TokenKind::Package,
             "import" => TokenKind::Import,
             "var" => TokenKind::Var,
@@ -254,93 +213,60 @@ impl<'a> Lexer<'a> {
             "implements" => TokenKind::Implements,
             "struct" => TokenKind::Struct,
             "map" => TokenKind::Map,
-            // Control flow
+            "chan" => TokenKind::Chan,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "for" => TokenKind::For,
+            "range" => TokenKind::Range,
             "switch" => TokenKind::Switch,
             "case" => TokenKind::Case,
             "default" => TokenKind::Default,
             "return" => TokenKind::Return,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
-            // Literals
+            "goto" => TokenKind::Goto,
+            "fallthrough" => TokenKind::Fallthrough,
+            "select" => TokenKind::Select,
+            "go" => TokenKind::Go,
+            "defer" => TokenKind::Defer,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "nil" => TokenKind::Nil,
-            // Identifier
             _ => TokenKind::Ident(ident.to_string()),
         }
     }
 
     /// Get the next token.
     pub fn next_token(&mut self) -> Token {
-        // Check for automatic semicolon insertion
-        if self.at_newline && self.should_insert_semi() {
-            self.at_newline = false;
-            self.prev_kind = Some(TokenKind::Semi);
-            // Return a synthetic semicolon at current position
-            return Token::new(TokenKind::Semi, Span::point(self.pos));
-        }
-
-        self.at_newline = false;
+        // Skip whitespace first, which may set at_newline
         self.skip_whitespace();
 
-        // Check for semicolon insertion again after skipping whitespace
+        // Check for automatic semicolon insertion after whitespace
         if self.at_newline && self.should_insert_semi() {
             self.at_newline = false;
             self.prev_kind = Some(TokenKind::Semi);
             return Token::new(TokenKind::Semi, Span::point(self.pos));
         }
 
-        // Clear the flag - we've passed the semi insertion point
-        // Any newline encountered was either used for semi insertion or should be ignored
         self.at_newline = false;
 
-        // Handle comments
-        if self.ch == Some('/') {
-            match self.peek_char() {
-                Some('/') => {
-                    self.read_char(); // consume first '/'
-                    self.skip_line_comment();
-                    return self.next_token();
-                }
-                Some('*') => {
-                    self.read_char(); // consume '/'
-                    self.skip_block_comment();
-                    return self.next_token();
-                }
-                _ => {}
-            }
-        }
-
-        let start = self.pos;
+        let start = self
+            .pos
+            .saturating_sub(self.ch.map(|c| c.len_utf8()).unwrap_or(0));
 
         let kind = match self.ch {
             None => TokenKind::Eof,
-
             Some(c) => match c {
-                // ═══════════════════════════════════════════════════════════
                 // Identifiers and keywords
-                // ═══════════════════════════════════════════════════════════
-                'a'..='z' | 'A'..='Z' | '_' => {
-                    let ident = self.read_identifier();
-                    Self::lookup_ident(&ident)
-                }
+                'a'..='z' | 'A'..='Z' | '_' => self.read_ident(),
 
-                // ═══════════════════════════════════════════════════════════
                 // Numbers
-                // ═══════════════════════════════════════════════════════════
                 '0'..='9' => self.read_number(),
 
-                // ═══════════════════════════════════════════════════════════
                 // Strings
-                // ═══════════════════════════════════════════════════════════
                 '"' => self.read_string(),
 
-                // ═══════════════════════════════════════════════════════════
-                // Two-character operators (check first)
-                // ═══════════════════════════════════════════════════════════
+                // Operators and punctuation
                 '+' => {
                     self.read_char();
                     if self.ch == Some('=') {
@@ -409,6 +335,9 @@ impl<'a> Lexer<'a> {
                     if self.ch == Some('=') {
                         self.read_char();
                         TokenKind::LtEq
+                    } else if self.ch == Some('-') {
+                        self.read_char();
+                        TokenKind::Arrow
                     } else {
                         TokenKind::Lt
                     }
@@ -449,10 +378,16 @@ impl<'a> Lexer<'a> {
                         TokenKind::Colon
                     }
                 }
-
-                // ═══════════════════════════════════════════════════════════
-                // Single-character tokens
-                // ═══════════════════════════════════════════════════════════
+                '.' => {
+                    self.read_char();
+                    if self.ch == Some('.') && self.peek_char() == Some('.') {
+                        self.read_char();
+                        self.read_char();
+                        TokenKind::Ellipsis
+                    } else {
+                        TokenKind::Dot
+                    }
+                }
                 '(' => {
                     self.read_char();
                     TokenKind::LParen
@@ -485,49 +420,34 @@ impl<'a> Lexer<'a> {
                     self.read_char();
                     TokenKind::Semi
                 }
-                '.' => {
-                    self.read_char();
-                    TokenKind::Dot
-                }
-
-                // ═══════════════════════════════════════════════════════════
-                // Invalid character
-                // ═══════════════════════════════════════════════════════════
-                c => {
+                _ => {
                     self.read_char();
                     TokenKind::Invalid(c)
                 }
             },
         };
 
-        let end = self.pos;
+        // For ident/number/string, the end position is already at the correct place
+        // after read_ident/read_number/read_string. For other tokens, self.pos is correct.
+        let end = match self.ch {
+            Some(c) => self.pos - c.len_utf8(),
+            None => self.pos,
+        };
         self.prev_kind = Some(kind.clone());
         Token::new(kind, Span::new(start, end))
     }
 
-    /// Collect all tokens into a vector (excluding EOF).
+    /// Tokenize the entire input.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
         loop {
-            let token = self.next_token();
-            if token.is_eof() {
+            let tok = self.next_token();
+            let is_eof = tok.kind == TokenKind::Eof;
+            tokens.push(tok);
+            if is_eof {
                 break;
             }
-            tokens.push(token);
         }
         tokens
-    }
-}
-
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let token = self.next_token();
-        if token.is_eof() {
-            None
-        } else {
-            Some(token)
-        }
     }
 }

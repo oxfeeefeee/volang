@@ -1,8 +1,4 @@
-//! GoX Analysis - Semantic analysis for the GoX compiler.
+//! GoX Analysis - Semantic analysis for the GoX language.
 //!
-//! TODO: Implement type checking, name resolution, and semantic validation.
+//! This crate will provide type checking and semantic analysis.
 
-/// Placeholder for semantic checking.
-pub fn check(_ast: &gox_syntax::ast::File) {
-    // TODO: Implement semantic analysis
-}

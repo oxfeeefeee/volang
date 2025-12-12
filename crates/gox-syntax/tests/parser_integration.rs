@@ -13,7 +13,7 @@ fn test_data_dir() -> PathBuf {
         .join("test_data")
 }
 
-fn parse_file(name: &str) -> Result<gox_syntax::ast::File, String> {
+fn parse_file(name: &str) -> Result<gox_syntax::ast::SourceFile, String> {
     let path = test_data_dir().join(name);
     let source =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", name, e))?;
@@ -28,7 +28,7 @@ fn parse_file(name: &str) -> Result<gox_syntax::ast::File, String> {
 fn test_parse_hello() {
     let file = parse_file("hello.gox").expect("should parse hello.gox");
     assert!(file.package.is_some());
-    assert_eq!(file.package.as_ref().unwrap().name.name, "main");
+    assert_eq!(file.package.as_ref().unwrap().name, "main");
     assert_eq!(file.decls.len(), 1); // main function
 }
 
@@ -139,14 +139,15 @@ fn test_parse_all_test_files() {
 
         if path.extension().map(|e| e == "gox").unwrap_or(false) {
             let filename = path.file_name().unwrap().to_string_lossy().to_string();
-            let source = fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {}", filename));
+            let source =
+                fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {}", filename));
 
             match parser::parse(&source) {
                 Ok(file) => {
                     println!(
                         "✓ {} - package: {:?}, {} decls",
                         filename,
-                        file.package.as_ref().map(|p| &p.name.name),
+                        file.package.as_ref().map(|p| &p.name),
                         file.decls.len()
                     );
                     passed += 1;
@@ -229,7 +230,7 @@ fn test_structs_ast_structure() {
     let email_field = person
         .fields
         .iter()
-        .find(|f| f.name.name == "email")
+        .find(|f| f.names.first().map(|n| n.name.as_str()) == Some("email"))
         .expect("should have email field");
     assert!(email_field.tag.is_some());
 }
