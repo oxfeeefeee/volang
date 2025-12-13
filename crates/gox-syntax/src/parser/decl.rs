@@ -246,13 +246,49 @@ impl<'a> Parser<'a> {
         Ok((params, variadic))
     }
 
-    fn parse_result_type(&mut self) -> ParseResult<Vec<TypeExpr>> {
+    fn parse_result_type(&mut self) -> ParseResult<Vec<ResultParam>> {
         // Multiple results in parentheses
         if self.at(TokenKind::LParen) {
             self.advance();
             let mut results = Vec::new();
             while !self.at(TokenKind::RParen) && !self.at_eof() {
-                results.push(self.parse_type()?);
+                let start = self.current.span.start;
+                
+                // Try to parse as named result: name type
+                // or unnamed result: type
+                if self.at(TokenKind::Ident) {
+                    let first = self.parse_ident()?;
+                    
+                    // Check if next token is a type (meaning first was a name)
+                    if self.at_type_start() {
+                        let ty = self.parse_type()?;
+                        results.push(ResultParam {
+                            name: Some(first),
+                            ty,
+                            span: Span::new(start, self.current.span.start),
+                        });
+                    } else {
+                        // First was actually the type (identifier type like `int`)
+                        let ty = TypeExpr {
+                            kind: TypeExprKind::Ident(first),
+                            span: first.span,
+                        };
+                        results.push(ResultParam {
+                            name: None,
+                            ty,
+                            span: Span::new(start, self.current.span.start),
+                        });
+                    }
+                } else {
+                    // Non-identifier type (like *int, []int, etc.)
+                    let ty = self.parse_type()?;
+                    results.push(ResultParam {
+                        name: None,
+                        ty,
+                        span: Span::new(start, self.current.span.start),
+                    });
+                }
+                
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }
@@ -263,9 +299,24 @@ impl<'a> Parser<'a> {
             // No result type
             Ok(Vec::new())
         } else {
-            // Single result type
-            Ok(vec![self.parse_type()?])
+            // Single result type (always unnamed)
+            let start = self.current.span.start;
+            let ty = self.parse_type()?;
+            Ok(vec![ResultParam {
+                name: None,
+                ty,
+                span: Span::new(start, self.current.span.start),
+            }])
         }
+    }
+    
+    /// Checks if current token could start a type expression.
+    fn at_type_start(&self) -> bool {
+        matches!(self.current.kind, 
+            TokenKind::Ident | TokenKind::Star | TokenKind::LBracket | 
+            TokenKind::Map | TokenKind::Chan | TokenKind::Func |
+            TokenKind::Struct | TokenKind::Interface
+        )
     }
 
     /// Parses an interface declaration.

@@ -2,6 +2,33 @@
 //!
 //! This module provides the scope hierarchy and entity definitions
 //! for name resolution during type checking.
+//!
+//! # Scope Hierarchy
+//!
+//! ```text
+//! Universe Scope (built-in types: int, bool, string, etc.)
+//!     └── Package Scope (top-level declarations)
+//!             └── Function Scope (parameters, named returns)
+//!                     └── Block Scope (if/for/switch bodies)
+//!                             └── Block Scope (nested blocks)
+//! ```
+//!
+//! # Entities
+//!
+//! The symbol table stores different kinds of entities:
+//! - [`Entity::Var`]: Variables and constants with their types
+//! - [`Entity::Type`]: Type declarations (named types)
+//! - [`Entity::Func`]: Function declarations with signatures
+//! - [`Entity::Builtin`]: Built-in functions like `len`, `make`, `append`
+//!
+//! # Name Resolution
+//!
+//! Names are resolved by searching from the innermost scope outward:
+//! 1. Current block scope (if any)
+//! 2. Enclosing block scopes
+//! 3. Function scope (parameters, named returns)
+//! 4. Package scope (top-level declarations)
+//! 5. Universe scope (built-in types and functions)
 
 use std::collections::HashMap;
 

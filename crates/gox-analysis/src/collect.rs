@@ -1,11 +1,35 @@
 //! Phase 1: Type Collection
 //!
-//! This module collects all top-level declarations and builds the symbol table skeleton.
-//! It handles:
-//! - Registering var/const/type/func/interface names
-//! - Detecting duplicate declarations
-//! - Evaluating iota in const blocks
-//! - Building the initial scope structure
+//! This module collects all top-level declarations and builds the initial symbol table.
+//! It is the first phase of the three-phase type checking pipeline.
+//!
+//! # Responsibilities
+//!
+//! - **Declaration registration**: Registers all top-level `var`, `const`, `type`, `func`,
+//!   and `interface` declarations in the package scope
+//! - **Duplicate detection**: Reports errors for redeclared identifiers
+//! - **Constant evaluation**: Evaluates `iota` in const blocks and simple constant expressions
+//! - **Placeholder creation**: Creates [`NamedTypePlaceholder`], [`VarTypePlaceholder`],
+//!   [`FuncSigPlaceholder`], and [`MethodPlaceholder`] for Phase 2 resolution
+//! - **Built-in population**: Populates the universe scope with built-in types and functions
+//!
+//! # Output
+//!
+//! Returns a [`CollectResult`] containing:
+//! - The package-level [`Scope`] with all declarations
+//! - Placeholders for types, variables, functions, and methods that need resolution
+//!
+//! # Example
+//!
+//! ```ignore
+//! use gox_analysis::collect::TypeCollector;
+//!
+//! let mut diag = DiagnosticSink::new();
+//! let collector = TypeCollector::new(&interner, &mut diag);
+//! let result = collector.collect(&file);
+//! // result.scope contains all declarations
+//! // result.named_types contains type placeholders for Phase 2
+//! ```
 
 use gox_common::{Diagnostic, DiagnosticSink, Span, Symbol, SymbolInterner};
 use gox_syntax::ast::{self, BinaryOp, Decl, File, UnaryOp};
@@ -22,6 +46,41 @@ pub struct CollectResult {
     pub scope: Scope,
     /// Named type registry (id -> info placeholder).
     pub named_types: Vec<NamedTypePlaceholder>,
+    /// Methods collected (receiver type name -> method declarations).
+    pub methods: Vec<MethodPlaceholder>,
+    /// Variables that need type resolution.
+    pub var_types: Vec<VarTypePlaceholder>,
+    /// Functions that need signature resolution.
+    pub func_sigs: Vec<FuncSigPlaceholder>,
+}
+
+/// A placeholder for a variable's type (resolved in Phase 2).
+#[derive(Debug)]
+pub struct VarTypePlaceholder {
+    /// The variable name.
+    pub name: Symbol,
+    /// The type expression (if specified).
+    pub ty: Option<ast::TypeExpr>,
+}
+
+/// A placeholder for a function's signature (resolved in Phase 2).
+#[derive(Debug)]
+pub struct FuncSigPlaceholder {
+    /// The function name.
+    pub name: Symbol,
+    /// The function signature AST.
+    pub sig: ast::FuncSig,
+}
+
+/// A placeholder for a method declaration (resolved in Phase 2).
+#[derive(Debug)]
+pub struct MethodPlaceholder {
+    /// The receiver type name.
+    pub receiver_type: Symbol,
+    /// The method name.
+    pub name: Symbol,
+    /// The function declaration AST.
+    pub decl: ast::FuncDecl,
 }
 
 /// A placeholder for a named type (resolved in Phase 2).
@@ -45,6 +104,12 @@ pub struct TypeCollector<'a> {
     scope: Scope,
     /// Named type registry.
     named_types: Vec<NamedTypePlaceholder>,
+    /// Methods collected.
+    methods: Vec<MethodPlaceholder>,
+    /// Variables needing type resolution.
+    var_types: Vec<VarTypePlaceholder>,
+    /// Functions needing signature resolution.
+    func_sigs: Vec<FuncSigPlaceholder>,
     /// Next named type ID.
     next_type_id: u32,
     /// Current iota value (for const blocks).
@@ -148,6 +213,9 @@ impl<'a> TypeCollector<'a> {
             diagnostics,
             scope,
             named_types: Vec::new(),
+            methods: Vec::new(),
+            var_types: Vec::new(),
+            func_sigs: Vec::new(),
             next_type_id: 0,
             iota: 0,
             builtin_symbols,
@@ -253,6 +321,9 @@ impl<'a> TypeCollector<'a> {
         CollectResult {
             scope: self.scope,
             named_types: self.named_types,
+            methods: self.methods,
+            var_types: self.var_types,
+            func_sigs: self.func_sigs,
         }
     }
 
@@ -280,6 +351,13 @@ impl<'a> TypeCollector<'a> {
                             span: name.span,
                         }),
                     );
+                    // Track for type resolution if type is specified
+                    if let Some(ref ty) = spec.ty {
+                        self.var_types.push(VarTypePlaceholder {
+                            name: sym,
+                            ty: Some(ty.clone()),
+                        });
+                    }
                 }
             }
         }
@@ -341,10 +419,13 @@ impl<'a> TypeCollector<'a> {
     }
 
     fn collect_func(&mut self, decl: &ast::FuncDecl) {
-        // If there's a receiver, this is a method - handle separately
-        if decl.receiver.is_some() {
-            // Methods are associated with their receiver type
-            // For now, we'll handle this in Phase 2 when we have full type info
+        // If there's a receiver, this is a method - collect it separately
+        if let Some(ref receiver) = decl.receiver {
+            self.methods.push(MethodPlaceholder {
+                receiver_type: receiver.ty.symbol,
+                name: decl.name.symbol,
+                decl: decl.clone(),
+            });
             return;
         }
 
@@ -367,6 +448,12 @@ impl<'a> TypeCollector<'a> {
                 span: decl.name.span,
             }),
         );
+
+        // Track for signature resolution in Phase 2
+        self.func_sigs.push(FuncSigPlaceholder {
+            name: sym,
+            sig: decl.sig.clone(),
+        });
     }
 
     fn collect_interface(&mut self, decl: &ast::InterfaceDecl) {

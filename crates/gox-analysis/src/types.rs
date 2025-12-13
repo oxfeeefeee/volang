@@ -1,6 +1,49 @@
 //! Type representations for the GoX type system.
 //!
-//! This module defines the internal representation of all GoX types.
+//! This module defines the internal representation of all GoX types used
+//! throughout the type checking pipeline.
+//!
+//! # Type Hierarchy
+//!
+//! ```text
+//! Type
+//! ├── Basic (bool, int, uint, float64, string, etc.)
+//! ├── Named (user-defined types with methods)
+//! ├── Array ([N]T - fixed size)
+//! ├── Slice ([]T - dynamic size)
+//! ├── Map (map[K]V)
+//! ├── Struct (struct { fields })
+//! ├── Obx (object { fields } - GoX extension)
+//! ├── Func (func(params) results)
+//! ├── Interface (interface { methods })
+//! ├── Pointer (*T)
+//! ├── Chan (chan T, <-chan T, chan<- T)
+//! ├── Tuple (multiple return values)
+//! ├── Untyped (untyped constants)
+//! ├── Nil (nil literal)
+//! └── Invalid (error placeholder)
+//! ```
+//!
+//! # Key Types
+//!
+//! - [`Type`]: The main enum representing all possible types
+//! - [`BasicType`]: Primitive types like `int`, `bool`, `string`
+//! - [`NamedTypeId`]: Reference to a user-defined named type
+//! - [`NamedTypeInfo`]: Full information about a named type including methods
+//! - [`FuncType`]: Function signature with params, results, and variadic flag
+//! - [`InterfaceType`]: Interface with methods and embedded interfaces
+//! - [`MethodSet`]: Collection of methods for interface satisfaction checking
+//! - [`TypeRegistry`]: Lookup table for named type information
+//!
+//! # Untyped Constants
+//!
+//! GoX supports untyped constants that can be implicitly converted to compatible
+//! types. The [`UntypedKind`] enum tracks the kind of untyped constant:
+//! - `UntypedBool` → can become `bool`
+//! - `UntypedInt` → can become any integer or float type
+//! - `UntypedFloat` → can become any float type
+//! - `UntypedString` → can become `string`
+//! - `UntypedNil` → can become any pointer, slice, map, channel, or interface
 
 use gox_common::Symbol;
 
@@ -365,6 +408,214 @@ pub struct NamedTypeInfo {
     pub methods: Vec<Method>,
 }
 
+/// A computed method set for interface implementation checking.
+#[derive(Debug, Clone, Default)]
+pub struct MethodSet {
+    /// Methods in the set, sorted by name for efficient comparison.
+    pub methods: Vec<Method>,
+}
+
+impl MethodSet {
+    /// Creates a new empty method set.
+    pub fn new() -> Self {
+        Self { methods: Vec::new() }
+    }
+
+    /// Creates a method set from a list of methods.
+    pub fn from_methods(mut methods: Vec<Method>) -> Self {
+        // Sort by name for consistent comparison
+        methods.sort_by(|a, b| a.name.as_u32().cmp(&b.name.as_u32()));
+        Self { methods }
+    }
+
+    /// Adds a method to the set.
+    /// Returns false if a method with the same name already exists.
+    pub fn add(&mut self, method: Method) -> bool {
+        if self.methods.iter().any(|m| m.name == method.name) {
+            return false;
+        }
+        self.methods.push(method);
+        // Keep sorted
+        self.methods.sort_by(|a, b| a.name.as_u32().cmp(&b.name.as_u32()));
+        true
+    }
+
+    /// Merges another method set into this one.
+    /// Returns the names of conflicting methods (same name, different signature).
+    pub fn merge(&mut self, other: &MethodSet) -> Vec<Symbol> {
+        let mut conflicts = Vec::new();
+        for method in &other.methods {
+            if let Some(existing) = self.methods.iter().find(|m| m.name == method.name) {
+                // Check if signatures match
+                if existing.sig != method.sig {
+                    conflicts.push(method.name);
+                }
+                // Skip duplicate (same name, same sig is OK)
+            } else {
+                self.methods.push(method.clone());
+            }
+        }
+        // Re-sort after merge
+        self.methods.sort_by(|a, b| a.name.as_u32().cmp(&b.name.as_u32()));
+        conflicts
+    }
+
+    /// Checks if this method set contains all methods from the required set.
+    /// Returns the missing method names if not.
+    pub fn implements(&self, required: &MethodSet) -> Result<(), Vec<Symbol>> {
+        let mut missing = Vec::new();
+        for req_method in &required.methods {
+            let found = self.methods.iter().find(|m| m.name == req_method.name);
+            match found {
+                Some(m) if m.sig == req_method.sig => {
+                    // OK - method exists with matching signature
+                }
+                Some(_) => {
+                    // Method exists but signature doesn't match
+                    missing.push(req_method.name);
+                }
+                None => {
+                    // Method doesn't exist
+                    missing.push(req_method.name);
+                }
+            }
+        }
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(missing)
+        }
+    }
+
+    /// Returns true if this method set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.methods.is_empty()
+    }
+
+    /// Returns the number of methods in the set.
+    pub fn len(&self) -> usize {
+        self.methods.len()
+    }
+
+    /// Gets a method by name.
+    pub fn get(&self, name: Symbol) -> Option<&Method> {
+        self.methods.iter().find(|m| m.name == name)
+    }
+}
+
+impl InterfaceType {
+    /// Creates a method set from this interface's direct methods.
+    /// Note: This does not expand embedded interfaces - use TypeRegistry for that.
+    pub fn direct_method_set(&self) -> MethodSet {
+        MethodSet::from_methods(self.methods.clone())
+    }
+}
+
+/// A registry for looking up type information.
+/// Used for computing method sets and checking interface implementation.
+pub struct TypeRegistry<'a> {
+    /// Named type information from Phase 2.
+    pub named_types: &'a [NamedTypeInfo],
+}
+
+impl<'a> TypeRegistry<'a> {
+    /// Creates a new type registry.
+    pub fn new(named_types: &'a [NamedTypeInfo]) -> Self {
+        Self { named_types }
+    }
+
+    /// Gets the underlying type for a named type.
+    pub fn underlying(&self, id: NamedTypeId) -> Option<&Type> {
+        self.named_types.get(id.0 as usize).map(|info| &info.underlying)
+    }
+
+    /// Gets the full method set for a type, including inherited methods.
+    pub fn method_set(&self, ty: &Type) -> MethodSet {
+        match ty {
+            Type::Named(id) => {
+                let idx = id.0 as usize;
+                if idx < self.named_types.len() {
+                    let info = &self.named_types[idx];
+                    // Start with the type's own methods
+                    let mut set = MethodSet::from_methods(info.methods.clone());
+                    // Add methods from underlying type if it's an interface
+                    if let Type::Interface(iface) = &info.underlying {
+                        let iface_set = self.interface_method_set(iface);
+                        set.merge(&iface_set);
+                    }
+                    set
+                } else {
+                    MethodSet::new()
+                }
+            }
+            Type::Interface(iface) => self.interface_method_set(iface),
+            Type::Obx(s) => {
+                // Object types can have methods via embedded fields
+                self.struct_method_set(s)
+            }
+            Type::Struct(s) => self.struct_method_set(s),
+            _ => MethodSet::new(),
+        }
+    }
+
+    /// Computes the full method set for an interface, expanding embedded interfaces.
+    pub fn interface_method_set(&self, iface: &InterfaceType) -> MethodSet {
+        let mut set = iface.direct_method_set();
+
+        // Expand embedded interfaces
+        for embed_name in &iface.embeds {
+            // Find the embedded interface type
+            if let Some(info) = self.named_types.iter().find(|i| i.name == *embed_name) {
+                if let Type::Interface(embedded_iface) = &info.underlying {
+                    let embedded_set = self.interface_method_set(embedded_iface);
+                    set.merge(&embedded_set);
+                }
+            }
+        }
+
+        set
+    }
+
+    /// Computes method set from struct's embedded fields.
+    fn struct_method_set(&self, s: &StructType) -> MethodSet {
+        let mut set = MethodSet::new();
+
+        for field in &s.fields {
+            if field.embedded {
+                // Get methods from embedded type
+                let embedded_set = self.method_set(&field.ty);
+                set.merge(&embedded_set);
+            }
+        }
+
+        set
+    }
+
+    /// Checks if a type implements an interface.
+    /// Returns Ok(()) if it does, or Err with missing method names.
+    pub fn implements_interface(&self, ty: &Type, iface: &InterfaceType) -> Result<(), Vec<Symbol>> {
+        let type_methods = self.method_set(ty);
+        let iface_methods = self.interface_method_set(iface);
+        type_methods.implements(&iface_methods)
+    }
+
+    /// Checks if a type can be assigned to an interface type.
+    pub fn assignable_to_interface(&self, ty: &Type, iface_ty: &Type) -> Result<(), Vec<Symbol>> {
+        match iface_ty {
+            Type::Interface(iface) => self.implements_interface(ty, iface),
+            Type::Named(id) => {
+                if let Some(info) = self.named_types.get(id.0 as usize) {
+                    if let Type::Interface(iface) = &info.underlying {
+                        return self.implements_interface(ty, iface);
+                    }
+                }
+                Err(vec![]) // Not an interface type
+            }
+            _ => Err(vec![]), // Not an interface type
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +661,86 @@ mod tests {
     fn test_untyped_kind_precedence() {
         assert!(UntypedKind::Float.precedence() > UntypedKind::Rune.precedence());
         assert!(UntypedKind::Rune.precedence() > UntypedKind::Int.precedence());
+    }
+
+    fn make_symbol(id: u32) -> Symbol {
+        // Create distinct symbols for testing by using raw transmute
+        // This is safe in tests since we just need distinct values
+        unsafe { std::mem::transmute(id) }
+    }
+
+    fn make_method(name_id: u32, param_count: usize, result_count: usize) -> Method {
+        Method {
+            name: make_symbol(name_id),
+            sig: FuncType {
+                params: vec![Type::Basic(BasicType::Int); param_count],
+                results: vec![Type::Basic(BasicType::Int); result_count],
+                variadic: false,
+            },
+        }
+    }
+
+    #[test]
+    fn test_method_set_add() {
+        let mut set = MethodSet::new();
+        let m1 = make_method(1, 0, 0);
+        let m2 = make_method(2, 1, 1);
+
+        assert!(set.add(m1.clone()));
+        assert!(!set.add(m1.clone())); // Duplicate name
+        assert!(set.add(m2));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_method_set_implements() {
+        let m1 = make_method(1, 0, 1);
+        let m2 = make_method(2, 1, 0);
+
+        let required = MethodSet::from_methods(vec![m1.clone()]);
+        let full = MethodSet::from_methods(vec![m1.clone(), m2]);
+        let empty = MethodSet::new();
+
+        assert!(full.implements(&required).is_ok());
+        assert!(full.implements(&empty).is_ok());
+        assert!(empty.implements(&required).is_err());
+    }
+
+    #[test]
+    fn test_method_set_merge() {
+        let m1 = make_method(1, 0, 0);
+        let m2 = make_method(2, 0, 0);
+
+        let mut set1 = MethodSet::from_methods(vec![m1.clone()]);
+        let set2 = MethodSet::from_methods(vec![m2]);
+
+        let conflicts = set1.merge(&set2);
+        assert!(conflicts.is_empty());
+        assert_eq!(set1.len(), 2);
+    }
+
+    #[test]
+    fn test_method_set_merge_conflict() {
+        // Same name, different signature = conflict
+        let m1 = make_method(1, 0, 0); // () -> ()
+        let m2 = make_method(1, 1, 0); // (int) -> ()
+
+        let mut set1 = MethodSet::from_methods(vec![m1]);
+        let set2 = MethodSet::from_methods(vec![m2]);
+
+        let conflicts = set1.merge(&set2);
+        assert_eq!(conflicts.len(), 1);
+    }
+
+    #[test]
+    fn test_method_set_implements_wrong_sig() {
+        let m1 = make_method(1, 0, 0); // () -> ()
+        let m2 = make_method(1, 1, 0); // (int) -> () - same name, different sig
+
+        let required = MethodSet::from_methods(vec![m1]);
+        let provided = MethodSet::from_methods(vec![m2]);
+
+        // Should fail because signature doesn't match
+        assert!(provided.implements(&required).is_err());
     }
 }

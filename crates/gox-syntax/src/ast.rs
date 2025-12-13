@@ -142,11 +142,22 @@ pub struct Receiver {
 pub struct FuncSig {
     /// The parameters.
     pub params: Vec<Param>,
-    /// The result type(s).
-    pub results: Vec<TypeExpr>,
+    /// The result parameters (may have names for named returns).
+    pub results: Vec<ResultParam>,
     /// Whether the last parameter is variadic.
     pub variadic: bool,
     /// The span of the signature.
+    pub span: Span,
+}
+
+/// A function result parameter (may be named or unnamed).
+#[derive(Debug, Clone)]
+pub struct ResultParam {
+    /// The result name (None for unnamed results).
+    pub name: Option<Ident>,
+    /// The result type.
+    pub ty: TypeExpr,
+    /// The span of this result parameter.
     pub span: Span,
 }
 
