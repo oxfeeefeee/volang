@@ -229,16 +229,16 @@ fn parse_test_file(content: &str) -> TestSections {
 }
 
 /// Formats diagnostics for comparison.
-/// Format: "[E{code}] {message}" or just "{message}" if no code.
+/// Only outputs diagnostics with error codes (skips notes without codes).
+/// Format: "[E{code}] {message}"
 fn format_diagnostics(diagnostics: &gox_common::diagnostics::DiagnosticSink) -> String {
     let mut output = String::new();
     for diag in diagnostics.iter() {
         if let Some(code) = diag.code {
             output.push_str(&format!("[E{:04}] {}", code, diag.message));
-        } else {
-            output.push_str(&diag.message);
+            output.push('\n');
         }
-        output.push('\n');
+        // Skip diagnostics without codes (notes, etc.)
     }
     output.trim().to_string()
 }

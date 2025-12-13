@@ -1,0 +1,13 @@
+// Test for-range syntax
+package main
+
+func main() {
+    var a [10]int
+    for k, v := range a {
+        _ = k
+        _ = v
+    }
+}
+
+=== typecheck ===
+OK

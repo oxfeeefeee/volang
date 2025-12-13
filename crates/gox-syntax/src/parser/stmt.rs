@@ -563,6 +563,13 @@ impl<'a> Parser<'a> {
             TokenKind::ColonEq => {
                 self.advance();
                 let names = self.exprs_to_idents(left)?;
+                // Check for range keyword - will be handled by for loop parser
+                if self.at(TokenKind::Range) {
+                    return Ok(Stmt {
+                        kind: StmtKind::ShortVar(ShortVarDecl { names, values: vec![] }),
+                        span: Span::new(start, self.current.span.start),
+                    });
+                }
                 let values = self.parse_expr_list()?;
                 StmtKind::ShortVar(ShortVarDecl { names, values })
             }

@@ -1,0 +1,16 @@
+// Test non-boolean condition errors
+package main
+
+func main() {
+    if 1 {  // non-bool condition
+        _ = 1
+    }
+    
+    for "x" {  // non-bool condition
+        break
+    }
+}
+
+=== typecheck ===
+E2700
+E2700

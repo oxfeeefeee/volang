@@ -1,0 +1,10 @@
+// Test short declaration errors
+package main
+
+func main() {
+    x := 1
+    x := 2  // no new variables
+}
+
+=== typecheck ===
+E2604

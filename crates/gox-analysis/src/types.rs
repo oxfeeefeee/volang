@@ -538,10 +538,18 @@ impl<'a> TypeRegistry<'a> {
                     let info = &self.named_types[idx];
                     // Start with the type's own methods
                     let mut set = MethodSet::from_methods(info.methods.clone());
-                    // Add methods from underlying type if it's an interface
-                    if let Type::Interface(iface) = &info.underlying {
-                        let iface_set = self.interface_method_set(iface);
-                        set.merge(&iface_set);
+                    // Add methods from underlying type
+                    match &info.underlying {
+                        Type::Interface(iface) => {
+                            let iface_set = self.interface_method_set(iface);
+                            set.merge(&iface_set);
+                        }
+                        Type::Struct(s) | Type::Obx(s) => {
+                            // Add methods from embedded fields
+                            let struct_set = self.struct_method_set(s);
+                            set.merge(&struct_set);
+                        }
+                        _ => {}
                     }
                     set
                 } else {

@@ -1,0 +1,7 @@
+// Test illegal type cycles
+package main
+
+type a a  // illegal cycle
+
+=== typecheck ===
+E2102

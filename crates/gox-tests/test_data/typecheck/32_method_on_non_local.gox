@@ -1,0 +1,18 @@
+// Test method call on undefined method
+package main
+
+type T struct {
+    x int
+}
+
+func (t T) Foo() int {
+    return t.x
+}
+
+func main() {
+    t := T{x: 1}
+    _ = t.Bar()  // no method Bar
+}
+
+=== typecheck ===
+E2510

@@ -1,0 +1,26 @@
+// Test interface satisfaction with method sets
+package main
+
+type Reader interface {
+    Read() int
+}
+
+type File struct {
+    data int
+}
+
+func (f File) Read() int {
+    return f.data
+}
+
+func main() {
+    var r Reader
+    f := File{data: 42}
+    
+    // File implements Reader
+    r = f
+    _ = r.Read()
+}
+
+=== typecheck ===
+OK
