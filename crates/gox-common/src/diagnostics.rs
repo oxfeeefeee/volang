@@ -531,14 +531,14 @@ mod tests {
     #[test]
     fn test_diagnostic_creation() {
         let diag = Diagnostic::error("test error")
-            .with_code("E0001")
+            .with_code(1)
             .with_label(Label::primary(FileId::new(0), 0u32..5u32))
             .with_note("this is a note");
         
         assert!(diag.is_error());
         assert!(!diag.is_warning());
         assert_eq!(diag.message, "test error");
-        assert_eq!(diag.code, Some("E0001".to_string()));
+        assert_eq!(diag.code, Some(1));
         assert_eq!(diag.labels.len(), 1);
         assert_eq!(diag.notes.len(), 1);
     }

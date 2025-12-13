@@ -4,6 +4,7 @@ members = [
   "crates/gox-common",
   "crates/gox-syntax",
   "crates/gox-analysis",
+  "crates/gox-module",
   "crates/gox-cli",
   "crates/gox-codegen-llvm",
   "crates/gox-codegen-wasm",
