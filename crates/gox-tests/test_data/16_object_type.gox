@@ -1,0 +1,12 @@
+// Test: Object type declaration
+type Counter object {
+    count int
+}
+
+=== parser ===
+File {
+  package: None,
+  decls: [
+    Type { name: "Counter", type: object { count int; } },
+  ],
+}

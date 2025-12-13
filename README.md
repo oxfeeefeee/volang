@@ -1,113 +1,134 @@
-# GoX
+# GoX Programming Language
 
-**GoX** is a compiled programming language inspired by Go, designed for simplicity and performance. This repository contains the GoX compiler toolchain.
+GoX is a statically typed, Go-like programming language with multiple backend targets.
 
-## Features
+## Overview
 
-- **Go-like syntax** — Clean, readable syntax familiar to Go developers
-- **Explicit interface implementation** — Uses `implements` declarations instead of implicit interface satisfaction
-- **Simple type system** — Basic types, structs, arrays, slices, maps, functions
-- **Automatic semicolon insertion** — Write clean code without explicit semicolons at line ends
+GoX aims to provide familiar Go syntax while introducing explicit reference semantics through the `object` type and supporting multiple compilation backends.
+
+### Key Features
+
+- **Go-like syntax** - Familiar to Go programmers
+- **Static typing** with local type inference
+- **Explicit memory model** - Clear distinction between value types (`struct`) and object types (`object`)
+- **Multiple backends** - LLVM, WebAssembly, and a custom VM
+- **No generics** - Simplified type system
+- **No pointers** - Reference semantics through `object` types
 
 ## Project Structure
 
 ```
 gox/
 ├── crates/
-│   ├── gox-common/     # Shared utilities (spans, errors, diagnostics)
-│   ├── gox-syntax/     # Lexer, parser, AST definitions
-│   ├── gox-analysis/   # Semantic analysis (WIP)
-│   ├── gox-codegen-llvm/  # LLVM backend (WIP)
-│   ├── gox-codegen-wasm/  # WebAssembly backend (WIP)
-│   ├── gox-codegen-vm/    # VM bytecode backend (WIP)
-│   ├── gox-vm/         # Virtual machine runtime (WIP)
-│   └── gox-cli/        # Command-line interface
-├── english/            # Language specification
-└── instructions/       # Development guides
+│   ├── gox-common/        # Shared infrastructure: source management, diagnostics, symbols
+│   ├── gox-syntax/        # Lexer, AST definitions, and parser
+│   ├── gox-analysis/      # Semantic analysis, type checking, name resolution
+│   ├── gox-codegen-llvm/  # LLVM IR code generation backend
+│   ├── gox-codegen-wasm/  # WebAssembly code generation backend
+│   ├── gox-codegen-vm/    # Custom VM bytecode generation
+│   ├── gox-vm/            # Custom VM runtime and interpreter
+│   └── gox-cli/           # Command-line interface tool
+├── english/
+│   └── language_spec.md   # Language specification
+└── tests/                 # Integration tests and test fixtures
 ```
 
-## Getting Started
+## Crate Dependencies
 
-### Prerequisites
+```
+                    ┌─────────────┐
+                    │  gox-cli    │
+                    └──────┬──────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+         ▼                 ▼                 ▼
+┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
+│ gox-codegen-llvm│ │gox-codegen- │ │ gox-codegen-vm  │
+└────────┬────────┘ │    wasm     │ └────────┬────────┘
+         │          └──────┬──────┘          │
+         │                 │                 │
+         └─────────────────┼─────────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │gox-analysis │
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │ gox-syntax  │
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │ gox-common  │
+                    └─────────────┘
 
-- Rust 1.70+
-- Cargo
+                    ┌─────────────┐
+                    │   gox-vm    │ (standalone runtime)
+                    └─────────────┘
+```
 
-### Build
+## Building
 
 ```bash
-cargo build --workspace
+cargo build --release
 ```
 
-### Run the CLI
+## Usage
 
 ```bash
-# Parse a GoX source file and display AST
-cargo run -p gox-cli -- parse crates/gox-syntax/tests/test_data/hello.gox
+# Compile a GoX program
+gox build program.gox
 
-# Display token stream
-cargo run -p gox-cli -- parse --tokens crates/gox-syntax/tests/test_data/hello.gox
+# Run a GoX program (using VM backend)
+gox run program.gox
 
-# Check syntax
-cargo run -p gox-cli -- check crates/gox-syntax/tests/test_data/hello.gox
+# Compile to specific backend
+gox build --target=llvm program.gox
+gox build --target=wasm program.gox
+gox build --target=vm program.gox
 ```
 
-### Run Tests
+## Language Example
 
-```bash
-cargo test --workspace
-```
+```gox
+package main
 
-## Example
-
-```go
-// hello.gox
-package main;
-
-func main() {
-    println("Hello, World!");
+type User struct {
+    name string
+    age  int
 }
-```
 
-```go
-// structs.gox
-package main;
-
-type Person struct {
-    name string;
-    age int;
-};
-
-func (p Person) Greet() string {
-    return "Hello, " + p.name;
+type UserRef object {
+    name string
+    age  int
 }
 
 interface Greeter {
-    Greet() string;
-};
+    Greet() string
+}
 
-implements Person : Greeter;
+func (u User) Greet() string {
+    return "Hello, " + u.name
+}
 
-func main() {
-    p := Person{name: "Alice", age: 30};
-    println(p.Greet());
+func main() int {
+    user := User{name: "Alice", age: 30}
+    println(user.Greet())
+    
+    var ref UserRef = UserRef{name: "Bob", age: 25}
+    ref.name = "Charlie"  // modifies the object
+    
+    numbers := []int{1, 2, 3}
+    for i, v := range numbers {
+        println(i, v)
+    }
+    
+    return 0
 }
 ```
-
-## Language Specification
-
-See [english/language_spec.md](english/language_spec.md) for the complete language specification.
-
-## Status
-
-| Component | Status |
-|-----------|--------|
-| Lexer | ✅ Complete |
-| Parser | ✅ Complete |
-| AST | ✅ Complete |
-| CLI | ✅ Basic functionality |
-| Semantic Analysis | 🚧 In Progress |
-| Code Generation | 📋 Planned |
 
 ## License
 

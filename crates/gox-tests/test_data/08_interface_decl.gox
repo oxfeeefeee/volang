@@ -1,0 +1,17 @@
+// Test: Interface declarations
+interface Reader {
+    Read(p []byte) int
+}
+
+=== parser ===
+File {
+  package: None,
+  decls: [
+    Interface {
+      name: "Reader",
+      methods: [
+        Read,
+      ],
+    },
+  ],
+}

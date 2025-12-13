@@ -2,7 +2,17 @@
 
 This document defines the syntax and semantics of the **GoX** programming language.
 
-GoX is a statically typed, Go-like language designed for compilation to LLVM, WASM, or a custom VM. It simplifies Go by removing complex features while adding an explicit interface/implements model.
+GoX is a statically typed, Go-like language.
+
+## Differences from Go
+
+GoX aims to match the Go language specification as closely as possible, except for the following intentional differences:
+
+- **No generics**: GoX does not support type parameters.
+- **No pointers**: GoX does not support pointer types or pointer operators (no `*T`, `&x`, `*x`).
+- **No complex numbers**: GoX does not support `complex*` types, imaginary literals, or the `complex/real/imag` built-ins.
+- **Explicit reference types**: GoX introduces an `object` composite type with reference semantics and `nil` as the zero value. `object` and `struct` are parallel composite types; a `struct` never "becomes" an `object`.
+- **No method expressions/values**: Go method expressions (`T.M`) and method values (`x.M` used as a function value) are not supported. Use `func` literals to create closures instead (see §9.3).
 
 ---
 
@@ -13,7 +23,6 @@ GoX is a statically typed, Go-like language designed for compilation to LLVM, WA
 - Familiar syntax for Go programmers
 - Static, strong typing with local type inference
 - Simple memory model: **object types** (heap-allocated, reference semantics) vs **value types** (copied on assignment)
-- Explicit interface implementation via `implements` declarations
 - Multiple backend targets (LLVM, WASM, VM)
 
 ### 1.2 Non-Goals
@@ -33,16 +42,18 @@ GoX distinguishes two categories of types:
 
 | Category | Types | Assignment | Zero Value |
 |----------|-------|------------|------------|
-| **Value** | `int`, `float`, `bool`, `string`, `byte`, `[N]T` | Copies data | Type-specific |
-| **Object** | `struct`, `interface`, `[]T`, `map[K]V`, `func(...)` | Copies reference | `nil` |
+| **Value** | `int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`, `float32`, `float64`, `bool`, `string`, `byte`, `rune`, `[N]T`, `struct` | Copies data | Type-specific |
+| **Object** | `object { ... }`, `interface`, `[]T`, `map[K]V`, `chan T`, `func(...)` | Copies reference | `nil` |
 
 **Value type zero values**:
-- `int` → `0`
-- `float` → `0.0`
+- `int`, `int8`, ..., `uint64` → `0`
+- `float32`, `float64` → `0.0`
 - `bool` → `false`
 - `string` → `""`
 - `byte` → `0`
+- `rune` → `0` (the null character)
 - `[N]T` → each element is zero value of `T`
+- `struct` → each field is zero value of its type
 
 **Object type zero values**: Always `nil`.
 
@@ -54,32 +65,50 @@ When declaring `type T U`:
 - `T` inherits the **comparability** of `U`
 
 ```gox
-type MyInt int;       // value type, zero = 0, comparable
-type Users []User;    // object type, zero = nil
-type Handler func();  // object type, zero = nil
+type MyInt int       // value type, zero = 0, comparable
+type Users []User    // object type, zero = nil
+type Handler func()  // object type, zero = nil
 ```
 
-### 2.3 Struct Reference Semantics
+### 2.3 Object Reference Semantics
 
-> **⚠️ Key Difference from Go**: In GoX, `struct` types are object types with reference semantics.
+GoX provides an `object` composite type, parallel to `struct`.
+
+`struct` and `object` share similar surface syntax (fields, composite literals, selection, methods), but they are different types with different runtime behavior. In particular, a `struct` value is never an `object` value.
 
 **Consequences**:
 
-1. `var u User;` initializes `u` to `nil`, not a zero-valued struct
-2. `u := User{};` creates a new object with zero-valued fields; `u != nil`
-3. Assignment copies the reference: after `v := u;`, both `v` and `u` refer to the same object
-4. Mutations through one variable are visible through the other
-5. Field access (`u.name`) or method calls (`u.Method()`) on `nil` are **runtime errors**
+1. Variables of object type initialize to `nil`
+2. Composite literals of object type (e.g., `T{...}` where `T` is an object type) allocate a new object
+3. `make(T)` allocates a new object when `T` is an object type
+4. Assignment of object values copies the reference: after `q := p`, both `q` and `p` refer to the same object
+5. Mutations through one reference are visible through the other
+6. Field access (`p.name`) or method calls (`p.Method()`) on `nil` are **runtime errors**
 
 ```gox
-var u User;           // u == nil
-u.name = "x";         // RUNTIME ERROR: nil dereference
+type User struct {
+    name string
+    age  int
+}
 
-u = User{};           // u != nil, new object created
-u.name = "Alice";     // OK
+type UserRef object {
+    name string
+    age  int
+}
 
-v := u;               // v and u refer to same object
-v.name = "Bob";       // u.name is now also "Bob"
+var u User            // zero-valued struct
+
+var p UserRef         // p == nil
+p.name = "x"          // RUNTIME ERROR: nil dereference
+
+p = UserRef{}         // p != nil, new object created
+p.name = "Alice"      // OK
+
+r := make(UserRef)    // r != nil, new object created
+r.name = "Carol"
+
+q := p                // q and p refer to same object
+q.name = "Bob"        // p.name is now also "Bob"
 ```
 
 ### 2.4 The `nil` Literal
@@ -89,13 +118,15 @@ v.name = "Bob";       // u.name is now also "Bob"
 **Static Rules**:
 - `nil` may be assigned to any object type
 - `nil` cannot be assigned to value types (compile error)
-- `var x = nil;` is invalid: type cannot be inferred
-- `x := nil;` is invalid: type cannot be inferred (see §5.3)
+- `var x = nil` is invalid: type cannot be inferred
+- `x := nil` is invalid: type cannot be inferred (see §5.4)
 
 **Runtime Rules**:
 - Field access on `nil` → runtime error
 - Method call on `nil` → runtime error
-- Index access on `nil` slice/map → runtime error
+- Index access on `nil` slice → runtime error
+- Index access on `nil` map is allowed (returns zero value; the `ok` result is `false`)
+- Assignment to a `nil` map (`m[k] = v`) → runtime error
 
 ### 2.5 Comparability Rules
 
@@ -103,26 +134,27 @@ Types are classified as **comparable** or **non-comparable**:
 
 | Type | Comparable | Comparison Semantics |
 |------|------------|---------------------|
-| `int`, `float`, `byte` | ✅ | Value equality |
+| `int`, `int8`, ..., `uint64`, `float32`, `float64` | ✅ | Value equality |
 | `bool` | ✅ | Value equality |
 | `string` | ✅ | Content equality |
 | `[N]T` (if `T` comparable) | ✅ | Element-wise equality |
 | Named value type | ✅ (inherits) | Per underlying type |
-| `struct` | ❌ | Only `== nil` / `!= nil` |
-| `interface` | ❌ | Only `== nil` / `!= nil` |
+| `struct` | ✅ if all fields comparable | Field-wise equality |
+| `object` | ✅ | Reference identity (`==`/`!=`), or `nil` |
+| `interface` | ✅ | Dynamic value equality (requires underlying comparable) or `nil` |
 | `[]T` | ❌ | Only `== nil` / `!= nil` |
 | `map[K]V` | ❌ | Only `== nil` / `!= nil` |
 | `func(...)` | ❌ | Only `== nil` / `!= nil` |
 
 **Rules**:
 - `==` and `!=` require both operands to be comparable, OR one operand to be `nil` and the other an object type
-- `<`, `<=`, `>`, `>=` are only valid for numeric types (`int`, `float`, `byte`) and `string`
+- `<`, `<=`, `>`, `>=` are only valid for numeric types (`int`, `int8`, ..., `float64`) and `string`
 
 ```gox
 1 == 2              // OK: int comparable
 "a" < "b"           // OK: string ordered
-u == nil            // OK: struct vs nil
-u == v              // ERROR: struct not comparable (except nil)
+p == nil            // OK: object vs nil
+p == q              // OK: object reference comparison
 s == nil            // OK: slice vs nil
 s == t              // ERROR: slices not comparable
 ```
@@ -150,12 +182,12 @@ Identifiers are case-sensitive.
 The following are reserved keywords:
 
 ```
-break     case      chan      const     continue
-default   defer     else      fallthrough false
-for       func      go        goto      if
-implements import   interface map       nil
-package   range     return    select    struct
-switch    true      type      var
+ break     case      chan      const     continue
+ default   defer     else      fallthrough
+ for       func      go        goto      if
+ import    interface map       object
+ package   range     return    select    struct
+ switch    type      var
 ```
 
 > **Note**: `panic` and `recover` are **built-in functions**, not keywords. See §10.
@@ -166,10 +198,14 @@ The following are predeclared but can be shadowed:
 
 ```
 // Types
-int  float  bool  string  byte
+bool  string
+int  int8  int16  int32  int64
+uint  uint8  uint16  uint32  uint64
+float32  float64
+byte  rune  // aliases for uint8 and int32
 
 // Constants
-iota
+true  false  iota
 
 // Zero value
 nil
@@ -178,15 +214,15 @@ nil
 _
 
 // Functions (compiler built-ins)
-len  cap  append  make  close  panic  recover  print  println
+len  cap  append  copy  delete  make  close  panic  recover  print  println
 ```
 
 **Blank identifier `_`**: Used to discard values or declare unused variables. It can appear on the left side of assignments and short variable declarations.
 
 ```gox
-_, err := doSomething();   // discard first return value
-for _, v := range slice {  // discard index
-    println(v);
+_, err := doSomething()   // discard first return value
+for _, v := range slice { // discard index
+    println(v)
 }
 ```
 
@@ -194,10 +230,13 @@ for _, v := range slice {  // discard index
 
 ```
 +    -    *    /    %
+&    |    ^    &^              // bitwise: AND, OR, XOR, AND NOT (bit clear)
+<<   >>
 ==   !=   <    <=   >    >=
 &&   ||   !
 <-                              // channel send/receive
-=    :=   +=   -=   *=   /=   %=
+++   --                        // increment/decrement (statements only)
+=    :=   +=   -=   *=   /=   %=   <<=  >>=  &=  |=  ^=  &^=
 (    )    [    ]    {    }
 ,    :    ;    .    ...
 ```
@@ -205,21 +244,65 @@ for _, v := range slice {  // discard index
 ### 3.5 Literals
 
 ```ebnf
-IntLit    ::= Digit+ ;
-FloatLit  ::= Digit+ "." Digit+ ;
-StringLit ::= '"' { char | escape } '"' ;
-BoolLit   ::= "true" | "false" ;
-NilLit    ::= "nil" ;
+HexDigit ::= "0".."9" | "A".."F" | "a".."f" ;
+OctDigit ::= "0".."7" ;
+BinDigit ::= "0" | "1" ;
+
+IntLit ::= DecLit | HexLit | OctLit | BinLit ;
+DecLit ::= "0" | ("1".."9") ( "_"? Digit )* ;
+HexLit ::= "0" ("x"|"X") HexDigit ( "_"? HexDigit )* ;
+OctLit ::= "0" ("o"|"O") OctDigit ( "_"? OctDigit )* ;
+BinLit ::= "0" ("b"|"B") BinDigit ( "_"? BinDigit )* ;
+
+FloatLit    ::= DecFloatLit | HexFloatLit ;
+DecFloatLit ::= ( Digit+ "." Digit* | "." Digit+ ) ( ("e"|"E") ("+"|"-")? Digit+ )?
+             | Digit+ ("e"|"E") ("+"|"-")? Digit+ ;
+
+HexDigits    ::= HexDigit ( "_"? HexDigit )* ;
+HexMantissa  ::= HexDigits "." HexDigits?
+              | "." HexDigits
+              | HexDigits ;
+HexExponent  ::= ("p"|"P") ("+"|"-")? Digit+ ;
+HexFloatLit  ::= "0" ("x"|"X") HexMantissa HexExponent ;
+
+UnicodeChar ::= /* any Unicode code point except newline */ ;
+EscapeSeq ::= "\\" ( "a" | "b" | "f" | "n" | "r" | "t" | "v" | "\\" | "'" | '"' ) ;
+ByteEscape ::= "\\" OctDigit OctDigit OctDigit | "\\x" HexDigit HexDigit ;
+UnicodeEscape ::= "\\u" HexDigit HexDigit HexDigit HexDigit
+                | "\\U" HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit ;
+
+RuneLit ::= "'" ( UnicodeChar | EscapeSeq | ByteEscape | UnicodeEscape ) "'" ;
+StringLit ::= InterpretedStringLit | RawStringLit ;
+InterpretedStringLit ::= '"' ( UnicodeChar | EscapeSeq | ByteEscape | UnicodeEscape )* '"' ;
+RawStringLit ::= "`" ( /* any char except "`" */ )* "`" ;
 ```
+
+Hexadecimal floating-point literals follow Go's syntax: they start with `0x`/`0X` and must use a binary exponent introduced by `p`/`P`.
+
+```gox
+0x1p-2      // 0.25
+0x1.2p3     // 9.0
+0X.8p0      // 0.5
+0x1.p0      // 1.0
+```
+
+`rune` literals follow Go's Unicode semantics: a rune literal denotes a Unicode code point value. The allowed escape forms are aligned with Go:
+
+- `\\a \\b \\f \\n \\r \\t \\v \\\\ \\'` (and `\\"` only inside string literals)
+- Octal byte escape: `\\` followed by exactly three octal digits (value 0..255)
+- Hex byte escape: `\\x` followed by exactly two hex digits (value 0..255)
+- Unicode escapes: `\\u` (4 hex digits), `\\U` (8 hex digits), must be valid Unicode code points (no surrogates, max `0x10FFFF`)
 
 Escape sequences: `\n`, `\t`, `\\`, `\"`.
 
-> **Note**: GoX only supports double-quoted strings. There are no raw string literals (backticks).
+Raw string literals use backquotes and may contain any characters except a backquote. Backslashes have no special meaning and escapes are not processed. Newlines are permitted.
 
 ### 3.6 Semicolons
 
 Semicolons terminate statements and declarations. The lexer automatically inserts a semicolon after a line's final token if that token is:
-- An identifier, literal, or keyword (`break`, `continue`, `return`, `true`, `false`, `nil`)
+- An identifier or basic literal
+- One of the keywords `break`, `continue`, `fallthrough`, `return`
+- One of the operators `++`, `--`
 - A closing delimiter: `)`, `]`, `}`
 
 ### 3.7 Comments
@@ -250,7 +333,6 @@ TopDecl ::= VarDecl
           | ConstDecl
           | TypeDecl
           | InterfaceDecl
-          | ImplementsDecl
           | FuncDecl ;
 ```
 
@@ -269,10 +351,10 @@ VarSpec     ::= IdentList Type? ( "=" ExprList )? ;
 **Grouped declarations** use parentheses:
 ```gox
 var (
-    x int;
-    y = 42;
-    a, b = 1, 2;
-);
+    x int
+    y = 42
+    a, b = 1, 2
+)
 ```
 
 **Static Rules**:
@@ -281,11 +363,12 @@ var (
 - If `Expr` is `nil`, `Type` is required
 
 ```gox
-var x int;           // x = 0
-var y = 42;          // y inferred as int
-var u User;          // u = nil (User is struct, an object type)
-var h Handler = nil; // OK: type is explicit
-var z = nil;         // ERROR: cannot infer type
+var x int           // x = 0
+var y = 42          // y inferred as int
+var u User          // u is a zero-valued struct
+var p UserRef       // p == nil
+var h Handler = nil // OK: type is explicit
+var z = nil         // ERROR: cannot infer type
 ```
 
 ### 5.2 Constants
@@ -301,35 +384,185 @@ Constants require initializers (except when using `iota` continuation). `nil` is
 **Grouped declarations** use parentheses:
 ```gox
 const (
-    Pi = 3.14159;
-    E  = 2.71828;
-);
+    Pi = 3.14159
+    E  = 2.71828
+)
 ```
 
 **iota**: A predeclared identifier representing successive untyped integer constants. It resets to 0 at each `const` block and increments by 1 for each ConstSpec.
 
 ```gox
 const (
-    Sunday = iota;   // 0
-    Monday;          // 1 (implicit = iota)
-    Tuesday;         // 2
-);
+    Sunday = iota   // 0
+    Monday          // 1 (implicit = iota)
+    Tuesday         // 2
+)
 
 const (
-    _  = iota;             // 0, ignored
-    KB = 1 << (10 * iota); // 1 << 10 = 1024
-    MB;                    // 1 << 20
-    GB;                    // 1 << 30
-);
+    _  = iota             // 0, ignored
+    KB = 1 << (10 * iota) // 1 << 10 = 1024
+    MB                    // 1 << 20
+    GB                    // 1 << 30
+)
 ```
 
 ```gox
-const Pi = 3.14159;
-const MaxSize int = 1024;
-const Empty = nil;   // ERROR: nil cannot be const
+const Pi = 3.14159
+const MaxSize int = 1024
+const Empty = nil   // ERROR: nil cannot be const
 ```
 
-### 5.3 Short Variable Declaration
+### 5.3 Numeric Constants
+
+GoX follows Go's numeric constant model (with complex numbers removed), which provides arbitrary-precision arithmetic at compile time and flexible type conversion.
+
+#### 5.3.1 Typed vs Untyped Constants
+
+Constants can be **typed** or **untyped**:
+
+| Kind | Example | Description |
+|------|---------|-------------|
+| Untyped integer | `42`, `0xFF`, `-14` | No fixed type, default to `int` |
+| Untyped float | `3.14`, `1e10`, `2.0` | No fixed type, default to `float64` |
+| Untyped rune | `'a'`, `'世'`, `'\n'` | No fixed type, default to `rune` |
+| Untyped string | `"hello"` | No fixed type, default to `string` |
+| Untyped bool | `true`, `false` | No fixed type, default to `bool` |
+| Typed | `int(42)`, `const x int = 1` | Has explicit type |
+
+**Key insight**: Untyped constants live in an "ideal" numeric space and can be freely mixed in expressions. They only acquire a concrete type when assigned to a variable or used in a context requiring a specific type.
+
+```gox
+const a = 2 + 3.0       // a == 5.0 (untyped floating-point)
+const b = 15 / 4        // b == 3 (untyped integer, integer division)
+const c = 15 / 4.0      // c == 3.75 (untyped floating-point)
+const d = 'a' + 1       // d == 'b' (untyped rune)
+```
+
+#### 5.3.2 Default Types
+
+When an untyped constant is used where a typed value is required (e.g., variable declaration without explicit type), it converts to its **default type**:
+
+| Constant Kind | Default Type |
+|---------------|--------------|
+| Integer | `int` |
+| Floating-point | `float64` |
+| Rune | `rune` |
+| String | `string` |
+| Boolean | `bool` |
+
+```gox
+x := 42       // x is int (default type of untyped integer)
+y := 3.14     // y is float64 (default type of untyped floating-point)
+z := 'a'      // z is rune (default type of untyped rune)
+s := "hi"     // s is string
+```
+
+#### 5.3.3 Implicit Conversion of Untyped Constants
+
+An untyped constant can be implicitly converted to any compatible type:
+
+```gox
+var i int = 42        // OK: untyped 42 → int
+var f float64 = 42    // OK: untyped 42 → float64
+var b byte = 42       // OK: untyped 42 → byte (if in range)
+
+type MyInt int
+var m MyInt = 42      // OK: untyped 42 → MyInt
+
+const Pi = 3.14159
+var f64 float64 = Pi  // OK: untyped floating-point → float64
+```
+
+**Typed constants** cannot be implicitly converted:
+
+```gox
+const TypedInt int = 42
+type MyInt int
+var m MyInt = TypedInt   // ERROR: int is not MyInt
+var m MyInt = 42         // OK: untyped constant
+```
+
+#### 5.3.4 Arbitrary Precision
+
+Numeric constants are represented with arbitrary precision at compile time. They do not overflow during constant evaluation:
+
+```gox
+const Huge = 1 << 100           // OK: very large untyped integer
+const Four = Huge >> 98         // Four == 4
+const Result = Huge / 1e97      // OK: computed at compile time
+
+var x int = Huge                // ERROR: Huge overflows int
+var y int = Four                // OK: Four fits in int
+```
+
+**Implementation requirement**: Compilers must support at least 256-bit integer constants and 256-bit mantissa for floating-point constants.
+
+#### 5.3.5 Representability
+
+A constant `x` is **representable** by a value of type `T` if:
+
+1. `x` is in the set of values determined by `T`, OR
+2. `T` is a floating-point type and `x` can be rounded to `T`'s precision without overflow
+
+```gox
+// Representable:
+var a byte = 97       // 97 is in [0, 255]
+var b float64 = 42.0  // 42.0 is representable as float64
+var c int = 1e3       // 1000 is an integer
+
+// Not representable:
+var d byte = 256      // ERROR: 256 > 255
+var e byte = -1       // ERROR: -1 < 0
+var f int = 1.5       // ERROR: 1.5 is not an integer
+var g int = 1e100     // ERROR: too large for int
+```
+
+#### 5.3.6 Kind Promotion in Expressions
+
+When untyped constants of different kinds are combined in an expression, the result takes the kind that appears later in this precedence list:
+
+**integer < rune < floating-point**
+
+```gox
+const a = 1 + 2       // integer + integer → integer (3)
+const b = 1 + 2.0     // integer + float → float (3.0)
+const c = 'a' + 1     // rune + integer → rune ('b')
+const d = 'a' + 1.0   // rune + float → float (98.0)
+```
+
+#### 5.3.7 Constant Expressions
+
+Constant expressions are evaluated at compile time with exact precision:
+
+```gox
+const (
+    Pi    = 3.14159265358979323846264338327950288419716939937510582097494459
+    Tau   = 2 * Pi          // Full precision maintained
+    Theta = Pi / 2
+)
+
+var f float64 = Pi          // Rounded to float64 precision
+```
+
+**Division by zero** in constant expressions is a compile-time error:
+
+```gox
+const bad = 1 / 0           // ERROR: division by zero
+const alsobad = 1.0 / 0.0   // ERROR: division by zero
+```
+
+#### 5.3.8 Shift Expressions
+
+Shift expressions use `<<` and `>>`.
+
+**Static Rules**:
+- The left operand must be of integer type or an untyped integer/rune constant.
+- The right operand must be of integer type or an untyped integer constant.
+- If the left operand is an untyped constant, the result is an untyped constant.
+- If the left operand is a typed integer value, the result has the same type as the left operand.
+
+
+### 5.4 Short Variable Declaration
 
 ```ebnf
 ShortVarDecl ::= IdentList ":=" ExprList ";" ;
@@ -339,20 +572,18 @@ ExprList     ::= Expr ( "," Expr )* ;
 
 **Static Rules**:
 - Only valid inside blocks (not at package level)
-- **Always declares new variables** (shadowing is allowed)
+- Declares new variables and may reassign existing variables in the same scope, following Go's rules: at least one variable on the left-hand side must be newly declared, and all non-blank variables must already be declared in the same scope.
 - Number of identifiers must equal number of expressions
 - Type of each variable = static type of corresponding expression
 - If expression is `nil` with no inferable context type → compile error
 
-> **⚠️ Difference from Go**: In Go, `:=` may reuse an existing variable if at least one new variable is declared. In GoX, `:=` **always** declares new variables. It never degrades to assignment.
-
 ```gox
-x := 10;
-x := 20;     // OK: shadows outer x, declares new x
-x := nil;    // ERROR: cannot infer type from nil
+x := 10
+x, y := 20, "hi"  // OK: x reassigned, y newly declared
+x := nil          // ERROR: cannot infer type from nil
 ```
 
-### 5.4 Type Declarations
+### 5.5 Type Declarations
 
 ```ebnf
 TypeDecl ::= "type" Ident Type ";" ;
@@ -362,9 +593,9 @@ The new type inherits the category (value/object), zero value, and comparability
 
 ```gox
 type User struct {
-    name string;
-    age  int "json:\"name\"";
-};
+    name string
+    age  int "json:\"name\""
+}
 ```
 
 > **Note**: Struct field tags are metadata strings. Their semantics are defined by tooling/standard library (e.g., JSON serialization). The compiler preserves them in the AST but does not interpret them.
@@ -377,25 +608,34 @@ type User struct {
 
 ```ebnf
 Type ::= Ident
+       | ObjectType
        | ArrayType
        | SliceType
        | MapType
        | ChanType
        | FuncType
-       | StructType ;
+       | StructType
+       | InterfaceType ;
 ```
 
-> **Note**: Interface types cannot appear inline. Use named interface types declared via `InterfaceDecl`.
+```ebnf
+InterfaceType ::= "interface" "{" InterfaceElem* "}" ;
+InterfaceElem ::= MethodSpec | EmbeddedIface ;
+MethodSpec    ::= Ident "(" ParamList? ")" ResultType? ";" ;  // ParamList defined in §7.1
+EmbeddedIface ::= Ident ";" ;
+```
 
 ### 6.2 Built-in Types
 
 | Type | Category | Description |
 |------|----------|-------------|
-| `int` | Value | Platform-sized signed integer |
-| `float` | Value | Platform-sized floating point |
 | `bool` | Value | Boolean (`true`/`false`) |
+| `int`, `int8`, `int16`, `int32`, `int64` | Value | Signed integers |
+| `uint`, `uint8`, `uint16`, `uint32`, `uint64` | Value | Unsigned integers |
+| `float32`, `float64` | Value | IEEE-754 floating point |
 | `string` | Value | Immutable UTF-8 string |
-| `byte` | Value | Alias for 8-bit unsigned integer |
+| `byte` | Value | Alias for `uint8` |
+| `rune` | Value | Alias for `int32` (Unicode code point) |
 
 ### 6.3 Arrays
 
@@ -406,7 +646,7 @@ ArrayType ::= "[" IntLit "]" Type ;
 Arrays are value types with fixed length.
 
 ```gox
-var a [4]int;  // [0, 0, 0, 0]
+var a [4]int  // [0, 0, 0, 0]
 ```
 
 ### 6.4 Slices
@@ -418,8 +658,8 @@ SliceType ::= "[" "]" Type ;
 Slices are object types referencing a dynamic sequence.
 
 ```gox
-var s []int;         // s == nil
-s = []int{1, 2, 3};  // s != nil
+var s []int         // s == nil
+s = []int{1, 2, 3}  // s != nil
 ```
 
 ### 6.5 Maps
@@ -430,38 +670,52 @@ MapType ::= "map" "[" Type "]" Type ;
 
 Maps are object types providing key-value storage.
 
-**Key type restriction**: The key type must be a **comparable value type**:
+**Key type restriction**: The key type must be **comparable**:
 
 | Valid Keys | Invalid Keys |
 |------------|--------------|
-| `int`, `float`, `byte` | `struct` |
-| `bool` | `interface` |
-| `string` | `[]T` (slice) |
-| `[N]T` (array of comparable) | `map[K]V` |
-| Named value types | `func(...)` |
+| `int`, `int8`, ..., `uint64` | `[]T` (slice) |
+| `float32`, `float64` | `map[K]V` |
+| `bool`, `string`, `byte`, `rune` | `func(...)` |
+| `[N]T` (array of comparable) | |
+| `struct` (if comparable) | |
+| `object` | |
+| `interface` | |
 
 ```gox
-var m map[string]int;      // m == nil
-m = map[string]int{};      // m != nil, empty map
-m["key"] = 42;
+var m map[string]int      // m == nil
+m = map[string]int{}      // m != nil, empty map
+m["key"] = 42
 
-var bad map[User]int;      // ERROR: User (struct) not a valid key type
+var bad map[[]int]int     // ERROR: slices are not comparable
 ```
 
 ### 6.6 Channels
 
 ```ebnf
-ChanType ::= "chan" Type ;
+ChanType ::= ( "chan" | "chan" "<-" | "<-" "chan" ) Type ;
 ```
 
 Channels are object types used for communication between goroutines. Zero value is `nil`.
 
-> **Note**: GoX only supports bidirectional channels. Unlike Go, there are no directional channel types (`<-chan T` or `chan<- T`).
+**Channel directions**:
+- `chan T` — bidirectional (can send and receive)
+- `chan<- T` — send-only
+- `<-chan T` — receive-only
 
 ```gox
-var ch chan int;           // ch == nil
-ch = make(chan int);       // unbuffered channel
-ch = make(chan int, 10);   // buffered channel with capacity 10
+var ch chan int           // ch == nil
+ch = make(chan int)       // unbuffered channel
+ch = make(chan int, 10)   // buffered channel with capacity 10
+
+// Directional channels (typically used in function parameters)
+func producer(out chan<- int) {
+    out <- 42             // can only send
+}
+
+func consumer(in <-chan int) {
+    x := <-in             // can only receive
+}
 ```
 
 **Operations**:
@@ -470,9 +724,9 @@ ch = make(chan int, 10);   // buffered channel with capacity 10
 - `value, ok := <-ch` — receive with closed check (`ok` is `false` if channel closed and empty)
 
 ```gox
-ch <- 42;           // send
-x := <-ch;          // receive
-close(ch);          // close channel (no more sends allowed)
+ch <- 42           // send
+x := <-ch          // receive
+close(ch)          // close channel (no more sends allowed)
 ```
 
 ### 6.7 Functions
@@ -486,7 +740,7 @@ ResultType    ::= Type | "(" Type ( "," Type )* ")" ;
 Function types are object types. Zero value is `nil`.
 
 ```gox
-var f func(int) int;  // f == nil
+var f func(int) int  // f == nil
 ```
 
 ### 6.8 Variadic Functions
@@ -499,18 +753,18 @@ A function may have a variadic final parameter. The caller may pass zero or more
 
 ```gox
 func sum(nums ...int) int {
-    total := 0;
+    total := 0
     for i := 0; i < len(nums); i += 1 {
-        total += nums[i];
+        total += nums[i]
     }
-    return total;
+    return total
 }
 
-sum(1, 2, 3);        // nums = []int{1, 2, 3}
-sum();               // nums = []int{}
+sum(1, 2, 3)        // nums = []int{1, 2, 3}
+sum()               // nums = []int{}
 
-s := []int{1, 2, 3};
-sum(s...);           // spread slice as arguments
+s := []int{1, 2, 3}
+sum(s...)           // spread slice as arguments
 ```
 
 ### 6.9 Structs
@@ -521,27 +775,56 @@ FieldDecl  ::= ( IdentList Type | Type ) Tag? ";" ;
 Tag        ::= StringLit ;
 ```
 
-Structs are **object types** (see §2.3). Fields may have optional tags for metadata.
+Structs are **value types**. Assignment copies the struct value. The zero value of a struct is a struct value where each field is the zero value of its type.
 
-**Anonymous fields** (embedding): A field can be just a type name, creating an embedded field. The type must be a named type or pointer to named type.
+**Anonymous fields** (embedding): A field can be just a type name, creating an embedded field. The type must be a named type.
 
 ```gox
 type User struct {
-    id   int    "json:\"id\"";
-    name string "json:\"name\"";
-};
+    id   int    "json:\"id\""
+    name string "json:\"name\""
+}
 
 type Employee struct {
-    User;           // anonymous/embedded field
-    department string;
-};
+    User           // anonymous/embedded field
+    department string
+}
 
 // Access embedded fields directly:
-e := Employee{};
-e.name = "Alice";   // accesses User.name
+e := Employee{}
+e.name = "Alice"   // accesses User.name
 ```
 
 > **Note**: Tags use double-quoted strings with escaped inner quotes.
+
+### 6.10 Objects
+
+```ebnf
+ObjectType ::= "object" "{" FieldDecl* "}" ;
+```
+
+Objects are **object types** with reference semantics. The zero value is `nil`. Assignment copies the reference, not the data.
+
+`object` and `struct` share similar surface syntax (fields, composite literals, selection, methods), but they are different types with different runtime behavior.
+
+```gox
+type UserRef object {
+    id   int
+    name string
+}
+
+var p UserRef         // p == nil
+p = UserRef{}         // p != nil, new object allocated
+p.name = "Alice"
+
+r := make(UserRef)    // r != nil, new object allocated
+r.name = "Carol"
+
+q := p                // q and p refer to same object
+q.name = "Bob"        // p.name is now also "Bob"
+```
+
+**Anonymous fields** (embedding) work the same as in structs.
 
 ---
 
@@ -560,16 +843,16 @@ Param         ::= IdentList Type ;   // Type sharing: x, y int
 
 ```gox
 interface Reader {
-    Read(buf []byte) (int, Error);
-};
+    Read(buf []byte) int
+}
 
 interface ReadWriter {
-    Reader;  // embedding
-    Write(buf []byte) (int, Error);
-};
+    Reader  // embedding
+    Write(buf []byte) int
+}
 ```
 
-> **Scope Limitation**: Embedded interfaces must be unqualified names from the current package. To embed an external interface like `io.Reader`, first create a local alias: `type Reader = io.Reader;`.
+> **Scope Limitation**: Embedded interfaces must be unqualified names from the current package.
 
 ### 7.2 Interface Method Sets
 
@@ -583,12 +866,21 @@ The **method set** of an interface is computed as follows:
    - If signatures differ → compile error
 
 ```gox
-interface A { Foo() int; };
-interface B { Foo() int; Bar(); };
-interface C { A; B; };  // method set = {Foo() int, Bar()}
+interface A { Foo() int }
+interface B {
+    Foo() int
+    Bar()
+}
+interface C {
+    A
+    B
+}  // method set = {Foo() int, Bar()}
 
-interface D { Foo() string; };
-interface E { A; D; };  // ERROR: Foo has conflicting signatures
+interface D { Foo() string }
+interface E {
+    A
+    D
+}  // ERROR: Foo has conflicting signatures
 ```
 
 ### 7.3 Type Method Sets
@@ -596,7 +888,7 @@ interface E { A; D; };  // ERROR: Foo has conflicting signatures
 The **method set** of a named type `T` is the set of all methods declared with receiver type `T`.
 
 ```gox
-type User struct { ... };
+type User struct { ... }
 
 func (u User) Name() string { ... }
 func (u User) SetName(n string) { ... }
@@ -617,36 +909,17 @@ The receiver consists of a name and a **named type**. Anonymous types (arrays, s
 
 ```gox
 func (u User) Name() string {
-    return u.name;
+    return u.name
 }
 
 func (u User) SetName(name string) {
-    u.name = name;  // modifies the underlying object
+    u.name = name  // NOTE: User is a struct, so this modifies a copy
 }
 
 func (a [4]int) Sum() int { ... }  // ERROR: receiver must be named type
 ```
 
 **Runtime**: Calling a method on a `nil` receiver is a runtime error.
-
-### 7.5 Implements Declarations
-
-```ebnf
-ImplementsDecl ::= "implements" Ident ":" IdentList ";" ;
-```
-
-Explicitly declares that a type implements one or more interfaces.
-
-```gox
-implements User : Reader, Writer;
-```
-
-**Static Verification**:
-1. Compute the flattened method set of each interface (per §7.2)
-2. Compute the method set of the type (per §7.3)
-3. The type's method set must include all required methods
-4. Each method signature must match exactly (name, parameter types, result types)
-5. Missing or mismatched methods → compile error
 
 ---
 
@@ -674,10 +947,12 @@ Stmt ::= Block
        | GotoStmt
        | FallthroughStmt
        | LabeledStmt
+       | IncDecStmt
        | EmptyStmt ;
 
-EmptyStmt ::= ";" ;
-ExprStmt  ::= Expr ";" ;
+EmptyStmt  ::= ";" ;
+ExprStmt   ::= Expr ";" ;
+IncDecStmt ::= Expr ( "++" | "--" ) ";" ;
 ```
 
 ### 8.2 Blocks
@@ -692,7 +967,7 @@ Blocks introduce lexical scope.
 
 ```ebnf
 Assignment ::= ExprList AssignOp ExprList ";" ;
-AssignOp   ::= "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+AssignOp   ::= "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^=" | "&^=" ;
 ExprList   ::= Expr ( "," Expr )* ;
 ```
 
@@ -704,9 +979,9 @@ ExprList   ::= Expr ( "," Expr )* ;
 This guarantees that `a, b = b, a` swaps the values (or references, for object types).
 
 ```gox
-x = 10;
-a, b = b, a;  // swap: evaluates b, a first, then assigns
-count += 1;
+x = 10
+a, b = b, a  // swap: evaluates b, a first, then assigns
+count += 1
 ```
 
 ### 8.4 Return
@@ -719,26 +994,26 @@ ReturnStmt ::= "return" ExprList? ";" ;
 
 | Function Returns | `return` Form | Validity |
 |------------------|---------------|----------|
-| Nothing (no ResultType) | `return;` | ✅ Required |
-| Nothing | `return expr;` | ❌ Error |
-| Single type `T` | `return;` | ❌ Error |
-| Single type `T` | `return expr;` | ✅ Required, `expr` must be type `T` |
-| Multiple types `(T1, T2, ...)` | `return;` | ❌ Error |
-| Multiple types | `return e1, e2, ...;` | ✅ Count and types must match |
+| Nothing (no ResultType) | `return` | ✅ Required |
+| Nothing | `return expr` | ❌ Error |
+| Single type `T` | `return` | ❌ Error |
+| Single type `T` | `return expr` | ✅ Required, expr must be assignable to `T` |
+| Multiple types `(T1, T2, ...)` | `return` | ❌ Error |
+| Multiple types | `return e1, e2, ...` | ✅ Count and types must match |
 
 ```gox
-func f() { return; }              // OK
-func g() int { return 42; }       // OK
-func h() (int, string) { return 1, "x"; }  // OK
-func i() int { return; }          // ERROR
-func j() { return 1; }            // ERROR
+func f() { return }              // OK
+func g() int { return 42 }       // OK
+func h() (int, string) { return 1, "x" }  // OK
+func i() int { return }          // ERROR
+func j() { return 1 }            // ERROR
 ```
 
 ### 8.5 If
 
 ```ebnf
-IfStmt     ::= "if" SimpleStmt? ";"? Expr Block ( "else" ( IfStmt | Block ) )? ;
-SimpleStmt ::= ExprStmt | Assignment | ShortVarDecl ;
+IfStmt     ::= "if" ( SimpleStmt ";" )? Expr Block ( "else" ( IfStmt | Block ) )? ;
+SimpleStmt ::= ExprStmt | Assignment | ShortVarDecl | IncDecStmt | SendStmt ;
 ```
 
 Optional init statement before condition. Condition must be type `bool`.
@@ -754,11 +1029,11 @@ if x > 0 {
 
 // With init statement:
 if x := compute(); x > 0 {
-    println(x);
+    println(x)
 }
 
 if err := doSomething(); err != nil {
-    return err;
+    return err
 }
 ```
 
@@ -769,7 +1044,6 @@ ForStmt        ::= "for" ForClause Block ;
 ForClause      ::= Expr | ForThreeClause | ForRangeClause ;
 ForThreeClause ::= SimpleStmt? ";" Expr? ";" SimpleStmt? ;
 ForRangeClause ::= ( IdentList ( ":=" | "=" ) )? "range" Expr ;
-SimpleStmt     ::= ExprStmt | Assignment | ShortVarDecl ;
 ```
 
 **Parsing Note**: The parser distinguishes forms by the presence of `;` or `range` keyword.
@@ -778,16 +1052,16 @@ SimpleStmt     ::= ExprStmt | Assignment | ShortVarDecl ;
 for x < 10 { ... }                    // while-style
 for i := 0; i < 10; i += 1 { ... }    // C-style
 for ; ; { ... }                       // infinite
-for i, v := range slice { ... }      // range over slice
-for k, v := range m { ... }          // range over map
-for i := range slice { ... }         // range with index only
+for i, v := range slice { ... }       // range over slice
+for k, v := range m { ... }           // range over map
+for i := range slice { ... }          // range with index only
 for range ch { ... }                  // range with no variables
 ```
 
 **Range Semantics**:
 - For slices/arrays: `i` is index (int), `v` is element value
 - For maps: `k` is key, `v` is value
-- For strings: `i` is byte index, `v` is rune (int)
+- For strings: `i` is byte index, `v` is rune (`int32`)
 - For channels: `v` is received value (single variable only)
 
 ### 8.7 Switch
@@ -805,27 +1079,27 @@ Cases implicitly break unless `fallthrough` is used.
 ```gox
 switch x {
 case 1:
-    println("one");
+    println("one")
 case 2, 3:
-    println("two or three");
+    println("two or three")
 default:
-    println("other");
+    println("other")
 }
 
 // With init statement:
 switch x := getValue(); x {
 case 1:
-    println("one");
+    println("one")
 }
 
 // Without tag (boolean cases):
 switch {
 case x > 0:
-    println("positive");
+    println("positive")
 case x < 0:
-    println("negative");
+    println("negative")
 default:
-    println("zero");
+    println("zero")
 }
 ```
 
@@ -836,7 +1110,7 @@ switch handler {
 case nil:
     // handler is nil
 default:
-    handler.Serve();
+    handler.Serve()
 }
 ```
 
@@ -853,11 +1127,11 @@ RecvStmt     ::= ( IdentList ( ":=" | "=" ) )? "<-" Expr ;
 ```gox
 select {
 case msg := <-ch1:
-    println("received", msg);
+    println("received", msg)
 case ch2 <- value:
-    println("sent");
+    println("sent")
 default:
-    println("no communication ready");
+    println("no communication ready")
 }
 ```
 
@@ -870,10 +1144,10 @@ GoStmt ::= "go" Expr ";" ;
 Starts a new goroutine executing the function call. The expression must be a function or method call.
 
 ```gox
-go handleRequest(conn);
+go handleRequest(conn)
 go func() {
     // anonymous function
-}();
+}()
 ```
 
 ### 8.10 Defer
@@ -886,8 +1160,8 @@ Defers execution of a function call until the surrounding function returns. Argu
 
 ```gox
 func readFile(path string) {
-    f := open(path);
-    defer close(f);       // called when function returns
+    f := open(path)
+    defer close(f)       // called when function returns
     // ... use f ...
 }
 ```
@@ -901,7 +1175,7 @@ SendStmt ::= Expr "<-" Expr ";" ;
 Sends a value to a channel. The first expression must be a channel type, the second is the value to send.
 
 ```gox
-ch <- 42;
+ch <- 42
 ```
 
 ### 8.12 Goto and Labels
@@ -916,7 +1190,7 @@ LabeledStmt ::= Ident ":" Stmt ;
 ```gox
 func example() {
     if condition {
-        goto cleanup;
+        goto cleanup
     }
     // ... normal code ...
 cleanup:
@@ -935,10 +1209,10 @@ In a `switch` case, `fallthrough` transfers control to the first statement of th
 ```gox
 switch x {
 case 1:
-    println("one");
-    fallthrough;
+    println("one")
+    fallthrough
 case 2:
-    println("one or two");
+    println("one or two")
 }
 ```
 
@@ -956,7 +1230,7 @@ outer:
 for i := 0; i < 10; i += 1 {
     for j := 0; j < 10; j += 1 {
         if condition {
-            break outer;   // breaks outer loop
+            break outer   // breaks outer loop
         }
     }
 }
@@ -973,18 +1247,19 @@ Expr      ::= OrExpr ;
 OrExpr    ::= AndExpr ( "||" AndExpr )* ;
 AndExpr   ::= EqExpr ( "&&" EqExpr )* ;
 EqExpr    ::= RelExpr ( ( "==" | "!=" ) RelExpr )* ;
-RelExpr   ::= AddExpr ( ( "<" | "<=" | ">" | ">=" ) AddExpr )* ;
-AddExpr   ::= MulExpr ( ( "+" | "-" ) MulExpr )* ;
-MulExpr   ::= UnaryExpr ( ( "*" | "/" | "%" ) UnaryExpr )* ;
-UnaryExpr ::= ( "+" | "-" | "!" ) UnaryExpr | Primary ;
+RelExpr   ::= ShiftExpr ( ( "<" | "<=" | ">" | ">=" ) ShiftExpr )* ;
+ShiftExpr ::= AddExpr ( ( "<<" | ">>" ) AddExpr )* ;
+AddExpr   ::= MulExpr ( ( "+" | "-" | "|" | "^" ) MulExpr )* ;
+MulExpr   ::= UnaryExpr ( ( "*" | "/" | "%" | "&" | "&^" ) UnaryExpr )* ;
+UnaryExpr ::= ( "+" | "-" | "!" | "^" ) UnaryExpr | Primary ;
 ```
 
 ### 9.2 Primary Expressions
 
 ```ebnf
-Primary ::= Operand ( Selector | Index | Call | TypeAssertion )* ;
+Primary ::= Operand ( Selector | Index | SliceExpr | Call | TypeAssertion )* ;
 Operand ::= Ident | Literal | "(" Expr ")" | CompositeLit | Conversion | FuncLit ;
-Literal ::= IntLit | FloatLit | StringLit | BoolLit | NilLit ;
+Literal ::= IntLit | FloatLit | RuneLit | StringLit ;
 FuncLit ::= "func" "(" ParamList? ")" ResultType? Block ;
 ```
 
@@ -995,6 +1270,13 @@ Selector    ::= "." Ident ;
 Index       ::= "[" Expr "]" ;
 SliceExpr   ::= "[" Expr? ":" Expr? "]" ;
 Call        ::= "(" ( Expr ( "," Expr )* "..."? )? ")" ;
+```
+
+> **Note**: GoX does not support Go's method expressions (`T.M`) or method values (`x.M` used as a function value). To pass a method as a value, use a `func` literal:
+
+```gox
+// Instead of: f := x.M
+f := func(a int) int { return x.M(a) }
 ```
 
 **Slice Expressions**: Create a sub-slice from an array or slice.
@@ -1030,14 +1312,14 @@ Value        ::= Expr | "{" ElementList? "}" ;
 **Nested literal type elision**: For nested composite literals, the inner type can be omitted when it can be inferred from the outer type:
 
 ```gox
-u := User{name: "Alice", age: 30};     // struct
-a := [3]int{1, 2, 3};                  // array
-s := []int{10, 20};                    // slice
-m := map[string]int{"a": 1, "b": 2};   // map (key is Expr)
+u := User{name: "Alice", age: 30}     // struct
+a := [3]int{1, 2, 3}                  // array
+s := []int{10, 20}                    // slice
+m := map[string]int{"a": 1, "b": 2}   // map (key is Expr)
 
 // Nested with type elision:
-matrix := [][]int{{1, 2}, {3, 4}};     // inner []int elided
-points := []Point{{1, 2}, {3, 4}};     // inner Point elided
+matrix := [][]int{{1, 2}, {3, 4}}     // inner []int elided
+points := []Point{{1, 2}, {3, 4}}     // inner Point elided
 ```
 
 ### 9.5 Type Conversions
@@ -1047,8 +1329,8 @@ Conversion ::= Type "(" Expr ")" ;
 ```
 
 ```gox
-i := int(f);
-s := string(65);  // implementation-defined
+i := int(f)
+s := string(65)  // implementation-defined
 ```
 
 ### 9.6 Type Assertions
@@ -1060,10 +1342,10 @@ TypeAssertion ::= Expr "." "(" Type ")" ;
 A type assertion extracts the concrete value from an interface value.
 
 ```gox
-var i interface{} = "hello";
+var i interface{} = "hello"
 
-s := i.(string);       // panics if i is not a string
-s, ok := i.(string);   // ok is false if i is not a string, no panic
+s := i.(string)       // panics if i is not a string
+s, ok := i.(string)   // ok is false if i is not a string, no panic
 ```
 
 **Rules**:
@@ -1080,8 +1362,8 @@ RecvExpr ::= "<-" Expr ;
 Receives a value from a channel. Can be used in expressions or statements.
 
 ```gox
-x := <-ch;            // receive value
-x, ok := <-ch;        // receive with closed check
+x := <-ch            // receive value
+x, ok := <-ch        // receive with closed check
 ```
 
 ---
@@ -1095,7 +1377,9 @@ The following functions are **compiler built-ins**. Their signatures use meta-no
 | `len(s)` | Returns length of slice, map, string, array, or channel |
 | `cap(s)` | Returns capacity of slice or channel |
 | `append(s, elems...)` | Returns new slice with elements appended |
-| `make(T, size?, cap?)` | Allocates and initializes slice, map, or channel |
+| `copy(dst, src)` | Copies elements from src slice to dst slice, returns count copied |
+| `delete(m, key)` | Deletes the element with the specified key from a map |
+| `make(T, size?, cap?)` | Allocates and initializes slice, map, channel, or object |
 | `close(ch)` | Closes a channel (no more sends allowed) |
 | `panic(v)` | Stops normal execution and begins panicking |
 | `recover()` | Captures a panic value during deferred function execution |
@@ -1104,10 +1388,10 @@ The following functions are **compiler built-ins**. Their signatures use meta-no
 
 **Usage Examples**:
 ```gox
-s := make([]int, 10);      // slice of length 10
-m := make(map[string]int); // empty map
-s = append(s, 42);         // returns new slice
-n := len(s);               // length
+s := make([]int, 10)      // slice of length 10
+m := make(map[string]int) // empty map
+s = append(s, 42)         // returns new slice
+n := len(s)               // length
 ```
 
 ### 10.1 Panic and Recover
@@ -1118,30 +1402,36 @@ n := len(s);               // length
 func safeCall(f func()) (err string) {
     defer func() {
         if r := recover(); r != nil {
-            err = "caught panic";
+            err = "caught panic"
         }
-    }();
-    f();
-    return "";
+    }()
+    f()
+    return ""
 }
 
 func dangerous() {
-    panic("something went wrong");
+    panic("something went wrong")
 }
 
-result := safeCall(dangerous);  // result = "caught panic"
+result := safeCall(dangerous)  // result = "caught panic"
 ```
 
 ### 10.2 Make
 
-`make` creates and initializes slices, maps, and channels:
+`make` creates and initializes slices, maps, channels, and objects:
 
 ```gox
-s := make([]int, 10);         // slice with length 10, capacity 10
-s := make([]int, 10, 20);     // slice with length 10, capacity 20
-m := make(map[string]int);    // empty map
-ch := make(chan int);         // unbuffered channel
-ch := make(chan int, 10);     // buffered channel with capacity 10
+s := make([]int, 10)         // slice with length 10, capacity 10
+s := make([]int, 10, 20)     // slice with length 10, capacity 20
+m := make(map[string]int)    // empty map
+ch := make(chan int)         // unbuffered channel
+ch := make(chan int, 10)     // buffered channel with capacity 10
+
+type UserRef object {
+    name string
+}
+p := make(UserRef)           // new object allocated
+p.name = "Alice"
 ```
 
 ---
@@ -1160,13 +1450,13 @@ A type switch compares the dynamic type of an interface value against multiple t
 func describe(i interface{}) {
     switch v := i.(type) {
     case int:
-        println("int:", v);
+        println("int:", v)
     case string:
-        println("string:", v);
+        println("string:", v)
     case nil:
-        println("nil");
+        println("nil")
     default:
-        println("unknown type");
+        println("unknown type")
     }
 }
 ```
@@ -1174,7 +1464,7 @@ func describe(i interface{}) {
 **Rules**:
 - The expression must be of interface type
 - `v` is bound to the asserted type in each case
-- Multiple types can be listed: `case int, float:`
+- Multiple types can be listed: `case int, float64:`
 - `default` handles unmatched types
 
 ---
@@ -1182,45 +1472,42 @@ func describe(i interface{}) {
 ## 12. Example Program
 
 ```gox
-package main;
+package main
 
-import "std/io";
+import "std/io"
 
 type Error struct {
-    msg string "json:\"message\"";
-};
+    msg string "json:\"message\""
+}
 
 interface Logger {
-    Log(msg string);
-};
+    Log(msg string)
+}
 
 type ConsoleLogger struct {
-    prefix string;
-};
+    prefix string
+}
 
 func (l ConsoleLogger) Log(msg string) {
-    io.Println(l.prefix + ": " + msg);
+    io.Println(l.prefix + ": " + msg)
 }
-
-implements ConsoleLogger : Logger;
 
 func main() int {
-    var logger Logger;  // logger == nil
+    var logger Logger  // logger == nil
 
     if logger == nil {
-        logger = ConsoleLogger{prefix: "[APP]"};
+        logger = ConsoleLogger{prefix: "[APP]"}
     }
 
-    logger.Log("Hello, GoX!");
+    logger.Log("Hello, GoX!")
 
-    numbers := []int{1, 2, 3};
-    numbers = append(numbers, 4);
+    numbers := []int{1, 2, 3}
+    numbers = append(numbers, 4)
 
     for i := 0; i < len(numbers); i += 1 {
-        println(numbers[i]);
+        println(numbers[i])
     }
 
-    return 0;
+    return 0
 }
 ```
-

@@ -1,14 +1,18 @@
-//! GoX Syntax - Lexer, Parser, and AST for the GoX language.
+//! # gox-syntax
+//!
+//! Lexer, AST definitions, and parser for the GoX programming language.
 //!
 //! This crate provides the frontend components of the GoX compiler:
-//! - **Lexer**: Tokenizes GoX source code
-//! - **Parser**: Produces an AST from tokens
-//! - **AST**: Abstract Syntax Tree types
+//! - Tokenization of source code
+//! - Abstract Syntax Tree definitions
+//! - Recursive descent parser with Pratt expression parsing
 
-pub mod ast;
-pub mod lexer;
-pub mod parser;
 pub mod token;
+pub mod lexer;
+pub mod ast;
+pub mod parser;
 
-#[cfg(test)]
-mod tests;
+pub use token::{Token, TokenKind};
+pub use lexer::Lexer;
+pub use ast::*;
+pub use parser::{Parser, parse};

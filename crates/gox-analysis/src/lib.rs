@@ -1,4 +1,3 @@
-//! GoX Analysis - Semantic analysis for the GoX language.
+//! Semantic analysis and type checking for GoX.
 //!
-//! This crate will provide type checking and semantic analysis.
-
+//! TODO: Implement semantic analysis phase.

@@ -1,8 +1,12 @@
 [package]
 name = "gox-analysis"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Semantic analysis and type checking for the GoX programming language"
 
 [dependencies]
 gox-common = { path = "../gox-common" }
 gox-syntax = { path = "../gox-syntax" }
+
+[dev-dependencies]

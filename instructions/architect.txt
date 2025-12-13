@@ -1,3 +1,34 @@
-Implement this language based on the content of gox_language_spec.
-For now, you only need to design the overall project structure, i.e., the typical components of a programming language. Keep in mind that this language will have three backends: LLVM / WASM / a custom VM.
+Implement this language based on language_spec.md.
+
+开发风格始终牢记：第一版就是最终版，特别是结构层面要全面，尽量避免后续需要改动，不要搞什么最小可交付。test case 覆盖要全面。
+
+Step1: 
+design the overall project structure, i.e., the typical components of a programming language. Keep in mind that this language will have three backends: LLVM / WASM / a custom VM.
 This language will be implemented in Rust. You now need to generate multiple projects (crates) in this repository, and write a README for each project explaining its purpose.
+
+The project should include a comprehensive system that manages source file and dagnositics info for both internal use and end users.
+The project should include a CLI tool for compiling and running programs.
+
+但是目前我们只建立空的项目，不要开始写实质性的代码
+
+Step2:
+完整实现 dagnositics 系统，包含足够 test cases。
+
+Step3:
+Implement the lexer based on the content of language_spec.md，include dagnositics if needed, 包含足够 test cases。
+
+Step4:
+Implement the parser based on the content of language_spec.md, parser.md。 主要是 language_spec，parser.md
+如果觉得有问题可以修改。include dagnositics.
+
+Step5:
+添加一个独立的基于文件的测试项目， 包括检查错误信息输出是否正确。
+它在文件中包含两部分，第一部分是gox代码，第二部分是parser，type checker，bytcode gen 等的输出。
+目前先只支持parser的输出验证。
+
+然后添加全面的test case。
+
+Step6:
+现在，我们要开始做typechecker了，这个东西非常复杂，你先不要动手，先分析一下重点和难点。
+
+

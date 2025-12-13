@@ -1,17 +1,16 @@
 [package]
-name = "gox-cli"
+name = "gox-tests"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Command-line interface for the GoX compiler"
+description = "File-based integration tests for the GoX compiler"
 
 [[bin]]
-name = "gox"
+name = "gox-tests"
 path = "src/main.rs"
 
 [dependencies]
 gox-common = { path = "../gox-common" }
 gox-syntax = { path = "../gox-syntax" }
-clap = { version = "4.4", features = ["derive"] }
 
 [dev-dependencies]

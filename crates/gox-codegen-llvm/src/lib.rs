@@ -1,3 +1,3 @@
-pub fn generate() {
-    println!("Generating LLVM IR...");
-}
+//! LLVM code generation backend for GoX.
+//!
+//! TODO: Implement LLVM IR generation.

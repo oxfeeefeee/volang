@@ -1,47 +1,115 @@
 # gox-syntax
 
-Lexer, parser, and AST definitions for the GoX language.
+Lexer, AST definitions, and parser for the GoX programming language.
 
-## Components
+## Overview
 
-- **Lexer** (`lexer.rs`): Tokenizes GoX source code with automatic semicolon insertion
-- **Parser** (`parser/`): Recursive descent parser with Pratt expression parsing
-- **AST** (`ast.rs`): Complete AST node definitions for GoX programs
-- **Tokens** (`token.rs`): Token type definitions
+This crate provides the frontend components of the GoX compiler:
+
+- **Lexer** - Tokenization of GoX source code
+- **AST** - Abstract Syntax Tree definitions
+- **Parser** - Recursive descent parser producing AST
+
+## Modules
+
+### `token`
+Token definitions and token kinds:
+- `Token` - A token with kind, span, and optional value
+- `TokenKind` - All possible token types (keywords, operators, literals, etc.)
+- Automatic semicolon insertion rules
+
+### `lexer`
+Tokenization of source code:
+- `Lexer` - Converts source text into a stream of tokens
+- Handles all GoX literals (integers, floats, strings, runes)
+- Unicode identifier support
+- Comment handling (line and block comments)
+
+### `ast`
+Complete AST definitions for GoX:
+- `File` - Top-level source file
+- `Decl` - Declarations (var, const, type, func, interface)
+- `Stmt` - Statements (if, for, switch, return, etc.)
+- `Expr` - Expressions (binary, unary, call, index, etc.)
+- `Type` - Type expressions (named, array, slice, map, etc.)
+
+### `parser`
+Recursive descent parser:
+- `Parser` - Parses tokens into AST
+- Error recovery for better diagnostics
+- Precedence climbing for expressions
 
 ## Usage
 
 ```rust
-use gox_syntax::parser;
+use gox_common::source::SourceMap;
+use gox_syntax::{lexer::Lexer, parser::Parser};
 
-let source = r#"
-package main;
+// Create source map and add file
+let mut source_map = SourceMap::new();
+let file_id = source_map.add_file("main.gox", r#"
+    package main
+    
+    func main() int {
+        return 0
+    }
+"#);
 
-func main() {
-    println("Hello, World!");
-}
-"#;
+// Lex the source
+let source = source_map.source(file_id).unwrap();
+let lexer = Lexer::new(file_id, source);
+let tokens = lexer.collect_tokens();
 
-let ast = parser::parse(source)?;
-println!("{:?}", ast);
+// Parse into AST
+let mut parser = Parser::new(file_id, &tokens);
+let file = parser.parse_file();
 ```
 
-## Testing
+## Token Kinds
 
-```bash
-# Run all tests (unit + integration)
-cargo test -p gox-syntax
+The lexer recognizes:
 
-# Run integration tests with test data files
-cargo test -p gox-syntax --test parser_integration
+- **Keywords**: `break`, `case`, `chan`, `const`, `continue`, `default`, `defer`, `else`, `fallthrough`, `for`, `func`, `go`, `goto`, `if`, `import`, `interface`, `map`, `object`, `package`, `range`, `return`, `select`, `struct`, `switch`, `type`, `var`
+- **Literals**: integers (decimal, hex, octal, binary), floats, strings, runes
+- **Operators**: arithmetic, bitwise, comparison, logical, assignment
+- **Delimiters**: parentheses, brackets, braces, commas, semicolons
+
+## AST Structure
+
+```
+File
+├── package: Option<Ident>
+├── imports: Vec<ImportDecl>
+└── decls: Vec<Decl>
+    ├── VarDecl
+    ├── ConstDecl
+    ├── TypeDecl
+    ├── FuncDecl
+    └── InterfaceDecl
+
+Stmt
+├── Block
+├── VarDecl / ConstDecl
+├── ExprStmt
+├── Assignment
+├── If / For / Switch / Select
+├── Return / Break / Continue / Goto
+├── Go / Defer
+├── Send
+└── Labeled / Empty
+
+Expr
+├── Ident / Literal
+├── Binary / Unary
+├── Call / Index / Slice
+├── Selector / TypeAssertion
+├── CompositeLit / FuncLit
+└── Receive
 ```
 
-## Test Data
+## Error Recovery
 
-Sample GoX files for testing are in `tests/test_data/`:
-- `hello.gox` - Hello world
-- `fibonacci.gox` - Recursive function
-- `structs.gox` - Struct types and methods
-- `interfaces.gox` - Interface declarations
-- `control_flow.gox` - Control flow statements
-- `types.gox` - All type forms
+The parser implements error recovery to continue parsing after errors:
+- Synchronizes at statement boundaries
+- Reports multiple errors per compilation
+- Provides helpful error messages with source locations

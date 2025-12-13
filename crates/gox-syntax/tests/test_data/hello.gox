@@ -1,6 +1,0 @@
-// Basic hello world program
-package main;
-
-func main() {
-    println("Hello, World!");
-}

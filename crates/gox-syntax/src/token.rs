@@ -1,197 +1,468 @@
-//! Token definitions for GoX lexer.
+//! Token definitions for the GoX lexer.
+//!
+//! This module defines all token kinds recognized by the GoX lexer,
+//! including keywords, operators, literals, and delimiters.
 
 use std::fmt;
 
-pub use gox_common::Span;
+use gox_common::span::Span;
 
-/// A token with its kind and source span.
-#[derive(Debug, Clone, PartialEq)]
+/// A token produced by the lexer.
+#[derive(Clone, Debug)]
 pub struct Token {
+    /// The kind of token.
     pub kind: TokenKind,
+    /// The source span of this token.
     pub span: Span,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, span: Span) -> Self {
+    /// Creates a new token.
+    #[inline]
+    pub const fn new(kind: TokenKind, span: Span) -> Self {
         Self { kind, span }
+    }
+
+    /// Returns true if this token is a keyword.
+    #[inline]
+    pub fn is_keyword(&self) -> bool {
+        self.kind.is_keyword()
+    }
+
+    /// Returns true if this token is a literal.
+    #[inline]
+    pub fn is_literal(&self) -> bool {
+        self.kind.is_literal()
+    }
+
+    /// Returns true if this token is an operator.
+    #[inline]
+    pub fn is_operator(&self) -> bool {
+        self.kind.is_operator()
+    }
+
+    /// Returns true if this token can end a statement (triggers semicolon insertion).
+    #[inline]
+    pub fn can_end_statement(&self) -> bool {
+        self.kind.can_end_statement()
     }
 }
 
-/// Token kinds for GoX.
-#[derive(Debug, Clone, PartialEq)]
+/// All possible token kinds in GoX.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TokenKind {
-    // ═══════════════════════════════════════════════════════════════════════
-    // Literals
-    // ═══════════════════════════════════════════════════════════════════════
-    Ident(String),
-    Int(i64),
-    Float(f64),
-    String(String),
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Keywords
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // Declaration keywords
-    Package,
-    Import,
-    Var,
-    Const,
-    Type,
-    Func,
-    Interface,
-    Implements,
-    Struct,
-    Map,
-    Chan,
-
-    // Control flow keywords
-    If,
-    Else,
-    For,
-    Range,
-    Switch,
-    Case,
-    Default,
-    Return,
-    Break,
-    Continue,
-    Goto,
-    Fallthrough,
-    Select,
-
-    // Concurrency keywords
-    Go,
-    Defer,
-
-    // Literal keywords
-    True,
-    False,
-    Nil,
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Operators
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // Arithmetic
-    Plus,    // +
-    Minus,   // -
-    Star,    // *
-    Slash,   // /
-    Percent, // %
-
-    // Comparison
-    Eq,    // ==
-    NotEq, // !=
-    Lt,    // <
-    LtEq,  // <=
-    Gt,    // >
-    GtEq,  // >=
-
-    // Logical
-    And, // &&
-    Or,  // ||
-    Not, // !
-
-    // Channel
-    Arrow, // <-
-
-    // Misc
-    Ellipsis, // ...
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Assignment
-    // ═══════════════════════════════════════════════════════════════════════
-    Assign,        // =
-    ColonAssign,   // :=
-    PlusAssign,    // +=
-    MinusAssign,   // -=
-    StarAssign,    // *=
-    SlashAssign,   // /=
-    PercentAssign, // %=
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Delimiters
-    // ═══════════════════════════════════════════════════════════════════════
-    LParen,   // (
-    RParen,   // )
-    LBracket, // [
-    RBracket, // ]
-    LBrace,   // {
-    RBrace,   // }
-    Comma,    // ,
-    Colon,    // :
-    Semi,     // ;
-    Dot,      // .
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Special
-    // ═══════════════════════════════════════════════════════════════════════
+    // Special tokens
+    /// End of file
     Eof,
-    Invalid(char),
-    UnterminatedString,
+    /// Invalid token (lexer error)
+    Invalid,
+    /// Automatically inserted semicolon
+    Semicolon,
+    /// Newline (used for semicolon insertion, not emitted)
+    Newline,
+
+    // Identifiers and literals
+    /// Identifier
+    Ident,
+    /// Integer literal
+    IntLit,
+    /// Float literal
+    FloatLit,
+    /// Rune literal
+    RuneLit,
+    /// String literal
+    StringLit,
+    /// Raw string literal
+    RawStringLit,
+
+    // Keywords
+    /// `break`
+    Break,
+    /// `case`
+    Case,
+    /// `chan`
+    Chan,
+    /// `const`
+    Const,
+    /// `continue`
+    Continue,
+    /// `default`
+    Default,
+    /// `defer`
+    Defer,
+    /// `else`
+    Else,
+    /// `fallthrough`
+    Fallthrough,
+    /// `for`
+    For,
+    /// `func`
+    Func,
+    /// `go`
+    Go,
+    /// `goto`
+    Goto,
+    /// `if`
+    If,
+    /// `import`
+    Import,
+    /// `interface`
+    Interface,
+    /// `map`
+    Map,
+    /// `object` (named `Obx` to avoid Rust naming conflicts)
+    Obx,
+    /// `package`
+    Package,
+    /// `range`
+    Range,
+    /// `return`
+    Return,
+    /// `select`
+    Select,
+    /// `struct`
+    Struct,
+    /// `switch`
+    Switch,
+    /// `type`
+    Type,
+    /// `var`
+    Var,
+
+    // Operators and punctuation
+    /// `+`
+    Plus,
+    /// `-`
+    Minus,
+    /// `*`
+    Star,
+    /// `/`
+    Slash,
+    /// `%`
+    Percent,
+    /// `&`
+    Amp,
+    /// `|`
+    Pipe,
+    /// `^`
+    Caret,
+    /// `&^`
+    AmpCaret,
+    /// `<<`
+    Shl,
+    /// `>>`
+    Shr,
+
+    /// `==`
+    EqEq,
+    /// `!=`
+    NotEq,
+    /// `<`
+    Lt,
+    /// `<=`
+    LtEq,
+    /// `>`
+    Gt,
+    /// `>=`
+    GtEq,
+
+    /// `&&`
+    AmpAmp,
+    /// `||`
+    PipePipe,
+    /// `!`
+    Not,
+
+    /// `<-`
+    Arrow,
+
+    /// `++`
+    PlusPlus,
+    /// `--`
+    MinusMinus,
+
+    /// `=`
+    Eq,
+    /// `:=`
+    ColonEq,
+    /// `+=`
+    PlusEq,
+    /// `-=`
+    MinusEq,
+    /// `*=`
+    StarEq,
+    /// `/=`
+    SlashEq,
+    /// `%=`
+    PercentEq,
+    /// `<<=`
+    ShlEq,
+    /// `>>=`
+    ShrEq,
+    /// `&=`
+    AmpEq,
+    /// `|=`
+    PipeEq,
+    /// `^=`
+    CaretEq,
+    /// `&^=`
+    AmpCaretEq,
+
+    // Delimiters
+    /// `(`
+    LParen,
+    /// `)`
+    RParen,
+    /// `[`
+    LBracket,
+    /// `]`
+    RBracket,
+    /// `{`
+    LBrace,
+    /// `}`
+    RBrace,
+
+    /// `,`
+    Comma,
+    /// `:`
+    Colon,
+    /// `.`
+    Dot,
+    /// `...`
+    Ellipsis,
 }
 
 impl TokenKind {
-    /// Get a human-readable name for this token kind.
-    pub fn name(&self) -> &'static str {
+    /// Returns true if this is a keyword token.
+    pub const fn is_keyword(self) -> bool {
+        matches!(
+            self,
+            TokenKind::Break
+                | TokenKind::Case
+                | TokenKind::Chan
+                | TokenKind::Const
+                | TokenKind::Continue
+                | TokenKind::Default
+                | TokenKind::Defer
+                | TokenKind::Else
+                | TokenKind::Fallthrough
+                | TokenKind::For
+                | TokenKind::Func
+                | TokenKind::Go
+                | TokenKind::Goto
+                | TokenKind::If
+                | TokenKind::Import
+                | TokenKind::Interface
+                | TokenKind::Map
+                | TokenKind::Obx
+                | TokenKind::Package
+                | TokenKind::Range
+                | TokenKind::Return
+                | TokenKind::Select
+                | TokenKind::Struct
+                | TokenKind::Switch
+                | TokenKind::Type
+                | TokenKind::Var
+        )
+    }
+
+    /// Returns true if this is a literal token.
+    pub const fn is_literal(self) -> bool {
+        matches!(
+            self,
+            TokenKind::IntLit
+                | TokenKind::FloatLit
+                | TokenKind::RuneLit
+                | TokenKind::StringLit
+                | TokenKind::RawStringLit
+        )
+    }
+
+    /// Returns true if this is an operator token.
+    pub const fn is_operator(self) -> bool {
+        matches!(
+            self,
+            TokenKind::Plus
+                | TokenKind::Minus
+                | TokenKind::Star
+                | TokenKind::Slash
+                | TokenKind::Percent
+                | TokenKind::Amp
+                | TokenKind::Pipe
+                | TokenKind::Caret
+                | TokenKind::AmpCaret
+                | TokenKind::Shl
+                | TokenKind::Shr
+                | TokenKind::EqEq
+                | TokenKind::NotEq
+                | TokenKind::Lt
+                | TokenKind::LtEq
+                | TokenKind::Gt
+                | TokenKind::GtEq
+                | TokenKind::AmpAmp
+                | TokenKind::PipePipe
+                | TokenKind::Not
+                | TokenKind::Arrow
+                | TokenKind::PlusPlus
+                | TokenKind::MinusMinus
+        )
+    }
+
+    /// Returns true if this is an assignment operator.
+    pub const fn is_assign_op(self) -> bool {
+        matches!(
+            self,
+            TokenKind::Eq
+                | TokenKind::PlusEq
+                | TokenKind::MinusEq
+                | TokenKind::StarEq
+                | TokenKind::SlashEq
+                | TokenKind::PercentEq
+                | TokenKind::ShlEq
+                | TokenKind::ShrEq
+                | TokenKind::AmpEq
+                | TokenKind::PipeEq
+                | TokenKind::CaretEq
+                | TokenKind::AmpCaretEq
+        )
+    }
+
+    /// Returns true if this token can end a statement (triggers semicolon insertion).
+    ///
+    /// Per the GoX spec, semicolons are inserted after:
+    /// - Identifiers and literals
+    /// - Keywords: break, continue, fallthrough, return
+    /// - Operators: ++, --
+    /// - Closing delimiters: ), ], }
+    pub const fn can_end_statement(self) -> bool {
+        matches!(
+            self,
+            TokenKind::Ident
+                | TokenKind::IntLit
+                | TokenKind::FloatLit
+                | TokenKind::RuneLit
+                | TokenKind::StringLit
+                | TokenKind::RawStringLit
+                | TokenKind::Break
+                | TokenKind::Continue
+                | TokenKind::Fallthrough
+                | TokenKind::Return
+                | TokenKind::PlusPlus
+                | TokenKind::MinusMinus
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+        )
+    }
+
+    /// Returns the keyword for a given string, if any.
+    pub fn keyword(s: &str) -> Option<TokenKind> {
+        match s {
+            "break" => Some(TokenKind::Break),
+            "case" => Some(TokenKind::Case),
+            "chan" => Some(TokenKind::Chan),
+            "const" => Some(TokenKind::Const),
+            "continue" => Some(TokenKind::Continue),
+            "default" => Some(TokenKind::Default),
+            "defer" => Some(TokenKind::Defer),
+            "else" => Some(TokenKind::Else),
+            "fallthrough" => Some(TokenKind::Fallthrough),
+            "for" => Some(TokenKind::For),
+            "func" => Some(TokenKind::Func),
+            "go" => Some(TokenKind::Go),
+            "goto" => Some(TokenKind::Goto),
+            "if" => Some(TokenKind::If),
+            "import" => Some(TokenKind::Import),
+            "interface" => Some(TokenKind::Interface),
+            "map" => Some(TokenKind::Map),
+            "object" => Some(TokenKind::Obx),
+            "package" => Some(TokenKind::Package),
+            "range" => Some(TokenKind::Range),
+            "return" => Some(TokenKind::Return),
+            "select" => Some(TokenKind::Select),
+            "struct" => Some(TokenKind::Struct),
+            "switch" => Some(TokenKind::Switch),
+            "type" => Some(TokenKind::Type),
+            "var" => Some(TokenKind::Var),
+            _ => None,
+        }
+    }
+
+    /// Returns the string representation of this token kind.
+    pub const fn as_str(self) -> &'static str {
         match self {
-            TokenKind::Ident(_) => "identifier",
-            TokenKind::Int(_) => "integer",
-            TokenKind::Float(_) => "float",
-            TokenKind::String(_) => "string",
-            TokenKind::Package => "package",
-            TokenKind::Import => "import",
-            TokenKind::Var => "var",
-            TokenKind::Const => "const",
-            TokenKind::Type => "type",
-            TokenKind::Func => "func",
-            TokenKind::Interface => "interface",
-            TokenKind::Implements => "implements",
-            TokenKind::Struct => "struct",
-            TokenKind::Map => "map",
-            TokenKind::Chan => "chan",
-            TokenKind::If => "if",
-            TokenKind::Else => "else",
-            TokenKind::For => "for",
-            TokenKind::Range => "range",
-            TokenKind::Switch => "switch",
-            TokenKind::Case => "case",
-            TokenKind::Default => "default",
-            TokenKind::Return => "return",
+            TokenKind::Eof => "EOF",
+            TokenKind::Invalid => "INVALID",
+            TokenKind::Semicolon => ";",
+            TokenKind::Newline => "NEWLINE",
+            TokenKind::Ident => "IDENT",
+            TokenKind::IntLit => "INT",
+            TokenKind::FloatLit => "FLOAT",
+            TokenKind::RuneLit => "RUNE",
+            TokenKind::StringLit => "STRING",
+            TokenKind::RawStringLit => "RAW_STRING",
             TokenKind::Break => "break",
+            TokenKind::Case => "case",
+            TokenKind::Chan => "chan",
+            TokenKind::Const => "const",
             TokenKind::Continue => "continue",
-            TokenKind::Goto => "goto",
-            TokenKind::Fallthrough => "fallthrough",
-            TokenKind::Select => "select",
-            TokenKind::Go => "go",
+            TokenKind::Default => "default",
             TokenKind::Defer => "defer",
-            TokenKind::True => "true",
-            TokenKind::False => "false",
-            TokenKind::Nil => "nil",
+            TokenKind::Else => "else",
+            TokenKind::Fallthrough => "fallthrough",
+            TokenKind::For => "for",
+            TokenKind::Func => "func",
+            TokenKind::Go => "go",
+            TokenKind::Goto => "goto",
+            TokenKind::If => "if",
+            TokenKind::Import => "import",
+            TokenKind::Interface => "interface",
+            TokenKind::Map => "map",
+            TokenKind::Obx => "object",
+            TokenKind::Package => "package",
+            TokenKind::Range => "range",
+            TokenKind::Return => "return",
+            TokenKind::Select => "select",
+            TokenKind::Struct => "struct",
+            TokenKind::Switch => "switch",
+            TokenKind::Type => "type",
+            TokenKind::Var => "var",
             TokenKind::Plus => "+",
             TokenKind::Minus => "-",
             TokenKind::Star => "*",
             TokenKind::Slash => "/",
             TokenKind::Percent => "%",
-            TokenKind::Eq => "==",
+            TokenKind::Amp => "&",
+            TokenKind::Pipe => "|",
+            TokenKind::Caret => "^",
+            TokenKind::AmpCaret => "&^",
+            TokenKind::Shl => "<<",
+            TokenKind::Shr => ">>",
+            TokenKind::EqEq => "==",
             TokenKind::NotEq => "!=",
             TokenKind::Lt => "<",
             TokenKind::LtEq => "<=",
             TokenKind::Gt => ">",
             TokenKind::GtEq => ">=",
-            TokenKind::And => "&&",
-            TokenKind::Or => "||",
+            TokenKind::AmpAmp => "&&",
+            TokenKind::PipePipe => "||",
             TokenKind::Not => "!",
             TokenKind::Arrow => "<-",
-            TokenKind::Ellipsis => "...",
-            TokenKind::Assign => "=",
-            TokenKind::ColonAssign => ":=",
-            TokenKind::PlusAssign => "+=",
-            TokenKind::MinusAssign => "-=",
-            TokenKind::StarAssign => "*=",
-            TokenKind::SlashAssign => "/=",
-            TokenKind::PercentAssign => "%=",
+            TokenKind::PlusPlus => "++",
+            TokenKind::MinusMinus => "--",
+            TokenKind::Eq => "=",
+            TokenKind::ColonEq => ":=",
+            TokenKind::PlusEq => "+=",
+            TokenKind::MinusEq => "-=",
+            TokenKind::StarEq => "*=",
+            TokenKind::SlashEq => "/=",
+            TokenKind::PercentEq => "%=",
+            TokenKind::ShlEq => "<<=",
+            TokenKind::ShrEq => ">>=",
+            TokenKind::AmpEq => "&=",
+            TokenKind::PipeEq => "|=",
+            TokenKind::CaretEq => "^=",
+            TokenKind::AmpCaretEq => "&^=",
             TokenKind::LParen => "(",
             TokenKind::RParen => ")",
             TokenKind::LBracket => "[",
@@ -200,17 +471,98 @@ impl TokenKind {
             TokenKind::RBrace => "}",
             TokenKind::Comma => ",",
             TokenKind::Colon => ":",
-            TokenKind::Semi => ";",
             TokenKind::Dot => ".",
-            TokenKind::Eof => "end of file",
-            TokenKind::Invalid(_) => "invalid character",
-            TokenKind::UnterminatedString => "unterminated string",
+            TokenKind::Ellipsis => "...",
         }
     }
 }
 
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name())
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_kind_keyword() {
+        assert_eq!(TokenKind::keyword("func"), Some(TokenKind::Func));
+        assert_eq!(TokenKind::keyword("struct"), Some(TokenKind::Struct));
+        assert_eq!(TokenKind::keyword("object"), Some(TokenKind::Obx));
+        assert_eq!(TokenKind::keyword("notakeyword"), None);
+    }
+
+    #[test]
+    fn test_token_kind_is_keyword() {
+        assert!(TokenKind::Func.is_keyword());
+        assert!(TokenKind::Struct.is_keyword());
+        assert!(!TokenKind::Plus.is_keyword());
+        assert!(!TokenKind::Ident.is_keyword());
+    }
+
+    #[test]
+    fn test_token_kind_is_literal() {
+        assert!(TokenKind::IntLit.is_literal());
+        assert!(TokenKind::FloatLit.is_literal());
+        assert!(TokenKind::StringLit.is_literal());
+        assert!(!TokenKind::Ident.is_literal());
+        assert!(!TokenKind::Plus.is_literal());
+    }
+
+    #[test]
+    fn test_token_kind_is_operator() {
+        assert!(TokenKind::Plus.is_operator());
+        assert!(TokenKind::Minus.is_operator());
+        assert!(TokenKind::EqEq.is_operator());
+        assert!(!TokenKind::Eq.is_operator());
+        assert!(!TokenKind::Ident.is_operator());
+    }
+
+    #[test]
+    fn test_token_kind_is_assign_op() {
+        assert!(TokenKind::Eq.is_assign_op());
+        assert!(TokenKind::PlusEq.is_assign_op());
+        assert!(TokenKind::MinusEq.is_assign_op());
+        assert!(!TokenKind::Plus.is_assign_op());
+        assert!(!TokenKind::ColonEq.is_assign_op());
+    }
+
+    #[test]
+    fn test_token_kind_can_end_statement() {
+        assert!(TokenKind::Ident.can_end_statement());
+        assert!(TokenKind::IntLit.can_end_statement());
+        assert!(TokenKind::Return.can_end_statement());
+        assert!(TokenKind::Break.can_end_statement());
+        assert!(TokenKind::RParen.can_end_statement());
+        assert!(TokenKind::RBrace.can_end_statement());
+        assert!(!TokenKind::Plus.can_end_statement());
+        assert!(!TokenKind::LParen.can_end_statement());
+        assert!(!TokenKind::If.can_end_statement());
+    }
+
+    #[test]
+    fn test_token_kind_as_str() {
+        assert_eq!(TokenKind::Plus.as_str(), "+");
+        assert_eq!(TokenKind::Func.as_str(), "func");
+        assert_eq!(TokenKind::Ellipsis.as_str(), "...");
+        assert_eq!(TokenKind::ColonEq.as_str(), ":=");
+    }
+
+    #[test]
+    fn test_all_keywords() {
+        let keywords = [
+            "break", "case", "chan", "const", "continue", "default", "defer",
+            "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
+            "interface", "map", "object", "package", "range", "return", "select",
+            "struct", "switch", "type", "var",
+        ];
+        
+        for kw in keywords {
+            assert!(TokenKind::keyword(kw).is_some(), "Missing keyword: {}", kw);
+            assert!(TokenKind::keyword(kw).unwrap().is_keyword());
+        }
     }
 }

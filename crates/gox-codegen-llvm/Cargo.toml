@@ -1,8 +1,11 @@
 [package]
 name = "gox-codegen-llvm"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLVM code generation backend for GoX"
 
 [dependencies]
 gox-common = { path = "../gox-common" }
-gox-analysis = { path = "../gox-analysis" }
+
+[dev-dependencies]

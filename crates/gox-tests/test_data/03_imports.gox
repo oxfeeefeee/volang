@@ -1,0 +1,14 @@
+// Test: Package with imports
+package main
+
+import "fmt"
+import "os"
+
+=== parser ===
+File {
+  package: "main",
+  imports: [
+    "fmt",
+    "os",
+  ],
+}

@@ -1,3 +1,3 @@
-pub fn generate() {
-    println!("Generating Gox Bytecode...");
-}
+//! Custom VM bytecode generation for GoX.
+//!
+//! TODO: Implement bytecode generation.
