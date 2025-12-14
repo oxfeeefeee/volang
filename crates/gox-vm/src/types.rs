@@ -40,7 +40,7 @@ pub enum TypeKind {
     Nil,
     Primitive,
     Struct,
-    Object,
+    Obx,  // GoX object type
     Array,
     Slice,
     String,
@@ -120,7 +120,7 @@ impl TypeMeta {
     pub fn object(id: TypeId, name: &str, size_slots: usize, ptr_bitmap: Vec<bool>) -> Self {
         Self {
             id,
-            kind: TypeKind::Object,
+            kind: TypeKind::Obx,
             size_slots,
             ptr_bitmap,
             name: name.to_string(),
@@ -136,7 +136,7 @@ impl TypeMeta {
         matches!(
             self.kind,
             TypeKind::String | TypeKind::Slice | TypeKind::Map | 
-            TypeKind::Channel | TypeKind::Closure | TypeKind::Object |
+            TypeKind::Channel | TypeKind::Closure | TypeKind::Obx |
             TypeKind::Array | TypeKind::Interface
         )
     }
