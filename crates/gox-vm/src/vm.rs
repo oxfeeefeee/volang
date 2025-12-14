@@ -1155,7 +1155,36 @@ impl Vm {
             // ============ Debug ============
             Opcode::DebugPrint => {
                 let val = self.read_reg(fiber_id, a);
-                println!("[DEBUG] r{} = {}", a, val as i64);
+                let type_tag = crate::ffi::TypeTag::from_u8(b as u8);
+                match type_tag {
+                    crate::ffi::TypeTag::Float32 => {
+                        let f = f32::from_bits(val as u32);
+                        println!("{}", f);
+                    }
+                    crate::ffi::TypeTag::Float64 => {
+                        let f = f64::from_bits(val);
+                        // Use Go-like float formatting
+                        if f.abs() >= 1e10 || (f != 0.0 && f.abs() < 1e-4) {
+                            println!("{:e}", f);
+                        } else {
+                            println!("{}", f);
+                        }
+                    }
+                    crate::ffi::TypeTag::Bool => {
+                        println!("{}", if val != 0 { "true" } else { "false" });
+                    }
+                    crate::ffi::TypeTag::String => {
+                        let ptr = val as crate::gc::GcRef;
+                        if ptr.is_null() {
+                            println!("");
+                        } else {
+                            println!("{}", crate::objects::string::as_str(ptr));
+                        }
+                    }
+                    _ => {
+                        println!("{}", val as i64);
+                    }
+                }
             }
             
             Opcode::Invalid => {

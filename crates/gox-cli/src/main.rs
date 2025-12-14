@@ -183,6 +183,7 @@ fn cmd_get(module_version: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn cmd_build(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     use gox_common::vfs::{FileSet, RealFs};
     use gox_analysis::analyze_project;
+    use gox_module::VfsConfig;
     use gox_codegen_vm::compile_project;
     
     let project_dir = std::path::Path::new(path).canonicalize()?;
@@ -208,8 +209,12 @@ fn cmd_build(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     
     println!("Found {} source files", file_set.files.len());
     
+    // Initialize VFS
+    let vfs_config = VfsConfig::from_env(project_dir.clone());
+    let vfs = vfs_config.to_vfs();
+    
     // Analyze project
-    let project = analyze_project(file_set).map_err(|e| format!("analysis error: {}", e))?;
+    let project = analyze_project(file_set, &vfs).map_err(|e| format!("analysis error: {}", e))?;
     println!("Analyzed {} packages", project.packages.len());
     
     // Compile to bytecode

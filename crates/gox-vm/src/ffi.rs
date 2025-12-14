@@ -1,0 +1,177 @@
+//! FFI types for native function calls.
+//!
+//! Native functions receive arguments as typed values (GoxValue),
+//! allowing proper formatting and type-safe operations.
+
+use crate::gc::GcRef;
+use crate::objects::string;
+
+/// Type tag for argument passing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TypeTag {
+    Nil = 0,
+    Bool = 1,
+    Int = 2,
+    Int8 = 3,
+    Int16 = 4,
+    Int32 = 5,
+    Int64 = 6,
+    Uint = 7,
+    Uint8 = 8,
+    Uint16 = 9,
+    Uint32 = 10,
+    Uint64 = 11,
+    Float32 = 12,
+    Float64 = 13,
+    String = 14,
+    Slice = 15,
+    Map = 16,
+    Struct = 17,
+    Pointer = 18,
+    Interface = 19,
+}
+
+impl TypeTag {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => TypeTag::Nil,
+            1 => TypeTag::Bool,
+            2 => TypeTag::Int,
+            3 => TypeTag::Int8,
+            4 => TypeTag::Int16,
+            5 => TypeTag::Int32,
+            6 => TypeTag::Int64,
+            7 => TypeTag::Uint,
+            8 => TypeTag::Uint8,
+            9 => TypeTag::Uint16,
+            10 => TypeTag::Uint32,
+            11 => TypeTag::Uint64,
+            12 => TypeTag::Float32,
+            13 => TypeTag::Float64,
+            14 => TypeTag::String,
+            15 => TypeTag::Slice,
+            16 => TypeTag::Map,
+            17 => TypeTag::Struct,
+            18 => TypeTag::Pointer,
+            19 => TypeTag::Interface,
+            _ => TypeTag::Nil,
+        }
+    }
+}
+
+/// A typed value for FFI.
+#[derive(Debug, Clone)]
+pub enum GoxValue {
+    Nil,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(GcRef),
+    Slice(GcRef),
+    Map(GcRef),
+    Struct(GcRef),
+    Pointer(GcRef),
+    Interface { type_id: u32, value: u64 },
+}
+
+impl GoxValue {
+    /// Create a GoxValue from a raw u64 and type tag.
+    pub fn from_raw(raw: u64, tag: TypeTag) -> Self {
+        match tag {
+            TypeTag::Nil => GoxValue::Nil,
+            TypeTag::Bool => GoxValue::Bool(raw != 0),
+            TypeTag::Int | TypeTag::Int8 | TypeTag::Int16 | TypeTag::Int32 | TypeTag::Int64 |
+            TypeTag::Uint | TypeTag::Uint8 | TypeTag::Uint16 | TypeTag::Uint32 | TypeTag::Uint64 => {
+                GoxValue::Int(raw as i64)
+            }
+            TypeTag::Float32 => GoxValue::Float(f32::from_bits(raw as u32) as f64),
+            TypeTag::Float64 => GoxValue::Float(f64::from_bits(raw)),
+            TypeTag::String => GoxValue::String(raw as GcRef),
+            TypeTag::Slice => GoxValue::Slice(raw as GcRef),
+            TypeTag::Map => GoxValue::Map(raw as GcRef),
+            TypeTag::Struct => GoxValue::Struct(raw as GcRef),
+            TypeTag::Pointer => GoxValue::Pointer(raw as GcRef),
+            TypeTag::Interface => GoxValue::Interface { type_id: 0, value: raw },
+        }
+    }
+
+    /// Format this value as a string (for fmt.Println etc).
+    pub fn format(&self) -> String {
+        match self {
+            GoxValue::Nil => "nil".to_string(),
+            GoxValue::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+            GoxValue::Int(i) => format!("{}", i),
+            GoxValue::Float(f) => format!("{}", f),
+            GoxValue::String(ptr) => {
+                if ptr.is_null() {
+                    "".to_string()
+                } else {
+                    string::as_str(*ptr).to_string()
+                }
+            }
+            GoxValue::Slice(_) => "[...]".to_string(),
+            GoxValue::Map(_) => "map[...]".to_string(),
+            GoxValue::Struct(_) => "{...}".to_string(),
+            GoxValue::Pointer(ptr) => {
+                if ptr.is_null() {
+                    "nil".to_string()
+                } else {
+                    format!("0x{:x}", *ptr as usize)
+                }
+            }
+            GoxValue::Interface { .. } => "<interface>".to_string(),
+        }
+    }
+}
+
+/// Argument offset for native calls.
+/// Contains the register index and type tag for each argument.
+#[derive(Debug, Clone, Copy)]
+pub struct ArgOffset {
+    pub reg: u16,
+    pub type_tag: TypeTag,
+}
+
+/// Arguments wrapper for native function calls.
+pub struct GoxArgs<'a> {
+    /// Raw register values.
+    raw: &'a [u64],
+    /// Argument offsets with type information.
+    offsets: &'a [ArgOffset],
+}
+
+impl<'a> GoxArgs<'a> {
+    pub fn new(raw: &'a [u64], offsets: &'a [ArgOffset]) -> Self {
+        Self { raw, offsets }
+    }
+
+    pub fn len(&self) -> usize {
+        self.offsets.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.offsets.is_empty()
+    }
+
+    pub fn get(&self, idx: usize) -> GoxValue {
+        if idx >= self.offsets.len() {
+            return GoxValue::Nil;
+        }
+        let offset = &self.offsets[idx];
+        let raw = self.raw.get(offset.reg as usize).copied().unwrap_or(0);
+        GoxValue::from_raw(raw, offset.type_tag)
+    }
+
+    /// Format all arguments with spaces between them (like fmt.Println).
+    pub fn format_all(&self) -> String {
+        let mut output = String::new();
+        for i in 0..self.len() {
+            if i > 0 {
+                output.push(' ');
+            }
+            output.push_str(&self.get(i).format());
+        }
+        output
+    }
+}

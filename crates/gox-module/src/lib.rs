@@ -25,7 +25,9 @@
 mod modfile;
 mod resolver;
 mod error;
+pub mod vfs;
 
 pub use modfile::{ModFile, Require};
 pub use resolver::{ModuleResolver, ModuleClosure, ResolvedPackage};
 pub use error::{ModuleError, ModuleResult};
+pub use vfs::{Vfs, VfsConfig, VfsPackage, VfsFile, PackageSource};

@@ -4,9 +4,80 @@ use gox_common::symbol::Ident;
 use gox_syntax::ast::{Expr, ExprKind, BinaryOp, UnaryOp, CallExpr, SelectorExpr};
 use gox_vm::bytecode::Constant;
 use gox_vm::instruction::Opcode;
+use gox_vm::ffi::TypeTag;
+use gox_analysis::types::{Type, BasicType};
+use gox_analysis::scope::Entity;
 
 use crate::{CodegenContext, CodegenError};
 use crate::context::FuncContext;
+
+/// Infer the type tag of an expression for FFI purposes.
+pub fn infer_type_tag(ctx: &CodegenContext, fctx: &FuncContext, expr: &Expr) -> TypeTag {
+    match &expr.kind {
+        ExprKind::IntLit(_) => TypeTag::Int64,
+        ExprKind::FloatLit(_) => TypeTag::Float64,
+        ExprKind::StringLit(_) => TypeTag::String,
+        ExprKind::RuneLit(_) => TypeTag::Int32,
+        ExprKind::Ident(ident) => {
+            let name_str = ctx.interner.resolve(ident.symbol).unwrap_or("");
+            match name_str {
+                "true" | "false" => TypeTag::Bool,
+                "nil" => TypeTag::Nil,
+                _ => {
+                    // Check constants first
+                    if let Some(const_val) = ctx.const_values.get(&ident.symbol) {
+                        match const_val {
+                            crate::ConstValue::Int(_) => TypeTag::Int64,
+                            crate::ConstValue::FloatIdx(_) => TypeTag::Float64,
+                        }
+                    }
+                    // Check scope
+                    else if let Some(Entity::Var(var)) = ctx.result.scope.lookup(ident.symbol) {
+                        type_to_tag(&var.ty)
+                    }
+                    else {
+                        TypeTag::Int64 // default
+                    }
+                }
+            }
+        }
+        ExprKind::Binary(_) => TypeTag::Int64, // TODO: infer from operands
+        ExprKind::Unary(unary) => {
+            if matches!(unary.op, UnaryOp::Not) {
+                TypeTag::Bool
+            } else {
+                infer_type_tag(ctx, fctx, &unary.operand)
+            }
+        }
+        ExprKind::Paren(inner) => infer_type_tag(ctx, fctx, inner),
+        _ => TypeTag::Int64, // default
+    }
+}
+
+/// Convert analysis Type to FFI TypeTag.
+fn type_to_tag(ty: &Type) -> TypeTag {
+    match ty {
+        Type::Basic(BasicType::Bool) => TypeTag::Bool,
+        Type::Basic(BasicType::Int) => TypeTag::Int,
+        Type::Basic(BasicType::Int8) => TypeTag::Int8,
+        Type::Basic(BasicType::Int16) => TypeTag::Int16,
+        Type::Basic(BasicType::Int32) => TypeTag::Int32,
+        Type::Basic(BasicType::Int64) => TypeTag::Int64,
+        Type::Basic(BasicType::Uint) => TypeTag::Uint,
+        Type::Basic(BasicType::Uint8) => TypeTag::Uint8,
+        Type::Basic(BasicType::Uint16) => TypeTag::Uint16,
+        Type::Basic(BasicType::Uint32) => TypeTag::Uint32,
+        Type::Basic(BasicType::Uint64) => TypeTag::Uint64,
+        Type::Basic(BasicType::Float32) => TypeTag::Float32,
+        Type::Basic(BasicType::Float64) => TypeTag::Float64,
+        Type::Basic(BasicType::String) => TypeTag::String,
+        Type::Slice(_) => TypeTag::Slice,
+        Type::Map(_) => TypeTag::Map,
+        Type::Struct(_) => TypeTag::Struct,
+        Type::Interface(_) => TypeTag::Interface,
+        _ => TypeTag::Int64,
+    }
+}
 
 /// Compile an expression, return the register containing the result.
 pub fn compile_expr(
@@ -307,14 +378,8 @@ fn compile_call(
                 return compile_func_call(ctx, fctx, func_idx, call);
             }
             
-            // Try native functions
+            // Try native functions (registered via FFI)
             if let Some(native_idx) = ctx.lookup_native(&full_name) {
-                return compile_native_call(ctx, fctx, native_idx, call);
-            }
-            
-            // Register common natives
-            if pkg == "fmt" && (method == "Println" || method == "Print") {
-                let native_idx = ctx.register_native(&full_name, 1, 0);
                 return compile_native_call(ctx, fctx, native_idx, call);
             }
         }
@@ -458,8 +523,10 @@ fn compile_builtin_print(
     call: &CallExpr,
 ) -> Result<u16, CodegenError> {
     for arg in &call.args {
+        let type_tag = infer_type_tag(ctx, fctx, arg);
         let reg = compile_expr(ctx, fctx, arg)?;
-        fctx.emit(Opcode::DebugPrint, reg, 0, 0);
+        // Pass type tag in b parameter for proper formatting
+        fctx.emit(Opcode::DebugPrint, reg, type_tag as u16, 0);
     }
     let dst = fctx.regs.alloc(1);
     fctx.emit(Opcode::LoadNil, dst, 0, 0);

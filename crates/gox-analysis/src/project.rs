@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use gox_common::vfs::FileSet;
 use gox_common::{DiagnosticSink, FileId, Symbol, SymbolInterner};
+use gox_module::vfs::Vfs;
 use gox_syntax::{parse, parse_with_interner, ast};
 use gox_syntax::ast::Decl;
 
@@ -34,6 +35,8 @@ pub struct ResolvedImport {
 pub enum ImportPath {
     /// "./mylib" - relative to current package directory
     Local(PathBuf),
+    /// "fmt", "os" - standard library package
+    Stdlib(String),
     /// "github.com/user/pkg" - external module (not yet supported)
     External(String),
 }
@@ -42,9 +45,19 @@ impl ImportPath {
     pub fn parse(import_str: &str) -> Self {
         if import_str.starts_with("./") || import_str.starts_with("../") {
             ImportPath::Local(PathBuf::from(import_str))
+        } else if Self::is_stdlib(import_str) {
+            ImportPath::Stdlib(import_str.to_string())
         } else {
             ImportPath::External(import_str.to_string())
         }
+    }
+    
+    /// Check if import path is a standard library package.
+    /// Go convention: stdlib has no dots (domain names like github.com have dots).
+    /// Examples: "fmt", "os", "encoding/json" are stdlib
+    ///           "github.com/user/pkg" is external
+    fn is_stdlib(path: &str) -> bool {
+        !path.contains('.')
     }
 }
 
@@ -157,7 +170,9 @@ impl From<std::io::Error> for ProjectError {
 }
 
 /// Analyze a complete project from a file set.
-pub fn analyze_project(file_set: FileSet) -> Result<Project, ProjectError> {
+/// 
+/// The VFS is used to resolve imports (std, local, external modules).
+pub fn analyze_project(file_set: FileSet, vfs: &Vfs) -> Result<Project, ProjectError> {
     let mut interner = SymbolInterner::new();
     
     // Step 1: Parse all files and group by package (by directory)
@@ -335,6 +350,11 @@ fn resolve_imports(packages: &mut HashMap<String, ParsedPackage>) -> Result<(), 
                         }
                     }
                 }
+                ImportPath::Stdlib(pkg_name) => {
+                    // Standard library: use package name directly
+                    // The actual implementation is via native functions
+                    import.package_name = pkg_name;
+                }
                 ImportPath::External(path) => {
                     return Err(ProjectError::ExternalImport(path));
                 }
@@ -374,6 +394,10 @@ fn topological_sort(packages: &HashMap<String, ParsedPackage>) -> Result<Vec<Str
     for (name, pkg) in packages {
         for import in &pkg.imports {
             if !import.package_name.is_empty() {
+                // Skip stdlib imports - they don't exist as real packages
+                if !packages.contains_key(&import.package_name) {
+                    continue;
+                }
                 // This package depends on import.package_name
                 *in_degree.get_mut(name).unwrap() += 1;
                 if let Some(deps) = dependents.get_mut(&import.package_name) {
@@ -603,7 +627,12 @@ func main() {
 "#);
         
         let file_set = FileSet::collect(&fs, Path::new("/project")).unwrap();
-        let project = analyze_project(file_set).unwrap();
+        let vfs = Vfs::with_fs_roots(
+            PathBuf::from("/std"),
+            PathBuf::from("/project"),
+            PathBuf::from("/mod"),
+        );
+        let project = analyze_project(file_set, &vfs).unwrap();
         
         assert_eq!(project.main_package, "main");
         assert_eq!(project.packages.len(), 1);

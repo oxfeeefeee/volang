@@ -13,6 +13,7 @@ pub mod fiber;
 pub mod objects;
 pub mod bytecode;
 pub mod vm;
+pub mod ffi;
 
 pub use gc::{Gc, GcRef, GcHeader, GcColor, NULL_REF};
 pub use types::{TypeId, TypeMeta, TypeTable, TypeKind, builtin};
@@ -20,3 +21,4 @@ pub use instruction::{Instruction, Opcode};
 pub use fiber::{Fiber, FiberId, FiberStatus, CallFrame, Scheduler};
 pub use bytecode::{Module, FunctionDef, Constant, BytecodeError};
 pub use vm::{Vm, VmResult, NativeFn, NativeCtx, NativeRegistry};
+pub use ffi::{TypeTag, GoxValue, GoxArgs, ArgOffset};
