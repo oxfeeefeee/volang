@@ -12,11 +12,10 @@
 //! - `1 << 100` is valid as a constant, overflow only checked at use
 
 use std::fmt;
-use std::cmp::Ordering;
 
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::{Zero, One, ToPrimitive, Signed};
+use num_traits::{Zero, ToPrimitive, Signed};
 
 use crate::types::{BasicType, UntypedKind};
 

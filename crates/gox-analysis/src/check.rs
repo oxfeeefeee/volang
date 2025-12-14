@@ -49,13 +49,12 @@
 use gox_common::{DiagnosticSink, Ident, Span, Symbol, SymbolInterner};
 use gox_syntax::ast::{self, BinaryOp, Expr, ExprKind, Stmt, StmtKind, UnaryOp};
 
-use crate::constant::Constant;
 use crate::errors::TypeError;
 use crate::lookup::{Lookup, LookupResult};
 use crate::resolve::ResolveResult;
 use crate::scope::{BuiltinKind, Entity, Scope, ScopeKind, VarEntity};
 use crate::types::{
-    BasicType, FuncType, InterfaceType, MethodSet, NamedTypeId, NamedTypeInfo,
+    BasicType, FuncType, NamedTypeInfo,
     Type, TypeRegistry, UntypedKind,
 };
 

@@ -10,14 +10,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gox_common::vfs::FileSet;
-use gox_common::{DiagnosticSink, FileId, Symbol, SymbolInterner};
+use gox_common::{DiagnosticSink, FileId, SymbolInterner};
 use gox_module::vfs::Vfs;
-use gox_syntax::{parse, parse_with_interner, ast};
+use gox_syntax::{parse_with_interner, ast};
 use gox_syntax::ast::Decl;
 
 use crate::types::Type;
 use crate::scope::Entity;
-use crate::{typecheck_files, typecheck_files_with_imports, TypeCheckResult};
+use crate::{typecheck_files_with_imports, TypeCheckResult};
 
 /// Import declaration with resolved package reference.
 #[derive(Debug, Clone)]

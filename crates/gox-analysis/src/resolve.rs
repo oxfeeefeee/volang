@@ -46,9 +46,9 @@ use gox_syntax::ast::{self, TypeExprKind};
 use crate::collect::{CollectResult, FuncSigPlaceholder, MethodPlaceholder, NamedTypePlaceholder, VarTypePlaceholder};
 use crate::errors::TypeError;
 use crate::constant::Constant;
-use crate::scope::{Entity, Scope, ScopeKind};
+use crate::scope::{Entity, Scope};
 use crate::types::{
-    ArrayType, BasicType, ChanDir, ChanType, Field, FuncType, InterfaceType,
+    ArrayType, ChanDir, ChanType, Field, FuncType, InterfaceType,
     MapType, Method, NamedTypeId, NamedTypeInfo, SliceType, StructType, Type,
 };
 

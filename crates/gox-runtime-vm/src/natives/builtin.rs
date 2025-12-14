@@ -1,6 +1,6 @@
 //! Built-in native functions (len, cap, panic, etc.)
 
-use gox_vm::{NativeCtx, NativeRegistry, GcRef};
+use gox_vm::{NativeCtx, NativeRegistry};
 use gox_vm::ffi::GoxValue;
 use gox_vm::objects::{array, slice, string, map, channel};
 

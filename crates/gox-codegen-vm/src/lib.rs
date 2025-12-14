@@ -29,7 +29,7 @@ mod expr;
 mod stmt;
 
 use std::collections::HashMap;
-use gox_analysis::{Project, TypeCheckResult, TypedPackage};
+use gox_analysis::{Project, TypeCheckResult};
 use gox_common::{Symbol, SymbolInterner};
 use gox_syntax::ast::{Decl, File};
 use gox_vm::bytecode::{FunctionDef, Module};
@@ -53,7 +53,7 @@ pub fn compile(
 /// A module-level $init function is generated that calls all package inits.
 pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     use gox_vm::instruction::Instruction;
-    use gox_syntax::ast::VarDecl;
+    
     
     let mut module = Module::new(&project.main_package);
     

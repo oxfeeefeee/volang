@@ -11,8 +11,7 @@
 //! Based on Go's types/lookup.go implementation.
 
 use crate::types::{
-    Field, FuncType, InterfaceType, Method, MethodSet, NamedTypeId, NamedTypeInfo,
-    StructType, Type,
+    FuncType, InterfaceType, Method, MethodSet, NamedTypeInfo, Type,
 };
 use gox_common::Symbol;
 use std::collections::{HashMap, HashSet};
