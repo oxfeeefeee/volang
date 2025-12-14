@@ -1,7 +1,8 @@
 //! Bytecode module format and function definitions.
 
 use crate::instruction::Instruction;
-use crate::types::TypeMeta;
+use crate::types::{TypeMeta, TypeKind};
+use std::io::{Read, Write, Cursor};
 
 /// Magic bytes for bytecode files.
 pub const MAGIC: [u8; 4] = *b"GOXB";
@@ -150,5 +151,406 @@ impl Module {
     /// Find native by name.
     pub fn find_native(&self, name: &str) -> Option<u32> {
         self.natives.iter().position(|n| n.name == name).map(|i| i as u32)
+    }
+    
+    /// Serialize module to bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        
+        // Header
+        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&VERSION.to_le_bytes());
+        buf.extend_from_slice(&self.entry_func.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // flags (reserved)
+        
+        // Module name
+        write_string(&mut buf, &self.name);
+        
+        // Types section
+        write_u32(&mut buf, self.types.len() as u32);
+        for ty in &self.types {
+            write_type_meta(&mut buf, ty);
+        }
+        
+        // Constants section
+        write_u32(&mut buf, self.constants.len() as u32);
+        for c in &self.constants {
+            write_constant(&mut buf, c);
+        }
+        
+        // Natives section
+        write_u32(&mut buf, self.natives.len() as u32);
+        for n in &self.natives {
+            write_string(&mut buf, &n.name);
+            write_u16(&mut buf, n.param_slots);
+            write_u16(&mut buf, n.ret_slots);
+        }
+        
+        // Functions section
+        write_u32(&mut buf, self.functions.len() as u32);
+        for f in &self.functions {
+            write_function_def(&mut buf, f);
+        }
+        
+        buf
+    }
+    
+    /// Deserialize module from bytes.
+    pub fn from_bytes(data: &[u8]) -> Result<Self, BytecodeError> {
+        let mut cursor = Cursor::new(data);
+        
+        // Header
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic).map_err(|_| BytecodeError::UnexpectedEof)?;
+        if magic != MAGIC {
+            return Err(BytecodeError::InvalidMagic);
+        }
+        
+        let version = read_u32(&mut cursor)?;
+        if version != VERSION {
+            return Err(BytecodeError::UnsupportedVersion(version));
+        }
+        
+        let entry_func = read_u32(&mut cursor)?;
+        let _flags = read_u32(&mut cursor)?;
+        
+        // Module name
+        let name = read_string(&mut cursor)?;
+        
+        // Types section
+        let type_count = read_u32(&mut cursor)?;
+        let mut types = Vec::with_capacity(type_count as usize);
+        for _ in 0..type_count {
+            types.push(read_type_meta(&mut cursor)?);
+        }
+        
+        // Constants section
+        let const_count = read_u32(&mut cursor)?;
+        let mut constants = Vec::with_capacity(const_count as usize);
+        for _ in 0..const_count {
+            constants.push(read_constant(&mut cursor)?);
+        }
+        
+        // Natives section
+        let native_count = read_u32(&mut cursor)?;
+        let mut natives = Vec::with_capacity(native_count as usize);
+        for _ in 0..native_count {
+            let n_name = read_string(&mut cursor)?;
+            let param_slots = read_u16(&mut cursor)?;
+            let ret_slots = read_u16(&mut cursor)?;
+            natives.push(NativeDef { name: n_name, param_slots, ret_slots });
+        }
+        
+        // Functions section
+        let func_count = read_u32(&mut cursor)?;
+        let mut functions = Vec::with_capacity(func_count as usize);
+        for _ in 0..func_count {
+            functions.push(read_function_def(&mut cursor)?);
+        }
+        
+        Ok(Module {
+            name,
+            types,
+            constants,
+            functions,
+            natives,
+            entry_func,
+        })
+    }
+}
+
+/// Bytecode error type.
+#[derive(Debug)]
+pub enum BytecodeError {
+    InvalidMagic,
+    UnsupportedVersion(u32),
+    UnexpectedEof,
+    InvalidConstantTag(u8),
+    InvalidTypeKind(u8),
+    Utf8Error,
+}
+
+impl std::fmt::Display for BytecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BytecodeError::InvalidMagic => write!(f, "invalid magic bytes"),
+            BytecodeError::UnsupportedVersion(v) => write!(f, "unsupported version: {}", v),
+            BytecodeError::UnexpectedEof => write!(f, "unexpected end of file"),
+            BytecodeError::InvalidConstantTag(t) => write!(f, "invalid constant tag: {}", t),
+            BytecodeError::InvalidTypeKind(k) => write!(f, "invalid type kind: {}", k),
+            BytecodeError::Utf8Error => write!(f, "invalid UTF-8 string"),
+        }
+    }
+}
+
+impl std::error::Error for BytecodeError {}
+
+// === Writer helpers ===
+
+fn write_u16(buf: &mut Vec<u8>, v: u16) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn write_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn write_u64(buf: &mut Vec<u8>, v: u64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn write_string(buf: &mut Vec<u8>, s: &str) {
+    write_u32(buf, s.len() as u32);
+    buf.extend_from_slice(s.as_bytes());
+}
+
+fn write_constant(buf: &mut Vec<u8>, c: &Constant) {
+    match c {
+        Constant::Nil => buf.push(0),
+        Constant::Bool(v) => {
+            buf.push(1);
+            buf.push(if *v { 1 } else { 0 });
+        }
+        Constant::Int(v) => {
+            buf.push(2);
+            write_u64(buf, *v as u64);
+        }
+        Constant::Float(v) => {
+            buf.push(3);
+            write_u64(buf, v.to_bits());
+        }
+        Constant::String(s) => {
+            buf.push(4);
+            write_string(buf, s);
+        }
+    }
+}
+
+fn write_type_meta(buf: &mut Vec<u8>, ty: &TypeMeta) {
+    write_u32(buf, ty.id);
+    buf.push(type_kind_to_u8(ty.kind));
+    write_u16(buf, ty.size_slots as u16);
+    write_string(buf, &ty.name);
+    
+    // ptr_bitmap as bit-packed bytes
+    let bitmap_bytes = (ty.ptr_bitmap.len() + 7) / 8;
+    write_u32(buf, ty.ptr_bitmap.len() as u32);
+    for i in 0..bitmap_bytes {
+        let mut byte = 0u8;
+        for j in 0..8 {
+            let idx = i * 8 + j;
+            if idx < ty.ptr_bitmap.len() && ty.ptr_bitmap[idx] {
+                byte |= 1 << j;
+            }
+        }
+        buf.push(byte);
+    }
+    
+    // Optional type references
+    write_u32(buf, ty.elem_type.unwrap_or(0xFFFFFFFF));
+    write_u32(buf, ty.key_type.unwrap_or(0xFFFFFFFF));
+    write_u32(buf, ty.value_type.unwrap_or(0xFFFFFFFF));
+}
+
+fn write_function_def(buf: &mut Vec<u8>, f: &FunctionDef) {
+    write_string(buf, &f.name);
+    write_u16(buf, f.param_count);
+    write_u16(buf, f.param_slots);
+    write_u16(buf, f.local_slots);
+    write_u16(buf, f.ret_slots);
+    write_u32(buf, f.code.len() as u32);
+    for instr in &f.code {
+        buf.push(instr.op);
+        buf.push(instr.flags);
+        write_u16(buf, instr.a);
+        write_u16(buf, instr.b);
+        write_u16(buf, instr.c);
+    }
+}
+
+fn type_kind_to_u8(kind: TypeKind) -> u8 {
+    match kind {
+        TypeKind::Nil => 0,
+        TypeKind::Primitive => 1,
+        TypeKind::Struct => 2,
+        TypeKind::Object => 3,
+        TypeKind::Array => 4,
+        TypeKind::Slice => 5,
+        TypeKind::String => 6,
+        TypeKind::Map => 7,
+        TypeKind::Channel => 8,
+        TypeKind::Closure => 9,
+        TypeKind::Interface => 10,
+    }
+}
+
+// === Reader helpers ===
+
+fn read_u16(cursor: &mut Cursor<&[u8]>) -> Result<u16, BytecodeError> {
+    let mut buf = [0u8; 2];
+    cursor.read_exact(&mut buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn read_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, BytecodeError> {
+    let mut buf = [0u8; 4];
+    cursor.read_exact(&mut buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn read_u64(cursor: &mut Cursor<&[u8]>) -> Result<u64, BytecodeError> {
+    let mut buf = [0u8; 8];
+    cursor.read_exact(&mut buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+    Ok(u64::from_le_bytes(buf))
+}
+
+fn read_string(cursor: &mut Cursor<&[u8]>) -> Result<String, BytecodeError> {
+    let len = read_u32(cursor)? as usize;
+    let mut buf = vec![0u8; len];
+    cursor.read_exact(&mut buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+    String::from_utf8(buf).map_err(|_| BytecodeError::Utf8Error)
+}
+
+fn read_constant(cursor: &mut Cursor<&[u8]>) -> Result<Constant, BytecodeError> {
+    let mut tag = [0u8; 1];
+    cursor.read_exact(&mut tag).map_err(|_| BytecodeError::UnexpectedEof)?;
+    
+    match tag[0] {
+        0 => Ok(Constant::Nil),
+        1 => {
+            let mut v = [0u8; 1];
+            cursor.read_exact(&mut v).map_err(|_| BytecodeError::UnexpectedEof)?;
+            Ok(Constant::Bool(v[0] != 0))
+        }
+        2 => {
+            let v = read_u64(cursor)?;
+            Ok(Constant::Int(v as i64))
+        }
+        3 => {
+            let v = read_u64(cursor)?;
+            Ok(Constant::Float(f64::from_bits(v)))
+        }
+        4 => {
+            let s = read_string(cursor)?;
+            Ok(Constant::String(s))
+        }
+        t => Err(BytecodeError::InvalidConstantTag(t)),
+    }
+}
+
+fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError> {
+    let id = read_u32(cursor)?;
+    let mut kind_byte = [0u8; 1];
+    cursor.read_exact(&mut kind_byte).map_err(|_| BytecodeError::UnexpectedEof)?;
+    let kind = u8_to_type_kind(kind_byte[0])?;
+    let size_slots = read_u16(cursor)? as usize;
+    let name = read_string(cursor)?;
+    
+    // ptr_bitmap
+    let bitmap_len = read_u32(cursor)? as usize;
+    let bitmap_bytes = (bitmap_len + 7) / 8;
+    let mut bitmap_data = vec![0u8; bitmap_bytes];
+    cursor.read_exact(&mut bitmap_data).map_err(|_| BytecodeError::UnexpectedEof)?;
+    
+    let mut ptr_bitmap = Vec::with_capacity(bitmap_len);
+    for i in 0..bitmap_len {
+        let byte_idx = i / 8;
+        let bit_idx = i % 8;
+        ptr_bitmap.push((bitmap_data[byte_idx] >> bit_idx) & 1 != 0);
+    }
+    
+    // Optional type references
+    let elem_type = read_u32(cursor)?;
+    let key_type = read_u32(cursor)?;
+    let value_type = read_u32(cursor)?;
+    
+    Ok(TypeMeta {
+        id,
+        kind,
+        size_slots,
+        ptr_bitmap,
+        name,
+        field_offsets: Vec::new(),
+        elem_type: if elem_type == 0xFFFFFFFF { None } else { Some(elem_type) },
+        elem_size: None,
+        key_type: if key_type == 0xFFFFFFFF { None } else { Some(key_type) },
+        value_type: if value_type == 0xFFFFFFFF { None } else { Some(value_type) },
+    })
+}
+
+fn read_function_def(cursor: &mut Cursor<&[u8]>) -> Result<FunctionDef, BytecodeError> {
+    let name = read_string(cursor)?;
+    let param_count = read_u16(cursor)?;
+    let param_slots = read_u16(cursor)?;
+    let local_slots = read_u16(cursor)?;
+    let ret_slots = read_u16(cursor)?;
+    let code_len = read_u32(cursor)? as usize;
+    
+    let mut code = Vec::with_capacity(code_len);
+    for _ in 0..code_len {
+        let mut instr_buf = [0u8; 8];
+        cursor.read_exact(&mut instr_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+        code.push(Instruction {
+            op: instr_buf[0],
+            flags: instr_buf[1],
+            a: u16::from_le_bytes([instr_buf[2], instr_buf[3]]),
+            b: u16::from_le_bytes([instr_buf[4], instr_buf[5]]),
+            c: u16::from_le_bytes([instr_buf[6], instr_buf[7]]),
+        });
+    }
+    
+    Ok(FunctionDef {
+        name,
+        param_count,
+        param_slots,
+        local_slots,
+        ret_slots,
+        code,
+    })
+}
+
+fn u8_to_type_kind(v: u8) -> Result<TypeKind, BytecodeError> {
+    match v {
+        0 => Ok(TypeKind::Nil),
+        1 => Ok(TypeKind::Primitive),
+        2 => Ok(TypeKind::Struct),
+        3 => Ok(TypeKind::Object),
+        4 => Ok(TypeKind::Array),
+        5 => Ok(TypeKind::Slice),
+        6 => Ok(TypeKind::String),
+        7 => Ok(TypeKind::Map),
+        8 => Ok(TypeKind::Channel),
+        9 => Ok(TypeKind::Closure),
+        10 => Ok(TypeKind::Interface),
+        _ => Err(BytecodeError::InvalidTypeKind(v)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instruction::Opcode;
+    
+    #[test]
+    fn test_roundtrip() {
+        let mut module = Module::new("test");
+        module.add_constant(Constant::Int(42));
+        module.add_constant(Constant::String("hello".to_string()));
+        module.add_native("println", 1, 0);
+        
+        let mut func = FunctionDef::new("main");
+        func.local_slots = 10;
+        func.code.push(Instruction::new(Opcode::LoadInt, 0, 42, 0));
+        func.code.push(Instruction::new(Opcode::Return, 0, 0, 0));
+        module.add_function(func);
+        
+        let bytes = module.to_bytes();
+        let decoded = Module::from_bytes(&bytes).unwrap();
+        
+        assert_eq!(decoded.name, "test");
+        assert_eq!(decoded.constants.len(), 2);
+        assert_eq!(decoded.natives.len(), 1);
+        assert_eq!(decoded.functions.len(), 1);
+        assert_eq!(decoded.functions[0].code.len(), 2);
     }
 }

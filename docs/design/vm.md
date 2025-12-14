@@ -134,39 +134,84 @@ MOV           d, s           # d = s (single slot)
 MOV_N         d, s, n        # Copy n slots
 ```
 
-### 4.2 Arithmetic (Type-Specialized)
+### 4.2 Numeric Type Strategy
+
+**Design Decision**: Unified 64-bit storage with minimal type-specialized instructions.
+
+| Go Type | VM Storage | Arithmetic | Notes |
+|---------|-----------|------------|-------|
+| int8, int16, int32, int64, int | i64 | I64 instructions | Sign extension at compile time |
+| uint8, uint16, uint32, uint64, uint | i64 | I64 + U64 for div/cmp | Zero extension at compile time |
+| float32 | f32 bits in u64 | F32 instructions | Separate precision |
+| float64 | f64 bits in u64 | F64 instructions | Native 64-bit |
+| complex64, complex128 | 2 slots | Emulated | Real + Imag |
+
+**Rationale**:
+- All integer types fit in 64-bit register
+- Add/Sub/Mul: Same binary result for signed/unsigned (2's complement)
+- Div/Mod/Cmp: Need separate signed vs unsigned variants
+- Float32 needs separate instructions due to different precision
+
+### 4.3 Arithmetic Instructions
 
 ```asm
+# Signed integer (i64) - used for all int types
 ADD_I64       d, s0, s1
 SUB_I64       d, s0, s1
 MUL_I64       d, s0, s1
-DIV_I64       d, s0, s1
-MOD_I64       d, s0, s1
+DIV_I64       d, s0, s1      # Signed division
+MOD_I64       d, s0, s1      # Signed modulo
 NEG_I64       d, s
 
+# Unsigned integer - only for division/modulo
+DIV_U64       d, s0, s1      # Unsigned division
+MOD_U64       d, s0, s1      # Unsigned modulo
+
+# Float64
 ADD_F64       d, s0, s1
 SUB_F64       d, s0, s1
 MUL_F64       d, s0, s1
 DIV_F64       d, s0, s1
 NEG_F64       d, s
 
-# Similar for: i32, u32, u64, f32
+# Float32
+ADD_F32       d, s0, s1
+SUB_F32       d, s0, s1
+MUL_F32       d, s0, s1
+DIV_F32       d, s0, s1
+NEG_F32       d, s
 ```
 
-### 4.3 Comparison
+### 4.4 Comparison
 
 ```asm
+# Signed integer comparison
 EQ_I64        d, s0, s1      # d = (s0 == s1)
 NE_I64        d, s0, s1
-LT_I64        d, s0, s1
+LT_I64        d, s0, s1      # Signed less than
 LE_I64        d, s0, s1
 GT_I64        d, s0, s1
 GE_I64        d, s0, s1
 
-EQ_REF        d, s0, s1      # Reference equality (address comparison)
+# Unsigned integer comparison
+LT_U64        d, s0, s1      # Unsigned less than
+LE_U64        d, s0, s1
+GT_U64        d, s0, s1
+GE_U64        d, s0, s1
+
+# Float comparison (works for both f32 and f64)
+EQ_F64        d, s0, s1
+NE_F64        d, s0, s1
+LT_F64        d, s0, s1
+LE_F64        d, s0, s1
+GT_F64        d, s0, s1
+GE_F64        d, s0, s1
+
+# Reference equality
+EQ_REF        d, s0, s1      # Address comparison
 ```
 
-### 4.4 Bitwise
+### 4.5 Bitwise
 
 ```asm
 BAND          d, s0, s1
@@ -174,11 +219,30 @@ BOR           d, s0, s1
 BXOR          d, s0, s1
 BNOT          d, s
 SHL           d, s0, s1
-SHR           d, s0, s1      # Arithmetic right shift
-USHR          d, s0, s1      # Logical right shift
+SHR           d, s0, s1      # Arithmetic right shift (signed)
+USHR          d, s0, s1      # Logical right shift (unsigned)
 ```
 
-### 4.5 Control Flow
+### 4.6 Type Conversion
+
+```asm
+# Integer truncation/extension (compile-time for same-size, runtime for cross-size)
+I64_TO_I32    d, s           # Truncate to 32-bit
+I32_TO_I64    d, s           # Sign extend
+U32_TO_I64    d, s           # Zero extend
+
+# Float conversion
+F32_TO_F64    d, s           # Widen
+F64_TO_F32    d, s           # Narrow (may lose precision)
+
+# Int-Float conversion
+I64_TO_F64    d, s
+F64_TO_I64    d, s
+I64_TO_F32    d, s
+F32_TO_I64    d, s
+```
+
+### 4.7 Control Flow
 
 ```asm
 JUMP          offset         # PC += offset
@@ -186,7 +250,7 @@ JUMP_IF       s, offset      # if s then jump
 JUMP_IF_NOT   s, offset      # if !s then jump
 ```
 
-### 4.6 Function Call
+### 4.8 Function Call
 
 Unified CALL instruction handles both GoX functions and native functions:
 
@@ -230,7 +294,7 @@ fn exec_call(vm: &mut Vm, callable: &Callable, args: &[u64], ret: &mut [u64]) {
 }
 ```
 
-### 4.7 Object Operations
+### 4.9 Object Operations
 
 ```asm
 ALLOC         d, type_id     # Allocate heap object
@@ -239,7 +303,7 @@ SET_FIELD     obj, idx, s    # obj.fields[idx] = s
 COPY_SLOTS    d, s, n        # Deep copy n slots (struct assignment)
 ```
 
-### 4.8 Array/Slice
+### 4.10 Array/Slice
 
 ```asm
 ARRAY_GET     d, arr, idx
@@ -255,7 +319,7 @@ SLICE_SLICE   d, s, lo, hi
 SLICE_APPEND  d, slice, elem
 ```
 
-### 4.9 String
+### 4.11 String
 
 ```asm
 STR_CONCAT    d, s0, s1
@@ -263,7 +327,7 @@ STR_LEN       d, s
 STR_INDEX     d, s, idx
 ```
 
-### 4.10 Map
+### 4.12 Map
 
 ```asm
 MAP_MAKE      d, type_id, cap
@@ -273,7 +337,7 @@ MAP_DELETE    map, key_start
 MAP_LEN       d, map
 ```
 
-### 4.11 Channel
+### 4.13 Channel
 
 ```asm
 CHAN_MAKE     d, type_id, cap
@@ -282,7 +346,7 @@ CHAN_RECV     d, chan            # May block
 CHAN_CLOSE    chan
 ```
 
-### 4.12 Range Iteration
+### 4.14 Range Iteration
 
 ```asm
 ITER_PUSH     container, type    # Push iterator onto stack
@@ -291,14 +355,14 @@ ITER_POP                         # Pop iterator from stack
 JUMP_DONE     offset             # Jump if iteration complete
 ```
 
-### 4.13 Goroutine
+### 4.15 Goroutine
 
 ```asm
 GO            func_id, arg_start, arg_count
 YIELD
 ```
 
-### 4.14 Defer/Panic/Recover
+### 4.16 Defer/Panic/Recover
 
 ```asm
 DEFER_PUSH    func_id, arg_start, arg_count
@@ -306,7 +370,7 @@ PANIC         val
 RECOVER       d
 ```
 
-### 4.15 Interface
+### 4.17 Interface
 
 ```asm
 IFACE_BOX     d, s, type_id      # Box: d = [type_id, value/ref]

@@ -1,0 +1,17 @@
+# GoX bytecode text format example
+# This prints "Hello from GoX VM!"
+
+module hello
+
+const 0 string "Hello from GoX VM!"
+
+native 0 "fmt.Println" 1 1
+
+func main
+  locals 10
+  0: LoadConst r0, $0
+  1: CallNative 0, r0, 1, 1
+  2: Return r0, 0
+end
+
+entry main

@@ -18,5 +18,5 @@ pub use gc::{Gc, GcRef, GcHeader, GcColor, NULL_REF};
 pub use types::{TypeId, TypeMeta, TypeTable, TypeKind, builtin};
 pub use instruction::{Instruction, Opcode};
 pub use fiber::{Fiber, FiberId, FiberStatus, CallFrame, Scheduler};
-pub use bytecode::{Module, FunctionDef, Constant};
+pub use bytecode::{Module, FunctionDef, Constant, BytecodeError};
 pub use vm::{Vm, VmResult, NativeFn, NativeCtx, NativeRegistry};
