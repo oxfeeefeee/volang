@@ -105,7 +105,7 @@ pub fn compile_expr(
             Ok(dst)
         }
         ExprKind::FuncLit(_) => Err(CodegenError::Unsupported("function literal".to_string())),
-        ExprKind::Slice(_) => Err(CodegenError::Unsupported("slice expression".to_string())),
+        ExprKind::Slice(slice) => compile_slice_expr(ctx, fctx, slice),
         ExprKind::TypeAssert(_) => Err(CodegenError::Unsupported("type assertion".to_string())),
         ExprKind::Conversion(_) => Err(CodegenError::Unsupported("type conversion".to_string())),
     }
@@ -488,6 +488,41 @@ fn compile_index(
     let idx = compile_expr(ctx, fctx, &index.index)?;
     let dst = fctx.regs.alloc(1);
     fctx.emit(Opcode::SliceGet, dst, arr, idx);
+    Ok(dst)
+}
+
+/// Compile slice expression: s[low:high]
+fn compile_slice_expr(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    slice: &gox_syntax::ast::SliceExpr,
+) -> Result<u16, CodegenError> {
+    // Compile the slice/array being sliced
+    let src = compile_expr(ctx, fctx, &slice.expr)?;
+    
+    // Compile low bound (default 0)
+    let low_reg = if let Some(ref low) = slice.low {
+        compile_expr(ctx, fctx, low)?
+    } else {
+        let r = fctx.regs.alloc(1);
+        fctx.emit(Opcode::LoadInt, r, 0, 0);
+        r
+    };
+    
+    // Compile high bound (default len(s))
+    let high_reg = if let Some(ref high) = slice.high {
+        compile_expr(ctx, fctx, high)?
+    } else {
+        // high = len(src)
+        let r = fctx.regs.alloc(1);
+        fctx.emit(Opcode::SliceLen, r, src, 0);
+        r
+    };
+    
+    let dst = fctx.regs.alloc(1);
+    // SliceSlice: a=dest, b=slice, c=start_reg, flags=end_reg
+    fctx.emit_with_flags(Opcode::SliceSlice, high_reg as u8, dst, src, low_reg);
+    
     Ok(dst)
 }
 

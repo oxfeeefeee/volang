@@ -699,10 +699,10 @@ impl Vm {
             }
             
             Opcode::SliceSlice => {
-                // a=dest, b=slice, c=start, flags=end
+                // a=dest, b=slice, c=start_reg, flags=end_reg
                 let sl = self.read_reg(fiber_id, b) as GcRef;
-                let start = c as usize;
-                let end = flags as usize;
+                let start = self.read_reg(fiber_id, c) as usize;
+                let end = self.read_reg(fiber_id, flags as u16) as usize;
                 let new_sl = slice::slice_of(&mut self.gc, builtin::SLICE, sl, start, end);
                 self.write_reg(fiber_id, a, new_sl as u64);
             }
