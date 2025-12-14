@@ -403,7 +403,7 @@ fn load_stdlib_packages(
             if !files.is_empty() {
                 let parsed = ParsedPackage {
                     name: pkg_name.clone(),
-                    dir: PathBuf::from(format!("std/{}", pkg_name)),
+                    dir: PathBuf::from(format!("stdlib/{}", pkg_name)),
                     files,
                     interner: pkg_interner,
                     imports: Vec::new(),
