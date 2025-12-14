@@ -600,6 +600,7 @@ pub fn resolve_types(
 mod tests {
     use super::*;
     use crate::collect::collect_types;
+    use crate::types::BasicType;
     use gox_common::FileId;
     use gox_syntax::parse;
 

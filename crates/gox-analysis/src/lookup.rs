@@ -577,7 +577,7 @@ fn consolidate_multiples(list: Vec<EmbeddedType>, lookup: &Lookup) -> Vec<Embedd
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::BasicType;
+    use crate::types::{BasicType, Field, StructType, NamedTypeId};
 
     fn make_symbol(id: u32) -> Symbol {
         unsafe { std::mem::transmute(id) }
