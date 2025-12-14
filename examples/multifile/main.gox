@@ -1,0 +1,9 @@
+package main
+
+func main() {
+    x := add(3, 4)
+    println(x)
+    
+    y := multiply(5, 6)
+    println(y)
+}

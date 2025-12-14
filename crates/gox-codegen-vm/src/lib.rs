@@ -62,10 +62,40 @@ fn compile_package(
     pkg: &TypedPackage,
     _interner: &SymbolInterner,
 ) -> Result<(), CodegenError> {
-    for (file, file_interner) in &pkg.files {
-        let mut ctx = CodegenContext::new_with_module(file, &pkg.types, file_interner, module);
-        ctx.compile_into_module()?;
+    use gox_syntax::ast::Decl;
+    use std::collections::HashMap;
+    use gox_common::Symbol;
+    use gox_vm::bytecode::FunctionDef;
+    
+    // First pass: collect ALL function declarations from ALL files
+    let mut func_indices: HashMap<Symbol, u32> = HashMap::new();
+    for file in &pkg.files {
+        for decl in &file.decls {
+            if let Decl::Func(func) = decl {
+                let idx = module.functions.len() as u32;
+                func_indices.insert(func.name.symbol, idx);
+                module.functions.push(FunctionDef::new(
+                    pkg.interner.resolve(func.name.symbol).unwrap_or("")
+                ));
+            }
+        }
     }
+    
+    // Second pass: compile ALL function bodies from ALL files
+    for file in &pkg.files {
+        for decl in &file.decls {
+            if let Decl::Func(func) = decl {
+                let mut ctx = context::CodegenContext::new(file, &pkg.types, &pkg.interner);
+                // Copy the shared func_indices
+                ctx.func_indices = func_indices.clone();
+                
+                let func_def = ctx.compile_func_body(func)?;
+                let idx = func_indices[&func.name.symbol] as usize;
+                module.functions[idx] = func_def;
+            }
+        }
+    }
+    
     Ok(())
 }
 

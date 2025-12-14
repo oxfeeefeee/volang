@@ -351,6 +351,11 @@ impl<'a> CodegenContext<'a> {
     }
     
     fn compile_func(&mut self, func: &FuncDecl) -> Result<FunctionDef, CodegenError> {
+        self.compile_func_body(func)
+    }
+    
+    /// Compile a single function body (public for multi-file packages).
+    pub fn compile_func_body(&mut self, func: &FuncDecl) -> Result<FunctionDef, CodegenError> {
         let name = self.interner.resolve(func.name.symbol).unwrap_or("");
         let mut fctx = FuncContext::new(name);
         

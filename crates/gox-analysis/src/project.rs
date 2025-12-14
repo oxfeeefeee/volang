@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 
 use gox_common::vfs::FileSet;
 use gox_common::{DiagnosticSink, FileId, SymbolInterner};
-use gox_syntax::ast;
-use gox_syntax::parse;
+use gox_syntax::{parse, parse_with_interner, ast};
 
 use crate::types::Type;
-use crate::{typecheck_file, TypeCheckResult};
+use crate::{typecheck_files, TypeCheckResult};
 
 /// Import path classification.
 #[derive(Debug, Clone)]
@@ -35,7 +34,8 @@ impl ImportPath {
 pub struct ParsedPackage {
     pub name: String,
     pub dir: PathBuf,
-    pub files: Vec<(PathBuf, ast::File, SymbolInterner)>,
+    pub files: Vec<(PathBuf, ast::File)>,
+    pub interner: SymbolInterner,
     pub imports: Vec<ImportPath>,
 }
 
@@ -44,7 +44,8 @@ pub struct ParsedPackage {
 pub struct TypedPackage {
     pub name: String,
     pub dir: PathBuf,
-    pub files: Vec<(ast::File, SymbolInterner)>,
+    pub files: Vec<ast::File>,
+    pub interner: SymbolInterner,
     pub types: TypeCheckResult,
     pub exports: HashMap<String, Type>,
 }
@@ -145,50 +146,58 @@ fn parse_packages(
     file_set: &FileSet,
     _interner: &mut SymbolInterner,
 ) -> Result<HashMap<String, ParsedPackage>, ProjectError> {
-    let mut packages: HashMap<PathBuf, Vec<(PathBuf, ast::File, SymbolInterner, Vec<ImportPath>)>> = HashMap::new();
-    
-    let mut file_id_counter = 0u32;
-    
+    // First, group files by directory
+    let mut files_by_dir: HashMap<PathBuf, Vec<(PathBuf, String)>> = HashMap::new();
     for (path, content) in &file_set.files {
-        let file_id = FileId::new(file_id_counter);
-        file_id_counter += 1;
-        
-        let (ast, _diag, file_interner) = parse(file_id, content);
-        
-        // Extract imports
-        let imports: Vec<ImportPath> = ast.imports.iter()
-            .filter_map(|imp| {
-                let raw = file_interner.resolve(imp.path.raw)?;
-                let path_str = raw.trim_matches('"');
-                Some(ImportPath::parse(path_str))
-            })
-            .collect();
-        
         let pkg_dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
-        packages.entry(pkg_dir).or_default().push((path.clone(), ast, file_interner, imports));
+        files_by_dir.entry(pkg_dir).or_default().push((path.clone(), content.clone()));
     }
     
-    // Convert to ParsedPackage
+    // Parse each package with a shared interner
     let mut result = HashMap::new();
-    for (dir, files) in packages {
+    let mut file_id_counter = 0u32;
+    
+    for (dir, files) in files_by_dir {
         if files.is_empty() {
             continue;
         }
         
-        // Get package name from first file's interner
-        let pkg_name = files[0].1.package.as_ref()
-            .and_then(|p| files[0].2.resolve(p.symbol))
+        // Parse all files in this package with a shared interner
+        let mut shared_interner = SymbolInterner::new();
+        let mut parsed_files = Vec::new();
+        let mut all_imports = Vec::new();
+        
+        for (path, content) in files {
+            let file_id = FileId::new(file_id_counter);
+            file_id_counter += 1;
+            
+            let (ast, _diag, interner) = parse_with_interner(file_id, &content, shared_interner);
+            shared_interner = interner;
+            
+            // Extract imports
+            let imports: Vec<ImportPath> = ast.imports.iter()
+                .filter_map(|imp| {
+                    let raw = shared_interner.resolve(imp.path.raw)?;
+                    let path_str = raw.trim_matches('"');
+                    Some(ImportPath::parse(path_str))
+                })
+                .collect();
+            
+            all_imports.extend(imports);
+            parsed_files.push((path, ast));
+        }
+        
+        // Get package name
+        let pkg_name = parsed_files[0].1.package.as_ref()
+            .and_then(|p| shared_interner.resolve(p.symbol))
             .unwrap_or("main")
             .to_string();
-        
-        let all_imports: Vec<ImportPath> = files.iter()
-            .flat_map(|(_, _, _, imports)| imports.clone())
-            .collect();
         
         let parsed = ParsedPackage {
             name: pkg_name.clone(),
             dir: dir.clone(),
-            files: files.into_iter().map(|(p, ast, interner, _)| (p, ast, interner)).collect(),
+            files: parsed_files,
+            interner: shared_interner,
             imports: all_imports,
         };
         
@@ -268,30 +277,43 @@ fn typecheck_package(
     _package_exports: &HashMap<String, HashMap<String, Type>>,
     _interner: &SymbolInterner,
 ) -> Result<TypedPackage, ProjectError> {
-    let mut all_files = Vec::new();
-    let mut combined_types = TypeCheckResult::default();
-    let exports = HashMap::new();
-    
-    for (path, ast, file_interner) in parsed.files {
-        let mut diag = DiagnosticSink::new();
-        let types = typecheck_file(&ast, &file_interner, &mut diag);
-        
-        if diag.has_errors() {
-            return Err(ProjectError::TypeCheck(format!(
-                "Type errors in {:?}", path
-            )));
-        }
-        
-        all_files.push((ast, file_interner));
-        combined_types = types;
+    if parsed.files.is_empty() {
+        return Ok(TypedPackage {
+            name: parsed.name,
+            dir: parsed.dir,
+            files: Vec::new(),
+            interner: parsed.interner,
+            types: TypeCheckResult::default(),
+            exports: HashMap::new(),
+        });
     }
+    
+    // Collect all ASTs
+    let file_refs: Vec<&ast::File> = parsed.files.iter().map(|(_, ast)| ast).collect();
+    
+    // Type check all files together with the shared interner
+    let mut diag = DiagnosticSink::new();
+    let types = typecheck_files(&file_refs, &parsed.interner, &mut diag);
+    
+    if diag.has_errors() {
+        let first_path = &parsed.files[0].0;
+        return Err(ProjectError::TypeCheck(format!(
+            "Type errors in package {:?}", first_path.parent().unwrap_or(first_path.as_path())
+        )));
+    }
+    
+    let all_files: Vec<ast::File> = parsed.files
+        .into_iter()
+        .map(|(_, ast)| ast)
+        .collect();
     
     Ok(TypedPackage {
         name: parsed.name,
         dir: parsed.dir,
         files: all_files,
-        types: combined_types,
-        exports,
+        interner: parsed.interner,
+        types,
+        exports: HashMap::new(),
     })
 }
 

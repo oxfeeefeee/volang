@@ -315,10 +315,19 @@ impl<'a> TypeCollector<'a> {
 
     /// Collects all declarations from a file.
     pub fn collect(mut self, file: &File) -> CollectResult {
+        self.collect_decls(file);
+        self.finish()
+    }
+    
+    /// Collects declarations from a file (can be called multiple times for multi-file packages).
+    pub fn collect_decls(&mut self, file: &File) {
         for decl in &file.decls {
             self.collect_decl(decl);
         }
-
+    }
+    
+    /// Finishes collection and returns the result.
+    pub fn finish(self) -> CollectResult {
         CollectResult {
             scope: self.scope,
             named_types: self.named_types,
@@ -749,6 +758,22 @@ pub fn collect_types(
 ) -> CollectResult {
     let collector = TypeCollector::new(interner, diagnostics);
     collector.collect(file)
+}
+
+/// Collect types from multiple files in the same package.
+pub fn collect_types_multi(
+    files: &[&File],
+    interner: &SymbolInterner,
+    diagnostics: &mut DiagnosticSink,
+) -> CollectResult {
+    let mut collector = TypeCollector::new(interner, diagnostics);
+    
+    // Collect declarations from all files
+    for file in files {
+        collector.collect_decls(file);
+    }
+    
+    collector.finish()
 }
 
 #[cfg(test)]

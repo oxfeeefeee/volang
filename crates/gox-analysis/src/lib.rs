@@ -83,7 +83,7 @@ use gox_syntax::ast::{Decl, File};
 pub use types::{Type, BasicType, UntypedKind, NamedTypeId, NamedTypeInfo, MethodSet, TypeRegistry};
 pub use scope::{Scope, ScopeKind, Entity, BuiltinKind};
 pub use constant::Constant;
-pub use collect::{collect_types, CollectResult};
+pub use collect::{collect_types, collect_types_multi, CollectResult};
 pub use resolve::{resolve_types, ResolveResult};
 pub use check::{check_types, TypeChecker};
 pub use project::{analyze_project, Project, TypedPackage, ProjectError};
@@ -110,19 +110,32 @@ pub fn typecheck_file(
     interner: &SymbolInterner,
     diagnostics: &mut DiagnosticSink,
 ) -> TypeCheckResult {
-    // Phase 1: Collect declarations
-    let collect_result = collect_types(file, interner, diagnostics);
+    typecheck_files(&[file], interner, diagnostics)
+}
+
+/// Type-checks multiple GoX source files in the same package.
+///
+/// This merges declarations from all files before type checking,
+/// allowing cross-file function calls within the same package.
+pub fn typecheck_files(
+    files: &[&File],
+    interner: &SymbolInterner,
+    diagnostics: &mut DiagnosticSink,
+) -> TypeCheckResult {
+    // Phase 1: Collect declarations from all files
+    let collect_result = collect_types_multi(files, interner, diagnostics);
 
     // Phase 2: Resolve types
     let resolve_result = resolve_types(collect_result, interner, diagnostics);
 
-    // Phase 3: Check function bodies
+    // Phase 3: Check function bodies from all files
     let mut checker = check_types(&resolve_result, interner, diagnostics);
 
-    // Check all function bodies with local scope tracking
-    for decl in &file.decls {
-        if let Decl::Func(func) = decl {
-            checker.check_func_body(func);
+    for file in files {
+        for decl in &file.decls {
+            if let Decl::Func(func) = decl {
+                checker.check_func_body(func);
+            }
         }
     }
 

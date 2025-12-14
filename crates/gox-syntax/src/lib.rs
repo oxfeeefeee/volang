@@ -16,4 +16,4 @@ pub mod errors;
 pub use token::{Token, TokenKind};
 pub use lexer::Lexer;
 pub use ast::*;
-pub use parser::{Parser, parse};
+pub use parser::{Parser, parse, parse_with_interner};

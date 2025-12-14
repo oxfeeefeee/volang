@@ -347,6 +347,24 @@ pub fn parse(file_id: FileId, source: &str) -> (File, DiagnosticSink, SymbolInte
     (file, diagnostics, interner)
 }
 
+/// Parses source code with a shared interner (for multi-file packages).
+pub fn parse_with_interner(
+    file_id: FileId,
+    source: &str,
+    interner: SymbolInterner,
+) -> (File, DiagnosticSink, SymbolInterner) {
+    let mut parser = Parser::with_interner(file_id, source, interner);
+    let file = parser.parse_file().unwrap_or_else(|()| File {
+        package: None,
+        imports: Vec::new(),
+        decls: Vec::new(),
+        span: Span::dummy(),
+    });
+    let diagnostics = parser.take_diagnostics();
+    let interner = parser.take_interner();
+    (file, diagnostics, interner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
