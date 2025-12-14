@@ -1,3 +1,12 @@
-//! Native function implementations for VM runtime.
+//! Native function implementations for the VM runtime.
 
 pub mod builtin;
+pub mod fmt;
+
+use gox_vm::{NativeFn, NativeRegistry};
+
+/// Register all native functions.
+pub fn register_all(registry: &mut NativeRegistry) {
+    builtin::register(registry);
+    fmt::register(registry);
+}

@@ -1,37 +1,273 @@
 # GoX FFI Design
 
-## Overview
+This document describes the Foreign Function Interface (FFI) for calling native (Rust) functions from GoX code.
 
-FFI (Foreign Function Interface) allows GoX code to call native (Rust) functions.
+## 1. Overview
 
-## FFI Types
+- Native functions use the same `CALL` instruction as GoX functions (unified calling)
+- Wrapper types hide VM internals from native developers
+- Proc macro enables ergonomic function definition and auto-registration
 
-```rust
-pub struct GoxString { ptr: *const u8, len: usize }
-pub struct GoxSlice { ptr: *mut u8, len: usize, cap: usize }
-pub struct GoxBytes { ptr: *mut u8, len: usize, cap: usize }
+## 2. GoX-Side Declaration
+
+Use `native` keyword to declare native functions:
+
+```go
+// std/fmt.gox
+package fmt
+
+native func Println(a ...interface{}) (n int, err error)
+native func Printf(format string, a ...interface{}) (n int, err error)
+native func Sprintf(format string, a ...interface{}) string
 ```
 
-## Runtime Context
+```go
+// std/os.gox
+package os
 
-All backends implement the `RuntimeContext` trait:
+type File struct { handle int }
 
-```rust
-pub trait RuntimeContext {
-    fn alloc(&mut self, layout: Layout) -> *mut u8;
-    fn dealloc(&mut self, ptr: *mut u8, layout: Layout);
-    fn gc_root(&mut self, ptr: *mut u8);
-    fn gc_unroot(&mut self, ptr: *mut u8);
+native func Open(name string) (*File, error)
+native func ReadFile(name string) ([]byte, error)
+native func (f *File) Read(b []byte) (n int, err error)
+native func (f *File) Close() error
+```
+
+Usage in GoX code:
+
+```go
+import "fmt"
+import "os"
+
+func main() {
+    data, err := os.ReadFile("hello.txt")
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println(string(data))
 }
 ```
 
-## Native Function Registration
+## 3. Rust-Side Implementation
 
-Native functions are implemented in `gox-runtime-*/natives/`:
+### 3.1 Proc Macro
 
 ```rust
-#[gox_native(name = "println")]
-pub fn println(args: &[FfiValue]) {
-    // implementation
+use gox_ffi::prelude::*;
+
+#[gox_native("fmt.Println")]
+fn println(args: GoxVariadic) -> (i64, Option<GoxError>) {
+    let s = args.format_default();
+    println!("{}", s);
+    (s.len() as i64, None)
+}
+
+#[gox_native("os.ReadFile")]
+fn read_file(path: GoxString) -> Result<Vec<u8>, GoxError> {
+    std::fs::read(path.as_str()).map_err(Into::into)
+}
+
+#[gox_native("os.File.Read")]
+fn file_read(file: GoxObject, buf: GoxSlice<u8>) -> Result<i64, GoxError> {
+    // ...
 }
 ```
+
+### 3.2 Wrapper Types
+
+Native developers use these wrapper types (not raw VM internals):
+
+```rust
+/// Generic value type
+pub enum GoxValue<'a> {
+    Nil,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(GoxString<'a>),
+    Slice(GoxSlice<'a>),
+    Map(GoxMap<'a>),
+    Struct(GoxStruct<'a>),
+    Object(GoxObject<'a>),
+    Interface(GoxInterface<'a>),
+}
+
+/// String wrapper
+pub struct GoxString<'a> { ... }
+impl GoxString<'_> {
+    pub fn as_str(&self) -> &str;
+    pub fn len(&self) -> usize;
+}
+
+/// Slice wrapper
+pub struct GoxSlice<'a, T = GoxValue<'a>> { ... }
+impl<'a, T> GoxSlice<'a, T> {
+    pub fn len(&self) -> usize;
+    pub fn get(&self, idx: usize) -> T;
+    pub fn as_slice(&self) -> &[T];  // for primitive T
+    pub fn iter(&self) -> impl Iterator<Item = T>;
+}
+
+/// Struct wrapper (value type, references stack slots)
+pub struct GoxStruct<'a> { ... }
+impl GoxStruct<'_> {
+    pub fn field(&self, idx: usize) -> GoxValue;
+    pub fn field_count(&self) -> usize;
+}
+
+/// Object wrapper (reference type)
+pub struct GoxObject<'a> { ... }
+
+/// Map wrapper
+pub struct GoxMap<'a> { ... }
+impl<'a> GoxMap<'a> {
+    pub fn get(&self, key: GoxValue) -> Option<GoxValue<'a>>;
+    pub fn len(&self) -> usize;
+    pub fn iter(&self) -> impl Iterator<Item = (GoxValue<'a>, GoxValue<'a>)>;
+}
+
+/// Variadic arguments
+pub struct GoxVariadic<'a> { ... }
+impl GoxVariadic<'_> {
+    pub fn len(&self) -> usize;
+    pub fn get(&self, idx: usize) -> GoxValue;
+    pub fn format_default(&self) -> String;
+    pub fn format_with(&self, fmt: &str) -> String;
+}
+```
+
+### 3.3 Type Conversion
+
+The proc macro automatically handles type conversion:
+
+| Rust Parameter | Extraction |
+|----------------|------------|
+| `i64`, `i32` | `args.get(n).as_int()` |
+| `f64`, `f32` | `args.get(n).as_float()` |
+| `bool` | `args.get(n).as_bool()` |
+| `GoxString` | `args.get(n).as_string()` |
+| `GoxSlice<T>` | `args.get(n).as_slice()` |
+| `GoxMap` | `args.get(n).as_map()` |
+| `GoxStruct` | `args.get(n).as_struct()` |
+| `GoxObject` | `args.get(n).as_object()` |
+| `GoxValue` | `args.get(n)` |
+| `GoxVariadic` | `args.rest(n)` |
+
+| Rust Return | Conversion |
+|-------------|------------|
+| `()` | `Ok(vec![])` |
+| `T` | `Ok(vec![T.into_gox()])` |
+| `(T, U)` | `Ok(vec![T.into_gox(), U.into_gox()])` |
+| `Result<T, GoxError>` | Success → values, Error → panic |
+| `Option<GoxError>` | `None` → nil, `Some(e)` → error |
+
+### 3.4 Native Context
+
+For operations that need VM access:
+
+```rust
+pub struct NativeCtx<'a> { ... }
+
+impl NativeCtx<'_> {
+    // Allocation
+    pub fn new_string(&mut self, s: &str) -> GoxString;
+    pub fn new_slice<T>(&mut self, data: &[T]) -> GoxSlice<T>;
+    pub fn new_byte_slice(&mut self, data: &[u8]) -> GoxSlice<u8>;
+    pub fn new_error(&mut self, msg: String) -> GoxError;
+    
+    // Type info
+    pub fn type_of(&self, val: &GoxValue) -> TypeId;
+}
+
+// Usage
+#[gox_native("mypackage.NewThing")]
+fn new_thing(ctx: &mut NativeCtx, name: GoxString) -> GoxObject {
+    ctx.new_object(TYPE_THING, &[name.into_gox()])
+}
+```
+
+## 4. Auto-Registration
+
+The `#[gox_native]` macro automatically registers functions using the `inventory` crate:
+
+```rust
+// Generated by macro
+inventory::submit! {
+    NativeEntry {
+        name: "fmt.Println",
+        func: __gox_wrapper_println,
+    }
+}
+
+// VM initialization
+impl NativeRegistry {
+    pub fn from_inventory() -> Self {
+        let mut registry = Self::new();
+        for entry in inventory::iter::<NativeEntry> {
+            registry.insert(entry.name.to_string(), entry.func);
+        }
+        registry
+    }
+}
+
+// Usage
+fn init_vm() -> Vm {
+    let registry = NativeRegistry::from_inventory();
+    Vm::new(registry)
+}
+```
+
+## 5. GC Safety
+
+During native function execution, GC is paused:
+
+```rust
+fn exec_native_call(vm: &mut Vm, native_fn: NativeFn, args: GoxArgs) -> GoxResult {
+    vm.gc.pause();
+    let result = native_fn(&mut vm.native_ctx, args);
+    vm.gc.resume();
+    result
+}
+```
+
+This ensures all GcRef values remain valid during the call.
+
+## 6. Internal Implementation
+
+### Callable Type
+
+```rust
+enum Callable {
+    GoxFunc { func_id: FuncId },
+    NativeFunc { func: fn(&mut NativeCtx, GoxArgs) -> GoxResult },
+    Closure { func_id: FuncId, upvalues: Vec<GcRef> },
+}
+```
+
+### Arguments Wrapper
+
+```rust
+pub struct GoxArgs<'a> {
+    ctx: &'a NativeCtx,
+    raw: &'a [u64],
+    offsets: &'a [ArgOffset],  // Start position and type of each arg
+}
+
+impl<'a> GoxArgs<'a> {
+    pub fn get(&self, idx: usize) -> GoxValue<'a>;
+    pub fn len(&self) -> usize;
+    pub fn rest(&self, from: usize) -> GoxVariadic<'a>;
+}
+```
+
+## 7. Summary
+
+| Aspect | Design |
+|--------|--------|
+| GoX syntax | `native func Name(params) returns` |
+| Rust syntax | `#[gox_native("pkg.Name")] fn name(...)` |
+| Wrapper types | `GoxString`, `GoxSlice`, `GoxStruct`, etc. |
+| Type conversion | Automatic via proc macro |
+| Registration | Auto via `inventory` crate |
+| GC safety | Pause during native call |

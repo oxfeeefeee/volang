@@ -31,4 +31,36 @@ Step5:
 Step6:
 现在，我们要开始做typechecker了，这个东西非常复杂，你先不要动手，先分析一下重点和难点。
 
+写设计文档，首先像技术博客一样写一下设计方案，重点难点以及如何解决，然后写分成几个阶段，分别是什么样的交付目标和如何测试
+不要包含实际的测试用例，不要包含过多代码
 
+
+我们假设一个use case：
+
+一个用户自定义的
+
+struct Kkk{
+    field1: int,
+    field2: Map,
+    field3: Slice,
+    field4: bool,
+
+}
+
+map[Kkk]string
+
+func main() {
+    m := make(map[Kkk]string)
+    m[Kkk{1, 2, 3, true}] = "hello"
+    m[Kkk{2, 3, 4, false}] = "world"
+    // range over map and concat the string
+    var s string
+    var total int
+    for k, v := range m {
+        s += v
+        total += (k.0 + k.1 + k.2)
+    }
+    println(s, total)  
+}
+
+你设想一下，字节码是什么样的

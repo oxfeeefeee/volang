@@ -5,3 +5,12 @@
 
 pub mod context;
 pub mod natives;
+
+use gox_vm::{Vm, NativeRegistry};
+
+/// Create a VM with all native functions registered.
+pub fn create_vm() -> Vm {
+    let mut registry = NativeRegistry::new();
+    natives::register_all(&mut registry);
+    Vm::with_natives(registry)
+}

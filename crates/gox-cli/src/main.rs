@@ -5,12 +5,15 @@
 //! - `gox get <module>@<version>` - Download a dependency
 //! - `gox build` - Build the current module
 //! - `gox check` - Type-check without building
+//! - `gox run-bytecode --test <name>` - Run bytecode tests
 
 use std::env;
 use std::process;
 
 use clap::{Parser, Subcommand};
 use gox_module::{ModFile, ModuleResolver};
+
+mod bytecode_tests;
 
 #[derive(Parser)]
 #[command(name = "gox")]
@@ -39,6 +42,13 @@ enum Commands {
 
     /// Type-check the current module without building
     Check,
+    
+    /// Run bytecode tests for VM verification
+    RunBytecode {
+        /// Test name: arithmetic, factorial, ffi, channel, all
+        #[arg(short, long, default_value = "all")]
+        test: String,
+    },
 }
 
 fn main() {
@@ -49,6 +59,7 @@ fn main() {
         Commands::Get { module_version } => cmd_get(&module_version),
         Commands::Build => cmd_build(),
         Commands::Check => cmd_check(),
+        Commands::RunBytecode { test } => bytecode_tests::run_test(&test),
     };
 
     if let Err(e) = result {
