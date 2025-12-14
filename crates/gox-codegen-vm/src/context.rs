@@ -128,6 +128,8 @@ pub struct CodegenContext<'a> {
     pub interner: &'a SymbolInterner,
     pub module: Module,
     pub func_indices: HashMap<Symbol, u32>,
+    /// Cross-package function index: "pkg.Func" -> func_idx
+    pub cross_pkg_funcs: HashMap<String, u32>,
     pub native_indices: HashMap<String, u32>,
     pub const_indices: HashMap<String, u16>,
 }
@@ -139,6 +141,7 @@ pub struct CodegenContextRef<'a, 'm> {
     pub interner: &'a SymbolInterner,
     pub module: &'m mut Module,
     pub func_indices: HashMap<Symbol, u32>,
+    pub cross_pkg_funcs: HashMap<String, u32>,
     pub native_indices: HashMap<String, u32>,
     pub const_indices: HashMap<String, u16>,
 }
@@ -190,6 +193,7 @@ impl<'a, 'm> CodegenContextRef<'a, 'm> {
                 interner: self.interner,
                 module: Module::new(""),
                 func_indices: self.func_indices.clone(),
+                cross_pkg_funcs: self.cross_pkg_funcs.clone(),
                 native_indices: self.native_indices.clone(),
                 const_indices: self.const_indices.clone(),
             };
@@ -241,6 +245,11 @@ impl<'a, 'm> CodegenContextRef<'a, 'm> {
         self.func_indices.get(&sym).copied()
     }
     
+    /// Look up a cross-package function by qualified name (e.g., "math.Add").
+    pub fn lookup_cross_pkg_func(&self, name: &str) -> Option<u32> {
+        self.cross_pkg_funcs.get(name).copied()
+    }
+    
     pub fn lookup_native(&self, name: &str) -> Option<u32> {
         self.native_indices.get(name).copied()
     }
@@ -258,6 +267,7 @@ impl<'a> CodegenContext<'a> {
             interner,
             module: Module::new(""),
             func_indices: HashMap::new(),
+            cross_pkg_funcs: HashMap::new(),
             native_indices: HashMap::new(),
             const_indices: HashMap::new(),
         }
@@ -276,6 +286,7 @@ impl<'a> CodegenContext<'a> {
             interner,
             module,
             func_indices: HashMap::new(),
+            cross_pkg_funcs: HashMap::new(),
             native_indices: HashMap::new(),
             const_indices: HashMap::new(),
         }
@@ -386,6 +397,10 @@ impl<'a> CodegenContext<'a> {
     
     pub fn lookup_func(&self, sym: Symbol) -> Option<u32> {
         self.func_indices.get(&sym).copied()
+    }
+    
+    pub fn lookup_cross_pkg_func(&self, name: &str) -> Option<u32> {
+        self.cross_pkg_funcs.get(name).copied()
     }
     
     pub fn lookup_native(&self, name: &str) -> Option<u32> {

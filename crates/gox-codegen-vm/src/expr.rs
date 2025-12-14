@@ -272,13 +272,19 @@ fn compile_call(
         }
     }
     
-    // Package.Function call (e.g., fmt.Println)
+    // Package.Function call (e.g., math.Add, fmt.Println)
     if let ExprKind::Selector(sel) = &call.func.kind {
         if let ExprKind::Ident(pkg_ident) = &sel.expr.kind {
             let pkg = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
             let method = ctx.interner.resolve(sel.sel.symbol).unwrap_or("");
             let full_name = format!("{}.{}", pkg, method);
             
+            // Try cross-package function first
+            if let Some(func_idx) = ctx.lookup_cross_pkg_func(&full_name) {
+                return compile_func_call(ctx, fctx, func_idx, call);
+            }
+            
+            // Try native functions
             if let Some(native_idx) = ctx.lookup_native(&full_name) {
                 return compile_native_call(ctx, fctx, native_idx, call);
             }

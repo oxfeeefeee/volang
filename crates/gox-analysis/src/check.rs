@@ -79,6 +79,10 @@ pub struct TypeChecker<'a> {
     return_types: Vec<Type>,
     /// Whether the current function has named return values.
     has_named_returns: bool,
+    /// Imported package names (for cross-package calls).
+    imported_packages: std::collections::HashSet<String>,
+    /// Imported package exports (pkg_name -> symbol_name -> type).
+    package_exports: std::collections::HashMap<String, std::collections::HashMap<String, Type>>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -98,6 +102,31 @@ impl<'a> TypeChecker<'a> {
             registry: TypeRegistry::new(&resolve_result.named_types),
             return_types: Vec::new(),
             has_named_returns: false,
+            imported_packages: std::collections::HashSet::new(),
+            package_exports: std::collections::HashMap::new(),
+        }
+    }
+    
+    /// Sets imported packages for cross-package call resolution.
+    pub fn set_imported_packages(
+        &mut self,
+        imports: &[crate::project::ResolvedImport],
+        exports: &std::collections::HashMap<String, std::collections::HashMap<String, crate::project::ExportedSymbol>>,
+    ) {
+        for import in imports {
+            if !import.package_name.is_empty() {
+                let local_name = import.alias.as_ref()
+                    .unwrap_or(&import.package_name);
+                self.imported_packages.insert(local_name.clone());
+                
+                // Copy the exports for this package
+                if let Some(pkg_exports) = exports.get(&import.package_name) {
+                    let type_map: std::collections::HashMap<String, Type> = pkg_exports.iter()
+                        .map(|(name, sym)| (name.clone(), sym.ty.clone()))
+                        .collect();
+                    self.package_exports.insert(local_name.clone(), type_map);
+                }
+            }
         }
     }
 
@@ -793,6 +822,23 @@ impl<'a> TypeChecker<'a> {
 
     /// Checks a selector expression (field or method access).
     fn check_selector(&mut self, sel: &ast::SelectorExpr, _span: Span) -> Type {
+        // Check for cross-package call (pkg.Func)
+        if let ast::ExprKind::Ident(pkg_ident) = &sel.expr.kind {
+            let pkg_name = self.interner.resolve(pkg_ident.symbol).unwrap_or("");
+            if self.imported_packages.contains(pkg_name) {
+                // This is a cross-package call
+                let field_name = self.interner.resolve(sel.sel.symbol).unwrap_or("");
+                if let Some(pkg_exports) = self.package_exports.get(pkg_name) {
+                    if let Some(ty) = pkg_exports.get(field_name) {
+                        return ty.clone();
+                    }
+                }
+                // Exported symbol not found, but don't error - codegen will handle
+                // Return Invalid type but don't emit error for now
+                return Type::Invalid;
+            }
+        }
+        
         let base_ty = self.check_expr(&sel.expr);
         let field_name = sel.sel.symbol;
 

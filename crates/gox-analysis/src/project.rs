@@ -1,14 +1,33 @@
 //! Multi-package project analysis.
+//!
+//! Handles:
+//! - Cross-package imports with "./path" syntax
+//! - Dependency graph and topological sort for init order
+//! - Package exports (capitalized names)
+//! - Package init: implicit (var decls) + explicit (init funcs)
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gox_common::vfs::FileSet;
-use gox_common::{DiagnosticSink, FileId, SymbolInterner};
+use gox_common::{DiagnosticSink, FileId, Symbol, SymbolInterner};
 use gox_syntax::{parse, parse_with_interner, ast};
+use gox_syntax::ast::Decl;
 
 use crate::types::Type;
-use crate::{typecheck_files, TypeCheckResult};
+use crate::scope::Entity;
+use crate::{typecheck_files, typecheck_files_with_imports, TypeCheckResult};
+
+/// Import declaration with resolved package reference.
+#[derive(Debug, Clone)]
+pub struct ResolvedImport {
+    /// The import path as written (e.g., "./math")
+    pub path: String,
+    /// The resolved package name (e.g., "math")
+    pub package_name: String,
+    /// Optional alias (e.g., `import m "./math"` -> alias = "m")
+    pub alias: Option<String>,
+}
 
 /// Import path classification.
 #[derive(Debug, Clone)]
@@ -36,7 +55,27 @@ pub struct ParsedPackage {
     pub dir: PathBuf,
     pub files: Vec<(PathBuf, ast::File)>,
     pub interner: SymbolInterner,
-    pub imports: Vec<ImportPath>,
+    pub imports: Vec<ResolvedImport>,
+    /// Has init() function(s)
+    pub has_init: bool,
+    /// Has package-level var declarations (implicit init)
+    pub has_var_decls: bool,
+}
+
+/// Exported symbol from a package.
+#[derive(Debug, Clone)]
+pub struct ExportedSymbol {
+    pub name: String,
+    pub ty: Type,
+    pub kind: ExportKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExportKind {
+    Func,
+    Var,
+    Const,
+    Type,
 }
 
 /// A type-checked package.
@@ -47,14 +86,25 @@ pub struct TypedPackage {
     pub files: Vec<ast::File>,
     pub interner: SymbolInterner,
     pub types: TypeCheckResult,
-    pub exports: HashMap<String, Type>,
+    /// Exported symbols (capitalized names)
+    pub exports: HashMap<String, ExportedSymbol>,
+    /// Resolved imports for this package
+    pub imports: Vec<ResolvedImport>,
+    /// Init order index (0 = first to init)
+    pub init_order: usize,
+    /// Has init() function(s)
+    pub has_init: bool,
+    /// Has package-level var declarations
+    pub has_var_decls: bool,
 }
 
 /// A complete project with all packages analyzed.
 #[derive(Debug)]
 pub struct Project {
-    /// Packages in dependency order (dependencies first)
+    /// Packages in init order (dependencies first)
     pub packages: Vec<TypedPackage>,
+    /// Package name -> index in packages vec
+    pub package_index: HashMap<String, usize>,
     /// Symbol interner shared across all packages
     pub interner: SymbolInterner,
     /// Main package name
@@ -110,22 +160,32 @@ impl From<std::io::Error> for ProjectError {
 pub fn analyze_project(file_set: FileSet) -> Result<Project, ProjectError> {
     let mut interner = SymbolInterner::new();
     
-    // Step 1: Parse all files and group by package
+    // Step 1: Parse all files and group by package (by directory)
     let mut parsed_packages = parse_packages(&file_set, &mut interner)?;
     
-    // Step 2: Build dependency graph and topologically sort
+    // Step 2: Resolve imports (map import paths to package names)
+    resolve_imports(&mut parsed_packages)?;
+    
+    // Step 3: Build dependency graph and topologically sort for init order
     let sorted_names = topological_sort(&parsed_packages)?;
     
-    // Step 3: Type check packages in dependency order
+    // Step 4: Type check packages in dependency order
     let mut typed_packages = Vec::new();
-    let mut package_exports: HashMap<String, HashMap<String, Type>> = HashMap::new();
+    let mut package_exports: HashMap<String, HashMap<String, ExportedSymbol>> = HashMap::new();
     
-    for pkg_name in &sorted_names {
+    for (init_order, pkg_name) in sorted_names.iter().enumerate() {
         let parsed = parsed_packages.remove(pkg_name).unwrap();
-        let typed = typecheck_package(parsed, &package_exports, &interner)?;
+        let typed = typecheck_package(parsed, &package_exports, &interner, init_order)?;
         package_exports.insert(pkg_name.clone(), typed.exports.clone());
         typed_packages.push(typed);
     }
+    
+    // Build package index
+    let package_index: HashMap<String, usize> = typed_packages
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.name.clone(), i))
+        .collect();
     
     // Find main package
     let main_package = typed_packages
@@ -136,6 +196,7 @@ pub fn analyze_project(file_set: FileSet) -> Result<Project, ProjectError> {
     
     Ok(Project {
         packages: typed_packages,
+        package_index,
         interner,
         main_package,
     })
@@ -165,7 +226,9 @@ fn parse_packages(
         // Parse all files in this package with a shared interner
         let mut shared_interner = SymbolInterner::new();
         let mut parsed_files = Vec::new();
-        let mut all_imports = Vec::new();
+        let mut raw_imports = Vec::new();
+        let mut has_init = false;
+        let mut has_var_decls = false;
         
         for (path, content) in files {
             let file_id = FileId::new(file_id_counter);
@@ -174,16 +237,29 @@ fn parse_packages(
             let (ast, _diag, interner) = parse_with_interner(file_id, &content, shared_interner);
             shared_interner = interner;
             
-            // Extract imports
-            let imports: Vec<ImportPath> = ast.imports.iter()
-                .filter_map(|imp| {
-                    let raw = shared_interner.resolve(imp.path.raw)?;
-                    let path_str = raw.trim_matches('"');
-                    Some(ImportPath::parse(path_str))
-                })
-                .collect();
+            // Extract imports (no alias support in current AST)
+            for imp in &ast.imports {
+                if let Some(raw) = shared_interner.resolve(imp.path.raw) {
+                    let path_str = raw.trim_matches('"').to_string();
+                    raw_imports.push((path_str, None));
+                }
+            }
             
-            all_imports.extend(imports);
+            // Check for init() and var declarations
+            for decl in &ast.decls {
+                match decl {
+                    Decl::Func(f) => {
+                        if shared_interner.resolve(f.name.symbol) == Some("init") {
+                            has_init = true;
+                        }
+                    }
+                    Decl::Var(_) => {
+                        has_var_decls = true;
+                    }
+                    _ => {}
+                }
+            }
+            
             parsed_files.push((path, ast));
         }
         
@@ -193,12 +269,23 @@ fn parse_packages(
             .unwrap_or("main")
             .to_string();
         
+        // Create unresolved imports (will be resolved later)
+        let imports: Vec<ResolvedImport> = raw_imports.into_iter()
+            .map(|(path, alias)| ResolvedImport {
+                path: path.clone(),
+                package_name: String::new(), // Will be resolved
+                alias,
+            })
+            .collect();
+        
         let parsed = ParsedPackage {
             name: pkg_name.clone(),
             dir: dir.clone(),
             files: parsed_files,
             interner: shared_interner,
-            imports: all_imports,
+            imports,
+            has_init,
+            has_var_decls,
         };
         
         result.insert(pkg_name, parsed);
@@ -207,7 +294,72 @@ fn parse_packages(
     Ok(result)
 }
 
-/// Topologically sort packages by dependencies.
+/// Resolve import paths to package names.
+fn resolve_imports(packages: &mut HashMap<String, ParsedPackage>) -> Result<(), ProjectError> {
+    // Build dir -> package name mapping
+    let dir_to_pkg: HashMap<PathBuf, String> = packages.iter()
+        .map(|(name, pkg)| (pkg.dir.clone(), name.clone()))
+        .collect();
+    
+    // Resolve each package's imports
+    let pkg_dirs: Vec<(String, PathBuf)> = packages.iter()
+        .map(|(name, pkg)| (name.clone(), pkg.dir.clone()))
+        .collect();
+    
+    for (pkg_name, pkg_dir) in pkg_dirs {
+        let pkg = packages.get_mut(&pkg_name).unwrap();
+        
+        for import in &mut pkg.imports {
+            let import_path = ImportPath::parse(&import.path);
+            
+            match import_path {
+                ImportPath::Local(rel_path) => {
+                    // Resolve relative to package directory
+                    let target_dir = pkg_dir.join(&rel_path);
+                    let target_dir = normalize_path(&target_dir);
+                    
+                    // Find matching package
+                    if let Some(target_pkg) = dir_to_pkg.get(&target_dir) {
+                        import.package_name = target_pkg.clone();
+                    } else {
+                        // Try matching by path suffix
+                        for (dir, name) in &dir_to_pkg {
+                            if dir.ends_with(&rel_path) {
+                                import.package_name = name.clone();
+                                break;
+                            }
+                        }
+                        
+                        if import.package_name.is_empty() {
+                            return Err(ProjectError::PackageNotFound(import.path.clone()));
+                        }
+                    }
+                }
+                ImportPath::External(path) => {
+                    return Err(ProjectError::ExternalImport(path));
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Normalize a path by resolving . and ..
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => { result.pop(); }
+            std::path::Component::CurDir => {}
+            c => result.push(c),
+        }
+    }
+    result
+}
+
+/// Topologically sort packages by dependencies (for init order).
+/// Dependencies come first in the result.
 fn topological_sort(packages: &HashMap<String, ParsedPackage>) -> Result<Vec<String>, ProjectError> {
     let mut in_degree: HashMap<String, usize> = HashMap::new();
     let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
@@ -218,43 +370,41 @@ fn topological_sort(packages: &HashMap<String, ParsedPackage>) -> Result<Vec<Str
         dependents.insert(name.clone(), Vec::new());
     }
     
-    // Build dependency graph
+    // Build dependency graph using resolved imports
     for (name, pkg) in packages {
         for import in &pkg.imports {
-            match import {
-                ImportPath::Local(path) => {
-                    // Find the package this import refers to
-                    let import_dir = pkg.dir.join(path);
-                    if let Some((dep_name, _)) = packages.iter()
-                        .find(|(_, p)| p.dir == import_dir || p.dir.ends_with(path))
-                    {
-                        *in_degree.get_mut(name).unwrap() += 1;
-                        dependents.get_mut(dep_name).unwrap().push(name.clone());
-                    }
-                }
-                ImportPath::External(path) => {
-                    return Err(ProjectError::ExternalImport(path.clone()));
+            if !import.package_name.is_empty() {
+                // This package depends on import.package_name
+                *in_degree.get_mut(name).unwrap() += 1;
+                if let Some(deps) = dependents.get_mut(&import.package_name) {
+                    deps.push(name.clone());
                 }
             }
         }
     }
     
-    // Kahn's algorithm
+    // Kahn's algorithm - packages with no dependencies come first
     let mut queue: Vec<String> = in_degree.iter()
         .filter(|(_, &deg)| deg == 0)
         .map(|(name, _)| name.clone())
         .collect();
+    
+    // Sort queue for deterministic ordering
+    queue.sort();
     
     let mut sorted = Vec::new();
     
     while let Some(name) = queue.pop() {
         sorted.push(name.clone());
         
-        for dependent in dependents.get(&name).unwrap_or(&Vec::new()) {
-            let deg = in_degree.get_mut(dependent).unwrap();
+        let deps = dependents.get(&name).cloned().unwrap_or_default();
+        for dependent in deps {
+            let deg = in_degree.get_mut(&dependent).unwrap();
             *deg -= 1;
             if *deg == 0 {
-                queue.push(dependent.clone());
+                // Insert in sorted position for determinism
+                let pos = queue.binary_search(&dependent).unwrap_or_else(|e| e);
+                queue.insert(pos, dependent);
             }
         }
     }
@@ -271,11 +421,12 @@ fn topological_sort(packages: &HashMap<String, ParsedPackage>) -> Result<Vec<Str
     Ok(sorted)
 }
 
-/// Type check a single package.
+/// Type check a single package and collect exports.
 fn typecheck_package(
     parsed: ParsedPackage,
-    _package_exports: &HashMap<String, HashMap<String, Type>>,
+    package_exports: &HashMap<String, HashMap<String, ExportedSymbol>>,
     _interner: &SymbolInterner,
+    init_order: usize,
 ) -> Result<TypedPackage, ProjectError> {
     if parsed.files.is_empty() {
         return Ok(TypedPackage {
@@ -285,6 +436,10 @@ fn typecheck_package(
             interner: parsed.interner,
             types: TypeCheckResult::default(),
             exports: HashMap::new(),
+            imports: parsed.imports,
+            init_order,
+            has_init: parsed.has_init,
+            has_var_decls: parsed.has_var_decls,
         });
     }
     
@@ -292,8 +447,15 @@ fn typecheck_package(
     let file_refs: Vec<&ast::File> = parsed.files.iter().map(|(_, ast)| ast).collect();
     
     // Type check all files together with the shared interner
+    // Pass imported package exports for cross-package symbol resolution
     let mut diag = DiagnosticSink::new();
-    let types = typecheck_files(&file_refs, &parsed.interner, &mut diag);
+    let types = typecheck_files_with_imports(
+        &file_refs, 
+        &parsed.interner, 
+        &mut diag,
+        &parsed.imports,
+        package_exports,
+    );
     
     if diag.has_errors() {
         let first_path = &parsed.files[0].0;
@@ -301,6 +463,9 @@ fn typecheck_package(
             "Type errors in package {:?}", first_path.parent().unwrap_or(first_path.as_path())
         )));
     }
+    
+    // Collect exported symbols (capitalized names)
+    let exports = collect_exports(&parsed.files, &parsed.interner, &types);
     
     let all_files: Vec<ast::File> = parsed.files
         .into_iter()
@@ -313,8 +478,112 @@ fn typecheck_package(
         files: all_files,
         interner: parsed.interner,
         types,
-        exports: HashMap::new(),
+        exports,
+        imports: parsed.imports,
+        init_order,
+        has_init: parsed.has_init,
+        has_var_decls: parsed.has_var_decls,
     })
+}
+
+/// Collect exported symbols (capitalized names) from a package.
+fn collect_exports(
+    files: &[(PathBuf, ast::File)],
+    interner: &SymbolInterner,
+    types: &TypeCheckResult,
+) -> HashMap<String, ExportedSymbol> {
+    let mut exports = HashMap::new();
+    
+    for (_, file) in files {
+        for decl in &file.decls {
+            match decl {
+                Decl::Func(f) => {
+                    if let Some(name) = interner.resolve(f.name.symbol) {
+                        if is_exported(name) && name != "init" {
+                            // Look up function type from scope
+                            let ty = types.scope.lookup(f.name.symbol)
+                                .and_then(|e| match e {
+                                    Entity::Func(fe) => Some(Type::Func(fe.sig.clone())),
+                                    _ => None,
+                                })
+                                .unwrap_or(Type::Invalid);
+                            
+                            exports.insert(name.to_string(), ExportedSymbol {
+                                name: name.to_string(),
+                                ty,
+                                kind: ExportKind::Func,
+                            });
+                        }
+                    }
+                }
+                Decl::Var(v) => {
+                    for spec in &v.specs {
+                        for ident in &spec.names {
+                            if let Some(name) = interner.resolve(ident.symbol) {
+                                if is_exported(name) {
+                                    let ty = types.scope.lookup(ident.symbol)
+                                        .and_then(|e| match e {
+                                            Entity::Var(ve) => Some(ve.ty.clone()),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(Type::Invalid);
+                                    
+                                    exports.insert(name.to_string(), ExportedSymbol {
+                                        name: name.to_string(),
+                                        ty,
+                                        kind: ExportKind::Var,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Decl::Const(c) => {
+                    for spec in &c.specs {
+                        for ident in &spec.names {
+                            if let Some(name) = interner.resolve(ident.symbol) {
+                                if is_exported(name) {
+                                    let ty = types.scope.lookup(ident.symbol)
+                                        .and_then(|e| match e {
+                                            Entity::Var(ve) => Some(ve.ty.clone()),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(Type::Invalid);
+                                    
+                                    exports.insert(name.to_string(), ExportedSymbol {
+                                        name: name.to_string(),
+                                        ty,
+                                        kind: ExportKind::Const,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Decl::Type(t) => {
+                    if let Some(name) = interner.resolve(t.name.symbol) {
+                        if is_exported(name) {
+                            // For type exports, just use Invalid for now
+                            // Full type info would require looking up named type
+                            exports.insert(name.to_string(), ExportedSymbol {
+                                name: name.to_string(),
+                                ty: Type::Invalid,
+                                kind: ExportKind::Type,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    exports
+}
+
+/// Check if a name is exported (starts with uppercase).
+fn is_exported(name: &str) -> bool {
+    name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
 }
 
 #[cfg(test)]

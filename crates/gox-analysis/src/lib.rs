@@ -145,6 +145,66 @@ pub fn typecheck_files(
     }
 }
 
+/// Type-checks files with imported package symbols.
+/// 
+/// This is used for multi-package projects where cross-package calls need
+/// to be resolved against imported packages' exports.
+pub fn typecheck_files_with_imports(
+    files: &[&File],
+    interner: &SymbolInterner,
+    diagnostics: &mut DiagnosticSink,
+    imports: &[project::ResolvedImport],
+    package_exports: &std::collections::HashMap<String, std::collections::HashMap<String, project::ExportedSymbol>>,
+) -> TypeCheckResult {
+    // Phase 1: Collect declarations from all files
+    let mut collect_result = collect_types_multi(files, interner, diagnostics);
+    
+    // Inject imported package names as entities
+    // This allows pkg.Func() calls to pass type checking
+    for import in imports {
+        if !import.package_name.is_empty() {
+            // Get the alias or use the package name
+            let local_name = import.alias.as_ref()
+                .unwrap_or(&import.package_name);
+            
+            // Intern the package name to get a Symbol
+            if let Some(sym) = interner.get(local_name) {
+                // Add as a package entity (using Var with special type for now)
+                collect_result.scope.insert(
+                    sym,
+                    scope::Entity::Var(scope::VarEntity {
+                        ty: types::Type::Invalid, // Package reference, not a real type
+                        constant: None,
+                        span: gox_common::Span::dummy(),
+                    }),
+                );
+            }
+        }
+    }
+    
+    // Phase 2: Resolve types
+    let resolve_result = resolve_types(collect_result, interner, diagnostics);
+
+    // Phase 3: Check function bodies from all files
+    let mut checker = check_types(&resolve_result, interner, diagnostics);
+    
+    // Set imported packages for cross-package call checking
+    checker.set_imported_packages(imports, package_exports);
+
+    for file in files {
+        for decl in &file.decls {
+            if let Decl::Func(func) = decl {
+                checker.check_func_body(func);
+            }
+        }
+    }
+
+    TypeCheckResult {
+        scope: resolve_result.scope,
+        named_types: resolve_result.named_types,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

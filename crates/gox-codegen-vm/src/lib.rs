@@ -15,16 +15,25 @@
 //!                          ▼
 //!                   gox-vm::Module
 //! ```
+//!
+//! # Multi-package compilation
+//!
+//! For multi-package projects:
+//! 1. Packages are compiled in dependency order (dependencies first)
+//! 2. Each package's init() functions are called in that order
+//! 3. Cross-package calls use qualified names (pkg.Func)
 
 mod types;
 mod context;
 mod expr;
 mod stmt;
 
+use std::collections::HashMap;
 use gox_analysis::{Project, TypeCheckResult, TypedPackage};
-use gox_common::SymbolInterner;
-use gox_syntax::ast::File;
-use gox_vm::bytecode::Module;
+use gox_common::{Symbol, SymbolInterner};
+use gox_syntax::ast::{Decl, File};
+use gox_vm::bytecode::{FunctionDef, Module};
+use gox_vm::instruction::Opcode;
 
 pub use context::CodegenContext;
 
@@ -39,64 +48,132 @@ pub fn compile(
 }
 
 /// Compile a multi-package project to bytecode.
+/// 
+/// Packages are compiled in init order (dependencies first).
+/// A module-level $init function is generated that calls all package inits.
 pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     let mut module = Module::new(&project.main_package);
     
-    // Compile each package in dependency order
+    // Build cross-package function index: "pkg.Func" -> func_idx
+    let mut cross_pkg_funcs: HashMap<String, u32> = HashMap::new();
+    
+    // First pass: collect all function declarations from ALL packages
+    // This allows cross-package function resolution
+    let mut pkg_func_indices: Vec<HashMap<Symbol, u32>> = Vec::new();
+    
     for pkg in &project.packages {
-        compile_package(&mut module, pkg, &project.interner)?;
+        let mut func_indices: HashMap<Symbol, u32> = HashMap::new();
+        
+        for file in &pkg.files {
+            for decl in &file.decls {
+                if let Decl::Func(func) = decl {
+                    let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
+                    let idx = module.functions.len() as u32;
+                    
+                    func_indices.insert(func.name.symbol, idx);
+                    
+                    // Register cross-package name for exported functions
+                    if func_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        let qualified_name = format!("{}.{}", pkg.name, func_name);
+                        cross_pkg_funcs.insert(qualified_name, idx);
+                    }
+                    
+                    // Also register init functions specially
+                    if func_name == "init" {
+                        let init_name = format!("{}.$init", pkg.name);
+                        cross_pkg_funcs.insert(init_name, idx);
+                    }
+                    
+                    module.functions.push(FunctionDef::new(func_name));
+                }
+            }
+        }
+        
+        pkg_func_indices.push(func_indices);
     }
     
-    // Find and set entry point (main.main)
+    // Second pass: compile all function bodies
+    for (pkg_idx, pkg) in project.packages.iter().enumerate() {
+        let func_indices = &pkg_func_indices[pkg_idx];
+        
+        for file in &pkg.files {
+            for decl in &file.decls {
+                if let Decl::Func(func) = decl {
+                    let mut ctx = context::CodegenContext::new(file, &pkg.types, &pkg.interner);
+                    ctx.func_indices = func_indices.clone();
+                    ctx.cross_pkg_funcs = cross_pkg_funcs.clone();
+                    
+                    let func_def = ctx.compile_func_body(func)?;
+                    let idx = func_indices[&func.name.symbol] as usize;
+                    module.functions[idx] = func_def;
+                }
+            }
+        }
+    }
+    
+    // Generate module $init function that calls package inits in order
+    let module_init_idx = module.functions.len() as u32;
+    let module_init = generate_module_init(project, &cross_pkg_funcs);
+    module.functions.push(module_init);
+    
+    // Find main function
     let main_idx = module.functions.iter()
         .position(|f| f.name == "main")
         .ok_or_else(|| CodegenError::Internal("no main function found".to_string()))?;
-    module.entry_func = main_idx as u32;
+    
+    // Generate entry point that calls $init then main
+    let entry_idx = module.functions.len() as u32;
+    let entry = generate_entry_point(module_init_idx, main_idx as u32);
+    module.functions.push(entry);
+    
+    module.entry_func = entry_idx;
     
     Ok(module)
 }
 
-/// Compile a single package into the module.
-fn compile_package(
-    module: &mut Module,
-    pkg: &TypedPackage,
-    _interner: &SymbolInterner,
-) -> Result<(), CodegenError> {
-    use gox_syntax::ast::Decl;
-    use std::collections::HashMap;
-    use gox_common::Symbol;
-    use gox_vm::bytecode::FunctionDef;
+/// Generate the module $init function that calls all package inits in order.
+fn generate_module_init(
+    project: &Project,
+    cross_pkg_funcs: &HashMap<String, u32>,
+) -> FunctionDef {
+    use gox_vm::instruction::Instruction;
     
-    // First pass: collect ALL function declarations from ALL files
-    let mut func_indices: HashMap<Symbol, u32> = HashMap::new();
-    for file in &pkg.files {
-        for decl in &file.decls {
-            if let Decl::Func(func) = decl {
-                let idx = module.functions.len() as u32;
-                func_indices.insert(func.name.symbol, idx);
-                module.functions.push(FunctionDef::new(
-                    pkg.interner.resolve(func.name.symbol).unwrap_or("")
-                ));
-            }
+    let mut func = FunctionDef::new("$init");
+    func.local_slots = 0;
+    
+    // Call each package's init in dependency order
+    for pkg in &project.packages {
+        // Check if package has init() function
+        let init_name = format!("{}.$init", pkg.name);
+        if let Some(&init_idx) = cross_pkg_funcs.get(&init_name) {
+            // Call init: Call func_id=init_idx, arg_start=0, arg_count=0, ret_count=0
+            func.code.push(Instruction::with_flags(Opcode::Call, 0, init_idx as u16, 0, 0));
         }
     }
     
-    // Second pass: compile ALL function bodies from ALL files
-    for file in &pkg.files {
-        for decl in &file.decls {
-            if let Decl::Func(func) = decl {
-                let mut ctx = context::CodegenContext::new(file, &pkg.types, &pkg.interner);
-                // Copy the shared func_indices
-                ctx.func_indices = func_indices.clone();
-                
-                let func_def = ctx.compile_func_body(func)?;
-                let idx = func_indices[&func.name.symbol] as usize;
-                module.functions[idx] = func_def;
-            }
-        }
-    }
+    // Return
+    func.code.push(Instruction::new(Opcode::Return, 0, 0, 0));
     
-    Ok(())
+    func
+}
+
+/// Generate entry point that calls $init then main.
+fn generate_entry_point(init_idx: u32, main_idx: u32) -> FunctionDef {
+    use gox_vm::instruction::Instruction;
+    
+    let mut func = FunctionDef::new("$entry");
+    func.local_slots = 0;
+    
+    // Call $init
+    func.code.push(Instruction::with_flags(Opcode::Call, 0, init_idx as u16, 0, 0));
+    
+    // Call main
+    func.code.push(Instruction::with_flags(Opcode::Call, 0, main_idx as u16, 0, 0));
+    
+    // Return
+    func.code.push(Instruction::new(Opcode::Return, 0, 0, 0));
+    
+    func
 }
 
 /// Codegen error.
