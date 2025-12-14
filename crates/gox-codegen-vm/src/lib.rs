@@ -163,7 +163,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
             .collect();
         
         // Collect constant values from scope for inlining
-        let pkg_consts: HashMap<Symbol, i64> = collect_const_values(&pkg.types.scope, &pkg.interner);
+        let pkg_consts: HashMap<Symbol, ConstValue> = collect_const_values(&pkg.types.scope, &pkg.interner);
         
         for file in &pkg.files {
             for decl in &file.decls {
@@ -246,20 +246,38 @@ fn compile_simple_expr(
     reg
 }
 
+/// Constant value for inlining (either i64 or f64).
+#[derive(Clone, Copy)]
+pub enum ConstValue {
+    Int(i64),
+    Float(f64),
+}
+
 /// Collect constant values from scope for inlining.
 fn collect_const_values(
     scope: &gox_analysis::scope::Scope,
     _interner: &SymbolInterner,
-) -> HashMap<Symbol, i64> {
+) -> HashMap<Symbol, ConstValue> {
     use gox_analysis::scope::Entity;
+    use gox_analysis::types::{Type, BasicType};
     
     let mut consts = HashMap::new();
     
     for (sym, entity) in scope.local_symbols() {
         if let Entity::Var(var) = entity {
             if let Some(ref constant) = var.constant {
-                if let Some(val) = constant.to_i64() {
-                    consts.insert(*sym, val);
+                // Check if this is a float type constant
+                let is_float = matches!(&var.ty, 
+                    Type::Basic(BasicType::Float32) | Type::Basic(BasicType::Float64));
+                
+                if is_float {
+                    // Float constants need constant pool support - skip for now
+                    // TODO: Add float constants to module constant pool
+                } else {
+                    // For int constants, try to fit in i64
+                    if let Some(val) = constant.to_i64() {
+                        consts.insert(*sym, ConstValue::Int(val));
+                    }
                 }
             }
         }

@@ -9,6 +9,7 @@ const (
     F = 0xFF & 0x0F   // 15
     G = 3 | 4         // 7
     H = -42           // -42
+    // FB float64 = 1 << 100  // TODO: float constants need constant pool
 )
 
 func main() {

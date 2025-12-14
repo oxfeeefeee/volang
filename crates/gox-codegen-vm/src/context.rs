@@ -132,8 +132,8 @@ pub struct CodegenContext<'a> {
     pub cross_pkg_funcs: HashMap<String, u32>,
     /// Global variable indices: var_symbol -> global_idx
     pub global_indices: HashMap<Symbol, u32>,
-    /// Constant values: const_symbol -> i64 value (for inlining)
-    pub const_values: HashMap<Symbol, i64>,
+    /// Constant values: const_symbol -> value (for inlining)
+    pub const_values: HashMap<Symbol, crate::ConstValue>,
     pub native_indices: HashMap<String, u32>,
     pub const_indices: HashMap<String, u16>,
 }
@@ -147,7 +147,7 @@ pub struct CodegenContextRef<'a, 'm> {
     pub func_indices: HashMap<Symbol, u32>,
     pub cross_pkg_funcs: HashMap<String, u32>,
     pub global_indices: HashMap<Symbol, u32>,
-    pub const_values: HashMap<Symbol, i64>,
+    pub const_values: HashMap<Symbol, crate::ConstValue>,
     pub native_indices: HashMap<String, u32>,
     pub const_indices: HashMap<String, u16>,
 }

@@ -76,11 +76,22 @@ fn compile_ident(
                 Ok(local.reg)
             } 
             // Then check constants (inline their values)
-            else if let Some(&const_val) = ctx.const_values.get(&ident.symbol) {
+            else if let Some(const_val) = ctx.const_values.get(&ident.symbol) {
                 let dst = fctx.regs.alloc(1);
-                // Load constant value as immediate
-                let val = const_val as u32;
-                fctx.emit(Opcode::LoadInt, dst, val as u16, (val >> 16) as u16);
+                match const_val {
+                    crate::ConstValue::Int(v) => {
+                        let val = *v as u32;
+                        fctx.emit(Opcode::LoadInt, dst, val as u16, (val >> 16) as u16);
+                    }
+                    crate::ConstValue::Float(v) => {
+                        // Load float as raw bits
+                        let bits = v.to_bits();
+                        fctx.emit(Opcode::LoadInt, dst, bits as u16, (bits >> 16) as u16);
+                        // For 64-bit float, need to handle high bits too
+                        // For now, store as 64-bit value directly
+                        fctx.emit(Opcode::MovN, dst, (bits >> 32) as u16, (bits >> 48) as u16);
+                    }
+                }
                 Ok(dst)
             }
             // Then check global variables

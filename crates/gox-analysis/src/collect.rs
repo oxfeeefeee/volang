@@ -406,12 +406,19 @@ impl<'a> TypeCollector<'a> {
                 let sym = name.symbol;
                 if self.check_redeclaration(sym, name.span) {
                     // Evaluate constant value if possible
-                    let (ty, constant) = if i < spec.values.len() {
+                    let (mut ty, constant) = if i < spec.values.len() {
                         self.eval_const_expr(&spec.values[i])
                     } else {
                         // Use previous spec's expression pattern (iota continues)
                         (Type::Invalid, None)
                     };
+                    
+                    // If there's an explicit type annotation, use it
+                    // (e.g., `const FB float64 = 1 << 100`)
+                    if spec.ty.is_some() {
+                        // For typed constants, infer the basic type from the type expression
+                        ty = self.infer_type_from_type_expr(spec.ty.as_ref().unwrap());
+                    }
 
                     self.scope.insert(
                         sym,
@@ -424,6 +431,34 @@ impl<'a> TypeCollector<'a> {
                 }
             }
             self.iota += 1;
+        }
+    }
+    
+    /// Infer basic type from a type expression (for typed constants).
+    fn infer_type_from_type_expr(&self, ty_expr: &ast::TypeExpr) -> Type {
+        use ast::TypeExprKind;
+        match &ty_expr.kind {
+            TypeExprKind::Ident(ident) => {
+                let name = self.interner.resolve(ident.symbol).unwrap_or("");
+                match name {
+                    "int" => Type::Basic(BasicType::Int),
+                    "int8" => Type::Basic(BasicType::Int8),
+                    "int16" => Type::Basic(BasicType::Int16),
+                    "int32" => Type::Basic(BasicType::Int32),
+                    "int64" => Type::Basic(BasicType::Int64),
+                    "uint" => Type::Basic(BasicType::Uint),
+                    "uint8" => Type::Basic(BasicType::Uint8),
+                    "uint16" => Type::Basic(BasicType::Uint16),
+                    "uint32" => Type::Basic(BasicType::Uint32),
+                    "uint64" => Type::Basic(BasicType::Uint64),
+                    "float32" => Type::Basic(BasicType::Float32),
+                    "float64" => Type::Basic(BasicType::Float64),
+                    "bool" => Type::Basic(BasicType::Bool),
+                    "string" => Type::Basic(BasicType::String),
+                    _ => Type::Invalid,
+                }
+            }
+            _ => Type::Invalid,
         }
     }
 
