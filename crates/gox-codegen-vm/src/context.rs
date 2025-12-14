@@ -85,6 +85,10 @@ impl FuncContext {
         self.code.push(Instruction::new(op, a, b, c));
     }
     
+    pub fn emit_with_flags(&mut self, op: Opcode, flags: u8, a: u16, b: u16, c: u16) {
+        self.code.push(Instruction::with_flags(op, flags, a, b, c));
+    }
+    
     pub fn pc(&self) -> usize {
         self.code.len()
     }

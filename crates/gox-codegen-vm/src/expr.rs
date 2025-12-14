@@ -302,12 +302,19 @@ fn compile_func_call(
 ) -> Result<u16, CodegenError> {
     let arg_start = fctx.regs.current();
     
-    for arg in &call.args {
-        compile_expr(ctx, fctx, arg)?;
+    // Compile each argument and ensure it's in the correct position
+    for (i, arg) in call.args.iter().enumerate() {
+        let expected_reg = arg_start + i as u16;
+        let actual_reg = compile_expr(ctx, fctx, arg)?;
+        if actual_reg != expected_reg {
+            // Move result to expected argument position
+            fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
+        }
     }
     
     let arg_count = call.args.len() as u16;
-    fctx.emit(Opcode::Call, func_idx as u16, arg_start, arg_count);
+    // flags = ret_count (1 for single return value)
+    fctx.emit_with_flags(Opcode::Call, 1, func_idx as u16, arg_start, arg_count);
     
     Ok(arg_start)
 }

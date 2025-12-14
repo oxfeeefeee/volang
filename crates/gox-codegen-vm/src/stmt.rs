@@ -190,8 +190,12 @@ fn compile_return(
         fctx.emit(Opcode::Return, 0, 0, 0);
     } else {
         let start_reg = fctx.regs.current();
-        for e in &ret.values {
-            expr::compile_expr(ctx, fctx, e)?;
+        for (i, e) in ret.values.iter().enumerate() {
+            let expected_reg = start_reg + i as u16;
+            let actual_reg = expr::compile_expr(ctx, fctx, e)?;
+            if actual_reg != expected_reg {
+                fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
+            }
         }
         fctx.emit(Opcode::Return, start_reg, ret_count, 0);
     }
