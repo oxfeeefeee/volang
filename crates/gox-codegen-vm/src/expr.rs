@@ -425,16 +425,58 @@ fn compile_native_call(
     native_idx: u32,
     call: &CallExpr,
 ) -> Result<u16, CodegenError> {
-    let arg_start = fctx.regs.current();
+    // First, compile all arguments and collect their values and types
+    let mut compiled_args: Vec<(u8, u16)> = Vec::new(); // (type_tag, value_reg)
     
     for arg in &call.args {
-        compile_expr(ctx, fctx, arg)?;
+        let type_tag = get_type_tag(ctx, arg);
+        let val_reg = compile_expr(ctx, fctx, arg)?;
+        compiled_args.push((type_tag, val_reg));
     }
     
-    let arg_count = call.args.len() as u16;
-    fctx.emit(Opcode::CallNative, native_idx as u16, arg_start, arg_count);
+    // Now emit pairs into consecutive registers
+    let arg_start = fctx.regs.current();
+    
+    for (type_tag, val_reg) in &compiled_args {
+        // Allocate pair: [tag, value]
+        let tag_dst = fctx.regs.alloc(1);
+        let val_dst = fctx.regs.alloc(1);
+        
+        // Load type tag
+        fctx.emit(Opcode::LoadInt, tag_dst, *type_tag as u16, 0);
+        
+        // Copy value
+        fctx.emit(Opcode::Mov, val_dst, *val_reg, 0);
+    }
+    
+    let pair_count = call.args.len() as u16;
+    fctx.emit(Opcode::CallNative, native_idx as u16, arg_start, pair_count);
     
     Ok(arg_start)
+}
+
+/// Get TypeTag for an expression based on literal type.
+fn get_type_tag(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -> u8 {
+    use gox_vm::ffi::TypeTag;
+    use gox_syntax::ast::ExprKind;
+    
+    match &expr.kind {
+        ExprKind::IntLit(_) => TypeTag::Int as u8,
+        ExprKind::FloatLit(_) => TypeTag::Float64 as u8,
+        ExprKind::StringLit(_) => TypeTag::String as u8,
+        ExprKind::Ident(ident) => {
+            let name = ctx.interner.resolve(ident.symbol).unwrap_or("");
+            if name == "true" || name == "false" {
+                TypeTag::Bool as u8
+            } else if name == "nil" {
+                TypeTag::Nil as u8
+            } else {
+                // Could be a variable - default to Int for now
+                TypeTag::Int as u8
+            }
+        }
+        _ => TypeTag::Nil as u8,
+    }
 }
 
 fn compile_index(

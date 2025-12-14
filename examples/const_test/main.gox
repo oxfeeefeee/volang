@@ -24,5 +24,6 @@ func main() {
     println(G)
     println(H)
     println(FB)
-    fmt.Println("Hello from fmt!")
+    println("Hello")
+    fmt.Println(42, "from fmt!")
 }

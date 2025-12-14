@@ -2,6 +2,7 @@
 
 use crate::bytecode::{Constant, Module};
 use crate::fiber::{BlockReason, DeferEntry, FiberId, FiberStatus, IterState, Scheduler};
+use crate::ffi::GoxValue;
 use crate::gc::{Gc, GcRef, NULL_REF};
 use crate::instruction::{Instruction, Opcode};
 use crate::objects::{array, channel, closure, interface, map, slice, string};
@@ -9,23 +10,15 @@ use crate::types::{builtin, TypeId, TypeTable};
 use std::collections::HashMap;
 
 /// Native function signature.
-pub type NativeFn = fn(&mut NativeCtx) -> Vec<u64>;
+/// Takes typed arguments and returns typed results.
+pub type NativeFn = fn(&mut NativeCtx, Vec<GoxValue>) -> Vec<GoxValue>;
 
 /// Native function context.
 pub struct NativeCtx<'a> {
     pub vm: &'a mut Vm,
-    pub args: Vec<u64>,
 }
 
 impl<'a> NativeCtx<'a> {
-    pub fn arg(&self, idx: usize) -> u64 {
-        self.args[idx]
-    }
-    
-    pub fn arg_count(&self) -> usize {
-        self.args.len()
-    }
-    
     pub fn gc(&mut self) -> &mut Gc {
         &mut self.vm.gc
     }
@@ -542,7 +535,8 @@ impl Vm {
             
             // ============ Native call ============
             Opcode::CallNative => {
-                // a=native_id, b=arg_start, c=arg_count, flags=ret_count
+                // a=native_id, b=arg_start, c=pair_count (each arg is type,value pair)
+                // Args layout: [type0, val0, type1, val1, ...]
                 let native_fn = match self.native_ptrs.get(a as usize) {
                     Some(Some(f)) => *f,
                     _ => {
@@ -552,23 +546,30 @@ impl Vm {
                     }
                 };
                 
-                // Collect arguments
-                let args: Vec<u64> = (0..c).map(|i| self.read_reg(fiber_id, b + i)).collect();
+                // Collect arguments as GoxValue
+                use crate::ffi::TypeTag;
+                let mut args = Vec::with_capacity(c as usize);
+                for i in 0..c {
+                    let type_tag = TypeTag::from_u8(self.read_reg(fiber_id, b + i * 2) as u8);
+                    let raw_val = self.read_reg(fiber_id, b + i * 2 + 1);
+                    args.push(GoxValue::from_raw(raw_val, type_tag));
+                }
                 
                 // Pause GC during native call
                 self.gc.pause_gc();
                 
                 // Call native
-                let mut ctx = NativeCtx { vm: self, args };
-                let results = native_fn(&mut ctx);
+                let mut ctx = NativeCtx { vm: self };
+                let results = native_fn(&mut ctx, args);
                 
                 // Resume GC
                 self.gc.resume_gc();
                 
-                // Store results
+                // Store results back as raw values
                 let ret_start = b;
                 for (i, v) in results.into_iter().enumerate() {
-                    self.write_reg(fiber_id, ret_start + i as u16, v);
+                    let raw = v.to_raw();
+                    self.write_reg(fiber_id, ret_start + i as u16, raw);
                 }
             }
             

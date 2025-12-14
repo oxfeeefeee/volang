@@ -152,8 +152,9 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         module.functions.push(func);
     }
     
-    // Shared native indices across all packages
+    // Shared indices across all packages
     let mut native_indices: HashMap<String, u32> = HashMap::new();
+    let mut const_indices: HashMap<String, u16> = HashMap::new();
     
     // Fourth pass: compile all function bodies
     for (pkg_idx, pkg) in project.packages.iter().enumerate() {
@@ -178,18 +179,19 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     ctx.global_indices = pkg_globals.clone();
                     ctx.const_values = pkg_consts.clone();
                     ctx.native_indices = native_indices.clone();
+                    ctx.const_indices = const_indices.clone();
+                    // Share the module's constant pool
+                    ctx.module.constants = module.constants.clone();
                     
                     let func_def = ctx.compile_func_body(func)?;
                     let idx = func_indices[&func.name.symbol] as usize;
                     module.functions[idx] = func_def;
                     
-                    // Merge back any new natives registered during compilation
-                    for (name, native_idx) in ctx.native_indices {
-                        if !native_indices.contains_key(&name) {
-                            native_indices.insert(name.clone(), native_idx);
-                            module.add_native(&name, 1, 1);
-                        }
-                    }
+                    // Merge back changes
+                    native_indices = ctx.native_indices;
+                    const_indices = ctx.const_indices;
+                    module.constants = ctx.module.constants;
+                    module.natives = ctx.module.natives;
                 }
             }
         }

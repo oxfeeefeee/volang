@@ -96,6 +96,22 @@ impl GoxValue {
         }
     }
 
+    /// Convert to raw u64 value for storing in registers.
+    pub fn to_raw(&self) -> u64 {
+        match self {
+            GoxValue::Nil => 0,
+            GoxValue::Bool(b) => if *b { 1 } else { 0 },
+            GoxValue::Int(i) => *i as u64,
+            GoxValue::Float(f) => f.to_bits(),
+            GoxValue::String(ptr) => *ptr as u64,
+            GoxValue::Slice(ptr) => *ptr as u64,
+            GoxValue::Map(ptr) => *ptr as u64,
+            GoxValue::Struct(ptr) => *ptr as u64,
+            GoxValue::Pointer(ptr) => *ptr as u64,
+            GoxValue::Interface { value, .. } => *value,
+        }
+    }
+
     /// Format this value as a string (for fmt.Println etc).
     pub fn format(&self) -> String {
         match self {
