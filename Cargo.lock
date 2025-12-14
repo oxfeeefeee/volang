@@ -222,7 +222,10 @@ dependencies = [
 name = "gox-codegen-vm"
 version = "0.1.0"
 dependencies = [
+ "gox-analysis",
  "gox-common",
+ "gox-runtime-vm",
+ "gox-syntax",
  "gox-vm",
 ]
 
