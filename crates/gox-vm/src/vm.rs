@@ -920,7 +920,7 @@ impl Vm {
                             *index += 1;
                             
                             // Can't borrow self while fiber is borrowed, so store values after
-                            drop(fiber);
+                            let _ = fiber;
                             self.write_reg(fiber_id, a, idx as u64);
                             self.write_reg(fiber_id, b, val);
                             false
@@ -930,7 +930,7 @@ impl Vm {
                         match map::iter_at(*map_ref, *index) {
                             Some((k, v)) => {
                                 *index += 1;
-                                drop(fiber);
+                                let _ = fiber;
                                 self.write_reg(fiber_id, a, k);
                                 self.write_reg(fiber_id, b, v);
                                 false
@@ -946,7 +946,7 @@ impl Vm {
                             let pos = *byte_pos;
                             let byte = bytes[pos];
                             *byte_pos += 1;
-                            drop(fiber);
+                            let _ = fiber;
                             self.write_reg(fiber_id, a, pos as u64);
                             self.write_reg(fiber_id, b, byte as u64);
                             false
@@ -959,7 +959,7 @@ impl Vm {
                         } else {
                             let val = *current;
                             *current += *step;
-                            drop(fiber);
+                            let _ = fiber;
                             self.write_reg(fiber_id, a, val as u64);
                             self.write_reg(fiber_id, b, val as u64);
                             false
