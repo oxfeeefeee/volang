@@ -10,23 +10,27 @@ func main() {
     m[3] = 30
     
     // Test map access
-    println(m[1])  // 10
-    println(m[2])  // 20
-    println(m[3])  // 30
+    assert(m[1] == 10, "m[1] should be 10")
+    assert(m[2] == 20, "m[2] should be 20")
+    assert(m[3] == 30, "m[3] should be 30")
     
     // Test len
-    println(len(m))  // 3
+    assert(len(m) == 3, "len(m) should be 3")
     
     // Test delete
     delete(m, 2)
-    println(len(m))  // 2
+    assert(len(m) == 2, "len(m) after delete should be 2")
     
-    // Test for-range
-    println("range:")
+    // Test for-range: sum all keys and values
+    keySum := 0
+    valSum := 0
     for k, v := range m {
-        println(k)
-        println(v)
+        keySum = keySum + k
+        valSum = valSum + v
     }
+    // After delete(m, 2): m has {1:10, 3:30}
+    assert(keySum == 4, "key sum should be 4 (1+3)")
+    assert(valSum == 40, "val sum should be 40 (10+30)")
     
-    println(999)
+    println("map_test: ALL PASSED")
 }
