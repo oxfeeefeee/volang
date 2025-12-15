@@ -56,6 +56,8 @@ pub enum TypeError {
     WrongReturnCount = 2205,
     /// Bare return in function without named returns.
     BareReturnNotAllowed = 2206,
+    /// Cannot convert type.
+    CannotConvert = 2207,
 
     // === Operator Errors (2300-2399) ===
     /// Operator requires numeric operands.
@@ -219,6 +221,7 @@ impl TypeError {
             TypeError::WrongArgCount => "wrong number of arguments",
             TypeError::ArgTypeMismatch => "argument type mismatch",
             TypeError::ReturnTypeMismatch => "cannot use type as return value",
+            TypeError::CannotConvert => "cannot convert",
             TypeError::WrongReturnCount => "wrong number of return values",
             TypeError::BareReturnNotAllowed => "bare return in function without named returns",
 

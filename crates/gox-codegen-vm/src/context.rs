@@ -632,6 +632,26 @@ impl<'a> CodegenContext<'a> {
         }
         false
     }
+    
+    /// Check if a symbol is a type name (for type conversions).
+    pub fn is_type_name(&self, sym: Symbol) -> bool {
+        for named in &self.result.named_types {
+            if named.name == sym {
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// Get the underlying type info for a named type.
+    pub fn get_named_type_info(&self, sym: Symbol) -> Option<&gox_analysis::NamedTypeInfo> {
+        for named in &self.result.named_types {
+            if named.name == sym {
+                return Some(named);
+            }
+        }
+        None
+    }
 }
 
 /// Infer VarKind and type_sym from a parameter type expression

@@ -473,6 +473,11 @@ fn compile_call(
         if let Some(local) = fctx.lookup_local(ident.symbol) {
             return compile_closure_call(ctx, fctx, local.reg, call);
         }
+        
+        // Type conversion: T(x) where T is a type name
+        if ctx.is_type_name(ident.symbol) {
+            return compile_type_conversion(ctx, fctx, ident.symbol, call);
+        }
     }
     
     // Package.Function call (e.g., math.Add, fmt.Println) or method call (e.g., obj.Method())
@@ -1520,4 +1525,72 @@ fn compile_builtin_assert(
     let dst = fctx.regs.alloc(1);
     fctx.emit(Opcode::LoadNil, dst, 0, 0);
     Ok(dst)
+}
+
+/// Compile a type conversion: T(x)
+fn compile_type_conversion(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    type_sym: gox_common::Symbol,
+    call: &CallExpr,
+) -> Result<u16, CodegenError> {
+    use gox_analysis::Type;
+    
+    if call.args.len() != 1 {
+        return Err(CodegenError::Unsupported("type conversion requires exactly one argument".to_string()));
+    }
+    
+    // Compile the source expression
+    let src = compile_expr(ctx, fctx, &call.args[0])?;
+    
+    // Get target type info
+    let type_info = ctx.get_named_type_info(type_sym);
+    
+    if let Some(info) = type_info {
+        match &info.underlying {
+            // Interface conversion: box the value
+            Type::Interface(iface) => {
+                let dst = fctx.regs.alloc(1);
+                if iface.methods.is_empty() && iface.embeds.is_empty() {
+                    // Empty interface: just box with type tag
+                    let type_tag = infer_type_tag(ctx, fctx, &call.args[0]);
+                    fctx.emit(Opcode::BoxInterface, dst, type_tag as u16, src);
+                } else {
+                    // Named interface: need to look up method table
+                    // For now, just box - VM handles dispatch
+                    let type_tag = infer_type_tag(ctx, fctx, &call.args[0]);
+                    fctx.emit(Opcode::BoxInterface, dst, type_tag as u16, src);
+                }
+                return Ok(dst);
+            }
+            // Numeric conversions
+            Type::Basic(BasicType::Int | BasicType::Int64) => {
+                // Source might be float -> int
+                let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
+                if src_tag == gox_vm::ffi::TypeTag::Float64 {
+                    let dst = fctx.regs.alloc(1);
+                    fctx.emit(Opcode::F64ToI64, dst, src, 0);
+                    return Ok(dst);
+                }
+                return Ok(src);
+            }
+            Type::Basic(BasicType::Float64) => {
+                // Source might be int -> float
+                let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
+                if src_tag == gox_vm::ffi::TypeTag::Int64 {
+                    let dst = fctx.regs.alloc(1);
+                    fctx.emit(Opcode::I64ToF64, dst, src, 0);
+                    return Ok(dst);
+                }
+                return Ok(src);
+            }
+            _ => {
+                // For other types, just pass through (same underlying representation)
+                return Ok(src);
+            }
+        }
+    }
+    
+    // Unknown type - just pass through
+    Ok(src)
 }

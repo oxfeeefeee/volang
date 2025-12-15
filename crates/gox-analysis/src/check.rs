@@ -54,7 +54,7 @@ use crate::lookup::{Lookup, LookupResult};
 use crate::resolve::ResolveResult;
 use crate::scope::{BuiltinKind, Entity, Scope, ScopeKind, VarEntity};
 use crate::types::{
-    BasicType, FuncType, NamedTypeInfo,
+    BasicType, FuncType, NamedTypeId, NamedTypeInfo,
     Type, TypeRegistry, UntypedKind,
 };
 
@@ -559,6 +559,10 @@ impl<'a> TypeChecker<'a> {
             if let Some(Entity::Builtin(kind)) = self.lookup(ident.symbol) {
                 return self.check_builtin_call(*kind, &call.args, span);
             }
+            // Check for type conversion: T(x)
+            if let Some(Entity::Type(type_entity)) = self.lookup(ident.symbol) {
+                return self.check_type_conversion(type_entity.id, &call.args, span);
+            }
         }
 
         let func_ty = self.check_expr(&call.func);
@@ -571,6 +575,93 @@ impl<'a> TypeChecker<'a> {
                 Type::Invalid
             }
         }
+    }
+    
+    /// Checks a type conversion expression: T(x)
+    fn check_type_conversion(&mut self, target_id: NamedTypeId, args: &[Expr], span: Span) -> Type {
+        if args.len() != 1 {
+            self.error(TypeError::WrongArgCount, span);
+            return Type::Invalid;
+        }
+        
+        let arg_ty = self.check_expr(&args[0]);
+        let target_ty = Type::Named(target_id);
+        
+        // Check if conversion is valid
+        if self.is_convertible(&arg_ty, &target_ty) {
+            target_ty
+        } else {
+            self.error(TypeError::CannotConvert, span);
+            Type::Invalid
+        }
+    }
+    
+    /// Checks if a value of type `from` can be converted to type `to`.
+    fn is_convertible(&self, from: &Type, to: &Type) -> bool {
+        // Same type: always convertible
+        if from == to {
+            return true;
+        }
+        
+        let from_u = self.underlying_type(from);
+        let to_u = self.underlying_type(to);
+        
+        // nil can be converted to any interface
+        if from.is_nil() {
+            if matches!(&to_u, Type::Interface(_)) {
+                return true;
+            }
+        }
+        
+        // To empty interface: always convertible
+        if let Type::Interface(iface) = &to_u {
+            if iface.methods.is_empty() && iface.embeds.is_empty() {
+                return true;
+            }
+        }
+        
+        // Interface to interface: check if source interface has all methods of target
+        if let (Type::Interface(from_iface), Type::Interface(to_iface)) = (&from_u, &to_u) {
+            // Check if from_iface has all methods required by to_iface
+            let from_methods = self.registry.interface_method_set(from_iface);
+            let to_methods = self.registry.interface_method_set(to_iface);
+            
+            for req in &to_methods.methods {
+                match from_methods.get(req.name) {
+                    Some(found) if found.sig == req.sig => continue,
+                    _ => return false,
+                }
+            }
+            return true;
+        }
+        
+        // Concrete type to interface: check if implements
+        if let Type::Interface(to_iface) = &to_u {
+            return self.registry.implements_interface(from, to_iface).is_ok();
+        }
+        
+        // Numeric conversions
+        if self.is_numeric_type(&from_u) && self.is_numeric_type(&to_u) {
+            return true;
+        }
+        
+        // String <-> []byte conversions
+        if matches!(&to_u, Type::Basic(BasicType::String)) {
+            if let Type::Slice(sl) = &from_u {
+                if matches!(&*sl.elem, Type::Basic(BasicType::Uint8)) {
+                    return true;
+                }
+            }
+        }
+        if matches!(&from_u, Type::Basic(BasicType::String)) {
+            if let Type::Slice(sl) = &to_u {
+                if matches!(&*sl.elem, Type::Basic(BasicType::Uint8)) {
+                    return true;
+                }
+            }
+        }
+        
+        false
     }
 
     /// Checks a built-in function call.
