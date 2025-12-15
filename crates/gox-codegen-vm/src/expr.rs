@@ -757,7 +757,7 @@ fn get_expr_type(
 }
 
 /// Look up a named type and return its underlying type
-fn lookup_named_type<'a>(ctx: &'a CodegenContext, sym: gox_common::Symbol) -> Option<&'a Type> {
+pub fn lookup_named_type<'a>(ctx: &'a CodegenContext, sym: gox_common::Symbol) -> Option<&'a Type> {
     ctx.result.named_types.iter()
         .find(|n| n.name == sym)
         .map(|n| &n.underlying)

@@ -168,7 +168,7 @@ fn compile_short_var(
                                     VarKind::Map | VarKind::Slice => {
                                         // Indexing into map/slice - check element/value type
                                         if let Some(elem_type_sym) = container_local.type_sym {
-                                            if let Some(underlying) = lookup_named_type(ctx, elem_type_sym) {
+                                            if let Some(underlying) = expr::lookup_named_type(ctx, elem_type_sym) {
                                                 match underlying {
                                                     Type::Struct(s) => {
                                                         let fc = s.fields.len() as u16;
@@ -246,13 +246,6 @@ fn compile_index_struct_copy(
     fctx.emit(Opcode::Mov, dst, ptr, 0);
     
     Ok(())
-}
-
-/// Look up a named type and return its underlying type
-fn lookup_named_type<'a>(ctx: &'a CodegenContext, sym: gox_common::Symbol) -> Option<&'a Type> {
-    ctx.result.named_types.iter()
-        .find(|n| n.name == sym)
-        .map(|n| &n.underlying)
 }
 
 /// Infer VarKind and type symbol from an expression (for type tracking)
@@ -346,7 +339,7 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
 }
 /// Check if a named type is an object type (reference semantics)
 fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
-    lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Obx(_)))
+    expr::lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Obx(_)))
 }
 
 
