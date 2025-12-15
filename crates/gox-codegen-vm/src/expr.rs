@@ -617,22 +617,6 @@ pub fn is_map_expr_with_ctx(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox
     }
 }
 
-/// Check if an expression is a map type (simple version without ctx)
-fn is_map_expr(fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
-    use gox_syntax::ast::ExprKind;
-    use crate::context::VarKind;
-    match &expr.kind {
-        ExprKind::Ident(ident) => {
-            if let Some(local) = fctx.lookup_local(ident.symbol) {
-                local.kind == VarKind::Map
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
 /// Compile slice expression: s[low:high]
 fn compile_slice_expr(
     ctx: &mut CodegenContext,

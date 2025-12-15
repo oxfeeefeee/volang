@@ -344,21 +344,6 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
         _ => (VarKind::Other, None),
     }
 }
-
-/// Get the result type of an index expression (the element type)
-fn get_index_result_type(ctx: &CodegenContext, container_expr: &gox_syntax::ast::Expr) -> Option<Type> {
-    use gox_syntax::ast::ExprKind;
-    
-    // For map[K]V, we need to find V
-    // Search through named types for map types and return their value type
-    for named in &ctx.result.named_types {
-        if let Type::Map(map_ty) = &named.underlying {
-            return Some((*map_ty.value).clone());
-        }
-    }
-    None
-}
-
 /// Check if a named type is an object type (reference semantics)
 fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
     lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Obx(_)))
@@ -534,21 +519,16 @@ fn compile_assign(
     Ok(())
 }
 
-/// Check if an expression is a map type (for index assignment)
+/// Check if an expression is a map type (for range iteration)
 fn is_map_expr(fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
     use gox_syntax::ast::ExprKind;
     use crate::context::VarKind;
-    match &expr.kind {
-        ExprKind::Ident(ident) => {
-            // Check local variable type
-            if let Some(local) = fctx.lookup_local(ident.symbol) {
-                local.kind == VarKind::Map
-            } else {
-                false
-            }
+    if let ExprKind::Ident(ident) = &expr.kind {
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            return local.kind == VarKind::Map;
         }
-        _ => false,
     }
+    false
 }
 
 /// Compile return statement.
