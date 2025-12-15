@@ -59,6 +59,9 @@ use crate::types::{
 };
 
 /// Type checker for Phase 3.
+/// Offset for local type IDs to distinguish from package-level types.
+const LOCAL_TYPE_ID_OFFSET: u32 = 0x1000_0000;
+
 pub struct TypeChecker<'a> {
     /// Symbol interner for resolving names.
     interner: &'a SymbolInterner,
@@ -82,6 +85,8 @@ pub struct TypeChecker<'a> {
     imported_packages: std::collections::HashSet<String>,
     /// Imported package exports (pkg_name -> symbol_name -> type).
     package_exports: std::collections::HashMap<String, std::collections::HashMap<String, Type>>,
+    /// Local type declarations (function-scoped types).
+    local_types: Vec<NamedTypeInfo>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -103,6 +108,7 @@ impl<'a> TypeChecker<'a> {
             has_named_returns: false,
             imported_packages: std::collections::HashSet::new(),
             package_exports: std::collections::HashMap::new(),
+            local_types: Vec::new(),
         }
     }
     
@@ -230,34 +236,30 @@ impl<'a> TypeChecker<'a> {
     fn resolve_type_expr(&self, ty_expr: &ast::TypeExpr) -> Type {
         match &ty_expr.kind {
             ast::TypeExprKind::Ident(name) => {
-                // Look up the type name
-                match self.package_scope.lookup(name.symbol) {
-                    Some(Entity::Type(t)) => {
-                        Type::Named(t.id)
-                    }
-                    _ => {
-                        // Check for basic types
-                        let name_str = self.interner.resolve(name.symbol).unwrap_or("");
-                        match name_str {
-                            "int" => Type::Basic(BasicType::Int),
-                            "int8" => Type::Basic(BasicType::Int8),
-                            "int16" => Type::Basic(BasicType::Int16),
-                            "int32" => Type::Basic(BasicType::Int32),
-                            "int64" => Type::Basic(BasicType::Int64),
-                            "uint" => Type::Basic(BasicType::Uint),
-                            "uint8" => Type::Basic(BasicType::Uint8),
-                            "uint16" => Type::Basic(BasicType::Uint16),
-                            "uint32" => Type::Basic(BasicType::Uint32),
-                            "uint64" => Type::Basic(BasicType::Uint64),
-                            "float32" => Type::Basic(BasicType::Float32),
-                            "float64" => Type::Basic(BasicType::Float64),
-                            "bool" => Type::Basic(BasicType::Bool),
-                            "string" => Type::Basic(BasicType::String),
-                            "byte" => Type::Basic(BasicType::Uint8),
-                            "rune" => Type::Basic(BasicType::Int32),
-                            _ => Type::Invalid,
-                        }
-                    }
+                // Look up the type name - check local scope first
+                if let Some(Entity::Type(t)) = self.lookup(name.symbol) {
+                    return Type::Named(t.id);
+                }
+                // Check for basic types
+                let name_str = self.interner.resolve(name.symbol).unwrap_or("");
+                match name_str {
+                    "int" => Type::Basic(BasicType::Int),
+                    "int8" => Type::Basic(BasicType::Int8),
+                    "int16" => Type::Basic(BasicType::Int16),
+                    "int32" => Type::Basic(BasicType::Int32),
+                    "int64" => Type::Basic(BasicType::Int64),
+                    "uint" => Type::Basic(BasicType::Uint),
+                    "uint8" => Type::Basic(BasicType::Uint8),
+                    "uint16" => Type::Basic(BasicType::Uint16),
+                    "uint32" => Type::Basic(BasicType::Uint32),
+                    "uint64" => Type::Basic(BasicType::Uint64),
+                    "float32" => Type::Basic(BasicType::Float32),
+                    "float64" => Type::Basic(BasicType::Float64),
+                    "bool" => Type::Basic(BasicType::Bool),
+                    "string" => Type::Basic(BasicType::String),
+                    "byte" => Type::Basic(BasicType::Uint8),
+                    "rune" => Type::Basic(BasicType::Int32),
+                    _ => Type::Invalid,
                 }
             }
             ast::TypeExprKind::Slice(elem) => {
@@ -309,7 +311,55 @@ impl<'a> TypeChecker<'a> {
                     embeds: vec![],
                 })
             }
+            ast::TypeExprKind::Struct(s) => {
+                let fields = self.resolve_struct_fields(&s.fields);
+                Type::Struct(crate::types::StructType { fields })
+            }
+            ast::TypeExprKind::Obx(s) => {
+                let fields = self.resolve_struct_fields(&s.fields);
+                Type::Obx(crate::types::StructType { fields })
+            }
             _ => Type::Invalid,
+        }
+    }
+
+    /// Resolves struct fields for local type declarations.
+    fn resolve_struct_fields(&self, ast_fields: &[ast::Field]) -> Vec<crate::types::Field> {
+        let mut fields = Vec::new();
+        for ast_field in ast_fields {
+            let ty = self.resolve_type_expr(&ast_field.ty);
+            let tag = ast_field.tag.as_ref().map(|t| {
+                self.interner.resolve(t.raw).unwrap_or("").to_string()
+            });
+            if ast_field.names.is_empty() {
+                // Embedded field
+                let embedded_name = self.extract_type_name(&ast_field.ty);
+                fields.push(crate::types::Field {
+                    name: embedded_name,
+                    ty,
+                    embedded: true,
+                    tag,
+                });
+            } else {
+                // Named fields
+                for name in &ast_field.names {
+                    fields.push(crate::types::Field {
+                        name: Some(name.symbol),
+                        ty: ty.clone(),
+                        embedded: false,
+                        tag: tag.clone(),
+                    });
+                }
+            }
+        }
+        fields
+    }
+
+    /// Extracts the type name from a type expression (for embedded fields).
+    fn extract_type_name(&self, expr: &ast::TypeExpr) -> Option<Symbol> {
+        match &expr.kind {
+            ast::TypeExprKind::Ident(name) => Some(name.symbol),
+            _ => None,
         }
     }
 
@@ -991,9 +1041,12 @@ impl<'a> TypeChecker<'a> {
         let base_ty = self.check_expr(&sel.expr);
         let field_name = sel.sel.symbol;
 
+        // Resolve local types to their underlying type for lookup
+        let lookup_ty = self.resolve_for_lookup(&base_ty);
+
         // Use Lookup for field/method access
         let lookup = Lookup::new(&self.named_types);
-        match lookup.lookup_field_or_method(&base_ty, field_name) {
+        match lookup.lookup_field_or_method(&lookup_ty, field_name) {
             LookupResult::Field(ty, _indices, _indirect) => ty,
             LookupResult::Method(sig, _indices, _indirect) => Type::Func(sig),
             LookupResult::Ambiguous(_indices) => {
@@ -1250,8 +1303,33 @@ impl<'a> TypeChecker<'a> {
     fn underlying_type(&self, ty: &Type) -> Type {
         match ty {
             Type::Named(id) => {
+                // Check if this is a local type (high offset)
+                if id.0 >= LOCAL_TYPE_ID_OFFSET {
+                    let local_idx = (id.0 - LOCAL_TYPE_ID_OFFSET) as usize;
+                    if let Some(info) = self.local_types.get(local_idx) {
+                        return self.underlying_type(&info.underlying);
+                    }
+                    return Type::Invalid;
+                }
+                // Package-level type
                 if let Some(info) = self.named_types.get(id.0 as usize) {
                     self.underlying_type(&info.underlying)
+                } else {
+                    Type::Invalid
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// Resolves a type for lookup purposes, converting local types to their underlying type.
+    fn resolve_for_lookup(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Named(id) if id.0 >= LOCAL_TYPE_ID_OFFSET => {
+                // Local type - return underlying type for lookup
+                let local_idx = (id.0 - LOCAL_TYPE_ID_OFFSET) as usize;
+                if let Some(info) = self.local_types.get(local_idx) {
+                    info.underlying.clone()
                 } else {
                     Type::Invalid
                 }
@@ -1457,6 +1535,7 @@ impl<'a> TypeChecker<'a> {
             StmtKind::Const(_) => {
                 // Constants already handled in Phase 1
             }
+            StmtKind::Type(type_decl) => self.check_type_decl_stmt(type_decl),
             StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Goto(_) | StmtKind::Fallthrough => {
                 // Control flow - no type checking needed
             }
@@ -1503,6 +1582,34 @@ impl<'a> TypeChecker<'a> {
 
                 self.define_var(name.symbol, var_ty, name.span);
             }
+        }
+    }
+
+    /// Checks a local type declaration statement.
+    fn check_type_decl_stmt(&mut self, decl: &ast::TypeDecl) {
+        // Resolve the underlying type
+        let underlying = self.resolve_type_expr(&decl.ty);
+        
+        // Create a local type ID (offset from package-level types)
+        let local_idx = self.local_types.len() as u32;
+        let id = NamedTypeId(LOCAL_TYPE_ID_OFFSET + local_idx);
+        
+        // Store the local type info
+        self.local_types.push(NamedTypeInfo {
+            name: decl.name.symbol,
+            underlying: underlying.clone(),
+            methods: Vec::new(),
+        });
+        
+        // Add to local scope
+        if let Some(ref mut scope) = self.local_scope {
+            scope.insert(
+                decl.name.symbol,
+                Entity::Type(crate::scope::TypeEntity {
+                    id,
+                    span: decl.name.span,
+                }),
+            );
         }
     }
 

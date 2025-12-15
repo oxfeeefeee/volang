@@ -135,6 +135,10 @@ pub fn compile_stmt(
             Err(CodegenError::Unsupported("goto/fallthrough".to_string()))
         }
         StmtKind::Labeled(_) => Err(CodegenError::Unsupported("labeled statement".to_string())),
+        StmtKind::Type(_) => {
+            // Local type declarations - no codegen needed, just a compile-time construct
+            Ok(())
+        }
     }
 }
 

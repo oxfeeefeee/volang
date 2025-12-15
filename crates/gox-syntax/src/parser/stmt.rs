@@ -28,6 +28,10 @@ impl<'a> Parser<'a> {
                 let decl = self.parse_const_decl()?;
                 StmtKind::Const(decl)
             }
+            TokenKind::Type => {
+                let decl = self.parse_type_decl()?;
+                StmtKind::Type(decl)
+            }
             TokenKind::Return => {
                 self.advance();
                 let values = if self.at(TokenKind::Semicolon) || self.at(TokenKind::RBrace) {

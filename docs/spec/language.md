@@ -931,6 +931,7 @@ func (a [4]int) Sum() int { ... }  // ERROR: receiver must be named type
 Stmt ::= Block
        | VarDecl
        | ConstDecl
+       | TypeDecl
        | ShortVarDecl
        | Assignment
        | ExprStmt

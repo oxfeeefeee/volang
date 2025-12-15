@@ -339,6 +339,8 @@ pub enum StmtKind {
     Var(VarDecl),
     /// A constant declaration statement.
     Const(ConstDecl),
+    /// A type declaration statement.
+    Type(TypeDecl),
     /// A short variable declaration: `x := expr`
     ShortVar(ShortVarDecl),
     /// An expression statement.
@@ -965,6 +967,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, stmt: &Stmt) {
         }
         StmtKind::Var(d) => visitor.visit_decl(&Decl::Var(d.clone())),
         StmtKind::Const(d) => visitor.visit_decl(&Decl::Const(d.clone())),
+        StmtKind::Type(d) => visitor.visit_decl(&Decl::Type(d.clone())),
         StmtKind::ShortVar(d) => {
             for name in &d.names {
                 visitor.visit_ident(name);

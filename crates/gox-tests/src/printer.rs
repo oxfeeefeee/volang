@@ -627,6 +627,10 @@ impl<'a> AstPrinter<'a> {
                 self.write_stmt(&l.stmt);
                 self.indent -= 1;
             }
+            StmtKind::Type(t) => {
+                self.write_indent();
+                writeln!(self.output, "Type {{ name: \"{}\", ty: ... }},", self.resolve_symbol(t.name.symbol)).unwrap();
+            }
         }
     }
 
