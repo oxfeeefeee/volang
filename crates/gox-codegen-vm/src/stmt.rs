@@ -84,10 +84,12 @@ pub fn compile_stmt(
                         
                         let dst = fctx.define_local(*name, 1);
                         
-                        // Track the type symbol for local struct types
+                        // Track the type symbol for named types (local or global)
                         if let Some(ty) = &spec.ty {
                             if let gox_syntax::ast::TypeExprKind::Ident(type_ident) = &ty.kind {
-                                if fctx.get_local_type(type_ident.symbol).is_some() {
+                                // Set type_sym for both local and global named types
+                                if fctx.get_local_type(type_ident.symbol).is_some() 
+                                    || ctx.get_named_type_info(type_ident.symbol).is_some() {
                                     if let Some(local) = fctx.locals.get_mut(&name.symbol) {
                                         local.type_sym = Some(type_ident.symbol);
                                     }
