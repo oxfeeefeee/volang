@@ -443,21 +443,17 @@ fn compile_func_call(
         };
         
         if needs_copy {
-            // Get field count for struct copy
-            if let ExprKind::Ident(ident) = &arg.kind {
-                if let Some(local) = fctx.lookup_local(ident.symbol) {
-                    if let VarKind::Struct(field_count) = local.kind {
-                        // Allocate new struct and copy fields
-                        fctx.emit(Opcode::Alloc, expected_reg, 0, field_count);
-                        for f in 0..field_count {
-                            // Use expected_reg + field_count as temp space
-                            let tmp = expected_reg + field_count + f;
-                            fctx.emit(Opcode::GetField, tmp, actual_reg, f);
-                            fctx.emit(Opcode::SetField, expected_reg, f, tmp);
-                        }
-                    }
-                }
-            }
+            // Deep copy struct including nested structs
+            // Extract type_sym first to avoid borrow conflicts
+            let type_sym = if let ExprKind::Ident(ident) = &arg.kind {
+                fctx.lookup_local(ident.symbol).and_then(|l| l.type_sym)
+            } else {
+                None
+            };
+            // Allocate temp and deep copy, then move to expected_reg
+            let temp_dst = fctx.regs.alloc(1);
+            emit_deep_struct_copy(ctx, fctx, temp_dst, actual_reg, type_sym);
+            fctx.emit(Opcode::Mov, expected_reg, temp_dst, 0);
         } else if actual_reg != expected_reg {
             // Move result to expected argument position
             fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
@@ -592,6 +588,71 @@ fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key
         }
     }
     key_reg
+}
+
+/// Emit deep copy of a struct, handling nested structs recursively
+fn emit_deep_struct_copy(
+    ctx: &CodegenContext,
+    fctx: &mut FuncContext,
+    dst: u16,
+    src: u16,
+    type_sym: Option<gox_common::Symbol>,
+) {
+    use gox_analysis::Type;
+    
+    // Get struct field info from type
+    let field_info = get_struct_field_info(ctx, type_sym);
+    let field_count = field_info.len() as u16;
+    
+    if field_count == 0 {
+        // Fallback: simple copy if no type info
+        fctx.emit(Opcode::Mov, dst, src, 0);
+        return;
+    }
+    
+    // Allocate new struct
+    fctx.emit(Opcode::Alloc, dst, 0, field_count);
+    
+    // Copy each field, recursively copying nested structs
+    for (f, field_type_sym) in field_info.iter().enumerate() {
+        let tmp = fctx.regs.alloc(1);
+        fctx.emit(Opcode::GetField, tmp, src, f as u16);
+        
+        if let Some(nested_sym) = field_type_sym {
+            // This field is a nested struct - need to deep copy
+            let nested_dst = fctx.regs.alloc(1);
+            emit_deep_struct_copy(ctx, fctx, nested_dst, tmp, Some(*nested_sym));
+            fctx.emit(Opcode::SetField, dst, f as u16, nested_dst);
+        } else {
+            // Primitive field - simple copy
+            fctx.emit(Opcode::SetField, dst, f as u16, tmp);
+        }
+    }
+}
+
+/// Get field type info for a struct - returns Vec of Option<Symbol> for each field
+fn get_struct_field_info(ctx: &CodegenContext, type_sym: Option<gox_common::Symbol>) -> Vec<Option<gox_common::Symbol>> {
+    use gox_analysis::Type;
+    
+    if let Some(sym) = type_sym {
+        for named in &ctx.result.named_types {
+            if named.name == sym {
+                if let Type::Struct(s) = &named.underlying {
+                    return s.fields.iter().map(|field| {
+                        if let Type::Named(id) = &field.ty {
+                            if let Some(named_info) = ctx.result.named_types.get(id.0 as usize) {
+                                if matches!(named_info.underlying, Type::Struct(_)) {
+                                    return Some(named_info.name);
+                                }
+                            }
+                        }
+                        None
+                    }).collect();
+                }
+            }
+        }
+    }
+    Vec::new()
 }
 
 /// Check if an expression is a map type
