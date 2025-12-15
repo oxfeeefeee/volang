@@ -475,14 +475,28 @@ fn compile_call(
         }
     }
     
-    // Package.Function call (e.g., math.Add, fmt.Println)
+    // Package.Function call (e.g., math.Add, fmt.Println) or method call (e.g., obj.Method())
     if let ExprKind::Selector(sel) = &call.func.kind {
         if let ExprKind::Ident(pkg_ident) = &sel.expr.kind {
-            let pkg = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
             let method = ctx.interner.resolve(sel.sel.symbol).unwrap_or("");
+            
+            // Try method call on a local variable FIRST (receiver.Method())
+            if let Some(local) = fctx.lookup_local(pkg_ident.symbol) {
+                // Get receiver type name
+                if let Some(type_sym) = local.type_sym {
+                    let type_name = ctx.interner.resolve(type_sym).unwrap_or("");
+                    let method_key = format!("{}.{}", type_name, method);
+                    if let Some(&func_idx) = ctx.method_table.get(&method_key) {
+                        return compile_method_call(ctx, fctx, func_idx, local.reg, call);
+                    }
+                }
+            }
+            
+            // Then try package.Function calls
+            let pkg = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
             let full_name = format!("{}.{}", pkg, method);
             
-            // Try cross-package function first
+            // Try cross-package function
             if let Some(func_idx) = ctx.lookup_cross_pkg_func(&full_name) {
                 return compile_func_call(ctx, fctx, func_idx, call);
             }
@@ -496,6 +510,21 @@ fn compile_call(
             if ctx.is_native_func(pkg_ident.symbol, sel.sel.symbol) {
                 let native_idx = ctx.register_native(&full_name, 1, 1);
                 return compile_native_call(ctx, fctx, native_idx, call);
+            }
+        }
+        
+        // Method call on any expression (e.g., getObj().Method())
+        let method_name = ctx.interner.resolve(sel.sel.symbol).unwrap_or("");
+        
+        // Get receiver type from expression
+        if let Some(recv_type) = get_expr_type(ctx, fctx, &sel.expr) {
+            let type_name = get_type_name(ctx, &recv_type);
+            if !type_name.is_empty() {
+                let method_key = format!("{}.{}", type_name, method_name);
+                if let Some(&func_idx) = ctx.method_table.get(&method_key) {
+                    let receiver_reg = compile_expr(ctx, fctx, &sel.expr)?;
+                    return compile_method_call(ctx, fctx, func_idx, receiver_reg, call);
+                }
             }
         }
     }
@@ -553,6 +582,54 @@ fn compile_func_call(
     fctx.emit_with_flags(Opcode::Call, 1, func_idx as u16, arg_start, arg_count);
     
     Ok(arg_start)
+}
+
+fn compile_method_call(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    func_idx: u32,
+    receiver_reg: u16,
+    call: &CallExpr,
+) -> Result<u16, CodegenError> {
+    let arg_start = fctx.regs.current();
+    
+    // First argument is the receiver
+    let recv_dst = fctx.regs.alloc(1);
+    fctx.emit(Opcode::Mov, recv_dst, receiver_reg, 0);
+    
+    // Compile remaining arguments
+    for arg in &call.args {
+        let expected_reg = fctx.regs.current();
+        let actual_reg = compile_expr(ctx, fctx, arg)?;
+        if actual_reg != expected_reg {
+            fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
+        }
+    }
+    
+    // arg_count includes the receiver
+    let arg_count = (call.args.len() + 1) as u16;
+    fctx.emit_with_flags(Opcode::Call, 1, func_idx as u16, arg_start, arg_count);
+    
+    Ok(arg_start)
+}
+
+/// Get type name from Type for method lookup.
+fn get_type_name(ctx: &CodegenContext, ty: &Type) -> String {
+    match ty {
+        Type::Named(id) => {
+            // Look up the named type
+            if let Some(info) = ctx.result.named_types.get(id.0 as usize) {
+                ctx.interner.resolve(info.name).unwrap_or("").to_string()
+            } else {
+                String::new()
+            }
+        }
+        Type::Struct(_) | Type::Obx(_) => {
+            // Anonymous struct/obx - no method lookup
+            String::new()
+        }
+        _ => String::new(),
+    }
 }
 
 fn compile_closure_call(

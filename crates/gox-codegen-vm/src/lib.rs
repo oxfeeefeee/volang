@@ -83,6 +83,9 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     // Second pass: collect all function declarations from ALL packages
     let mut pkg_func_indices: Vec<HashMap<Symbol, u32>> = Vec::new();
     
+    // method_table: "TypeName.MethodName" -> func_idx
+    let mut method_table: HashMap<String, u32> = HashMap::new();
+    
     for pkg in &project.packages {
         let mut func_indices: HashMap<Symbol, u32> = HashMap::new();
         
@@ -93,6 +96,13 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     let idx = module.functions.len() as u32;
                     
                     func_indices.insert(func.name.symbol, idx);
+                    
+                    // Register method with receiver type
+                    if let Some(ref receiver) = func.receiver {
+                        let type_name = pkg.interner.resolve(receiver.ty.symbol).unwrap_or("");
+                        let method_key = format!("{}.{}", type_name, func_name);
+                        method_table.insert(method_key, idx);
+                    }
                     
                     // Register cross-package name for exported functions
                     if func_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
@@ -180,6 +190,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     ctx.const_values = pkg_consts.clone();
                     ctx.native_indices = native_indices.clone();
                     ctx.const_indices = const_indices.clone();
+                    ctx.method_table = method_table.clone();
                     // Set closure_func_offset to current function count so closures get correct indices
                     ctx.closure_func_offset = module.functions.len() as u32;
                     // Share the module's constant pool

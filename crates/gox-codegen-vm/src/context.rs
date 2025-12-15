@@ -300,6 +300,8 @@ pub struct CodegenContext<'a> {
     pub const_indices: HashMap<String, u16>,
     /// Offset for closure function indices (used when temp context has empty module)
     pub closure_func_offset: u32,
+    /// Method table: "TypeName.MethodName" -> func_idx
+    pub method_table: HashMap<String, u32>,
 }
 
 /// Codegen context that compiles into an existing module.
@@ -314,6 +316,8 @@ pub struct CodegenContextRef<'a, 'm> {
     pub const_values: HashMap<Symbol, crate::ConstValue>,
     pub native_indices: HashMap<String, u32>,
     pub const_indices: HashMap<String, u16>,
+    /// Method table: "TypeName.MethodName" -> func_idx
+    pub method_table: HashMap<String, u32>,
 }
 
 impl<'a, 'm> CodegenContextRef<'a, 'm> {
@@ -372,6 +376,7 @@ impl<'a, 'm> CodegenContextRef<'a, 'm> {
                 native_indices: self.native_indices.clone(),
                 const_indices: self.const_indices.clone(),
                 closure_func_offset: self.module.functions.len() as u32,
+                method_table: self.method_table.clone(),
             };
             crate::stmt::compile_block(&mut temp_ctx, &mut fctx, body)?;
             // Merge back any new natives/constants
@@ -465,6 +470,7 @@ impl<'a> CodegenContext<'a> {
             native_indices: HashMap::new(),
             const_indices: HashMap::new(),
             closure_func_offset: 0,
+            method_table: HashMap::new(),
         }
     }
     
@@ -486,6 +492,7 @@ impl<'a> CodegenContext<'a> {
             const_values: HashMap::new(),
             native_indices: HashMap::new(),
             const_indices: HashMap::new(),
+            method_table: HashMap::new(),
         }
     }
     
@@ -566,6 +573,15 @@ impl<'a> CodegenContext<'a> {
     pub fn compile_func_body(&mut self, func: &FuncDecl) -> Result<FunctionDef, CodegenError> {
         let name = self.interner.resolve(func.name.symbol).unwrap_or("");
         let mut fctx = FuncContext::new(name);
+        
+        // Handle receiver parameter for methods
+        if let Some(ref receiver) = func.receiver {
+            fctx.param_count += 1;
+            fctx.param_slots += 1;
+            // Define receiver with its type
+            let type_sym = Some(receiver.ty.symbol);
+            fctx.define_local_with_type(receiver.name, 1, VarKind::Other, type_sym);
+        }
         
         // Allocate registers for parameters with type info
         for param in &func.sig.params {
