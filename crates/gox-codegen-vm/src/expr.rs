@@ -421,13 +421,44 @@ fn compile_func_call(
     func_idx: u32,
     call: &CallExpr,
 ) -> Result<u16, CodegenError> {
+    use gox_syntax::ast::ExprKind;
+    use crate::context::VarKind;
+    
     let arg_start = fctx.regs.current();
     
     // Compile each argument and ensure it's in the correct position
     for (i, arg) in call.args.iter().enumerate() {
         let expected_reg = arg_start + i as u16;
         let actual_reg = compile_expr(ctx, fctx, arg)?;
-        if actual_reg != expected_reg {
+        
+        // Check if this is a struct argument that needs to be copied
+        let needs_copy = if let ExprKind::Ident(ident) = &arg.kind {
+            if let Some(local) = fctx.lookup_local(ident.symbol) {
+                matches!(local.kind, VarKind::Struct(_))
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        if needs_copy {
+            // Get field count for struct copy
+            if let ExprKind::Ident(ident) = &arg.kind {
+                if let Some(local) = fctx.lookup_local(ident.symbol) {
+                    if let VarKind::Struct(field_count) = local.kind {
+                        // Allocate new struct and copy fields
+                        fctx.emit(Opcode::Alloc, expected_reg, 0, field_count);
+                        for f in 0..field_count {
+                            // Use expected_reg + field_count as temp space
+                            let tmp = expected_reg + field_count + f;
+                            fctx.emit(Opcode::GetField, tmp, actual_reg, f);
+                            fctx.emit(Opcode::SetField, expected_reg, f, tmp);
+                        }
+                    }
+                }
+            }
+        } else if actual_reg != expected_reg {
             // Move result to expected argument position
             fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
         }

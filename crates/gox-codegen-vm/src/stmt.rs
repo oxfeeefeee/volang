@@ -227,12 +227,21 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
             }
         }
         ExprKind::Call(call) => {
-            // Check if it's make(map[...])
-            if let ExprKind::Ident(_ident) = &call.func.kind {
-                (VarKind::Other, None)
-            } else {
-                (VarKind::Other, None)
+            // Check if it's a function call that returns a struct/object
+            if let ExprKind::Ident(func_ident) = &call.func.kind {
+                // Look up function signature to determine return type
+                for decl in &ctx.file.decls {
+                    if let gox_syntax::ast::Decl::Func(func_decl) = decl {
+                        if func_decl.name.symbol == func_ident.symbol {
+                            // Found the function - check its return type
+                            if let Some(ret_type) = func_decl.sig.results.first() {
+                                return infer_type_from_type_expr(ctx, &ret_type.ty);
+                            }
+                        }
+                    }
+                }
             }
+            (VarKind::Other, None)
         }
         ExprKind::Selector(sel) => {
             // Accessing a struct field - infer type from the field
@@ -291,6 +300,33 @@ fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
         }
     }
     false
+}
+
+/// Infer VarKind and type_sym from a type expression
+fn infer_type_from_type_expr(ctx: &CodegenContext, ty: &gox_syntax::ast::TypeExpr) -> (crate::context::VarKind, Option<gox_common::Symbol>) {
+    use gox_syntax::ast::TypeExprKind;
+    use crate::context::VarKind;
+    
+    match &ty.kind {
+        TypeExprKind::Map(_) => (VarKind::Map, None),
+        TypeExprKind::Slice(_) => (VarKind::Slice, None),
+        TypeExprKind::Struct(s) => (VarKind::Struct(s.fields.len() as u16), None),
+        TypeExprKind::Obx(_) => (VarKind::Obx, None),
+        TypeExprKind::Ident(ident) => {
+            // Named type - check if struct or object
+            for named in &ctx.result.named_types {
+                if named.name == ident.symbol {
+                    match &named.underlying {
+                        Type::Struct(s) => return (VarKind::Struct(s.fields.len() as u16), Some(ident.symbol)),
+                        Type::Obx(_) => return (VarKind::Obx, Some(ident.symbol)),
+                        _ => {}
+                    }
+                }
+            }
+            (VarKind::Other, None)
+        }
+        _ => (VarKind::Other, None),
+    }
 }
 
 /// Get hash for a struct key, or return the key as-is for primitives

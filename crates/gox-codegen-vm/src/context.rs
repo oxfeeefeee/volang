@@ -343,10 +343,12 @@ impl<'a, 'm> CodegenContextRef<'a, 'm> {
         let mut fctx = FuncContext::new(name);
         
         for param in &func.sig.params {
+            // Infer VarKind and type_sym from parameter type
+            let (kind, type_sym) = infer_param_type(self.result, &param.ty);
             for name in &param.names {
                 fctx.param_count += 1;
                 fctx.param_slots += 1;
-                fctx.define_local(*name, 1);
+                fctx.define_local_with_type(*name, 1, kind.clone(), type_sym);
             }
         }
         
@@ -562,12 +564,13 @@ impl<'a> CodegenContext<'a> {
         let name = self.interner.resolve(func.name.symbol).unwrap_or("");
         let mut fctx = FuncContext::new(name);
         
-        // Allocate registers for parameters
+        // Allocate registers for parameters with type info
         for param in &func.sig.params {
+            let (kind, type_sym) = infer_param_type(self.result, &param.ty);
             for name in &param.names {
                 fctx.param_count += 1;
                 fctx.param_slots += 1;
-                fctx.define_local(*name, 1);
+                fctx.define_local_with_type(*name, 1, kind.clone(), type_sym);
             }
         }
         
@@ -609,5 +612,32 @@ impl<'a> CodegenContext<'a> {
             }
         }
         false
+    }
+}
+
+/// Infer VarKind and type_sym from a parameter type expression
+fn infer_param_type(result: &TypeCheckResult, ty: &gox_syntax::ast::TypeExpr) -> (VarKind, Option<Symbol>) {
+    use gox_syntax::ast::TypeExprKind;
+    use gox_analysis::Type;
+    
+    match &ty.kind {
+        TypeExprKind::Map(_) => (VarKind::Map, None),
+        TypeExprKind::Slice(_) => (VarKind::Slice, None),
+        TypeExprKind::Struct(s) => (VarKind::Struct(s.fields.len() as u16), None),
+        TypeExprKind::Obx(_) => (VarKind::Obx, None),
+        TypeExprKind::Ident(ident) => {
+            // Named type - check if struct or object
+            for named in &result.named_types {
+                if named.name == ident.symbol {
+                    match &named.underlying {
+                        Type::Struct(s) => return (VarKind::Struct(s.fields.len() as u16), Some(ident.symbol)),
+                        Type::Obx(_) => return (VarKind::Obx, Some(ident.symbol)),
+                        _ => {}
+                    }
+                }
+            }
+            (VarKind::Other, None)
+        }
+        _ => (VarKind::Other, None),
     }
 }
