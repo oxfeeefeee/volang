@@ -1,7 +1,7 @@
 //! Expression compilation.
 
 use gox_common::symbol::Ident;
-use gox_syntax::ast::{Expr, ExprKind, BinaryOp, UnaryOp, CallExpr, SelectorExpr};
+use gox_syntax::ast::{Expr, ExprKind, BinaryOp, UnaryOp, CallExpr, SelectorExpr, ConversionExpr, TypeAssertExpr};
 use gox_vm::bytecode::Constant;
 use gox_vm::instruction::Opcode;
 use gox_vm::ffi::TypeTag;
@@ -132,8 +132,8 @@ pub fn compile_expr(
         }
         ExprKind::FuncLit(func_lit) => compile_func_lit(ctx, fctx, func_lit),
         ExprKind::Slice(slice) => compile_slice_expr(ctx, fctx, slice),
-        ExprKind::TypeAssert(_) => Err(CodegenError::Unsupported("type assertion".to_string())),
-        ExprKind::Conversion(_) => Err(CodegenError::Unsupported("type conversion".to_string())),
+        ExprKind::TypeAssert(ta) => compile_type_assert(ctx, fctx, ta),
+        ExprKind::Conversion(conv) => compile_conversion_expr(ctx, fctx, conv),
     }
 }
 
@@ -1336,8 +1336,23 @@ fn compile_composite_lit(
                 fctx.emit(Opcode::SetField, dst, field_idx as u16, val_reg);
             }
         }
+        TypeExprKind::Array(_) => {
+            // Array literal [N]T{...}
+            let num_elems = lit.elems.len();
+            // elem_type=2 is INT (from gox_vm::types::builtin::INT)
+            fctx.emit(Opcode::ArrayNew, dst, 2, num_elems as u16);
+            
+            // Initialize array elements
+            for (idx, elem) in lit.elems.iter().enumerate() {
+                let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                let idx_reg = fctx.regs.alloc(1);
+                fctx.emit(Opcode::LoadInt, idx_reg, idx as u16, 0);
+                fctx.emit(Opcode::ArraySet, dst, idx_reg, val_reg);
+                fctx.regs.free(1);
+            }
+        }
         _ => {
-            // TODO: handle array literals
+            // Unknown type - just allocate nil
             fctx.emit(Opcode::LoadNil, dst, 0, 0);
         }
     }
@@ -1525,6 +1540,120 @@ fn compile_builtin_assert(
     let dst = fctx.regs.alloc(1);
     fctx.emit(Opcode::LoadNil, dst, 0, 0);
     Ok(dst)
+}
+
+/// Compile a type assertion: x.(T)
+fn compile_type_assert(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    ta: &TypeAssertExpr,
+) -> Result<u16, CodegenError> {
+    use gox_syntax::ast::TypeExprKind;
+    
+    // Compile the interface expression
+    let iface_reg = compile_expr(ctx, fctx, &ta.expr)?;
+    
+    // Get the target type
+    let ty = match &ta.ty {
+        Some(ty) => ty,
+        None => {
+            // x.(type) - used in type switch, not as expression
+            return Err(CodegenError::Unsupported("x.(type) outside type switch".to_string()));
+        }
+    };
+    
+    // Unbox the interface to the target type
+    let dst = fctx.regs.alloc(1);
+    
+    match &ty.kind {
+        TypeExprKind::Ident(type_ident) => {
+            let type_name = ctx.interner.resolve(type_ident.symbol).unwrap_or("");
+            let type_tag = match type_name {
+                "int" | "int64" => TypeTag::Int64,
+                "float64" => TypeTag::Float64,
+                "string" => TypeTag::String,
+                "bool" => TypeTag::Bool,
+                _ => {
+                    // Named type - try to get info
+                    if let Some(_info) = ctx.get_named_type_info(type_ident.symbol) {
+                        TypeTag::Struct
+                    } else {
+                        TypeTag::Struct
+                    }
+                }
+            };
+            fctx.emit(Opcode::UnboxInterface, dst, type_tag as u16, iface_reg);
+        }
+        _ => {
+            // Complex types - just unbox as struct
+            fctx.emit(Opcode::UnboxInterface, dst, TypeTag::Struct as u16, iface_reg);
+        }
+    }
+    
+    Ok(dst)
+}
+
+/// Compile a ConversionExpr: T(x) when parsed as explicit conversion
+fn compile_conversion_expr(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    conv: &ConversionExpr,
+) -> Result<u16, CodegenError> {
+    use gox_syntax::ast::TypeExprKind;
+    
+    // Compile the source expression
+    let src = compile_expr(ctx, fctx, &conv.expr)?;
+    
+    // Get the target type from TypeExpr
+    match &conv.ty.kind {
+        TypeExprKind::Ident(type_ident) => {
+            let type_name = ctx.interner.resolve(type_ident.symbol).unwrap_or("");
+            match type_name {
+                "int" | "int64" => {
+                    let src_tag = infer_type_tag(ctx, fctx, &conv.expr);
+                    if src_tag == TypeTag::Float64 {
+                        let dst = fctx.regs.alloc(1);
+                        fctx.emit(Opcode::F64ToI64, dst, src, 0);
+                        return Ok(dst);
+                    }
+                    Ok(src)
+                }
+                "float64" => {
+                    let src_tag = infer_type_tag(ctx, fctx, &conv.expr);
+                    if src_tag == TypeTag::Int64 {
+                        let dst = fctx.regs.alloc(1);
+                        fctx.emit(Opcode::I64ToF64, dst, src, 0);
+                        return Ok(dst);
+                    }
+                    Ok(src)
+                }
+                "string" => {
+                    // int -> string (rune to string) or []byte -> string
+                    Ok(src)
+                }
+                _ => {
+                    // Named type conversion - use existing logic
+                    if let Some(info) = ctx.get_named_type_info(type_ident.symbol) {
+                        match &info.underlying {
+                            Type::Interface(iface) => {
+                                let dst = fctx.regs.alloc(1);
+                                let type_tag = infer_type_tag(ctx, fctx, &conv.expr);
+                                fctx.emit(Opcode::BoxInterface, dst, type_tag as u16, src);
+                                return Ok(dst);
+                            }
+                            _ => Ok(src),
+                        }
+                    } else {
+                        Ok(src)
+                    }
+                }
+            }
+        }
+        _ => {
+            // Complex type conversions (slices, etc.) - just pass through for now
+            Ok(src)
+        }
+    }
 }
 
 /// Compile a type conversion: T(x)

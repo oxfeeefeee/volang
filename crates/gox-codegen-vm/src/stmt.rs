@@ -1,6 +1,6 @@
 //! Statement compilation.
 
-use gox_syntax::ast::{Stmt, StmtKind, Block, IfStmt, ForStmt, ForClause, ReturnStmt, AssignStmt, AssignOp, ShortVarDecl, ExprKind};
+use gox_syntax::ast::{Stmt, StmtKind, Block, IfStmt, ForStmt, ForClause, ReturnStmt, AssignStmt, AssignOp, ShortVarDecl, ExprKind, SwitchStmt, DeferStmt, GoStmt, SendStmt};
 use gox_vm::instruction::Opcode;
 use gox_analysis::Type;
 
@@ -102,11 +102,11 @@ pub fn compile_stmt(
         StmtKind::Return(ret) => compile_return(ctx, fctx, ret),
         StmtKind::If(if_stmt) => compile_if(ctx, fctx, if_stmt),
         StmtKind::For(for_stmt) => compile_for(ctx, fctx, for_stmt),
-        StmtKind::Go(_) => Err(CodegenError::Unsupported("go statement".to_string())),
-        StmtKind::Defer(_) => Err(CodegenError::Unsupported("defer statement".to_string())),
-        StmtKind::Send(_) => Err(CodegenError::Unsupported("send statement".to_string())),
+        StmtKind::Go(go_stmt) => compile_go(ctx, fctx, go_stmt),
+        StmtKind::Defer(defer_stmt) => compile_defer(ctx, fctx, defer_stmt),
+        StmtKind::Send(send) => compile_send(ctx, fctx, send),
         StmtKind::Select(_) => Err(CodegenError::Unsupported("select statement".to_string())),
-        StmtKind::Switch(_) => Err(CodegenError::Unsupported("switch statement".to_string())),
+        StmtKind::Switch(sw) => compile_switch(ctx, fctx, sw),
         StmtKind::TypeSwitch(_) => Err(CodegenError::Unsupported("type switch".to_string())),
         StmtKind::Break(_) => {
             // Emit jump placeholder, will be patched when loop ends
@@ -934,4 +934,172 @@ fn compile_inc_dec(
     }
     
     Err(CodegenError::Unsupported("complex inc/dec".to_string()))
+}
+
+/// Compile defer statement.
+fn compile_defer(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    defer_stmt: &DeferStmt,
+) -> Result<(), CodegenError> {
+    // defer func() - push the call onto the defer stack
+    if let ExprKind::Call(call) = &defer_stmt.call.kind {
+        // Compile the function to call
+        if let ExprKind::Ident(ident) = &call.func.kind {
+            // Direct function call
+            let func_name = ctx.interner.resolve(ident.symbol).unwrap_or("");
+            if let Some(&func_idx) = ctx.func_indices.get(&ident.symbol) {
+                let arg_start = fctx.regs.current();
+                let arg_count = call.args.len() as u16;
+                
+                // Compile arguments
+                for arg in &call.args {
+                    expr::compile_expr(ctx, fctx, arg)?;
+                }
+                
+                // Push defer with function index and args
+                fctx.emit(Opcode::DeferPush, func_idx as u16, arg_start, arg_count);
+                return Ok(());
+            }
+        }
+    }
+    
+    // For complex defer expressions, just skip for now
+    Ok(())
+}
+
+/// Compile go statement.
+fn compile_go(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    go_stmt: &GoStmt,
+) -> Result<(), CodegenError> {
+    // go func() - spawn a new goroutine
+    if let ExprKind::Call(call) = &go_stmt.call.kind {
+        if let ExprKind::Ident(ident) = &call.func.kind {
+            let func_name = ctx.interner.resolve(ident.symbol).unwrap_or("");
+            if let Some(&func_idx) = ctx.func_indices.get(&ident.symbol) {
+                let arg_start = fctx.regs.current();
+                let arg_count = call.args.len() as u16;
+                
+                // Compile arguments
+                for arg in &call.args {
+                    expr::compile_expr(ctx, fctx, arg)?;
+                }
+                
+                // Spawn goroutine
+                fctx.emit(Opcode::Go, func_idx as u16, arg_start, arg_count);
+                return Ok(());
+            }
+        }
+    }
+    
+    Err(CodegenError::Unsupported("complex go expression".to_string()))
+}
+
+/// Compile send statement (ch <- value).
+fn compile_send(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    send: &SendStmt,
+) -> Result<(), CodegenError> {
+    let ch_reg = expr::compile_expr(ctx, fctx, &send.chan)?;
+    let val_reg = expr::compile_expr(ctx, fctx, &send.value)?;
+    fctx.emit(Opcode::ChanSend, ch_reg, val_reg, 0);
+    Ok(())
+}
+
+/// Compile switch statement.
+fn compile_switch(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    sw: &SwitchStmt,
+) -> Result<(), CodegenError> {
+    // Compile init if present
+    if let Some(ref init) = sw.init {
+        compile_stmt(ctx, fctx, init)?;
+    }
+    
+    // Compile tag expression (or use true for tagless switch)
+    let tag_reg = if let Some(ref tag) = sw.tag {
+        expr::compile_expr(ctx, fctx, tag)?
+    } else {
+        // Tagless switch: compare against true
+        let reg = fctx.regs.alloc(1);
+        fctx.emit(Opcode::LoadTrue, reg, 0, 0);
+        reg
+    };
+    
+    // Track jump addresses for patching
+    let mut case_end_jumps: Vec<usize> = Vec::new();
+    let mut default_body_start: Option<usize> = None;
+    let mut default_body: Option<&Vec<Stmt>> = None;
+    
+    // Process each case
+    for case in &sw.cases {
+        if case.exprs.is_empty() {
+            // Default case - save for last
+            default_body_start = Some(fctx.pc());
+            default_body = Some(&case.body);
+            continue;
+        }
+        
+        // Compare tag with each case expression
+        let mut match_jumps: Vec<usize> = Vec::new();
+        
+        for case_expr in &case.exprs {
+            let case_reg = expr::compile_expr(ctx, fctx, case_expr)?;
+            let cmp_reg = fctx.regs.alloc(1);
+            // Use EqI64 for now - TODO: handle different types
+            fctx.emit(Opcode::EqI64, cmp_reg, tag_reg, case_reg);
+            
+            // Jump to case body if match
+            let jump_match_pc = fctx.pc();
+            fctx.emit(Opcode::JumpIf, cmp_reg, 0, 0);
+            match_jumps.push(jump_match_pc);
+            
+            fctx.regs.free(1); // free cmp_reg
+        }
+        
+        // Jump to next case if no match
+        let jump_next_pc = fctx.pc();
+        fctx.emit(Opcode::Jump, 0, 0, 0);
+        
+        // Patch match jumps to here (case body)
+        let body_pc = fctx.pc();
+        for jump_pc in match_jumps {
+            let offset = (body_pc as i32) - (jump_pc as i32);
+            fctx.patch_jump(jump_pc, offset);
+        }
+        
+        // Compile case body
+        for stmt in &case.body {
+            compile_stmt(ctx, fctx, stmt)?;
+        }
+        
+        // Jump to end of switch
+        let jump_end_pc = fctx.pc();
+        fctx.emit(Opcode::Jump, 0, 0, 0);
+        case_end_jumps.push(jump_end_pc);
+        
+        // Patch jump to next case
+        let next_offset = (fctx.pc() as i32) - (jump_next_pc as i32);
+        fctx.patch_jump(jump_next_pc, next_offset);
+    }
+    
+    // Compile default case if present
+    if let Some(body) = default_body {
+        for stmt in body {
+            compile_stmt(ctx, fctx, stmt)?;
+        }
+    }
+    
+    // Patch all case end jumps to here
+    let end_pc = fctx.pc();
+    for jump_pc in case_end_jumps {
+        let offset = (end_pc as i32) - (jump_pc as i32);
+        fctx.patch_jump(jump_pc, offset);
+    }
+    
+    Ok(())
 }
