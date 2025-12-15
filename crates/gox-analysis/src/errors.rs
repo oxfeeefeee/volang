@@ -82,10 +82,6 @@ pub enum TypeError {
     UnaryBitNotInteger = 2312,
     /// Unary + requires numeric operand.
     UnaryPosNumeric = 2313,
-    /// Cannot take address of expression.
-    CannotTakeAddress = 2314,
-    /// Cannot dereference non-pointer.
-    CannotDereference = 2315,
 
     // === Builtin Function Errors (2400-2499) ===
     /// len requires exactly one argument.
@@ -237,8 +233,6 @@ impl TypeError {
             TypeError::UnaryNotBoolean => "unary ! requires boolean operand",
             TypeError::UnaryBitNotInteger => "unary ^ requires integer operand",
             TypeError::UnaryPosNumeric => "unary + requires numeric operand",
-            TypeError::CannotTakeAddress => "cannot take address of expression",
-            TypeError::CannotDereference => "cannot dereference non-pointer",
 
             // Builtin Function Errors
             TypeError::LenArgCount => "len requires exactly one argument",

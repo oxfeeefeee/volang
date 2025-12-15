@@ -19,7 +19,7 @@
 //! # Cycle Detection
 //!
 //! The resolver detects illegal type cycles using a `resolving` set to track types
-//! currently being resolved. Cycles through pointers, slices, maps, and channels are
+//! currently being resolved. Cycles through slices, maps, and channels are
 //! allowed (they break the cycle), but direct cycles like `type A A` are errors.
 //!
 //! # Output

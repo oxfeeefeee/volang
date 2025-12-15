@@ -16,7 +16,6 @@
 //! ├── Obx (object { fields } - GoX extension)
 //! ├── Func (func(params) results)
 //! ├── Interface (interface { methods })
-//! ├── Pointer (*T)
 //! ├── Chan (chan T, <-chan T, chan<- T)
 //! ├── Tuple (multiple return values)
 //! ├── Untyped (untyped constants)
@@ -43,7 +42,7 @@
 //! - `UntypedInt` → can become any integer or float type
 //! - `UntypedFloat` → can become any float type
 //! - `UntypedString` → can become `string`
-//! - `UntypedNil` → can become any pointer, slice, map, channel, or interface
+//! - `UntypedNil` → can become any slice, map, channel, or interface
 
 use gox_common::Symbol;
 
