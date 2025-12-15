@@ -361,12 +361,7 @@ fn get_index_result_type(ctx: &CodegenContext, container_expr: &gox_syntax::ast:
 
 /// Check if a named type is an object type (reference semantics)
 fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
-    for named in &ctx.result.named_types {
-        if named.name == sym {
-            return matches!(named.underlying, Type::Obx(_));
-        }
-    }
-    false
+    lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Obx(_)))
 }
 
 /// Get hash for a struct key, or return the key as-is for primitives
@@ -398,23 +393,15 @@ fn resolve_selector_field_index(
     if let ExprKind::Ident(ident) = &expr.kind {
         if let Some(local) = fctx.lookup_local(ident.symbol) {
             if let Some(type_sym) = local.type_sym {
-                for named in &ctx.result.named_types {
-                    if named.name == type_sym {
-                        match &named.underlying {
-                            Type::Struct(s) | Type::Obx(s) => {
-                                for (idx, field) in s.fields.iter().enumerate() {
-                                    if field.name == Some(field_name) {
-                                        return idx as u16;
-                                    }
-                                }
+                if let Some(ty) = lookup_named_type(ctx, type_sym) {
+                    if let Type::Struct(s) | Type::Obx(s) = ty {
+                        for (idx, field) in s.fields.iter().enumerate() {
+                            if field.name == Some(field_name) {
+                                return idx as u16;
                             }
-                            _ => {}
                         }
                     }
                 }
-            } else {
-                // No type_sym - this shouldn't happen for struct fields
-                // Fall through to return 0
             }
         }
     }
