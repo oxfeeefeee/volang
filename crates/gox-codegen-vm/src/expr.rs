@@ -661,22 +661,8 @@ fn resolve_field_index(
                     }
                 }
             } else {
-                // No type_sym - try to infer from named_types by checking all struct types
-                // This handles cases where type_sym wasn't set during declaration
-                for named in &ctx.result.named_types {
-                    match &named.underlying {
-                        Type::Struct(s) | Type::Obx(s) => {
-                            for (idx, field) in s.fields.iter().enumerate() {
-                                if field.name == Some(field_name) {
-                                    // Found a match - return the index
-                                    // This is a heuristic and may not be correct for all cases
-                                    return idx as u16;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // No type_sym - this shouldn't happen for struct fields
+                // Fall through to return 0
             }
         }
     }
@@ -785,8 +771,28 @@ fn compile_composite_lit(
             }
         }
         TypeExprKind::Slice(_) => {
-            // Create nil slice (append will create it)
-            fctx.emit(Opcode::LoadNil, dst, 0, 0);
+            // Create slice with initial elements
+            let num_elems = lit.elems.len();
+            if num_elems == 0 {
+                // Empty slice - create nil
+                fctx.emit(Opcode::LoadNil, dst, 0, 0);
+            } else {
+                // Create underlying array
+                // elem_type=2 is INT (from gox_vm::types::builtin::INT)
+                let arr_reg = fctx.regs.alloc(1);
+                fctx.emit(Opcode::ArrayNew, arr_reg, 2, num_elems as u16);
+                
+                // Initialize array elements
+                for (idx, elem) in lit.elems.iter().enumerate() {
+                    let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                    let idx_reg = fctx.regs.alloc(1);
+                    fctx.emit(Opcode::LoadInt, idx_reg, idx as u16, 0);
+                    fctx.emit(Opcode::ArraySet, arr_reg, idx_reg, val_reg);
+                }
+                
+                // Create slice from array (start=0, end=len)
+                fctx.emit_with_flags(Opcode::SliceNew, num_elems as u8, dst, arr_reg, 0);
+            }
         }
         TypeExprKind::Struct(_) | TypeExprKind::Obx(_) => {
             // Allocate struct/object

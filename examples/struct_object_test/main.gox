@@ -25,6 +25,11 @@ type ObjPerson object {
     score  int
 }
 
+type Container struct {
+    name  string
+    items []int
+}
+
 
 func main() {
     // Test 1: Struct value semantics
@@ -49,6 +54,17 @@ func main() {
     println(p.age)     // 11
     println(p.height)  // 22
     println(p.score)   // 33
+    
+    // Test 4: Slice literal
+    println(4000)
+    items := []int{1, 2, 3}
+    println(len(items))  // 3
+    
+    // Test 5: Struct with string and slice fields
+    println(5000)
+    c := Container{"hello", items}
+    println(len(c.name))   // 5
+    println(len(c.items))  // 3
     
     println(9999)
 }

@@ -277,19 +277,8 @@ fn resolve_selector_field_index(
                     }
                 }
             } else {
-                // No type_sym - search all named types as fallback
-                for named in &ctx.result.named_types {
-                    match &named.underlying {
-                        Type::Struct(s) | Type::Obx(s) => {
-                            for (idx, field) in s.fields.iter().enumerate() {
-                                if field.name == Some(field_name) {
-                                    return idx as u16;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // No type_sym - this shouldn't happen for struct fields
+                // Fall through to return 0
             }
         }
     }
