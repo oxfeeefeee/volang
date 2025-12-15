@@ -944,9 +944,28 @@ fn compile_selector(
     sel: &SelectorExpr,
 ) -> Result<u16, CodegenError> {
     let obj = compile_expr(ctx, fctx, &sel.expr)?;
-    let dst = fctx.regs.alloc(1);
     
-    // Resolve field index from type info
+    // Get the type of the expression to check for embedded fields
+    if let Some(ty) = get_expr_type(ctx, fctx, &sel.expr) {
+        // Try to find field path (handles embedded fields)
+        if let Some(path) = find_field_path(ctx, &ty, sel.sel.symbol) {
+            // Generate GetField for each step in the path
+            let mut current = obj;
+            for (i, field_idx) in path.iter().enumerate() {
+                let dst = if i == path.len() - 1 {
+                    fctx.regs.alloc(1)
+                } else {
+                    fctx.regs.alloc(1)
+                };
+                fctx.emit(Opcode::GetField, dst, current, *field_idx);
+                current = dst;
+            }
+            return Ok(current);
+        }
+    }
+    
+    // Fallback: direct field access
+    let dst = fctx.regs.alloc(1);
     let field_idx = resolve_field_index(ctx, fctx, &sel.expr, sel.sel.symbol);
     fctx.emit(Opcode::GetField, dst, obj, field_idx);
     Ok(dst)
@@ -1046,8 +1065,90 @@ pub fn lookup_named_type<'a>(ctx: &'a CodegenContext, sym: gox_common::Symbol) -
         .map(|n| &n.underlying)
 }
 
-/// Find field index in a type
+/// Find the full path of field indices to access a field (including through embedded fields)
+/// Returns a vector of field indices representing the path to the target field
+fn find_field_path(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+) -> Option<Vec<u16>> {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            // First, look for direct field
+            for (idx, field) in s.fields.iter().enumerate() {
+                if field.name == Some(field_name) {
+                    return Some(vec![idx as u16]);
+                }
+            }
+            
+            // Then, search in embedded fields
+            for (idx, field) in s.fields.iter().enumerate() {
+                if field.embedded {
+                    if let Some(mut path) = find_field_path(ctx, &field.ty, field_name) {
+                        // Prepend the embedded field's index
+                        path.insert(0, idx as u16);
+                        return Some(path);
+                    }
+                }
+            }
+            None
+        }
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return find_field_path(ctx, &named.underlying, field_name);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Find field index in a type (including embedded fields)
+/// Returns (field_index, embedded_indices) where embedded_indices is the path through embedded fields
 fn find_field_index_in_type(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+) -> Option<u16> {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            // First, look for direct field
+            for (idx, field) in s.fields.iter().enumerate() {
+                if field.name == Some(field_name) {
+                    return Some(idx as u16);
+                }
+            }
+            
+            // Then, search in embedded fields
+            for (idx, field) in s.fields.iter().enumerate() {
+                if field.embedded {
+                    // For embedded fields, recursively search
+                    if let Some(_) = find_field_in_embedded(ctx, &field.ty, field_name) {
+                        // Return the embedded field's index - the actual nested access
+                        // will be handled by compile_selector_with_embedded
+                        return Some(idx as u16);
+                    }
+                }
+            }
+            None
+        }
+        Type::Named(id) => {
+            // Look up the named type by index
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return find_field_index_in_type(ctx, &named.underlying, field_name);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Find a field in an embedded type (recursively)
+fn find_field_in_embedded(
     ctx: &CodegenContext,
     ty: &gox_analysis::Type,
     field_name: gox_common::Symbol,
@@ -1061,12 +1162,19 @@ fn find_field_index_in_type(
                     return Some(idx as u16);
                 }
             }
+            // Continue searching in nested embedded fields
+            for field in &s.fields {
+                if field.embedded {
+                    if let Some(idx) = find_field_in_embedded(ctx, &field.ty, field_name) {
+                        return Some(idx);
+                    }
+                }
+            }
             None
         }
         Type::Named(id) => {
-            // Look up the named type by index
             if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
-                return find_field_index_in_type(ctx, &named.underlying, field_name);
+                return find_field_in_embedded(ctx, &named.underlying, field_name);
             }
             None
         }
