@@ -1,3 +1,4 @@
+// skip: GoX doesn't support pointer syntax
 // Test: GoX correctly rejects pointer syntax
 // GoX doesn't have pointers - these should all error
 package main

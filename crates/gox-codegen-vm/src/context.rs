@@ -115,6 +115,8 @@ pub struct FuncContext {
     pub parent_locals: Option<HashMap<Symbol, LocalVar>>,
     /// Parent function's upvalues (for multi-level capture)
     pub parent_upvalues: Option<Vec<Upvalue>>,
+    /// Local type declarations (symbol -> (slot_count, field_names))
+    pub local_types: HashMap<Symbol, (u16, Vec<Symbol>)>,
 }
 
 impl FuncContext {
@@ -131,6 +133,7 @@ impl FuncContext {
             upvalues: Vec::new(),
             parent_locals: None,
             parent_upvalues: None,
+            local_types: HashMap::new(),
         }
     }
     
@@ -148,6 +151,7 @@ impl FuncContext {
             upvalues: Vec::new(),
             parent_locals: Some(parent_locals),
             parent_upvalues: Some(parent_upvalues),
+            local_types: HashMap::new(),
         }
     }
     

@@ -69,12 +69,42 @@ pub fn compile_stmt(
                             fctx.emit(Opcode::LoadInt, dst + 1, 0, 0);
                         }
                     } else {
+                        // Check if this is a struct type that needs allocation
+                        let struct_slot_count = spec.ty.as_ref().and_then(|ty| {
+                            if let gox_syntax::ast::TypeExprKind::Ident(type_ident) = &ty.kind {
+                                // First check local types, then global types
+                                if let Some((count, _)) = fctx.local_types.get(&type_ident.symbol) {
+                                    Some(*count)
+                                } else {
+                                    ctx.get_named_type_info(type_ident.symbol)
+                                        .map(|ti| expr::get_type_slot_count_pub(ctx, &ti.underlying))
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        
                         let dst = fctx.define_local(*name, 1);
+                        
+                        // Track the type symbol for local struct types
+                        if let Some(ty) = &spec.ty {
+                            if let gox_syntax::ast::TypeExprKind::Ident(type_ident) = &ty.kind {
+                                if fctx.local_types.contains_key(&type_ident.symbol) {
+                                    if let Some(local) = fctx.locals.get_mut(&name.symbol) {
+                                        local.type_sym = Some(type_ident.symbol);
+                                    }
+                                }
+                            }
+                        }
+                        
                         if i < spec.values.len() {
                             let src = expr::compile_expr(ctx, fctx, &spec.values[i])?;
                             if src != dst {
                                 fctx.emit(Opcode::Mov, dst, src, 0);
                             }
+                        } else if let Some(slot_count) = struct_slot_count {
+                            // Allocate zero-initialized struct
+                            fctx.emit(Opcode::Alloc, dst, 0, slot_count);
                         } else {
                             fctx.emit(Opcode::LoadNil, dst, 0, 0);
                         }
@@ -135,8 +165,15 @@ pub fn compile_stmt(
             Err(CodegenError::Unsupported("goto/fallthrough".to_string()))
         }
         StmtKind::Labeled(_) => Err(CodegenError::Unsupported("labeled statement".to_string())),
-        StmtKind::Type(_) => {
-            // Local type declarations - no codegen needed, just a compile-time construct
+        StmtKind::Type(type_decl) => {
+            // Local type declarations - track struct types for var allocations and field access
+            if let gox_syntax::ast::TypeExprKind::Struct(struct_type) = &type_decl.ty.kind {
+                let slot_count = struct_type.fields.len() as u16;
+                let field_names: Vec<gox_common::Symbol> = struct_type.fields.iter()
+                    .filter_map(|f| f.names.first().map(|n| n.symbol))
+                    .collect();
+                fctx.local_types.insert(type_decl.name.symbol, (slot_count, field_names));
+            }
             Ok(())
         }
     }
@@ -163,7 +200,7 @@ fn compile_short_var(
         } else {
             // Determine the type kind and type symbol from the RHS expression
             let (mut kind, mut type_sym) = if i < sv.values.len() {
-                let (k, ts) = infer_var_kind_and_type(ctx, &sv.values[i]);
+                let (k, ts) = infer_var_kind_and_type_with_local(ctx, fctx, &sv.values[i]);
                 // Also check if it's a float expression using fctx
                 if k == VarKind::Other && expr::is_float_expr(ctx, fctx, &sv.values[i]) {
                     (VarKind::Float, None)
@@ -283,6 +320,50 @@ fn compile_index_struct_copy(
     fctx.emit(Opcode::Mov, dst, ptr, 0);
     
     Ok(())
+}
+
+/// Infer VarKind and type symbol from an expression, with access to local types
+fn infer_var_kind_and_type_with_local(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> (crate::context::VarKind, Option<gox_common::Symbol>) {
+    use gox_syntax::ast::{ExprKind, TypeExprKind};
+    use crate::context::VarKind;
+    
+    match &expr.kind {
+        ExprKind::CompositeLit(lit) => {
+            match &lit.ty.kind {
+                TypeExprKind::Map(map_ty) => {
+                    if let TypeExprKind::Ident(val_ident) = &map_ty.value.kind {
+                        (VarKind::Map, Some(val_ident.symbol))
+                    } else {
+                        (VarKind::Map, None)
+                    }
+                }
+                TypeExprKind::Slice(elem_ty) => {
+                    if let TypeExprKind::Ident(elem_ident) = &elem_ty.kind {
+                        (VarKind::Slice, Some(elem_ident.symbol))
+                    } else {
+                        (VarKind::Slice, None)
+                    }
+                }
+                TypeExprKind::Struct(s) => (VarKind::Struct(s.fields.len() as u16), None),
+                TypeExprKind::Obx(_) => (VarKind::Obx, None),
+                TypeExprKind::Ident(ident) => {
+                    // Check local types first
+                    if let Some((slot_count, _)) = fctx.local_types.get(&ident.symbol) {
+                        return (VarKind::Struct(*slot_count), Some(ident.symbol));
+                    }
+                    // Named type - look up in type check results
+                    let field_count = lit.elems.len() as u16;
+                    if is_named_type_object(ctx, ident.symbol) {
+                        (VarKind::Obx, Some(ident.symbol))
+                    } else {
+                        (VarKind::Struct(field_count), Some(ident.symbol))
+                    }
+                }
+                _ => (VarKind::Other, None),
+            }
+        }
+        _ => infer_var_kind_and_type(ctx, expr),
+    }
 }
 
 /// Infer VarKind and type symbol from an expression (for type tracking)
@@ -651,7 +732,7 @@ fn compile_assign(
                 // Handle struct/object field assignment: s.x = v
                 let obj = expr::compile_expr(ctx, fctx, &sel.expr)?;
                 let value = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
-                let field_idx = expr::resolve_field_index(ctx, fctx, &sel.expr, sel.sel.symbol);
+                let field_idx = expr::resolve_flat_field_index(ctx, fctx, &sel.expr, sel.sel.symbol);
                 fctx.emit(Opcode::SetField, obj, field_idx, value);
             }
             _ => {

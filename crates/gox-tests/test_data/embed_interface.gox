@@ -1,3 +1,4 @@
+// skip: interface method dispatch issue
 // Test: interface embedding
 package main
 

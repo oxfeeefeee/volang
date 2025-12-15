@@ -950,22 +950,26 @@ fn compile_selector(
 ) -> Result<u16, CodegenError> {
     let obj = compile_expr(ctx, fctx, &sel.expr)?;
     
+    // Check for local type field access first
+    if let Some(field_idx) = get_local_type_field_index(fctx, &sel.expr, sel.sel.symbol) {
+        let dst = fctx.regs.alloc(1);
+        fctx.emit(Opcode::GetField, dst, obj, field_idx);
+        return Ok(dst);
+    }
+    
     // Get the type of the expression to check for embedded fields
     if let Some(ty) = get_expr_type(ctx, fctx, &sel.expr) {
-        // Try to find field path (handles embedded fields)
-        if let Some(path) = find_field_path(ctx, &ty, sel.sel.symbol) {
-            // Generate GetField for each step in the path
-            let mut current = obj;
-            for (i, field_idx) in path.iter().enumerate() {
-                let dst = if i == path.len() - 1 {
-                    fctx.regs.alloc(1)
-                } else {
-                    fctx.regs.alloc(1)
-                };
-                fctx.emit(Opcode::GetField, dst, current, *field_idx);
-                current = dst;
-            }
-            return Ok(current);
+        // Check if we're accessing an embedded field by its type name (e.g., e.Person)
+        // For value types, this should just return the same object since fields are inline
+        if is_embedded_type_access(ctx, &ty, sel.sel.symbol) {
+            return Ok(obj);
+        }
+        
+        // Try to find flattened field offset (handles embedded fields for value types)
+        if let Some(flat_idx) = find_flat_field_index(ctx, &ty, sel.sel.symbol) {
+            let dst = fctx.regs.alloc(1);
+            fctx.emit(Opcode::GetField, dst, obj, flat_idx);
+            return Ok(dst);
         }
     }
     
@@ -974,6 +978,51 @@ fn compile_selector(
     let field_idx = resolve_field_index(ctx, fctx, &sel.expr, sel.sel.symbol);
     fctx.emit(Opcode::GetField, dst, obj, field_idx);
     Ok(dst)
+}
+
+/// Get field index for a local type variable
+fn get_local_type_field_index(
+    fctx: &FuncContext,
+    expr: &gox_syntax::ast::Expr,
+    field_name: gox_common::Symbol,
+) -> Option<u16> {
+    use gox_syntax::ast::ExprKind;
+    
+    // Get the variable name from the expression
+    if let ExprKind::Ident(ident) = &expr.kind {
+        // Check if this variable has a local type
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            // Use the type_sym to look up the local type
+            if let Some(type_sym) = local.type_sym {
+                if let Some((_, field_names)) = fctx.local_types.get(&type_sym) {
+                    if let Some(idx) = field_names.iter().position(|&f| f == field_name) {
+                        return Some(idx as u16);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve flattened field index for a selector expression (handles embedded fields)
+pub fn resolve_flat_field_index(
+    ctx: &CodegenContext,
+    fctx: &FuncContext,
+    expr: &gox_syntax::ast::Expr,
+    field_name: gox_common::Symbol,
+) -> u16 {
+    // First check local types
+    if let Some(idx) = get_local_type_field_index(fctx, expr, field_name) {
+        return idx;
+    }
+    
+    if let Some(ty) = get_expr_type(ctx, fctx, expr) {
+        if let Some(idx) = find_flat_field_index(ctx, &ty, field_name) {
+            return idx;
+        }
+    }
+    0
 }
 
 /// Resolve field index for a selector expression
@@ -1068,6 +1117,191 @@ pub fn lookup_named_type<'a>(ctx: &'a CodegenContext, sym: gox_common::Symbol) -
     ctx.result.named_types.iter()
         .find(|n| n.name == sym)
         .map(|n| &n.underlying)
+}
+
+/// Check if the selector is accessing an embedded field by its type name
+/// e.g., e.Person where Person is an embedded type in Employee
+fn is_embedded_type_access(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+) -> bool {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            for field in &s.fields {
+                if field.embedded {
+                    // Check if the field name matches the embedded type name
+                    if let Type::Named(id) = &field.ty {
+                        if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                            if named.name == field_name {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        }
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return is_embedded_type_access(ctx, &named.underlying, field_name);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Find the flattened field index for embedded struct field access
+/// For value type structs, fields are stored inline, so we need to calculate the actual offset
+fn find_flat_field_index(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+) -> Option<u16> {
+    find_flat_field_index_with_offset(ctx, ty, field_name, 0)
+}
+
+fn find_flat_field_index_with_offset(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+    base_offset: u16,
+) -> Option<u16> {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            // First pass: check all direct (non-embedded) fields for shadowing
+            let mut current_offset = base_offset;
+            for field in &s.fields {
+                if !field.embedded && field.name == Some(field_name) {
+                    return Some(current_offset);
+                }
+                if field.embedded {
+                    current_offset += get_type_slot_count(ctx, &field.ty);
+                } else {
+                    current_offset += 1;
+                }
+            }
+            
+            // Second pass: search in embedded fields (promoted fields)
+            current_offset = base_offset;
+            for field in &s.fields {
+                if field.embedded {
+                    if let Some(idx) = find_flat_field_index_with_offset(ctx, &field.ty, field_name, current_offset) {
+                        return Some(idx);
+                    }
+                    current_offset += get_type_slot_count(ctx, &field.ty);
+                } else {
+                    current_offset += 1;
+                }
+            }
+            None
+        }
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return find_flat_field_index_with_offset(ctx, &named.underlying, field_name, base_offset);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Get the slot count for a specific embedded field
+fn get_embedded_field_slot_count(ctx: &CodegenContext, ty: &gox_analysis::Type, field_name: gox_common::Symbol) -> u16 {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            for field in &s.fields {
+                if field.embedded {
+                    if let Type::Named(id) = &field.ty {
+                        if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                            if named.name == field_name {
+                                return get_type_slot_count(ctx, &field.ty);
+                            }
+                        }
+                    }
+                }
+            }
+            0
+        }
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return get_embedded_field_slot_count(ctx, &named.underlying, field_name);
+            }
+            0
+        }
+        _ => 0,
+    }
+}
+
+/// Get the base offset for a specific embedded field
+fn get_embedded_field_offset(ctx: &CodegenContext, ty: &gox_analysis::Type, field_name: gox_common::Symbol) -> u16 {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            let mut offset = 0u16;
+            for field in &s.fields {
+                if field.embedded {
+                    if let Type::Named(id) = &field.ty {
+                        if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                            if named.name == field_name {
+                                return offset;
+                            }
+                        }
+                    }
+                    offset += get_type_slot_count(ctx, &field.ty);
+                } else {
+                    offset += 1;
+                }
+            }
+            0
+        }
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return get_embedded_field_offset(ctx, &named.underlying, field_name);
+            }
+            0
+        }
+        _ => 0,
+    }
+}
+
+/// Get the number of slots a type occupies (public version for stmt.rs)
+pub fn get_type_slot_count_pub(ctx: &CodegenContext, ty: &gox_analysis::Type) -> u16 {
+    get_type_slot_count(ctx, ty)
+}
+
+/// Get the number of slots a type occupies (for calculating embedded struct offsets)
+fn get_type_slot_count(ctx: &CodegenContext, ty: &gox_analysis::Type) -> u16 {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            let mut count = 0u16;
+            for field in &s.fields {
+                if field.embedded {
+                    count += get_type_slot_count(ctx, &field.ty);
+                } else {
+                    count += 1;
+                }
+            }
+            count
+        }
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return get_type_slot_count(ctx, &named.underlying);
+            }
+            1
+        }
+        _ => 1,
+    }
 }
 
 /// Find the full path of field indices to access a field (including through embedded fields)
@@ -1324,16 +1558,71 @@ fn compile_composite_lit(
                 fctx.emit(Opcode::SetField, dst, field_idx as u16, val_reg);
             }
         }
-        TypeExprKind::Ident(_) => {
-            // Named type - could be struct or object alias
-            // For now, allocate based on element count
-            let num_fields = lit.elems.len();
-            fctx.emit(Opcode::Alloc, dst, 0, num_fields as u16);
+        TypeExprKind::Ident(type_ident) => {
+            // Check local types first, then global types
+            let local_type_info = fctx.local_types.get(&type_ident.symbol).cloned();
+            
+            let slot_count = if let Some((count, _)) = &local_type_info {
+                *count
+            } else if let Some(type_info) = ctx.get_named_type_info(type_ident.symbol) {
+                get_type_slot_count(ctx, &type_info.underlying)
+            } else {
+                lit.elems.len() as u16
+            };
+            fctx.emit(Opcode::Alloc, dst, 0, slot_count);
             
             // Initialize fields
-            for (field_idx, elem) in lit.elems.iter().enumerate() {
-                let val_reg = compile_expr(ctx, fctx, &elem.value)?;
-                fctx.emit(Opcode::SetField, dst, field_idx as u16, val_reg);
+            for elem in &lit.elems {
+                if let Some(gox_syntax::ast::CompositeLitKey::Ident(field_ident)) = &elem.key {
+                    // Check local type for field index
+                    if let Some((_, field_names)) = &local_type_info {
+                        if let Some(idx) = field_names.iter().position(|&f| f == field_ident.symbol) {
+                            let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                            fctx.emit(Opcode::SetField, dst, idx as u16, val_reg);
+                            continue;
+                        }
+                    }
+                    
+                    // Pre-compute type info before mutable borrow
+                    let is_embedded = ctx.get_named_type_info(type_ident.symbol)
+                        .map(|ti| is_embedded_type_access(ctx, &ti.underlying, field_ident.symbol))
+                        .unwrap_or(false);
+                    
+                    if is_embedded {
+                        // Get embedded field info before compile_expr
+                        let (inner_slot_count, base_offset) = ctx.get_named_type_info(type_ident.symbol)
+                            .map(|ti| (
+                                get_embedded_field_slot_count(ctx, &ti.underlying, field_ident.symbol),
+                                get_embedded_field_offset(ctx, &ti.underlying, field_ident.symbol)
+                            ))
+                            .unwrap_or((0, 0));
+                        
+                        // Now compile the inner struct
+                        let inner_reg = compile_expr(ctx, fctx, &elem.value)?;
+                        
+                        // Copy fields to flattened positions
+                        for i in 0..inner_slot_count {
+                            let tmp = fctx.regs.alloc(1);
+                            fctx.emit(Opcode::GetField, tmp, inner_reg, i);
+                            fctx.emit(Opcode::SetField, dst, base_offset + i, tmp);
+                            fctx.regs.free(1);
+                        }
+                    } else {
+                        // Get flattened index before compile_expr
+                        let flat_idx = ctx.get_named_type_info(type_ident.symbol)
+                            .and_then(|ti| find_flat_field_index(ctx, &ti.underlying, field_ident.symbol));
+                        
+                        let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                        if let Some(idx) = flat_idx {
+                            fctx.emit(Opcode::SetField, dst, idx, val_reg);
+                        }
+                    }
+                } else {
+                    // Positional initialization
+                    let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                    let field_idx = lit.elems.iter().position(|e| std::ptr::eq(e, elem)).unwrap_or(0);
+                    fctx.emit(Opcode::SetField, dst, field_idx as u16, val_reg);
+                }
             }
         }
         TypeExprKind::Array(_) => {

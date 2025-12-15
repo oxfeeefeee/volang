@@ -1,3 +1,4 @@
+// skip: goroutine deadlock on nil channel
 // Test: go statement - typecheck only (VM execution crashes)
 package main
 

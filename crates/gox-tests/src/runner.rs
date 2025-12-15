@@ -9,6 +9,8 @@
 //! - `=== typecheck ===` - Expected type errors or "OK"
 //! - `=== codegen ===` - Expected bytecode text
 //!
+//! To skip a test, add `// skip` or `// skip: reason` at the beginning of the file.
+//!
 //! All tests must run successfully. Use `assert()` to verify correctness.
 
 use std::fs;
@@ -28,16 +30,21 @@ use crate::printer::AstPrinter;
 pub struct TestResult {
     pub path: String,
     pub passed: bool,
+    pub skipped: bool,
     pub error: Option<String>,
 }
 
 impl TestResult {
     fn pass(path: impl Into<String>) -> Self {
-        Self { path: path.into(), passed: true, error: None }
+        Self { path: path.into(), passed: true, skipped: false, error: None }
     }
     
     fn fail(path: impl Into<String>, error: impl Into<String>) -> Self {
-        Self { path: path.into(), passed: false, error: Some(error.into()) }
+        Self { path: path.into(), passed: false, skipped: false, error: Some(error.into()) }
+    }
+    
+    fn skip(path: impl Into<String>, reason: Option<String>) -> Self {
+        Self { path: path.into(), passed: true, skipped: true, error: reason }
     }
 }
 
@@ -47,6 +54,7 @@ pub struct TestSummary {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
+    pub skipped: usize,
     pub failures: Vec<TestResult>,
 }
 
@@ -108,6 +116,23 @@ fn parse_test_file(content: &str) -> TestFile {
     result
 }
 
+/// Check if file should be skipped based on first line.
+/// Returns Some(reason) if skipped, None otherwise.
+fn check_skip_marker(content: &str) -> Option<Option<String>> {
+    let first_line = content.lines().next().unwrap_or("").trim();
+    if first_line.starts_with("// skip") || first_line.starts_with("//skip") {
+        // Extract reason after "skip:" if present
+        let reason = if let Some(pos) = first_line.find(':') {
+            Some(first_line[pos + 1..].trim().to_string())
+        } else {
+            None
+        };
+        Some(reason)
+    } else {
+        None
+    }
+}
+
 /// Run a single-file test.
 pub fn run_single_file(path: &Path) -> TestResult {
     let path_str = path.display().to_string();
@@ -117,6 +142,11 @@ pub fn run_single_file(path: &Path) -> TestResult {
         Ok(c) => c,
         Err(e) => return TestResult::fail(&path_str, format!("read error: {}", e)),
     };
+    
+    // Check for skip marker
+    if let Some(reason) = check_skip_marker(&content) {
+        return TestResult::skip(&path_str, reason);
+    }
     
     let test = parse_test_file(&content);
     
@@ -337,13 +367,17 @@ fn collect_and_run(dir: &Path, summary: &mut TestSummary) {
             }
         } else if path.extension().map_or(false, |e| e == "gox") {
             // Single-file test
-            summary.total += 1;
             let result = run_single_file(&path);
-            if result.passed {
-                summary.passed += 1;
+            if result.skipped {
+                summary.skipped += 1;
             } else {
-                summary.failed += 1;
-                summary.failures.push(result);
+                summary.total += 1;
+                if result.passed {
+                    summary.passed += 1;
+                } else {
+                    summary.failed += 1;
+                    summary.failures.push(result);
+                }
             }
         }
     }

@@ -812,6 +812,11 @@ impl Vm {
             Opcode::ChanSend => {
                 // a=chan, b=value
                 let ch = self.read_reg(fiber_id, a) as GcRef;
+                if ch.is_null() {
+                    // Send on nil channel blocks forever
+                    self.scheduler.block_current(BlockReason::ChanSend(ch));
+                    return VmResult::Yield;
+                }
                 let val = self.read_reg(fiber_id, b);
                 
                 match channel::try_send(ch, val) {
@@ -841,6 +846,11 @@ impl Vm {
             Opcode::ChanRecv => {
                 // a=dest, b=chan, c=ok_dest
                 let ch = self.read_reg(fiber_id, b) as GcRef;
+                if ch.is_null() {
+                    // Receive on nil channel blocks forever
+                    self.scheduler.block_current(BlockReason::ChanRecv(ch));
+                    return VmResult::Yield;
+                }
                 
                 match channel::try_recv(ch) {
                     Ok(Some(val)) => {

@@ -36,19 +36,27 @@ fn main() -> ExitCode {
     let summary = if path.is_file() {
         let result = run_single_file(&path);
         let mut s = gox_tests::TestSummary::default();
-        s.total = 1;
-        if result.passed {
-            s.passed = 1;
-            println!("  ✓ {}", result.path);
-        } else {
-            s.failed = 1;
-            println!("  ✗ {}", result.path);
-            if let Some(err) = &result.error {
-                for line in err.lines().take(10) {
-                    println!("    {}", line);
-                }
+        if result.skipped {
+            s.skipped = 1;
+            println!("  ⊘ {} (skipped)", result.path);
+            if let Some(reason) = &result.error {
+                println!("    {}", reason);
             }
-            s.failures.push(result);
+        } else {
+            s.total = 1;
+            if result.passed {
+                s.passed = 1;
+                println!("  ✓ {}", result.path);
+            } else {
+                s.failed = 1;
+                println!("  ✗ {}", result.path);
+                if let Some(err) = &result.error {
+                    for line in err.lines().take(10) {
+                        println!("    {}", line);
+                    }
+                }
+                s.failures.push(result);
+            }
         }
         s
     } else {
@@ -67,7 +75,11 @@ fn main() -> ExitCode {
         summary
     };
     
-    println!("\nResults: {} passed, {} failed", summary.passed, summary.failed);
+    if summary.skipped > 0 {
+        println!("\nResults: {} passed, {} failed, {} skipped", summary.passed, summary.failed, summary.skipped);
+    } else {
+        println!("\nResults: {} passed, {} failed", summary.passed, summary.failed);
+    }
     
     if summary.success() {
         println!("OK");
