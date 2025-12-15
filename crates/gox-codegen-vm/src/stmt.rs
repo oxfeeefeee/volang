@@ -166,8 +166,40 @@ fn compile_short_var(
                             if let Some(container_local) = fctx.lookup_local(container_ident.symbol) {
                                 match container_local.kind {
                                     VarKind::Map => {
-                                        // Indexing into map - assume result is also map for nested maps
-                                        kind = VarKind::Map;
+                                        // Indexing into map - check if value type is a struct
+                                        if let Some(val_type_sym) = container_local.type_sym {
+                                            let mut found = false;
+                                            for named in &ctx.result.named_types {
+                                                if named.name == val_type_sym {
+                                                    found = true;
+                                                    match &named.underlying {
+                                                        Type::Struct(s) => {
+                                                            let fc = s.fields.len() as u16;
+                                                            kind = VarKind::Struct(fc);
+                                                            type_sym = Some(val_type_sym);
+                                                            return Ok(compile_map_struct_copy(ctx, fctx, name, idx, fc, val_type_sym)?);
+                                                        }
+                                                        Type::Obx(_) => {
+                                                            kind = VarKind::Obx;
+                                                            type_sym = Some(val_type_sym);
+                                                        }
+                                                        Type::Map(_) => {
+                                                            // Nested map with named type
+                                                            kind = VarKind::Map;
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if !found {
+                                                // Value type not found in named types - assume map for nested maps
+                                                kind = VarKind::Map;
+                                            }
+                                        } else {
+                                            // No type_sym - assume nested map or primitive value
+                                            kind = VarKind::Map;
+                                        }
                                     }
                                     VarKind::Slice => {
                                         // Indexing into slice - check if element type is a struct
@@ -223,6 +255,32 @@ fn compile_short_var(
     Ok(())
 }
 
+/// Compile assignment from map index to a struct variable
+fn compile_map_struct_copy(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    name: &gox_common::symbol::Ident,
+    idx: &gox_syntax::ast::IndexExpr,
+    field_count: u16,
+    val_type_sym: gox_common::Symbol,
+) -> Result<(), CodegenError> {
+    use crate::context::VarKind;
+    
+    // Define the local variable with struct type
+    let dst = fctx.define_local_with_type(*name, 1, VarKind::Struct(field_count), Some(val_type_sym));
+    
+    // Compile the index expression to get the struct pointer
+    let ptr = expr::compile_expr(ctx, fctx, &gox_syntax::ast::Expr {
+        kind: ExprKind::Index(Box::new(idx.clone())),
+        span: idx.expr.span,
+    })?;
+    
+    // For map values, we just store the pointer (reference semantics)
+    fctx.emit(Opcode::Mov, dst, ptr, 0);
+    
+    Ok(())
+}
+
 /// Compile assignment from slice index to a struct variable (copy all fields)
 fn compile_slice_struct_copy(
     ctx: &mut CodegenContext,
@@ -271,7 +329,14 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
     match &expr.kind {
         ExprKind::CompositeLit(lit) => {
             match &lit.ty.kind {
-                TypeExprKind::Map(_) => (VarKind::Map, None),
+                TypeExprKind::Map(map_ty) => {
+                    // For maps, store value type symbol if it's a named type
+                    if let TypeExprKind::Ident(val_ident) = &map_ty.value.kind {
+                        (VarKind::Map, Some(val_ident.symbol))
+                    } else {
+                        (VarKind::Map, None)
+                    }
+                }
                 TypeExprKind::Slice(elem_ty) => {
                     // For slices, store element type symbol if it's a named type
                     if let TypeExprKind::Ident(elem_ident) = &elem_ty.kind {

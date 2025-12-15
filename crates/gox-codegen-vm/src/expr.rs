@@ -757,7 +757,14 @@ fn get_expr_type(
                             }
                         }
                     } else if local.kind == crate::context::VarKind::Map {
-                        // For maps, need to get value type - TODO
+                        // For maps, type_sym is the value type
+                        if let Some(val_type_sym) = local.type_sym {
+                            for named in &ctx.result.named_types {
+                                if named.name == val_type_sym {
+                                    return Some(named.underlying.clone());
+                                }
+                            }
+                        }
                     }
                 }
             }
