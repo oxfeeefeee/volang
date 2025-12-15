@@ -220,12 +220,23 @@ fn cmd_build(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Compile to bytecode
     let module = compile_project(&project).map_err(|e| format!("codegen error: {}", e))?;
     
-    // Write to file
-    let out_path = project_dir.join(format!("{}.goxc", module_name));
-    let bytes = module.to_bytes();
-    std::fs::write(&out_path, &bytes)?;
+    // TODO: Re-enable file output after development
+    // let out_path = project_dir.join(format!("{}.goxc", module_name));
+    // let bytes = module.to_bytes();
+    // std::fs::write(&out_path, &bytes)?;
+    // println!("✓ Built {} ({} bytes)", out_path.display(), bytes.len());
     
-    println!("✓ Built {} ({} bytes)", out_path.display(), bytes.len());
+    // During development: run directly without writing file
+    use gox_vm::VmResult;
+    println!("Running module: {}", module.name);
+    let mut vm = gox_runtime_vm::create_vm();
+    vm.load_module(module);
+    match vm.run() {
+        VmResult::Done => println!("\n✓ Execution completed"),
+        VmResult::Panic(msg) => return Err(format!("panic: {}", msg).into()),
+        VmResult::Ok => {}
+        VmResult::Yield => return Err("unexpected yield".into()),
+    }
     Ok(())
 }
 
