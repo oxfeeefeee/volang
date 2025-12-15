@@ -99,61 +99,105 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_run_source_simple() {
-        let result = run_source("simple_test", r#"
-package main
-
-func main() {
-    x := 1 + 2
-    assert(x == 3, "1 + 2 should be 3")
-}
-"#);
-        assert!(result.passed, "Test failed: {:?}", result.error);
-    }
-
-    #[test]
-    fn test_run_source_interface() {
-        let result = run_source("interface_test", r#"
-package main
-
-type Adder interface {
-    Add() int
-}
-
-type MyNum struct {
-    value int
-}
-
-func (m MyNum) Add() int {
-    return m.value + 100
-}
-
-func main() {
-    var a Adder
-    n := MyNum{value: 42}
-    a = n
-    result := a.Add()
-    assert(result == 142, "interface method should work")
-}
-"#);
-        assert!(result.passed, "Test failed: {:?}", result.error);
-    }
-
-    #[test]
-    fn test_run_source_with_vfs() {
-        let mut vfs = VirtualFs::new();
-        vfs.add_file("main.gox", r#"
-package main
-
-func main() {
-    s := []int{1, 2, 3}
-    assert(len(s) == 3, "slice length")
-    assert(s[0] == 1, "slice element")
-}
-"#);
+    // ========== Codegen tests from test_data/codegen ==========
+    
+    fn run_codegen_file(path: &Path) -> CodegenTestResult {
+        let name = path.file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
         
-        let result = run_source_with_vfs("vfs_test", &vfs);
-        assert!(result.passed, "Test failed: {:?}", result.error);
+        let source = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                return CodegenTestResult {
+                    name: name.clone(),
+                    passed: false,
+                    output: String::new(),
+                    error: Some(format!("Failed to read file: {}", e)),
+                };
+            }
+        };
+        
+        run_source(&name, &source)
+    }
+    
+    #[test]
+    fn test_codegen_closure() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/closure/closure.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "closure test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_const() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/const/const.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "const test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_const_fold() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/const/const_fold.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "const_fold test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_constant() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/const/constant.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "constant test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_slice() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/slice/slice.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "slice test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_map() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/map/map.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "map test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_slice_map() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/map/slice_map.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "slice_map test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_struct_object() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/struct/struct_object.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "struct_object test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_complex_literal() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/struct/complex_literal.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "complex_literal test failed: {:?}", result.error);
+    }
+    
+    #[test]
+    fn test_codegen_interface() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/codegen/interface/interface.gox");
+        let result = run_codegen_file(&path);
+        assert!(result.passed, "interface test failed: {:?}", result.error);
     }
 }
