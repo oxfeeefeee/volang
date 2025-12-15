@@ -1,0 +1,233 @@
+package main
+
+// ========== Complex Nested Type Definitions ==========
+
+type Point struct {
+    x int
+    y int
+}
+
+type Rect struct {
+    topLeft     Point
+    bottomRight Point
+}
+
+type Color struct {
+    r int
+    g int
+    b int
+}
+
+type Shape struct {
+    name   string
+    rect   Rect
+    color  Color
+    tags   []int
+    attrs  map[string]int
+}
+
+type Graph struct {
+    nodes []Point
+    edges map[int][]int
+}
+
+type Config struct {
+    name     string
+    settings map[string]int
+    points   []Point
+    nested   Rect
+}
+
+type ObjContainer object {
+    id    int
+    items []int
+    meta  map[string]int
+}
+
+type Tree struct {
+    value    int
+    children []int
+    props    map[int]int
+}
+
+func main() {
+    // ========== Test 1: Deeply Nested Struct Literals ==========
+    println(1000)
+    
+    shape := Shape{
+        "rectangle",
+        Rect{Point{0, 0}, Point{100, 200}},
+        Color{255, 128, 64},
+        []int{1, 2, 3, 4, 5},
+        map[string]int{"width": 100, "height": 200, "depth": 50},
+    }
+    
+    println(len(shape.name))           // 9
+    println(shape.rect.topLeft.x)      // 0
+    println(shape.rect.topLeft.y)      // 0
+    println(shape.rect.bottomRight.x)  // 100
+    println(shape.rect.bottomRight.y)  // 200
+    println(shape.color.r)             // 255
+    println(shape.color.g)             // 128
+    println(shape.color.b)             // 64
+    println(len(shape.tags))           // 5
+    println(shape.tags[0])             // 1
+    println(shape.tags[4])             // 5
+    println(shape.attrs["width"])      // 100
+    println(shape.attrs["height"])     // 200
+    
+    // ========== Test 2: Slice of Structs ==========
+    println(2000)
+    
+    points := []Point{Point{1, 2}, Point{3, 4}, Point{5, 6}}
+    println(len(points))        // 3
+    println(points[0].x)        // 1
+    println(points[0].y)        // 2
+    println(points[1].x)        // 3
+    println(points[2].y)        // 6
+    
+    // ========== Test 3: Map with Struct Values ==========
+    println(3000)
+    
+    colorMap := map[string]Color{
+        "red":   Color{255, 0, 0},
+        "green": Color{0, 255, 0},
+        "blue":  Color{0, 0, 255},
+    }
+    
+    red := colorMap["red"]
+    green := colorMap["green"]
+    blue := colorMap["blue"]
+    println(red.r)     // 255
+    println(green.g)   // 255
+    println(blue.b)    // 255
+    
+    // ========== Test 4: Nested Maps ==========
+    println(4000)
+    
+    matrix := map[int]map[int]int{
+        0: map[int]int{0: 1, 1: 2, 2: 3},
+        1: map[int]int{0: 4, 1: 5, 2: 6},
+    }
+    
+    row0 := matrix[0]
+    row1 := matrix[1]
+    println(row0[0])  // 1
+    println(row0[2])  // 3
+    println(row1[1])  // 5
+    
+    // ========== Test 5: Slice of Slices ==========
+    println(5000)
+    
+    grid := [][]int{
+        []int{1, 2, 3},
+        []int{4, 5, 6},
+        []int{7, 8, 9},
+    }
+    
+    println(len(grid))       // 3
+    println(len(grid[0]))    // 3
+    gridRow0 := grid[0]
+    gridRow1 := grid[1]
+    gridRow2 := grid[2]
+    println(gridRow0[0])     // 1
+    println(gridRow0[2])     // 3
+    println(gridRow1[1])     // 5
+    println(gridRow2[2])     // 9
+    
+    // ========== Test 6: Config with Mixed Nested Types ==========
+    println(6000)
+    
+    config := Config{
+        "app_config",
+        map[string]int{"timeout": 30, "retries": 3, "port": 8080},
+        []Point{Point{0, 0}, Point{100, 100}},
+        Rect{Point{10, 20}, Point{30, 40}},
+    }
+    
+    println(len(config.name))              // 10
+    println(config.settings["timeout"])    // 30
+    println(config.settings["port"])       // 8080
+    println(len(config.points))            // 2
+    println(config.points[0].x)            // 0
+    println(config.points[1].y)            // 100
+    println(config.nested.topLeft.x)       // 10
+    println(config.nested.bottomRight.y)   // 40
+    
+    // ========== Test 7: Object with Nested Collections ==========
+    println(7000)
+    
+    container := ObjContainer{
+        42,
+        []int{10, 20, 30, 40, 50},
+        map[string]int{"count": 5, "sum": 150},
+    }
+    
+    println(container.id)              // 42
+    println(len(container.items))      // 5
+    println(container.items[0])        // 10
+    println(container.items[4])        // 50
+    println(container.meta["count"])   // 5
+    println(container.meta["sum"])     // 150
+    
+    // Object reference semantics
+    container2 := container
+    container2.id = 99
+    println(container.id)   // 99 (shared)
+    println(container2.id)  // 99
+    
+    // ========== Test 8: Tree with Recursive-like Structure ==========
+    println(8000)
+    
+    tree := Tree{
+        100,
+        []int{1, 2, 3},
+        map[int]int{1: 10, 2: 20, 3: 30},
+    }
+    
+    println(tree.value)         // 100
+    println(len(tree.children)) // 3
+    println(tree.children[0])   // 1
+    println(tree.children[2])   // 3
+    println(tree.props[1])      // 10
+    println(tree.props[3])      // 30
+    
+    // ========== Test 9: Modification of Nested Structures ==========
+    println(9000)
+    
+    // Modify nested struct fields
+    shape.rect.topLeft.x = 50
+    shape.rect.bottomRight.y = 300
+    println(shape.rect.topLeft.x)      // 50
+    println(shape.rect.bottomRight.y)  // 300
+    
+    // Modify nested slice
+    shape.tags[0] = 100
+    println(shape.tags[0])  // 100
+    
+    // Modify nested map
+    shape.attrs["new_key"] = 999
+    println(shape.attrs["new_key"])  // 999
+    
+    // ========== Test 10: Complex Computations ==========
+    println(10000)
+    
+    // Sum all points in config
+    sum := 0
+    for i := 0; i < len(config.points); i++ {
+        sum = sum + config.points[i].x + config.points[i].y
+    }
+    println(sum)  // 0+0 + 100+100 = 200
+    
+    // Sum grid
+    gridSum := 0
+    for i := 0; i < len(grid); i++ {
+        row := grid[i]
+        for j := 0; j < len(row); j++ {
+            gridSum = gridSum + row[j]
+        }
+    }
+    println(gridSum)  // 1+2+3+4+5+6+7+8+9 = 45
+    
+    println(9999)
+}

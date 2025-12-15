@@ -917,8 +917,8 @@ fn compile_builtin_len(
     let arg = compile_expr(ctx, fctx, &call.args[0])?;
     let dst = fctx.regs.alloc(1);
     
-    // Use MapLen for maps, SliceLen for slices
-    if is_map_expr(fctx, &call.args[0]) {
+    // Use MapLen for maps, SliceLen for slices (use ctx for better type detection)
+    if is_map_expr_with_ctx(ctx, fctx, &call.args[0]) {
         fctx.emit(Opcode::MapLen, dst, arg, 0);
     } else {
         fctx.emit(Opcode::SliceLen, dst, arg, 0);

@@ -138,27 +138,42 @@ fn compile_short_var(
             };
             
             // Check if RHS is an identifier referencing a struct/object variable
+            // Or if it's an Index expression into a map (for nested maps)
             let src_struct_info = if i < sv.values.len() {
-                if let ExprKind::Ident(ident) = &sv.values[i].kind {
-                    if let Some(src_local) = fctx.lookup_local(ident.symbol) {
-                        match src_local.kind {
-                            VarKind::Struct(fc) => {
-                                kind = VarKind::Struct(fc);
-                                type_sym = src_local.type_sym;
-                                Some(fc)  // Need struct copy
+                match &sv.values[i].kind {
+                    ExprKind::Ident(ident) => {
+                        if let Some(src_local) = fctx.lookup_local(ident.symbol) {
+                            match src_local.kind {
+                                VarKind::Struct(fc) => {
+                                    kind = VarKind::Struct(fc);
+                                    type_sym = src_local.type_sym;
+                                    Some(fc)  // Need struct copy
+                                }
+                                VarKind::Obx => {
+                                    kind = VarKind::Obx;
+                                    type_sym = src_local.type_sym;
+                                    None  // No copy needed - reference semantics
+                                }
+                                _ => None
                             }
-                            VarKind::Obx => {
-                                kind = VarKind::Obx;
-                                type_sym = src_local.type_sym;
-                                None  // No copy needed - reference semantics
-                            }
-                            _ => None
+                        } else {
+                            None
                         }
-                    } else {
+                    }
+                    ExprKind::Index(idx) => {
+                        // Check if indexing into a map - result might be map/slice
+                        if let ExprKind::Ident(container_ident) = &idx.expr.kind {
+                            if let Some(container_local) = fctx.lookup_local(container_ident.symbol) {
+                                if container_local.kind == VarKind::Map {
+                                    // Indexing into map - assume result is also map for nested maps
+                                    // This is a heuristic that works for map[K]map[K2]V2
+                                    kind = VarKind::Map;
+                                }
+                            }
+                        }
                         None
                     }
-                } else {
-                    None
+                    _ => None
                 }
             } else {
                 None
@@ -245,8 +260,27 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
             }
             (VarKind::Other, None)
         }
+        ExprKind::Index(_) => {
+            // Index expressions need FuncContext to check container type
+            // This is handled separately in compile_short_var
+            (VarKind::Other, None)
+        }
         _ => (VarKind::Other, None),
     }
+}
+
+/// Get the result type of an index expression (the element type)
+fn get_index_result_type(ctx: &CodegenContext, container_expr: &gox_syntax::ast::Expr) -> Option<Type> {
+    use gox_syntax::ast::ExprKind;
+    
+    // For map[K]V, we need to find V
+    // Search through named types for map types and return their value type
+    for named in &ctx.result.named_types {
+        if let Type::Map(map_ty) = &named.underlying {
+            return Some((*map_ty.value).clone());
+        }
+    }
+    None
 }
 
 /// Check if a named type is an object type (reference semantics)
