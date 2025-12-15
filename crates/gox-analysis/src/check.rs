@@ -291,7 +291,47 @@ impl<'a> TypeChecker<'a> {
                     dir,
                 })
             }
+            ast::TypeExprKind::Interface(iface) => {
+                // Resolve interface methods
+                let methods = iface.elems.iter().filter_map(|elem| {
+                    if let ast::InterfaceElem::Method(m) = elem {
+                        let sig = self.resolve_func_sig(&m.sig);
+                        Some(crate::types::Method {
+                            name: m.name.symbol,
+                            sig,
+                        })
+                    } else {
+                        None
+                    }
+                }).collect();
+                Type::Interface(crate::types::InterfaceType {
+                    methods,
+                    embeds: vec![],
+                })
+            }
             _ => Type::Invalid,
+        }
+    }
+
+    /// Resolves a function signature to a FuncType.
+    fn resolve_func_sig(&self, sig: &ast::FuncSig) -> FuncType {
+        let params: Vec<Type> = sig.params.iter()
+            .flat_map(|p| {
+                let ty = self.resolve_type_expr(&p.ty);
+                // Repeat the type for each name (or once if no names)
+                let count = if p.names.is_empty() { 1 } else { p.names.len() };
+                std::iter::repeat(ty).take(count)
+            })
+            .collect();
+        
+        let results: Vec<Type> = sig.results.iter()
+            .map(|r| self.resolve_type_expr(&r.ty))
+            .collect();
+        
+        FuncType {
+            params,
+            results,
+            variadic: sig.variadic,
         }
     }
 
@@ -1262,6 +1302,8 @@ impl<'a> TypeChecker<'a> {
                 UntypedKind::String => b == BasicType::String,
             },
             Type::Untyped(k) => kind.precedence() <= k.precedence(),
+            // Any untyped value can be assigned to an empty interface
+            Type::Interface(iface) => iface.methods.is_empty() && iface.embeds.is_empty(),
             _ => false,
         }
     }
