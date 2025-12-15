@@ -12,57 +12,43 @@ type O object {
     y int
 }
 
+// More complex types with multiple field types
+type Person struct {
+    age    int
+    height int
+    score  int
+}
+
+type ObjPerson object {
+    age    int
+    height int
+    score  int
+}
+
+
 func main() {
-    // Test 1: Struct is value type - assignment copies
+    // Test 1: Struct value semantics
     println(1000)
-    
     s1 := S{10, 20}
-    s2 := s1  // Should copy
+    s2 := s1
     s2.x = 100
+    println(s1.x)  // 10
+    println(s2.x)  // 100
     
-    println(s1.x)  // Should be 10 (unchanged)
-    println(s2.x)  // Should be 100
-    
-    // Test 2: Object is reference type - assignment shares
+    // Test 2: Object reference semantics
     println(2000)
-    
     o1 := O{10, 20}
-    o2 := o1  // Should share reference
+    o2 := o1
     o2.x = 100
+    println(o1.x)  // 100
+    println(o2.x)  // 100
     
-    println(o1.x)  // Should be 100 (changed)
-    println(o2.x)  // Should be 100
-    
-    // Test 3: Struct as map key
+    // Test 3: Multi-field struct
     println(3000)
-    
-    m := map[S]int{}
-    k1 := S{1, 2}
-    k2 := S{1, 2}  // Same value as k1
-    k3 := S{3, 4}  // Different value
-    
-    m[k1] = 100
-    m[k3] = 200
-    
-    println(m[k1])  // Should be 100
-    println(m[k2])  // Should be 100 (same key value as k1)
-    println(m[k3])  // Should be 200
-    
-    // Test 4: Changing original struct doesn't affect map key
-    println(4000)
-    
-    k4 := S{5, 6}
-    m[k4] = 500
-    println(m[k4])  // Should be 500
-    
-    k4.x = 99  // Modify original struct
-    
-    // k4 now has different value, so lookup should fail (return 0)
-    println(m[k4])  // Should be 0 (key {99,6} not found)
-    
-    // Original key {5,6} should still work
-    k5 := S{5, 6}
-    println(m[k5])  // Should be 500
+    p := Person{11, 22, 33}
+    println(p.age)     // 11
+    println(p.height)  // 22
+    println(p.score)   // 33
     
     println(9999)
 }

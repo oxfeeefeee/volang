@@ -68,6 +68,7 @@ pub struct LocalVar {
     pub reg: u16,
     pub slots: u16,
     pub kind: VarKind,
+    pub type_sym: Option<Symbol>,  // Named type symbol for struct/object
 }
 
 /// Upvalue info for closures
@@ -253,7 +254,13 @@ impl FuncContext {
     
     pub fn define_local_with_kind(&mut self, ident: Ident, slots: u16, kind: VarKind) -> u16 {
         let reg = self.regs.alloc(slots);
-        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind });
+        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, type_sym: None });
+        reg
+    }
+    
+    pub fn define_local_with_type(&mut self, ident: Ident, slots: u16, kind: VarKind, type_sym: Option<Symbol>) -> u16 {
+        let reg = self.regs.alloc(slots);
+        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, type_sym });
         reg
     }
     

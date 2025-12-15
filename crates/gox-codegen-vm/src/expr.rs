@@ -621,9 +621,66 @@ fn compile_selector(
 ) -> Result<u16, CodegenError> {
     let obj = compile_expr(ctx, fctx, &sel.expr)?;
     let dst = fctx.regs.alloc(1);
-    // TODO: resolve field index
-    fctx.emit(Opcode::GetField, dst, obj, 0);
+    
+    // Resolve field index from type info
+    let field_idx = resolve_field_index(ctx, fctx, &sel.expr, sel.sel.symbol);
+    fctx.emit(Opcode::GetField, dst, obj, field_idx);
     Ok(dst)
+}
+
+/// Resolve field index for a selector expression
+fn resolve_field_index(
+    ctx: &CodegenContext,
+    fctx: &FuncContext,
+    expr: &gox_syntax::ast::Expr,
+    field_name: gox_common::Symbol,
+) -> u16 {
+    use gox_syntax::ast::ExprKind;
+    use gox_analysis::Type;
+    
+    // Get the type name from the expression
+    if let ExprKind::Ident(ident) = &expr.kind {
+        // Look up the variable's type
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            // Check if we have type info stored
+            if let Some(type_sym) = local.type_sym {
+                // Look up the named type
+                for named in &ctx.result.named_types {
+                    if named.name == type_sym {
+                        // Find field index
+                        match &named.underlying {
+                            Type::Struct(s) | Type::Obx(s) => {
+                                for (idx, field) in s.fields.iter().enumerate() {
+                                    if field.name == Some(field_name) {
+                                        return idx as u16;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            } else {
+                // No type_sym - try to infer from named_types by checking all struct types
+                // This handles cases where type_sym wasn't set during declaration
+                for named in &ctx.result.named_types {
+                    match &named.underlying {
+                        Type::Struct(s) | Type::Obx(s) => {
+                            for (idx, field) in s.fields.iter().enumerate() {
+                                if field.name == Some(field_name) {
+                                    // Found a match - return the index
+                                    // This is a heuristic and may not be correct for all cases
+                                    return idx as u16;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    0 // Fallback to field 0
 }
 
 /// Compile function literal (closure)

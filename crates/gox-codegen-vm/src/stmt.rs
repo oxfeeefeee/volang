@@ -130,22 +130,29 @@ fn compile_short_var(
                 expr::compile_expr(ctx, fctx, &sv.values[i])?;
             }
         } else {
-            // Determine the type kind from the RHS expression
-            let mut kind = if i < sv.values.len() {
-                infer_var_kind(ctx, &sv.values[i])
+            // Determine the type kind and type symbol from the RHS expression
+            let (mut kind, mut type_sym) = if i < sv.values.len() {
+                infer_var_kind_and_type(ctx, &sv.values[i])
             } else {
-                VarKind::Other
+                (VarKind::Other, None)
             };
             
-            // Check if RHS is an identifier referencing a struct variable
+            // Check if RHS is an identifier referencing a struct/object variable
             let src_struct_info = if i < sv.values.len() {
                 if let ExprKind::Ident(ident) = &sv.values[i].kind {
                     if let Some(src_local) = fctx.lookup_local(ident.symbol) {
-                        if let VarKind::Struct(fc) = src_local.kind {
-                            kind = VarKind::Struct(fc);
-                            Some(fc)
-                        } else {
-                            None
+                        match src_local.kind {
+                            VarKind::Struct(fc) => {
+                                kind = VarKind::Struct(fc);
+                                type_sym = src_local.type_sym;
+                                Some(fc)  // Need struct copy
+                            }
+                            VarKind::Obx => {
+                                kind = VarKind::Obx;
+                                type_sym = src_local.type_sym;
+                                None  // No copy needed - reference semantics
+                            }
+                            _ => None
                         }
                     } else {
                         None
@@ -157,7 +164,7 @@ fn compile_short_var(
                 None
             };
             
-            let dst = fctx.define_local_with_kind(*name, 1, kind);
+            let dst = fctx.define_local_with_type(*name, 1, kind, type_sym);
             if i < sv.values.len() {
                 let src = expr::compile_expr(ctx, fctx, &sv.values[i])?;
                 if src != dst {
@@ -180,40 +187,39 @@ fn compile_short_var(
     Ok(())
 }
 
-/// Infer VarKind from an expression (for type tracking)
-fn infer_var_kind(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -> crate::context::VarKind {
+/// Infer VarKind and type symbol from an expression (for type tracking)
+fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -> (crate::context::VarKind, Option<gox_common::Symbol>) {
     use gox_syntax::ast::{ExprKind, TypeExprKind};
     use crate::context::VarKind;
     
     match &expr.kind {
         ExprKind::CompositeLit(lit) => {
             match &lit.ty.kind {
-                TypeExprKind::Map(_) => VarKind::Map,
-                TypeExprKind::Slice(_) => VarKind::Slice,
-                TypeExprKind::Struct(s) => VarKind::Struct(s.fields.len() as u16),
-                TypeExprKind::Obx(_) => VarKind::Obx,
+                TypeExprKind::Map(_) => (VarKind::Map, None),
+                TypeExprKind::Slice(_) => (VarKind::Slice, None),
+                TypeExprKind::Struct(s) => (VarKind::Struct(s.fields.len() as u16), None),
+                TypeExprKind::Obx(_) => (VarKind::Obx, None),
                 TypeExprKind::Ident(ident) => {
                     // Named type - look up in type check results
                     let field_count = lit.elems.len() as u16;
                     if is_named_type_object(ctx, ident.symbol) {
-                        VarKind::Obx
+                        (VarKind::Obx, Some(ident.symbol))
                     } else {
-                        VarKind::Struct(field_count)
+                        (VarKind::Struct(field_count), Some(ident.symbol))
                     }
                 }
-                _ => VarKind::Other,
+                _ => (VarKind::Other, None),
             }
         }
         ExprKind::Call(call) => {
             // Check if it's make(map[...])
             if let ExprKind::Ident(_ident) = &call.func.kind {
-                // We can't resolve the name here easily, but make typically creates containers
-                VarKind::Other
+                (VarKind::Other, None)
             } else {
-                VarKind::Other
+                (VarKind::Other, None)
             }
         }
-        _ => VarKind::Other,
+        _ => (VarKind::Other, None),
     }
 }
 
@@ -242,6 +248,52 @@ fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key
         }
     }
     key_reg
+}
+
+/// Resolve field index for a selector expression
+fn resolve_selector_field_index(
+    ctx: &CodegenContext,
+    fctx: &FuncContext,
+    expr: &gox_syntax::ast::Expr,
+    field_name: gox_common::Symbol,
+) -> u16 {
+    use gox_syntax::ast::ExprKind;
+    
+    if let ExprKind::Ident(ident) = &expr.kind {
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            if let Some(type_sym) = local.type_sym {
+                for named in &ctx.result.named_types {
+                    if named.name == type_sym {
+                        match &named.underlying {
+                            Type::Struct(s) | Type::Obx(s) => {
+                                for (idx, field) in s.fields.iter().enumerate() {
+                                    if field.name == Some(field_name) {
+                                        return idx as u16;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            } else {
+                // No type_sym - search all named types as fallback
+                for named in &ctx.result.named_types {
+                    match &named.underlying {
+                        Type::Struct(s) | Type::Obx(s) => {
+                            for (idx, field) in s.fields.iter().enumerate() {
+                                if field.name == Some(field_name) {
+                                    return idx as u16;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    0
 }
 
 /// Compile assignment statement.
@@ -359,8 +411,7 @@ fn compile_assign(
                 // Handle struct/object field assignment: s.x = v
                 let obj = expr::compile_expr(ctx, fctx, &sel.expr)?;
                 let value = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
-                // TODO: resolve field index from type info, for now use 0
-                let field_idx = 0u16;
+                let field_idx = resolve_selector_field_index(ctx, fctx, &sel.expr, sel.sel.symbol);
                 fctx.emit(Opcode::SetField, obj, field_idx, value);
             }
             _ => {
