@@ -219,6 +219,32 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
                 (VarKind::Other, None)
             }
         }
+        ExprKind::Selector(sel) => {
+            // Accessing a struct field - infer type from the field
+            if let ExprKind::Ident(ident) = &sel.expr.kind {
+                // Look up the struct's type and find the field type
+                for named in &ctx.result.named_types {
+                    match &named.underlying {
+                        Type::Struct(s) | Type::Obx(s) => {
+                            for field in &s.fields {
+                                if field.name == Some(sel.sel.symbol) {
+                                    // Found the field - check its type
+                                    match &field.ty {
+                                        Type::Map(_) => return (VarKind::Map, None),
+                                        Type::Slice(_) => return (VarKind::Slice, None),
+                                        Type::Struct(fs) => return (VarKind::Struct(fs.fields.len() as u16), None),
+                                        Type::Obx(_) => return (VarKind::Obx, None),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            (VarKind::Other, None)
+        }
         _ => (VarKind::Other, None),
     }
 }

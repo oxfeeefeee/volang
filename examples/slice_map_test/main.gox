@@ -80,16 +80,21 @@ func main() {
     println(len(c1.points))     // 4
     println(c1.points[0])       // 1
     
-    // Test 6: Skip map field for now - needs investigation
+    // Test 6: Map field access
     println(6000)
+    scores := c1.scores
+    println(len(scores))        // 2
+    println(scores["a"])        // 10
+    println(scores["b"])        // 20
     
-    // ========== Nested Struct ==========
-    
-    // Test 7: Skip complex nested struct for now
+    // Test 7: Skip map field index assignment for now
     println(7000)
     
-    // Test 8: Skip nested struct modification
+    // Test 8: Nested struct field access
     println(8000)
+    cplx := Complex{"test", []int{1, 2}, map[int]int{1: 100}, Point{10, 20}}
+    println(cplx.point.x)       // 10
+    println(cplx.point.y)       // 20
     
     // ========== Object with Reference Semantics ==========
     

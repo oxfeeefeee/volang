@@ -660,9 +660,6 @@ fn resolve_field_index(
                         }
                     }
                 }
-            } else {
-                // No type_sym - this shouldn't happen for struct fields
-                // Fall through to return 0
             }
         }
     }
