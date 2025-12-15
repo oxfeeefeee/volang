@@ -95,13 +95,15 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
                     let idx = module.functions.len() as u32;
                     
-                    func_indices.insert(func.name.symbol, idx);
-                    
                     // Register method with receiver type
                     if let Some(ref receiver) = func.receiver {
                         let type_name = pkg.interner.resolve(receiver.ty.symbol).unwrap_or("");
                         let method_key = format!("{}.{}", type_name, func_name);
                         method_table.insert(method_key, idx);
+                        // Don't add methods to func_indices - they're looked up via method_table
+                    } else {
+                        // Only add non-method functions to func_indices
+                        func_indices.insert(func.name.symbol, idx);
                     }
                     
                     // Register cross-package name for exported functions
@@ -197,7 +199,15 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     ctx.module.constants = module.constants.clone();
                     
                     let func_def = ctx.compile_func_body(func)?;
-                    let idx = func_indices[&func.name.symbol] as usize;
+                    // Look up function index - methods use method_table, regular functions use func_indices
+                    let idx = if let Some(ref receiver) = func.receiver {
+                        let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
+                        let type_name = pkg.interner.resolve(receiver.ty.symbol).unwrap_or("");
+                        let method_key = format!("{}.{}", type_name, func_name);
+                        *method_table.get(&method_key).unwrap() as usize
+                    } else {
+                        func_indices[&func.name.symbol] as usize
+                    };
                     module.functions[idx] = func_def;
                     
                     // Merge back changes

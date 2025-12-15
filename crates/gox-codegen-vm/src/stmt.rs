@@ -437,15 +437,23 @@ fn infer_runtime_type_id(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_sy
 }
 
 /// Get runtime type_id for a named type by symbol.
+/// Skips interface types in the count since they don't have runtime type_ids.
 fn get_named_type_id(ctx: &CodegenContext, type_sym: gox_common::Symbol) -> Option<u16> {
     use gox_vm::types::builtin;
     
     let type_name = ctx.interner.resolve(type_sym)?;
-    for (i, info) in ctx.result.named_types.iter().enumerate() {
+    let mut concrete_idx = 0u32;
+    for info in ctx.result.named_types.iter() {
+        // Skip interface types
+        if matches!(info.underlying, Type::Interface(_)) {
+            continue;
+        }
+        
         let name = ctx.interner.resolve(info.name).unwrap_or("");
         if name == type_name {
-            return Some((builtin::FIRST_USER_TYPE + i as u32) as u16);
+            return Some((builtin::FIRST_USER_TYPE + concrete_idx) as u16);
         }
+        concrete_idx += 1;
     }
     None
 }

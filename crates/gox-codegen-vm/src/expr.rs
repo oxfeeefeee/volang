@@ -598,19 +598,12 @@ fn compile_interface_method_call(
     method_name: &str,
     call: &CallExpr,
 ) -> Result<u16, CodegenError> {
-    // For now, we need to know which concrete types might implement this interface
-    // and generate a dispatch table. This is complex runtime dispatch.
-    // 
-    // Simpler approach: at compile time, we can't know the concrete type,
-    // so we need a VM opcode for interface method dispatch.
-    //
-    // For MVP: look up all methods with this name and generate a type switch
-    
-    // Collect all methods with this name
-    let matching_methods: Vec<(String, u32)> = ctx.method_table.iter()
+    // Collect all methods with this name (sorted for deterministic order)
+    let mut matching_methods: Vec<(String, u32)> = ctx.method_table.iter()
         .filter(|(k, _)| k.ends_with(&format!(".{}", method_name)))
         .map(|(k, v)| (k.clone(), *v))
         .collect();
+    matching_methods.sort_by(|a, b| a.0.cmp(&b.0));
     
     if matching_methods.is_empty() {
         return Err(CodegenError::Internal(format!("no methods found for: {}", method_name)));
@@ -622,8 +615,18 @@ fn compile_interface_method_call(
     fctx.emit(Opcode::Mov, type_id_reg, iface_reg, 0);      // type_id = slot 0
     fctx.emit(Opcode::Mov, data_reg, iface_reg + 1, 0);     // data = slot 1
     
-    // For each possible concrete type, check type_id and call method
+    // Pre-compile arguments ONCE (before dispatch loop)
+    let mut arg_regs: Vec<u16> = Vec::new();
+    for arg in &call.args {
+        let reg = compile_expr(ctx, fctx, arg)?;
+        arg_regs.push(reg);
+    }
+    
+    // Allocate registers for dispatch (reused across branches)
+    let cmp_reg = fctx.regs.alloc(1);
+    let expected_reg = fctx.regs.alloc(1);
     let result_reg = fctx.regs.alloc(1);
+    
     let mut jump_to_end: Vec<usize> = Vec::new();
     
     for (method_key, func_idx) in &matching_methods {
@@ -633,32 +636,30 @@ fn compile_interface_method_call(
         // Look up type_id for this type name
         if let Some(type_id) = get_type_id_for_name(ctx, type_name) {
             // Compare type_id_reg with expected type_id
-            let cmp_reg = fctx.regs.alloc(1);
-            let expected = fctx.regs.alloc(1);
-            fctx.emit(Opcode::LoadInt, expected, type_id as u16, 0);
-            fctx.emit(Opcode::EqI64, cmp_reg, type_id_reg, expected);
+            fctx.emit(Opcode::LoadInt, expected_reg, type_id as u16, 0);
+            fctx.emit(Opcode::EqI64, cmp_reg, type_id_reg, expected_reg);
             
             // If not equal, jump to next check
             let skip_pc = fctx.pc();
             fctx.emit(Opcode::JumpIfNot, cmp_reg, 0, 0);
             
-            // Call the method with data as receiver
+            // Set up call: receiver + args in consecutive registers
             let arg_start = fctx.regs.current();
             let recv_dst = fctx.regs.alloc(1);
             fctx.emit(Opcode::Mov, recv_dst, data_reg, 0);
             
-            // Compile remaining arguments
-            for arg in &call.args {
-                let expected_reg = fctx.regs.current();
-                let actual_reg = compile_expr(ctx, fctx, arg)?;
-                if actual_reg != expected_reg {
-                    fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
-                }
+            // Copy pre-compiled arguments to call position
+            for &arg_reg in &arg_regs {
+                let dst = fctx.regs.alloc(1);
+                fctx.emit(Opcode::Mov, dst, arg_reg, 0);
             }
             
             let arg_count = (call.args.len() + 1) as u16;
             fctx.emit_with_flags(Opcode::Call, 1, *func_idx as u16, arg_start, arg_count);
             fctx.emit(Opcode::Mov, result_reg, arg_start, 0);
+            
+            // Reset register allocator for next branch
+            fctx.regs.reset_to(arg_start);
             
             // Jump to end
             let end_pc = fctx.pc();
@@ -683,15 +684,24 @@ fn compile_interface_method_call(
 }
 
 /// Get runtime type_id for a named type.
+/// Skips interface types in the count since they don't have runtime type_ids.
 fn get_type_id_for_name(ctx: &CodegenContext, type_name: &str) -> Option<u32> {
     use gox_vm::types::builtin;
+    use gox_analysis::Type;
     
-    // Check named types in analysis result
-    for (i, info) in ctx.result.named_types.iter().enumerate() {
+    // Check named types in analysis result, skipping interface types
+    let mut concrete_idx = 0u32;
+    for info in ctx.result.named_types.iter() {
+        // Skip interface types
+        if matches!(info.underlying, Type::Interface(_)) {
+            continue;
+        }
+        
         let name = ctx.interner.resolve(info.name).unwrap_or("");
         if name == type_name {
-            return Some(builtin::FIRST_USER_TYPE + i as u32);
+            return Some(builtin::FIRST_USER_TYPE + concrete_idx);
         }
+        concrete_idx += 1;
     }
     None
 }
