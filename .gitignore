@@ -31,3 +31,4 @@ target/
 *.profraw
 *.profdata
 tarpaulin-report.html
+*.goxc
