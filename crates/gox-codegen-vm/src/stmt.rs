@@ -2,6 +2,7 @@
 
 use gox_syntax::ast::{Stmt, StmtKind, Block, IfStmt, ForStmt, ForClause, ReturnStmt, AssignStmt, AssignOp, ShortVarDecl, ExprKind};
 use gox_vm::instruction::Opcode;
+use gox_analysis::Type;
 
 use crate::{CodegenContext, CodegenError};
 use crate::context::FuncContext;
@@ -117,6 +118,7 @@ fn compile_short_var(
     sv: &ShortVarDecl,
 ) -> Result<(), CodegenError> {
     use crate::context::VarKind;
+    use gox_syntax::ast::ExprKind;
     
     for (i, name) in sv.names.iter().enumerate() {
         // Check if this is the blank identifier
@@ -129,17 +131,48 @@ fn compile_short_var(
             }
         } else {
             // Determine the type kind from the RHS expression
-            let kind = if i < sv.values.len() {
-                infer_var_kind(&sv.values[i])
+            let mut kind = if i < sv.values.len() {
+                infer_var_kind(ctx, &sv.values[i])
             } else {
                 VarKind::Other
+            };
+            
+            // Check if RHS is an identifier referencing a struct variable
+            let src_struct_info = if i < sv.values.len() {
+                if let ExprKind::Ident(ident) = &sv.values[i].kind {
+                    if let Some(src_local) = fctx.lookup_local(ident.symbol) {
+                        if let VarKind::Struct(fc) = src_local.kind {
+                            kind = VarKind::Struct(fc);
+                            Some(fc)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
             };
             
             let dst = fctx.define_local_with_kind(*name, 1, kind);
             if i < sv.values.len() {
                 let src = expr::compile_expr(ctx, fctx, &sv.values[i])?;
                 if src != dst {
-                    fctx.emit(Opcode::Mov, dst, src, 0);
+                    // Check if we need struct copy
+                    if let Some(field_count) = src_struct_info {
+                        // Allocate new struct and copy fields
+                        fctx.emit(Opcode::Alloc, dst, 0, field_count);
+                        for f in 0..field_count {
+                            let tmp = fctx.regs.alloc(1);
+                            fctx.emit(Opcode::GetField, tmp, src, f);
+                            fctx.emit(Opcode::SetField, dst, f, tmp);
+                        }
+                    } else {
+                        fctx.emit(Opcode::Mov, dst, src, 0);
+                    }
                 }
             }
         }
@@ -148,7 +181,7 @@ fn compile_short_var(
 }
 
 /// Infer VarKind from an expression (for type tracking)
-fn infer_var_kind(expr: &gox_syntax::ast::Expr) -> crate::context::VarKind {
+fn infer_var_kind(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -> crate::context::VarKind {
     use gox_syntax::ast::{ExprKind, TypeExprKind};
     use crate::context::VarKind;
     
@@ -157,12 +190,23 @@ fn infer_var_kind(expr: &gox_syntax::ast::Expr) -> crate::context::VarKind {
             match &lit.ty.kind {
                 TypeExprKind::Map(_) => VarKind::Map,
                 TypeExprKind::Slice(_) => VarKind::Slice,
+                TypeExprKind::Struct(s) => VarKind::Struct(s.fields.len() as u16),
+                TypeExprKind::Obx(_) => VarKind::Obx,
+                TypeExprKind::Ident(ident) => {
+                    // Named type - look up in type check results
+                    let field_count = lit.elems.len() as u16;
+                    if is_named_type_object(ctx, ident.symbol) {
+                        VarKind::Obx
+                    } else {
+                        VarKind::Struct(field_count)
+                    }
+                }
                 _ => VarKind::Other,
             }
         }
         ExprKind::Call(call) => {
             // Check if it's make(map[...])
-            if let ExprKind::Ident(ident) = &call.func.kind {
+            if let ExprKind::Ident(_ident) = &call.func.kind {
                 // We can't resolve the name here easily, but make typically creates containers
                 VarKind::Other
             } else {
@@ -171,6 +215,33 @@ fn infer_var_kind(expr: &gox_syntax::ast::Expr) -> crate::context::VarKind {
         }
         _ => VarKind::Other,
     }
+}
+
+/// Check if a named type is an object type (reference semantics)
+fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
+    for named in &ctx.result.named_types {
+        if named.name == sym {
+            return matches!(named.underlying, Type::Obx(_));
+        }
+    }
+    false
+}
+
+/// Get hash for a struct key, or return the key as-is for primitives
+fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key_reg: u16) -> u16 {
+    use gox_syntax::ast::ExprKind;
+    use crate::context::VarKind;
+    
+    if let ExprKind::Ident(ident) = &expr.kind {
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            if let VarKind::Struct(field_count) = local.kind {
+                let hash_reg = fctx.regs.alloc(1);
+                fctx.emit(Opcode::StructHash, hash_reg, key_reg, field_count);
+                return hash_reg;
+            }
+        }
+    }
+    key_reg
 }
 
 /// Compile assignment statement.
@@ -195,13 +266,26 @@ fn compile_assign(
                 
                 if let Some(local) = fctx.lookup_local(ident.symbol) {
                     let dst = local.reg;
+                    let local_kind = local.kind;
                     
                     // Handle compound assignment to local variable
                     match assign.op {
                         AssignOp::Assign => {
                             let src = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
                             if src != dst {
-                                fctx.emit(Opcode::Mov, dst, src, 0);
+                                // Check if this is a struct (value type) - need to deep copy
+                                if let crate::context::VarKind::Struct(field_count) = local_kind {
+                                    // Allocate new struct and copy fields
+                                    fctx.emit(Opcode::Alloc, dst, 0, field_count);
+                                    for f in 0..field_count {
+                                        let tmp = fctx.regs.alloc(1);
+                                        fctx.emit(Opcode::GetField, tmp, src, f);
+                                        fctx.emit(Opcode::SetField, dst, f, tmp);
+                                    }
+                                } else {
+                                    // Reference type or primitive - just copy reference
+                                    fctx.emit(Opcode::Mov, dst, src, 0);
+                                }
                             }
                         }
                         AssignOp::Add => {
@@ -264,10 +348,20 @@ fn compile_assign(
                 
                 // Check if this is a map type
                 if is_map_expr(fctx, &index_expr.expr) {
-                    fctx.emit(Opcode::MapSet, container, index, value);
+                    // Check if key is a struct - need to compute hash
+                    let key = get_struct_key_hash(fctx, &index_expr.index, index);
+                    fctx.emit(Opcode::MapSet, container, key, value);
                 } else {
                     fctx.emit(Opcode::SliceSet, container, index, value);
                 }
+            }
+            ExprKind::Selector(sel) => {
+                // Handle struct/object field assignment: s.x = v
+                let obj = expr::compile_expr(ctx, fctx, &sel.expr)?;
+                let value = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
+                // TODO: resolve field index from type info, for now use 0
+                let field_idx = 0u16;
+                fctx.emit(Opcode::SetField, obj, field_idx, value);
             }
             _ => {
                 return Err(CodegenError::Unsupported("complex assignment target".to_string()));

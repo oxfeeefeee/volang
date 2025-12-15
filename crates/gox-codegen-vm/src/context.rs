@@ -49,7 +49,7 @@ impl Registers {
     }
 }
 
-/// Simple type kind for codegen (to distinguish map vs slice)
+/// Simple type kind for codegen (to distinguish map vs slice vs struct vs object)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VarKind {
     Int,
@@ -57,6 +57,8 @@ pub enum VarKind {
     String,
     Slice,
     Map,
+    Struct(u16),  // struct with field count
+    Obx,          // object (reference type)
     Other,
 }
 

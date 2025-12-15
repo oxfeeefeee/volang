@@ -5,7 +5,7 @@ use crate::fiber::{BlockReason, DeferEntry, FiberId, FiberStatus, IterState, Sch
 use crate::ffi::GoxValue;
 use crate::gc::{Gc, GcRef, NULL_REF};
 use crate::instruction::{Instruction, Opcode};
-use crate::objects::{array, channel, closure, interface, map, slice, string};
+use crate::objects::{self, array, channel, closure, interface, map, slice, string};
 use crate::types::{builtin, TypeId, TypeTable};
 use std::collections::HashMap;
 
@@ -577,8 +577,13 @@ impl Vm {
             Opcode::Alloc => {
                 // a=dest, b=type_id, c=extra_slots
                 let type_id = b as TypeId;
-                let type_meta = self.types.get_unchecked(type_id);
-                let size = type_meta.size_slots + c as usize;
+                let size = if type_id == 0 {
+                    // Anonymous struct - use extra_slots directly as size
+                    c as usize
+                } else {
+                    let type_meta = self.types.get_unchecked(type_id);
+                    type_meta.size_slots + c as usize
+                };
                 let obj = self.gc.alloc(type_id, size);
                 self.write_reg(fiber_id, a, obj as u64);
             }
@@ -611,8 +616,15 @@ impl Vm {
                 let obj = self.read_reg(fiber_id, a) as GcRef;
                 for i in 0..c {
                     let val = self.read_reg(fiber_id, b + i);
-                    Gc::write_slot(obj, flags as usize + i as usize, val);
+                    Gc::write_slot(obj, (flags + i as u8) as usize, val);
                 }
+            }
+            
+            Opcode::StructHash => {
+                // a=dest, b=struct, c=field_count
+                let obj = self.read_reg(fiber_id, b) as GcRef;
+                let hash = objects::struct_hash(obj, c as usize);
+                self.write_reg(fiber_id, a, hash);
             }
             
             // ============ Array ============

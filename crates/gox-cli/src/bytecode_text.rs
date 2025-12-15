@@ -160,6 +160,7 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::SetField => format!("SetField r{}, {}, r{}", a, b, c),
         Opcode::GetFieldN => format!("GetFieldN r{}, r{}, {}, {}", a, b, c, flags),
         Opcode::SetFieldN => format!("SetFieldN r{}, r{}, {}, {}", a, b, c, flags),
+        Opcode::StructHash => format!("StructHash r{}, r{}, {}", a, b, c),
         
         Opcode::ArrayNew => format!("ArrayNew r{}, {}, {}", a, b, c),
         Opcode::ArrayGet => format!("ArrayGet r{}, r{}, r{}", a, b, c),

@@ -273,6 +273,19 @@ pub mod slice {
     }
 }
 
+/// Compute hash for a struct value (based on field values, not pointer)
+pub fn struct_hash(obj: GcRef, field_count: usize) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    
+    let mut hasher = DefaultHasher::new();
+    for i in 0..field_count {
+        let val = Gc::read_slot(obj, i);
+        val.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// Map object - uses Rust IndexMap internally.
 /// Layout (after GcHeader):
 /// - slot 0: Box pointer to IndexMap

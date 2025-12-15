@@ -116,6 +116,7 @@ pub enum Opcode {
     SetField,     // a.field[b] = c
     GetFieldN,    // copy c slots from b.field[flags] to a
     SetFieldN,    // copy c slots from b to a.field[flags]
+    StructHash,   // a = hash(b) with c fields (for struct map keys)
     
     // ============ Array/Slice ============
     ArrayNew = 120,   // a = new array, elem_type=b, len=c
@@ -259,6 +260,7 @@ impl Opcode {
             112 => Self::SetField,
             113 => Self::GetFieldN,
             114 => Self::SetFieldN,
+            115 => Self::StructHash,
             
             120 => Self::ArrayNew,
             121 => Self::ArrayGet,

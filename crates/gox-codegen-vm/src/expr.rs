@@ -535,11 +535,32 @@ fn compile_index(
     
     // Check if this is a map type
     if is_map_expr(fctx, &index.expr) {
-        fctx.emit(Opcode::MapGet, dst, container, idx);
+        // Check if key is a struct - need to compute hash
+        let key = get_struct_key_hash(fctx, &index.index, idx);
+        fctx.emit(Opcode::MapGet, dst, container, key);
     } else {
         fctx.emit(Opcode::SliceGet, dst, container, idx);
     }
     Ok(dst)
+}
+
+/// Get hash for a struct key, or return the key as-is for primitives
+fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key_reg: u16) -> u16 {
+    use gox_syntax::ast::ExprKind;
+    use crate::context::VarKind;
+    
+    // Check if the key expression is a struct variable
+    if let ExprKind::Ident(ident) = &expr.kind {
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            if let VarKind::Struct(field_count) = local.kind {
+                // Emit StructHash to compute hash based on field values
+                let hash_reg = fctx.regs.alloc(1);
+                fctx.emit(Opcode::StructHash, hash_reg, key_reg, field_count);
+                return hash_reg;
+            }
+        }
+    }
+    key_reg
 }
 
 /// Check if an expression is a map type
@@ -710,8 +731,32 @@ fn compile_composite_lit(
             // Create nil slice (append will create it)
             fctx.emit(Opcode::LoadNil, dst, 0, 0);
         }
+        TypeExprKind::Struct(_) | TypeExprKind::Obx(_) => {
+            // Allocate struct/object
+            // For now, use type_id=0 and calculate slots from fields
+            let num_fields = lit.elems.len();
+            fctx.emit(Opcode::Alloc, dst, 0, num_fields as u16);
+            
+            // Initialize fields
+            for (field_idx, elem) in lit.elems.iter().enumerate() {
+                let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                fctx.emit(Opcode::SetField, dst, field_idx as u16, val_reg);
+            }
+        }
+        TypeExprKind::Ident(_) => {
+            // Named type - could be struct or object alias
+            // For now, allocate based on element count
+            let num_fields = lit.elems.len();
+            fctx.emit(Opcode::Alloc, dst, 0, num_fields as u16);
+            
+            // Initialize fields
+            for (field_idx, elem) in lit.elems.iter().enumerate() {
+                let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                fctx.emit(Opcode::SetField, dst, field_idx as u16, val_reg);
+            }
+        }
         _ => {
-            // TODO: handle struct, array literals
+            // TODO: handle array literals
             fctx.emit(Opcode::LoadNil, dst, 0, 0);
         }
     }
