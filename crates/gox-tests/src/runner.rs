@@ -62,47 +62,79 @@ pub fn run_source(name: &str, source: &str) -> CodegenTestResult {
 }
 
 /// Run source from virtual filesystem.
+/// Creates a temp directory, writes files, then uses standard project compilation.
 pub fn run_source_with_vfs(name: &str, vfs: &VirtualFs) -> CodegenTestResult {
-    // Get main.gox content
-    let source = match vfs.get("main.gox") {
-        Some(s) => s,
-        None => {
+    use gox_common::vfs::{FileSet, RealFs};
+    use gox_analysis::analyze_project;
+    use gox_module::VfsConfig;
+    
+    // Create temp directory with unique name
+    let temp_dir = std::env::temp_dir().join(format!("gox_test_{}", name));
+    let _ = fs::remove_dir_all(&temp_dir); // Clean up any existing
+    if let Err(e) = fs::create_dir_all(&temp_dir) {
+        return CodegenTestResult {
+            name: name.to_string(),
+            passed: false,
+            output: String::new(),
+            error: Some(format!("Failed to create temp dir: {}", e)),
+        };
+    }
+    
+    // Write all files from VFS to temp directory
+    for (path, content) in vfs.files() {
+        let file_path = temp_dir.join(path);
+        if let Some(parent) = file_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(e) = fs::write(&file_path, content) {
+            let _ = fs::remove_dir_all(&temp_dir);
             return CodegenTestResult {
                 name: name.to_string(),
                 passed: false,
                 output: String::new(),
-                error: Some("main.gox not found in virtual filesystem".to_string()),
+                error: Some(format!("Failed to write {}: {}", path, e)),
+            };
+        }
+    }
+    
+    // Collect source files
+    let real_fs = RealFs;
+    let file_set = match FileSet::collect(&real_fs, &temp_dir) {
+        Ok(fs) => fs,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return CodegenTestResult {
+                name: name.to_string(),
+                passed: false,
+                output: String::new(),
+                error: Some(format!("Failed to collect files: {}", e)),
             };
         }
     };
     
-    // Parse
-    let (file, parse_diag, interner) = parser::parse(FileId::new(0), source);
-    if parse_diag.has_errors() {
-        return CodegenTestResult {
-            name: name.to_string(),
-            passed: false,
-            output: String::new(),
-            error: Some(format!("Parse error: {}", format_diagnostics(&parse_diag))),
-        };
-    }
+    // Initialize VFS for analysis
+    let vfs_config = VfsConfig::from_env(temp_dir.clone());
+    let analysis_vfs = vfs_config.to_vfs();
     
-    // Type check
-    let mut typecheck_diag = DiagnosticSink::new();
-    let typecheck_result = gox_analysis::typecheck_file(&file, &interner, &mut typecheck_diag);
-    if typecheck_diag.has_errors() {
-        return CodegenTestResult {
-            name: name.to_string(),
-            passed: false,
-            output: String::new(),
-            error: Some(format!("Type error: {}", format_diagnostics(&typecheck_diag))),
-        };
-    }
+    // Analyze project
+    let project = match analyze_project(file_set, &analysis_vfs) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return CodegenTestResult {
+                name: name.to_string(),
+                passed: false,
+                output: String::new(),
+                error: Some(format!("Analysis error: {}", e)),
+            };
+        }
+    };
     
-    // Compile single file
-    let module = match gox_codegen_vm::compile(&file, &typecheck_result, &interner) {
+    // Compile using standard project compiler
+    let module = match gox_codegen_vm::compile_project(&project) {
         Ok(m) => m,
         Err(e) => {
+            let _ = fs::remove_dir_all(&temp_dir);
             return CodegenTestResult {
                 name: name.to_string(),
                 passed: false,
@@ -111,6 +143,9 @@ pub fn run_source_with_vfs(name: &str, vfs: &VirtualFs) -> CodegenTestResult {
             };
         }
     };
+    
+    // Cleanup temp directory
+    let _ = fs::remove_dir_all(&temp_dir);
     
     // Run
     let mut vm = gox_vm::Vm::new();

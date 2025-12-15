@@ -15,5 +15,6 @@ gox-syntax = { path = "../gox-syntax" }
 gox-analysis = { path = "../gox-analysis" }
 gox-codegen-vm = { path = "../gox-codegen-vm" }
 gox-vm = { path = "../gox-vm" }
+gox-module = { path = "../gox-module" }
 
 [dev-dependencies]

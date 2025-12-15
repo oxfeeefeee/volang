@@ -98,4 +98,62 @@ mod tests {
             panic!("Typecheck test failures:\n{}", failures.join("\n\n"));
         }
     }
+
+    #[test]
+    fn test_run_source_simple() {
+        let result = run_source("simple_test", r#"
+package main
+
+func main() {
+    x := 1 + 2
+    assert(x == 3, "1 + 2 should be 3")
+}
+"#);
+        assert!(result.passed, "Test failed: {:?}", result.error);
+    }
+
+    #[test]
+    fn test_run_source_interface() {
+        let result = run_source("interface_test", r#"
+package main
+
+type Adder interface {
+    Add() int
+}
+
+type MyNum struct {
+    value int
+}
+
+func (m MyNum) Add() int {
+    return m.value + 100
+}
+
+func main() {
+    var a Adder
+    n := MyNum{value: 42}
+    a = n
+    result := a.Add()
+    assert(result == 142, "interface method should work")
+}
+"#);
+        assert!(result.passed, "Test failed: {:?}", result.error);
+    }
+
+    #[test]
+    fn test_run_source_with_vfs() {
+        let mut vfs = VirtualFs::new();
+        vfs.add_file("main.gox", r#"
+package main
+
+func main() {
+    s := []int{1, 2, 3}
+    assert(len(s) == 3, "slice length")
+    assert(s[0] == 1, "slice element")
+}
+"#);
+        
+        let result = run_source_with_vfs("vfs_test", &vfs);
+        assert!(result.passed, "Test failed: {:?}", result.error);
+    }
 }
