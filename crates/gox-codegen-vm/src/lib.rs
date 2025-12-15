@@ -137,7 +137,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                             for (name, value) in spec.names.iter().zip(spec.values.iter()) {
                                 if let Some(&global_idx) = global_indices.get(&(pkg.name.clone(), name.symbol)) {
                                     // Compile init expression to register 0
-                                    let val_reg = compile_simple_expr(&pkg.interner, value, &mut func, 0);
+                                    let val_reg = compile_simple_expr(&pkg.interner, value, &mut func, &mut module, 0);
                                     // SetGlobal global_idx, val_reg
                                     func.code.push(Instruction::new(Opcode::SetGlobal, global_idx as u16, val_reg, 0));
                                 }
@@ -229,9 +229,11 @@ fn compile_simple_expr(
     interner: &SymbolInterner,
     expr: &gox_syntax::ast::Expr,
     func: &mut FunctionDef,
+    module: &mut Module,
     reg: u16,
 ) -> u16 {
     use gox_vm::instruction::Instruction;
+    use gox_vm::bytecode::Constant;
     use gox_syntax::ast::ExprKind;
     
     match &expr.kind {
@@ -243,8 +245,9 @@ fn compile_simple_expr(
                 func.code.push(Instruction::new(Opcode::LoadInt, reg, 
                     (val as u32) as u16, ((val as u32) >> 16) as u16));
             } else {
-                // TODO: handle large ints via constants
-                func.code.push(Instruction::new(Opcode::LoadInt, reg, 0, 0));
+                // Large int - store in constant pool
+                let const_idx = module.add_constant(Constant::Int(val));
+                func.code.push(Instruction::new(Opcode::LoadConst, reg, const_idx, 0));
             }
         }
         ExprKind::Ident(ident) => {
