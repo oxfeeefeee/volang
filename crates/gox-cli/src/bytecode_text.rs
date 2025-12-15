@@ -218,6 +218,9 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::I64ToI32 => format!("I64ToI32 r{}, r{}", a, b),
         
         Opcode::DebugPrint => format!("DebugPrint r{}", a),
+        Opcode::AssertBegin => format!("AssertBegin r{}, {}, {}", a, b, c),
+        Opcode::AssertArg => format!("AssertArg r{}, {}", a, b),
+        Opcode::AssertEnd => "AssertEnd".to_string(),
         
         Opcode::Invalid => format!("Invalid {}, {}, {}", a, b, c),
     }

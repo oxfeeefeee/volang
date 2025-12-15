@@ -187,6 +187,9 @@ pub enum Opcode {
     
     // ============ Debug ============
     DebugPrint = 250,
+    AssertBegin,      // a=cond, b=arg_count, c=line; if cond==false, begin assert output
+    AssertArg,        // a=value, b=type_tag; print arg if in assert failure mode
+    AssertEnd,        // end assert; if failed, terminate program
     
     // Invalid
     Invalid = 255,
@@ -319,6 +322,9 @@ impl Opcode {
             230 => Self::CallNative,
             
             250 => Self::DebugPrint,
+            251 => Self::AssertBegin,
+            252 => Self::AssertArg,
+            253 => Self::AssertEnd,
             
             _ => Self::Invalid,
         }

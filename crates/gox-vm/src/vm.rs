@@ -1196,34 +1196,52 @@ impl Vm {
             Opcode::DebugPrint => {
                 let val = self.read_reg(fiber_id, a);
                 let type_tag = crate::ffi::TypeTag::from_u8(b as u8);
-                match type_tag {
-                    crate::ffi::TypeTag::Float32 => {
-                        let f = f32::from_bits(val as u32);
-                        println!("{}", f);
+                let s = format_value(val, type_tag);
+                println!("{}", s);
+            }
+            
+            Opcode::AssertBegin => {
+                let cond = self.read_reg(fiber_id, a);
+                let arg_count = b;
+                let line = c;
+                
+                if cond == 0 {
+                    // Assertion failed - set flag and print header
+                    let fiber = self.scheduler.get_mut(fiber_id).unwrap();
+                    fiber.assert_failed = true;
+                    fiber.assert_line = line;
+                    if arg_count > 0 {
+                        eprint!("assertion failed: ");
+                    } else {
+                        eprintln!("assertion failed");
                     }
-                    crate::ffi::TypeTag::Float64 => {
-                        let f = f64::from_bits(val);
-                        // Use Go-like float formatting
-                        if f.abs() >= 1e10 || (f != 0.0 && f.abs() < 1e-4) {
-                            println!("{:e}", f);
-                        } else {
-                            println!("{}", f);
-                        }
+                } else {
+                    // Assertion passed - skip arg_count AssertArg instructions + AssertEnd
+                    let fiber = self.scheduler.get_mut(fiber_id).unwrap();
+                    fiber.assert_failed = false;
+                    if let Some(frame) = fiber.frame_mut() {
+                        frame.pc += arg_count as usize + 1; // skip instructions (pc increments by 1 per instruction)
                     }
-                    crate::ffi::TypeTag::Bool => {
-                        println!("{}", if val != 0 { "true" } else { "false" });
-                    }
-                    crate::ffi::TypeTag::String => {
-                        let ptr = val as crate::gc::GcRef;
-                        if ptr.is_null() {
-                            println!("");
-                        } else {
-                            println!("{}", crate::objects::string::as_str(ptr));
-                        }
-                    }
-                    _ => {
-                        println!("{}", val as i64);
-                    }
+                }
+            }
+            
+            Opcode::AssertArg => {
+                let fiber = self.scheduler.get(fiber_id).unwrap();
+                if fiber.assert_failed {
+                    let val = self.read_reg(fiber_id, a);
+                    let type_tag = crate::ffi::TypeTag::from_u8(b as u8);
+                    let s = format_value(val, type_tag);
+                    eprint!("{}", s);
+                }
+            }
+            
+            Opcode::AssertEnd => {
+                let fiber = self.scheduler.get(fiber_id).unwrap();
+                if fiber.assert_failed {
+                    let line = fiber.assert_line;
+                    eprintln!();
+                    eprintln!("  at line {}", line);
+                    return VmResult::Panic("assertion failed".into());
                 }
             }
             
@@ -1291,5 +1309,37 @@ impl Vm {
 impl Default for Vm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Format a value for printing based on its type tag.
+fn format_value(val: u64, type_tag: crate::ffi::TypeTag) -> String {
+    match type_tag {
+        crate::ffi::TypeTag::Float32 => {
+            let f = f32::from_bits(val as u32);
+            format!("{}", f)
+        }
+        crate::ffi::TypeTag::Float64 => {
+            let f = f64::from_bits(val);
+            if f.abs() >= 1e10 || (f != 0.0 && f.abs() < 1e-4) {
+                format!("{:e}", f)
+            } else {
+                format!("{}", f)
+            }
+        }
+        crate::ffi::TypeTag::Bool => {
+            if val != 0 { "true".to_string() } else { "false".to_string() }
+        }
+        crate::ffi::TypeTag::String => {
+            let ptr = val as crate::gc::GcRef;
+            if ptr.is_null() {
+                String::new()
+            } else {
+                crate::objects::string::as_str(ptr).to_string()
+            }
+        }
+        _ => {
+            format!("{}", val as i64)
+        }
     }
 }

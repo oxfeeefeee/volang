@@ -546,7 +546,26 @@ impl<'a> TypeChecker<'a> {
             BuiltinKind::Panic => self.check_panic(args, span),
             BuiltinKind::Recover => self.check_recover(args, span),
             BuiltinKind::Print | BuiltinKind::Println => self.check_print(args, span),
+            BuiltinKind::Assert => self.check_assert(args, span),
         }
+    }
+    
+    /// Checks assert(cond, args...) - no return value.
+    fn check_assert(&mut self, args: &[Expr], span: Span) -> Type {
+        if args.is_empty() {
+            self.error(TypeError::PanicArgCount, span); // Reuse panic error for now
+            return Type::Tuple(vec![]);
+        }
+        
+        // First argument must be boolean (just check it's a valid expression)
+        self.check_expr(&args[0]);
+        
+        // Remaining arguments can be any type (like println)
+        for arg in args.iter().skip(1) {
+            self.check_expr(arg);
+        }
+        
+        Type::Tuple(vec![])
     }
 
     /// Checks len(x) - returns int.

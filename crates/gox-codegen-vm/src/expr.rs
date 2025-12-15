@@ -373,6 +373,7 @@ fn compile_call(
             "append" => return compile_builtin_append(ctx, fctx, call),
             "delete" => return compile_builtin_delete(ctx, fctx, call),
             "println" | "print" => return compile_builtin_print(ctx, fctx, call),
+            "assert" => return compile_builtin_assert(ctx, fctx, call),
             _ => {}
         }
         
@@ -1049,6 +1050,48 @@ fn compile_builtin_print(
         // Pass type tag in b parameter for proper formatting
         fctx.emit(Opcode::DebugPrint, reg, type_tag as u16, 0);
     }
+    let dst = fctx.regs.alloc(1);
+    fctx.emit(Opcode::LoadNil, dst, 0, 0);
+    Ok(dst)
+}
+
+fn compile_builtin_assert(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    call: &CallExpr,
+) -> Result<u16, CodegenError> {
+    if call.args.is_empty() {
+        return Err(CodegenError::Internal("assert requires at least one argument".into()));
+    }
+    
+    // Compile condition (first argument)
+    let cond = compile_expr(ctx, fctx, &call.args[0])?;
+    
+    // Use byte position as approximate location info
+    let line = call.args[0].span.start.to_u32() as u16;
+    
+    // Pre-compile all message arguments and store their registers and type tags
+    let mut arg_info: Vec<(u16, u16)> = Vec::new();
+    for arg in call.args.iter().skip(1) {
+        let type_tag = infer_type_tag(ctx, fctx, arg);
+        let reg = compile_expr(ctx, fctx, arg)?;
+        arg_info.push((reg, type_tag as u16));
+    }
+    
+    // Count of additional arguments (for message)
+    let arg_count = arg_info.len() as u16;
+    
+    // Emit AssertBegin: checks condition, if false starts error output
+    fctx.emit(Opcode::AssertBegin, cond, arg_count, line);
+    
+    // Emit AssertArg for each pre-compiled argument
+    for (reg, type_tag) in &arg_info {
+        fctx.emit(Opcode::AssertArg, *reg, *type_tag, 0);
+    }
+    
+    // Emit AssertEnd: if failed, terminate program
+    fctx.emit(Opcode::AssertEnd, 0, 0, 0);
+    
     let dst = fctx.regs.alloc(1);
     fctx.emit(Opcode::LoadNil, dst, 0, 0);
     Ok(dst)

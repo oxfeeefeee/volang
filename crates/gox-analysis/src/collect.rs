@@ -155,6 +155,7 @@ struct BuiltinSymbols {
     recover_sym: Symbol,
     print_sym: Symbol,
     println_sym: Symbol,
+    assert_sym: Symbol,
 }
 
 impl BuiltinSymbols {
@@ -191,6 +192,7 @@ impl BuiltinSymbols {
             recover_sym: interner.get("recover").unwrap_or(Symbol::DUMMY),
             print_sym: interner.get("print").unwrap_or(Symbol::DUMMY),
             println_sym: interner.get("println").unwrap_or(Symbol::DUMMY),
+            assert_sym: interner.get("assert").unwrap_or(Symbol::DUMMY),
         }
     }
 }
@@ -304,6 +306,7 @@ impl<'a> TypeCollector<'a> {
             (syms.recover_sym, BuiltinKind::Recover),
             (syms.print_sym, BuiltinKind::Print),
             (syms.println_sym, BuiltinKind::Println),
+            (syms.assert_sym, BuiltinKind::Assert),
         ];
 
         for (sym, kind) in funcs {

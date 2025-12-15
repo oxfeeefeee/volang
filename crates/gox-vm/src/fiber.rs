@@ -131,6 +131,10 @@ pub struct Fiber {
     // Panic state
     pub panic_value: Option<u64>,
     pub recovering: bool,
+    
+    // Assert state
+    pub assert_failed: bool,
+    pub assert_line: u16,
 }
 
 impl Fiber {
@@ -145,6 +149,8 @@ impl Fiber {
             defer_stack: Vec::new(),
             panic_value: None,
             recovering: false,
+            assert_failed: false,
+            assert_line: 0,
         }
     }
     

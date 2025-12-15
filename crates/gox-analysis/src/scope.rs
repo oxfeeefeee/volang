@@ -120,6 +120,7 @@ pub enum BuiltinKind {
     Recover,
     Print,
     Println,
+    Assert,
 }
 
 impl BuiltinKind {
@@ -137,6 +138,7 @@ impl BuiltinKind {
             BuiltinKind::Recover => "recover",
             BuiltinKind::Print => "print",
             BuiltinKind::Println => "println",
+            BuiltinKind::Assert => "assert",
         }
     }
 
@@ -154,6 +156,7 @@ impl BuiltinKind {
             BuiltinKind::Recover,
             BuiltinKind::Print,
             BuiltinKind::Println,
+            BuiltinKind::Assert,
         ]
     }
 }
