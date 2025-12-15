@@ -573,7 +573,7 @@ fn compile_index(
 }
 
 /// Get hash for a struct key, or return the key as-is for primitives
-fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key_reg: u16) -> u16 {
+pub fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key_reg: u16) -> u16 {
     use gox_syntax::ast::ExprKind;
     use crate::context::VarKind;
     

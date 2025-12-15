@@ -349,23 +349,6 @@ fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
     lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Obx(_)))
 }
 
-/// Get hash for a struct key, or return the key as-is for primitives
-fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key_reg: u16) -> u16 {
-    use gox_syntax::ast::ExprKind;
-    use crate::context::VarKind;
-    
-    if let ExprKind::Ident(ident) = &expr.kind {
-        if let Some(local) = fctx.lookup_local(ident.symbol) {
-            if let VarKind::Struct(field_count) = local.kind {
-                let hash_reg = fctx.regs.alloc(1);
-                fctx.emit(Opcode::StructHash, hash_reg, key_reg, field_count);
-                return hash_reg;
-            }
-        }
-    }
-    key_reg
-}
-
 /// Resolve field index for a selector expression
 fn resolve_selector_field_index(
     ctx: &CodegenContext,
@@ -498,7 +481,7 @@ fn compile_assign(
                 // Check if this is a map type (using ctx for Selector support)
                 if expr::is_map_expr_with_ctx(ctx, fctx, &index_expr.expr) {
                     // Check if key is a struct - need to compute hash
-                    let key = get_struct_key_hash(fctx, &index_expr.index, index);
+                    let key = expr::get_struct_key_hash(fctx, &index_expr.index, index);
                     fctx.emit(Opcode::MapSet, container, key, value);
                 } else {
                     fctx.emit(Opcode::SliceSet, container, index, value);
