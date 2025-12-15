@@ -44,7 +44,14 @@ pub fn compile_stmt(
             for spec in &var_decl.specs {
                 // Check if this is an interface type declaration
                 let is_interface = spec.ty.as_ref().map_or(false, |ty| {
-                    matches!(ty.kind, gox_syntax::ast::TypeExprKind::Interface(_))
+                    match &ty.kind {
+                        gox_syntax::ast::TypeExprKind::Interface(_) => true,
+                        gox_syntax::ast::TypeExprKind::Ident(ident) => {
+                            // Check if named type is an interface
+                            is_named_interface_type(ctx, ident.symbol)
+                        }
+                        _ => false,
+                    }
                 });
                 
                 for (i, name) in spec.names.iter().enumerate() {
@@ -380,8 +387,13 @@ fn is_named_type_object(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
     expr::lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Obx(_)))
 }
 
+/// Check if a named type is an interface type
+fn is_named_interface_type(ctx: &CodegenContext, sym: gox_common::Symbol) -> bool {
+    expr::lookup_named_type(ctx, sym).map_or(false, |ty| matches!(ty, Type::Interface(_)))
+}
+
 /// Infer runtime type ID for boxing into interface
-fn infer_runtime_type_id(_ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> u16 {
+fn infer_runtime_type_id(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> u16 {
     use gox_syntax::ast::ExprKind;
     use gox_vm::types::builtin;
     use crate::context::VarKind;
@@ -394,6 +406,12 @@ fn infer_runtime_type_id(_ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_s
         ExprKind::Ident(ident) => {
             // Check local variable type
             if let Some(local) = fctx.lookup_local(ident.symbol) {
+                // If it's a named type (struct/object), look up its type_id
+                if let Some(type_sym) = local.type_sym {
+                    if let Some(type_id) = get_named_type_id(ctx, type_sym) {
+                        return type_id;
+                    }
+                }
                 match local.kind {
                     VarKind::Int => builtin::INT64 as u16,
                     VarKind::Float => builtin::FLOAT64 as u16,
@@ -408,7 +426,7 @@ fn infer_runtime_type_id(_ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_s
         }
         ExprKind::Binary(_) => {
             // Check if float expression
-            if expr::is_float_expr(_ctx, fctx, expr) {
+            if expr::is_float_expr(ctx, fctx, expr) {
                 builtin::FLOAT64 as u16
             } else {
                 builtin::INT64 as u16
@@ -416,6 +434,20 @@ fn infer_runtime_type_id(_ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_s
         }
         _ => builtin::INT64 as u16,
     }
+}
+
+/// Get runtime type_id for a named type by symbol.
+fn get_named_type_id(ctx: &CodegenContext, type_sym: gox_common::Symbol) -> Option<u16> {
+    use gox_vm::types::builtin;
+    
+    let type_name = ctx.interner.resolve(type_sym)?;
+    for (i, info) in ctx.result.named_types.iter().enumerate() {
+        let name = ctx.interner.resolve(info.name).unwrap_or("");
+        if name == type_name {
+            return Some((builtin::FIRST_USER_TYPE + i as u32) as u16);
+        }
+    }
+    None
 }
 
 

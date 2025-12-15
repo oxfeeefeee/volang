@@ -482,7 +482,12 @@ fn compile_call(
             
             // Try method call on a local variable FIRST (receiver.Method())
             if let Some(local) = fctx.lookup_local(pkg_ident.symbol) {
-                // Get receiver type name
+                // Check if this is an interface variable - needs dynamic dispatch
+                if local.kind == crate::context::VarKind::Interface {
+                    return compile_interface_method_call(ctx, fctx, local.reg, method, call);
+                }
+                
+                // Get receiver type name for static dispatch
                 if let Some(type_sym) = local.type_sym {
                     let type_name = ctx.interner.resolve(type_sym).unwrap_or("");
                     let method_key = format!("{}.{}", type_name, method);
@@ -582,6 +587,113 @@ fn compile_func_call(
     fctx.emit_with_flags(Opcode::Call, 1, func_idx as u16, arg_start, arg_count);
     
     Ok(arg_start)
+}
+
+/// Compile interface method call with dynamic dispatch.
+/// The interface is stored in 2 slots: [type_id, data]
+fn compile_interface_method_call(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    iface_reg: u16,
+    method_name: &str,
+    call: &CallExpr,
+) -> Result<u16, CodegenError> {
+    // For now, we need to know which concrete types might implement this interface
+    // and generate a dispatch table. This is complex runtime dispatch.
+    // 
+    // Simpler approach: at compile time, we can't know the concrete type,
+    // so we need a VM opcode for interface method dispatch.
+    //
+    // For MVP: look up all methods with this name and generate a type switch
+    
+    // Collect all methods with this name
+    let matching_methods: Vec<(String, u32)> = ctx.method_table.iter()
+        .filter(|(k, _)| k.ends_with(&format!(".{}", method_name)))
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    
+    if matching_methods.is_empty() {
+        return Err(CodegenError::Internal(format!("no methods found for: {}", method_name)));
+    }
+    
+    // Unbox interface: get type_id and data
+    let type_id_reg = fctx.regs.alloc(1);
+    let data_reg = fctx.regs.alloc(1);
+    fctx.emit(Opcode::Mov, type_id_reg, iface_reg, 0);      // type_id = slot 0
+    fctx.emit(Opcode::Mov, data_reg, iface_reg + 1, 0);     // data = slot 1
+    
+    // For each possible concrete type, check type_id and call method
+    let result_reg = fctx.regs.alloc(1);
+    let mut jump_to_end: Vec<usize> = Vec::new();
+    
+    for (method_key, func_idx) in &matching_methods {
+        // Extract type name from "TypeName.MethodName"
+        let type_name = method_key.split('.').next().unwrap_or("");
+        
+        // Look up type_id for this type name
+        if let Some(type_id) = get_type_id_for_name(ctx, type_name) {
+            // Compare type_id_reg with expected type_id
+            let cmp_reg = fctx.regs.alloc(1);
+            let expected = fctx.regs.alloc(1);
+            fctx.emit(Opcode::LoadInt, expected, type_id as u16, 0);
+            fctx.emit(Opcode::EqI64, cmp_reg, type_id_reg, expected);
+            
+            // If not equal, jump to next check
+            let skip_pc = fctx.pc();
+            fctx.emit(Opcode::JumpIfNot, cmp_reg, 0, 0);
+            
+            // Call the method with data as receiver
+            let arg_start = fctx.regs.current();
+            let recv_dst = fctx.regs.alloc(1);
+            fctx.emit(Opcode::Mov, recv_dst, data_reg, 0);
+            
+            // Compile remaining arguments
+            for arg in &call.args {
+                let expected_reg = fctx.regs.current();
+                let actual_reg = compile_expr(ctx, fctx, arg)?;
+                if actual_reg != expected_reg {
+                    fctx.emit(Opcode::Mov, expected_reg, actual_reg, 0);
+                }
+            }
+            
+            let arg_count = (call.args.len() + 1) as u16;
+            fctx.emit_with_flags(Opcode::Call, 1, *func_idx as u16, arg_start, arg_count);
+            fctx.emit(Opcode::Mov, result_reg, arg_start, 0);
+            
+            // Jump to end
+            let end_pc = fctx.pc();
+            fctx.emit(Opcode::Jump, 0, 0, 0);
+            jump_to_end.push(end_pc);
+            
+            // Patch skip jump
+            let current_pc = fctx.pc();
+            let offset = (current_pc as i32) - (skip_pc as i32);
+            fctx.patch_jump(skip_pc, offset);
+        }
+    }
+    
+    // Patch all jumps to end
+    let end_pc = fctx.pc();
+    for jump_pc in jump_to_end {
+        let offset = (end_pc as i32) - (jump_pc as i32);
+        fctx.patch_jump(jump_pc, offset);
+    }
+    
+    Ok(result_reg)
+}
+
+/// Get runtime type_id for a named type.
+fn get_type_id_for_name(ctx: &CodegenContext, type_name: &str) -> Option<u32> {
+    use gox_vm::types::builtin;
+    
+    // Check named types in analysis result
+    for (i, info) in ctx.result.named_types.iter().enumerate() {
+        let name = ctx.interner.resolve(info.name).unwrap_or("");
+        if name == type_name {
+            return Some(builtin::FIRST_USER_TYPE + i as u32);
+        }
+    }
+    None
 }
 
 fn compile_method_call(
