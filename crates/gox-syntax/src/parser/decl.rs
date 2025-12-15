@@ -331,7 +331,7 @@ impl<'a> Parser<'a> {
     /// Checks if current token could start a type expression.
     fn at_type_start(&self) -> bool {
         matches!(self.current.kind, 
-            TokenKind::Ident | TokenKind::Star | TokenKind::LBracket | 
+            TokenKind::Ident | TokenKind::LBracket | 
             TokenKind::Map | TokenKind::Chan | TokenKind::Func |
             TokenKind::Struct | TokenKind::Interface
         )

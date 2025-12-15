@@ -155,13 +155,21 @@ pub fn run_single_file(path: &Path) -> TestResult {
     let mut typecheck_diag = DiagnosticSink::new();
     let _typecheck_result = gox_analysis::typecheck_file(&file, &interner, &mut typecheck_diag);
     
+    // Combine parse errors and typecheck errors for checking
+    let mut all_errors = format_diagnostics(&parse_diag);
+    let typecheck_errors = format_diagnostics(&typecheck_diag);
+    if !all_errors.is_empty() && !typecheck_errors.is_empty() {
+        all_errors.push('\n');
+    }
+    all_errors.push_str(&typecheck_errors);
+    
     // Check typecheck section if present
     if let Some(expected) = &test.typecheck {
-        let actual = format_diagnostics(&typecheck_diag);
+        let actual = all_errors;
         if expected.trim() == "OK" {
-            if typecheck_diag.has_errors() {
+            if parse_diag.has_errors() || typecheck_diag.has_errors() {
                 return TestResult::fail(&path_str, format!(
-                    "unexpected type error: {}", actual
+                    "unexpected error: {}", actual
                 ));
             }
         } else {
@@ -175,9 +183,9 @@ pub fn run_single_file(path: &Path) -> TestResult {
         }
         // Typecheck-only test done
         return TestResult::pass(&path_str);
-    } else if typecheck_diag.has_errors() {
+    } else if parse_diag.has_errors() || typecheck_diag.has_errors() {
         return TestResult::fail(&path_str, format!(
-            "type error: {}", format_diagnostics(&typecheck_diag)
+            "error: {}", all_errors
         ));
     }
     
