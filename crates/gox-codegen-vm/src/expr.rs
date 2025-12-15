@@ -533,8 +533,8 @@ fn compile_index(
     let idx = compile_expr(ctx, fctx, &index.index)?;
     let dst = fctx.regs.alloc(2); // Map returns value + ok flag
     
-    // Check if this is a map type
-    if is_map_expr(fctx, &index.expr) {
+    // Check if this is a map type (using ctx for Selector support)
+    if is_map_expr_with_ctx(ctx, fctx, &index.expr) {
         // Check if key is a struct - need to compute hash
         let key = get_struct_key_hash(fctx, &index.index, idx);
         fctx.emit(Opcode::MapGet, dst, container, key);
@@ -564,6 +564,32 @@ fn get_struct_key_hash(fctx: &mut FuncContext, expr: &gox_syntax::ast::Expr, key
 }
 
 /// Check if an expression is a map type
+pub fn is_map_expr_with_ctx(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
+    use gox_syntax::ast::ExprKind;
+    use gox_analysis::Type;
+    use crate::context::VarKind;
+    
+    match &expr.kind {
+        ExprKind::Ident(ident) => {
+            if let Some(local) = fctx.lookup_local(ident.symbol) {
+                local.kind == VarKind::Map
+            } else {
+                false
+            }
+        }
+        ExprKind::Selector(_) => {
+            // Check if the selector result is a map type
+            if let Some(ty) = get_expr_type(ctx, fctx, expr) {
+                matches!(ty, Type::Map(_))
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Check if an expression is a map type (simple version without ctx)
 fn is_map_expr(fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
     use gox_syntax::ast::ExprKind;
     use crate::context::VarKind;
@@ -638,32 +664,86 @@ fn resolve_field_index(
     use gox_syntax::ast::ExprKind;
     use gox_analysis::Type;
     
-    // Get the type name from the expression
-    if let ExprKind::Ident(ident) = &expr.kind {
-        // Look up the variable's type
-        if let Some(local) = fctx.lookup_local(ident.symbol) {
-            // Check if we have type info stored
-            if let Some(type_sym) = local.type_sym {
-                // Look up the named type
-                for named in &ctx.result.named_types {
-                    if named.name == type_sym {
-                        // Find field index
-                        match &named.underlying {
-                            Type::Struct(s) | Type::Obx(s) => {
-                                for (idx, field) in s.fields.iter().enumerate() {
-                                    if field.name == Some(field_name) {
-                                        return idx as u16;
-                                    }
-                                }
-                            }
-                            _ => {}
+    // Get the type of the expression
+    if let Some(ty) = get_expr_type(ctx, fctx, expr) {
+        // Find field index in the type
+        if let Some(idx) = find_field_index_in_type(ctx, &ty, field_name) {
+            return idx;
+        }
+    }
+    0 // Fallback to field 0
+}
+
+/// Get the type of an expression (for field resolution)
+fn get_expr_type(
+    ctx: &CodegenContext,
+    fctx: &FuncContext,
+    expr: &gox_syntax::ast::Expr,
+) -> Option<gox_analysis::Type> {
+    use gox_syntax::ast::ExprKind;
+    use gox_analysis::Type;
+    
+    match &expr.kind {
+        ExprKind::Ident(ident) => {
+            // Look up the variable's type
+            if let Some(local) = fctx.lookup_local(ident.symbol) {
+                if let Some(type_sym) = local.type_sym {
+                    // Look up the named type
+                    for named in &ctx.result.named_types {
+                        if named.name == type_sym {
+                            return Some(named.underlying.clone());
                         }
                     }
                 }
             }
+            None
         }
+        ExprKind::Selector(sel) => {
+            // Get the type of the base expression, then find the field type
+            if let Some(base_ty) = get_expr_type(ctx, fctx, &sel.expr) {
+                match &base_ty {
+                    Type::Struct(s) | Type::Obx(s) => {
+                        for field in &s.fields {
+                            if field.name == Some(sel.sel.symbol) {
+                                return Some(field.ty.clone());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        _ => None,
     }
-    0 // Fallback to field 0
+}
+
+/// Find field index in a type
+fn find_field_index_in_type(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+) -> Option<u16> {
+    use gox_analysis::Type;
+    
+    match ty {
+        Type::Struct(s) | Type::Obx(s) => {
+            for (idx, field) in s.fields.iter().enumerate() {
+                if field.name == Some(field_name) {
+                    return Some(idx as u16);
+                }
+            }
+            None
+        }
+        Type::Named(id) => {
+            // Look up the named type by index
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                return find_field_index_in_type(ctx, &named.underlying, field_name);
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Compile function literal (closure)

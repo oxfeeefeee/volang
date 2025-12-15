@@ -87,8 +87,10 @@ func main() {
     println(scores["a"])        // 10
     println(scores["b"])        // 20
     
-    // Test 7: Skip map field index assignment for now
+    // Test 7: Map field index assignment
     println(7000)
+    c1.scores["c"] = 30
+    println(c1.scores["c"])     // 30
     
     // Test 8: Nested struct field access
     println(8000)

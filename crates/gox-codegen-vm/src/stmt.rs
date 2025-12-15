@@ -413,8 +413,8 @@ fn compile_assign(
                 let index = expr::compile_expr(ctx, fctx, &index_expr.index)?;
                 let value = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
                 
-                // Check if this is a map type
-                if is_map_expr(fctx, &index_expr.expr) {
+                // Check if this is a map type (using ctx for Selector support)
+                if expr::is_map_expr_with_ctx(ctx, fctx, &index_expr.expr) {
                     // Check if key is a struct - need to compute hash
                     let key = get_struct_key_hash(fctx, &index_expr.index, index);
                     fctx.emit(Opcode::MapSet, container, key, value);
