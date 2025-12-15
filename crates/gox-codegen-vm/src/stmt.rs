@@ -305,7 +305,7 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
         }
         ExprKind::Selector(sel) => {
             // Accessing a struct field - infer type from the field
-            if let ExprKind::Ident(ident) = &sel.expr.kind {
+            if let ExprKind::Ident(_) = &sel.expr.kind {
                 // Look up the struct's type and find the field type
                 for named in &ctx.result.named_types {
                     match &named.underlying {

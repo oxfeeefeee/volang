@@ -673,9 +673,6 @@ pub fn resolve_field_index(
     expr: &gox_syntax::ast::Expr,
     field_name: gox_common::Symbol,
 ) -> u16 {
-    use gox_syntax::ast::ExprKind;
-    use gox_analysis::Type;
-    
     // Get the type of the expression
     if let Some(ty) = get_expr_type(ctx, fctx, expr) {
         // Find field index in the type
@@ -880,7 +877,7 @@ fn compile_composite_lit(
                     // Get key expression
                     let key_reg = match key {
                         gox_syntax::ast::CompositeLitKey::Expr(k) => compile_expr(ctx, fctx, k)?,
-                        gox_syntax::ast::CompositeLitKey::Ident(ident) => {
+                        gox_syntax::ast::CompositeLitKey::Ident(_) => {
                             // Convert ident to value - for now just use as int
                             let r = fctx.regs.alloc(1);
                             fctx.emit(Opcode::LoadInt, r, 0, 0);

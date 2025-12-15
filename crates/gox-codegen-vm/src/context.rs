@@ -51,6 +51,7 @@ impl Registers {
 
 /// Simple type kind for codegen (to distinguish map vs slice vs struct vs object)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum VarKind {
     Int,
     Float,
@@ -66,6 +67,7 @@ pub enum VarKind {
 #[derive(Debug, Clone)]
 pub struct LocalVar {
     pub reg: u16,
+    #[allow(dead_code)]
     pub slots: u16,
     pub kind: VarKind,
     pub type_sym: Option<Symbol>,  // Named type symbol for struct/object
