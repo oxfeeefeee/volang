@@ -295,9 +295,10 @@ fn collect_const_values(
     for (sym, entity) in scope.local_symbols() {
         if let Entity::Var(var) = entity {
             if let Some(ref constant) = var.constant {
-                // Check if this is a float type constant
+                // Check if this is a float type constant (typed or untyped)
                 let is_float = matches!(&var.ty, 
-                    Type::Basic(BasicType::Float32) | Type::Basic(BasicType::Float64));
+                    Type::Basic(BasicType::Float32) | Type::Basic(BasicType::Float64) |
+                    Type::Untyped(gox_analysis::types::UntypedKind::Float));
                 
                 if is_float {
                     // Add float to constant pool

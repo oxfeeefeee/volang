@@ -24,7 +24,15 @@ pub fn infer_type_tag(ctx: &CodegenContext, fctx: &FuncContext, expr: &Expr) -> 
                 "true" | "false" => TypeTag::Bool,
                 "nil" => TypeTag::Nil,
                 _ => {
-                    // Check constants first
+                    // Check local variables first
+                    if let Some(local) = fctx.lookup_local(ident.symbol) {
+                        match local.kind {
+                            crate::context::VarKind::Float => return TypeTag::Float64,
+                            crate::context::VarKind::String => return TypeTag::String,
+                            _ => {}
+                        }
+                    }
+                    // Check constants
                     if let Some(const_val) = ctx.const_values.get(&ident.symbol) {
                         match const_val {
                             crate::ConstValue::Int(_) => TypeTag::Int64,
@@ -41,7 +49,25 @@ pub fn infer_type_tag(ctx: &CodegenContext, fctx: &FuncContext, expr: &Expr) -> 
                 }
             }
         }
-        ExprKind::Binary(_) => TypeTag::Int64, // TODO: infer from operands
+        ExprKind::Binary(bin) => {
+            // Comparison operators return bool regardless of operand types
+            match bin.op {
+                BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq |
+                BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::LogAnd | BinaryOp::LogOr => {
+                    TypeTag::Bool
+                }
+                _ => {
+                    // Arithmetic operators - if either is float, result is float
+                    let left_tag = infer_type_tag(ctx, fctx, &bin.left);
+                    let right_tag = infer_type_tag(ctx, fctx, &bin.right);
+                    if left_tag == TypeTag::Float64 || right_tag == TypeTag::Float64 {
+                        TypeTag::Float64
+                    } else {
+                        TypeTag::Int64
+                    }
+                }
+            }
+        }
         ExprKind::Unary(unary) => {
             if matches!(unary.op, UnaryOp::Not) {
                 TypeTag::Bool
@@ -166,8 +192,16 @@ fn compile_ident(
                 let dst = fctx.regs.alloc(1);
                 match const_val {
                     crate::ConstValue::Int(v) => {
-                        let val = *v as u32;
-                        fctx.emit(Opcode::LoadInt, dst, val as u16, (val >> 16) as u16);
+                        let val = *v;
+                        // Check if value fits in i32 for LoadInt
+                        if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
+                            let u = val as u32;
+                            fctx.emit(Opcode::LoadInt, dst, u as u16, (u >> 16) as u16);
+                        } else {
+                            // Large integer - store in constant pool
+                            let idx = ctx.add_constant(Constant::Int(val));
+                            fctx.emit(Opcode::LoadConst, dst, idx, 0);
+                        }
                     }
                     crate::ConstValue::FloatIdx(idx) => {
                         // Load float from constant pool
@@ -257,6 +291,28 @@ fn compile_rune_lit(
     Ok(dst)
 }
 
+/// Check if an expression is a float type
+pub fn is_float_expr(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
+    use gox_syntax::ast::ExprKind;
+    match &expr.kind {
+        ExprKind::FloatLit(_) => true,
+        ExprKind::Ident(ident) => {
+            // Check local variable type
+            if let Some(local) = fctx.lookup_local(ident.symbol) {
+                matches!(local.kind, crate::context::VarKind::Float)
+            } else if let Some(crate::ConstValue::FloatIdx(_)) = ctx.const_values.get(&ident.symbol) {
+                true
+            } else {
+                false
+            }
+        }
+        ExprKind::Paren(inner) => is_float_expr(ctx, fctx, inner),
+        ExprKind::Binary(bin) => is_float_expr(ctx, fctx, &bin.left) || is_float_expr(ctx, fctx, &bin.right),
+        ExprKind::Unary(un) => is_float_expr(ctx, fctx, &un.operand),
+        _ => false,
+    }
+}
+
 /// Compile binary expression.
 fn compile_binary(
     ctx: &mut CodegenContext,
@@ -272,30 +328,56 @@ fn compile_binary(
     let right = compile_expr(ctx, fctx, &binary.right)?;
     let dst = fctx.regs.alloc(1);
     
-    let op = match binary.op {
-        BinaryOp::Add => Opcode::AddI64,
-        BinaryOp::Sub => Opcode::SubI64,
-        BinaryOp::Mul => Opcode::MulI64,
-        BinaryOp::Div => Opcode::DivI64,
-        BinaryOp::Rem => Opcode::ModI64,
-        BinaryOp::And => Opcode::Band,
-        BinaryOp::Or => Opcode::Bor,
-        BinaryOp::Xor => Opcode::Bxor,
-        BinaryOp::Shl => Opcode::Shl,
-        BinaryOp::Shr => Opcode::Shr,
-        BinaryOp::Eq => Opcode::EqI64,
-        BinaryOp::NotEq => Opcode::NeI64,
-        BinaryOp::Lt => Opcode::LtI64,
-        BinaryOp::LtEq => Opcode::LeI64,
-        BinaryOp::Gt => Opcode::GtI64,
-        BinaryOp::GtEq => Opcode::GeI64,
-        BinaryOp::LogAnd | BinaryOp::LogOr => unreachable!(),
-        BinaryOp::AndNot => {
-            let tmp = fctx.regs.alloc(1);
-            fctx.emit(Opcode::Bnot, tmp, right, 0);
-            fctx.emit(Opcode::Band, dst, left, tmp);
-            fctx.regs.free(1);
-            return Ok(dst);
+    // Detect if operands are floats
+    let is_float = is_float_expr(ctx, fctx, &binary.left) || is_float_expr(ctx, fctx, &binary.right);
+    
+    let op = if is_float {
+        // Float operations
+        match binary.op {
+            BinaryOp::Add => Opcode::AddF64,
+            BinaryOp::Sub => Opcode::SubF64,
+            BinaryOp::Mul => Opcode::MulF64,
+            BinaryOp::Div => Opcode::DivF64,
+            BinaryOp::Eq => Opcode::EqF64,
+            BinaryOp::NotEq => Opcode::NeF64,
+            BinaryOp::Lt => Opcode::LtF64,
+            BinaryOp::LtEq => Opcode::LeF64,
+            BinaryOp::Gt => Opcode::GtF64,
+            BinaryOp::GtEq => Opcode::GeF64,
+            // Bitwise and modulo don't make sense for floats
+            BinaryOp::Rem | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor | 
+            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::AndNot => {
+                return Err(CodegenError::Unsupported("bitwise/modulo on floats".to_string()));
+            }
+            BinaryOp::LogAnd | BinaryOp::LogOr => unreachable!(),
+        }
+    } else {
+        // Integer operations
+        match binary.op {
+            BinaryOp::Add => Opcode::AddI64,
+            BinaryOp::Sub => Opcode::SubI64,
+            BinaryOp::Mul => Opcode::MulI64,
+            BinaryOp::Div => Opcode::DivI64,
+            BinaryOp::Rem => Opcode::ModI64,
+            BinaryOp::And => Opcode::Band,
+            BinaryOp::Or => Opcode::Bor,
+            BinaryOp::Xor => Opcode::Bxor,
+            BinaryOp::Shl => Opcode::Shl,
+            BinaryOp::Shr => Opcode::Shr,
+            BinaryOp::Eq => Opcode::EqI64,
+            BinaryOp::NotEq => Opcode::NeI64,
+            BinaryOp::Lt => Opcode::LtI64,
+            BinaryOp::LtEq => Opcode::LeI64,
+            BinaryOp::Gt => Opcode::GtI64,
+            BinaryOp::GtEq => Opcode::GeI64,
+            BinaryOp::LogAnd | BinaryOp::LogOr => unreachable!(),
+            BinaryOp::AndNot => {
+                let tmp = fctx.regs.alloc(1);
+                fctx.emit(Opcode::Bnot, tmp, right, 0);
+                fctx.emit(Opcode::Band, dst, left, tmp);
+                fctx.regs.free(1);
+                return Ok(dst);
+            }
         }
     };
     
@@ -343,7 +425,12 @@ fn compile_unary(
             fctx.emit(Opcode::Mov, dst, operand, 0);
         }
         UnaryOp::Neg => {
-            fctx.emit(Opcode::NegI64, dst, operand, 0);
+            // Use NegF64 for float operands
+            if is_float_expr(ctx, fctx, &unary.operand) {
+                fctx.emit(Opcode::NegF64, dst, operand, 0);
+            } else {
+                fctx.emit(Opcode::NegI64, dst, operand, 0);
+            }
         }
         UnaryOp::Not => {
             fctx.emit(Opcode::Not, dst, operand, 0);

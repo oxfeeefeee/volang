@@ -132,7 +132,13 @@ fn compile_short_var(
         } else {
             // Determine the type kind and type symbol from the RHS expression
             let (mut kind, mut type_sym) = if i < sv.values.len() {
-                infer_var_kind_and_type(ctx, &sv.values[i])
+                let (k, ts) = infer_var_kind_and_type(ctx, &sv.values[i]);
+                // Also check if it's a float expression using fctx
+                if k == VarKind::Other && expr::is_float_expr(ctx, fctx, &sv.values[i]) {
+                    (VarKind::Float, None)
+                } else {
+                    (k, ts)
+                }
             } else {
                 (VarKind::Other, None)
             };
@@ -334,6 +340,18 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -
             // This is handled separately in compile_short_var
             (VarKind::Other, None)
         }
+        ExprKind::FloatLit(_) => (VarKind::Float, None),
+        ExprKind::Binary(bin) => {
+            // If either operand is float, result is float
+            let (left_kind, _) = infer_var_kind_and_type(ctx, &bin.left);
+            let (right_kind, _) = infer_var_kind_and_type(ctx, &bin.right);
+            if left_kind == VarKind::Float || right_kind == VarKind::Float {
+                (VarKind::Float, None)
+            } else {
+                (VarKind::Other, None)
+            }
+        }
+        ExprKind::Paren(inner) => infer_var_kind_and_type(ctx, inner),
         _ => (VarKind::Other, None),
     }
 }
