@@ -121,21 +121,23 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                         let method_key = format!("{}.{}", type_name, func_name);
                         method_table.insert(method_key, idx);
                         // Don't add methods to func_indices - they're looked up via method_table
-                    } else {
-                        // Only add non-method functions to func_indices
-                        func_indices.insert(func.name.symbol, idx);
-                    }
-                    
-                    // Register cross-package name for exported functions
-                    if func_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        let qualified_name = format!("{}.{}", pkg.name, func_name);
-                        cross_pkg_funcs.insert(qualified_name, idx);
-                    }
-                    
-                    // Also register init functions specially
-                    if func_name == "init" {
-                        let init_name = format!("{}.$init", pkg.name);
+                    } else if func_name == "init" {
+                        // Register init functions with unique names (pkg.$init_0, pkg.$init_1, etc.)
+                        // Don't add to func_indices since they can't be called directly
+                        let init_count = cross_pkg_funcs.keys()
+                            .filter(|k| k.starts_with(&format!("{}.$init_", pkg.name)))
+                            .count();
+                        let init_name = format!("{}.$init_{}", pkg.name, init_count);
                         cross_pkg_funcs.insert(init_name, idx);
+                    } else {
+                        // Only add non-method, non-init functions to func_indices
+                        func_indices.insert(func.name.symbol, idx);
+                        
+                        // Register cross-package name for exported functions
+                        if func_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                            let qualified_name = format!("{}.{}", pkg.name, func_name);
+                            cross_pkg_funcs.insert(qualified_name, idx);
+                        }
                     }
                     
                     module.functions.push(FunctionDef::new(func_name));
@@ -146,7 +148,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         pkg_func_indices.push(func_indices);
     }
     
-    // Third pass: generate $var_init functions for each package with var decls
+    // Third pass: reserve slots for $var_init functions (compiled in fourth pass)
     for pkg in &project.packages {
         if !pkg.has_var_decls {
             continue;
@@ -156,32 +158,8 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         let var_init_name = format!("{}.$var_init", pkg.name);
         cross_pkg_funcs.insert(var_init_name.clone(), var_init_idx);
         
-        let mut func = FunctionDef::new(&format!("$var_init_{}", pkg.name));
-        func.local_slots = 8; // Temp registers for init expressions
-        
-        // Compile var initializers
-        for file in &pkg.files {
-            for decl in &file.decls {
-                if let Decl::Var(var) = decl {
-                    for spec in &var.specs {
-                        // If there are initializers, compile them
-                        if !spec.values.is_empty() {
-                            for (name, value) in spec.names.iter().zip(spec.values.iter()) {
-                                if let Some(&global_idx) = global_indices.get(&(pkg.name.clone(), name.symbol)) {
-                                    // Compile init expression to register 0
-                                    let val_reg = compile_simple_expr(&pkg.interner, value, &mut func, &mut module, 0);
-                                    // SetGlobal global_idx, val_reg
-                                    func.code.push(Instruction::new(Opcode::SetGlobal, global_idx as u16, val_reg, 0));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        func.code.push(Instruction::new(Opcode::Return, 0, 0, 0));
-        module.functions.push(func);
+        // Reserve slot - will be compiled in fourth pass with full context
+        module.functions.push(FunctionDef::new(&format!("$var_init_{}", pkg.name)));
     }
     
     // Shared indices across all packages
@@ -191,6 +169,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     // Fourth pass: compile all function bodies
     for (pkg_idx, pkg) in project.packages.iter().enumerate() {
         let func_indices = &pkg_func_indices[pkg_idx];
+        let mut init_counter = 0usize; // Track init function index within package
         
         // Build package-local global indices
         let pkg_globals: HashMap<Symbol, u32> = global_indices.iter()
@@ -220,12 +199,18 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     ctx.module.constants = module.constants.clone();
                     
                     let func_def = ctx.compile_func_body(func)?;
-                    // Look up function index - methods use method_table, regular functions use func_indices
+                    let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
+                    
+                    // Look up function index - methods use method_table, init uses cross_pkg_funcs
                     let idx = if let Some(ref receiver) = func.receiver {
-                        let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
                         let type_name = pkg.interner.resolve(receiver.ty.symbol).unwrap_or("");
                         let method_key = format!("{}.{}", type_name, func_name);
                         *method_table.get(&method_key).unwrap() as usize
+                    } else if func_name == "init" {
+                        // Use init_counter to find the correct init function index
+                        let init_name = format!("{}.$init_{}", pkg.name, init_counter);
+                        init_counter += 1;
+                        *cross_pkg_funcs.get(&init_name).unwrap() as usize
                     } else {
                         func_indices[&func.name.symbol] as usize
                     };
@@ -241,6 +226,75 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                         module.functions.push(closure_func);
                     }
                 }
+            }
+        }
+        
+        // Compile $var_init function for this package if needed
+        if pkg.has_var_decls {
+            let var_init_name = format!("{}.$var_init", pkg.name);
+            if let Some(&var_init_idx) = cross_pkg_funcs.get(&var_init_name) {
+                // Create a context for compiling var initializers
+                let first_file = pkg.files.first().unwrap();
+                let mut ctx = context::CodegenContext::new(first_file, &pkg.types, &pkg.interner);
+                ctx.func_indices = func_indices.clone();
+                ctx.cross_pkg_funcs = cross_pkg_funcs.clone();
+                ctx.global_indices = pkg_globals.clone();
+                ctx.const_values = pkg_consts.clone();
+                ctx.native_indices = native_indices.clone();
+                ctx.const_indices = const_indices.clone();
+                ctx.method_table = method_table.clone();
+                ctx.func_interface_params = func_interface_params.clone();
+                ctx.module.constants = module.constants.clone();
+                
+                let mut fctx = context::FuncContext::new(&format!("$var_init_{}", pkg.name));
+                
+                // Collect all var initializers for dependency analysis
+                let mut var_inits: Vec<VarInit> = Vec::new();
+                let mut pkg_var_symbols: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+                
+                for file in &pkg.files {
+                    for decl in &file.decls {
+                        if let Decl::Var(var) = decl {
+                            for spec in &var.specs {
+                                for name in &spec.names {
+                                    pkg_var_symbols.insert(name.symbol);
+                                }
+                                if !spec.values.is_empty() {
+                                    for (name, value) in spec.names.iter().zip(spec.values.iter()) {
+                                        if let Some(&global_idx) = global_indices.get(&(pkg.name.clone(), name.symbol)) {
+                                            var_inits.push(VarInit {
+                                                name: name.symbol,
+                                                value: value.clone(),
+                                                global_idx,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Sort variables by dependency order
+                let sorted_indices = topo_sort_vars(&var_inits, &pkg_var_symbols)?;
+                
+                // Compile var initializers in sorted order
+                for idx in sorted_indices {
+                    let var_init = &var_inits[idx];
+                    if let Ok(val_reg) = expr::compile_expr(&mut ctx, &mut fctx, &var_init.value) {
+                        fctx.emit(Opcode::SetGlobal, var_init.global_idx as u16, val_reg, 0);
+                    }
+                }
+                
+                fctx.emit(Opcode::Return, 0, 0, 0);
+                let func_def = fctx.build();
+                module.functions[var_init_idx as usize] = func_def;
+                
+                // Merge back changes
+                native_indices = ctx.native_indices;
+                const_indices = ctx.const_indices;
+                module.constants = ctx.module.constants;
+                module.natives = ctx.module.natives;
             }
         }
     }
@@ -265,91 +319,131 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     Ok(module)
 }
 
-/// Compile a simple expression for var initialization.
-/// Returns the register containing the result.
-fn compile_simple_expr(
-    interner: &SymbolInterner,
-    expr: &gox_syntax::ast::Expr,
-    func: &mut FunctionDef,
-    module: &mut Module,
-    reg: u16,
-) -> u16 {
-    use gox_vm::instruction::Instruction;
-    use gox_vm::bytecode::Constant;
-    use gox_syntax::ast::ExprKind;
-    
-    match &expr.kind {
-        ExprKind::IntLit(v) => {
-            let val = interner.resolve(v.raw)
-                .and_then(|s| s.parse::<i64>().ok())
-                .unwrap_or(0);
-            if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                func.code.push(Instruction::new(Opcode::LoadInt, reg, 
-                    (val as u32) as u16, ((val as u32) >> 16) as u16));
-            } else {
-                // Large int - store in constant pool
-                let const_idx = module.add_constant(Constant::Int(val));
-                func.code.push(Instruction::new(Opcode::LoadConst, reg, const_idx, 0));
-            }
-        }
-        ExprKind::Ident(ident) => {
-            // Check for true/false
-            let name = interner.resolve(ident.symbol).unwrap_or("");
-            if name == "true" {
-                func.code.push(Instruction::new(Opcode::LoadTrue, reg, 0, 0));
-            } else if name == "false" {
-                func.code.push(Instruction::new(Opcode::LoadFalse, reg, 0, 0));
-            } else {
-                // Default to 0
-                func.code.push(Instruction::new(Opcode::LoadInt, reg, 0, 0));
-            }
-        }
-        ExprKind::Call(call) => {
-            // Handle make() calls for global var initialization
-            if let ExprKind::Ident(func_ident) = &call.func.kind {
-                let func_name = interner.resolve(func_ident.symbol).unwrap_or("");
-                if func_name == "make" && !call.args.is_empty() {
-                    // Check for TypeAsExpr wrapper
-                    if let ExprKind::TypeAsExpr(ty) = &call.args[0].kind {
-                        match &ty.kind {
-                            gox_syntax::ast::TypeExprKind::Chan(_) => {
-                                let capacity = if call.args.len() > 1 {
-                                    if let ExprKind::IntLit(lit) = &call.args[1].kind {
-                                        interner.resolve(lit.raw)
-                                            .and_then(|s| s.parse::<u16>().ok())
-                                            .unwrap_or(0)
-                                    } else {
-                                        0
-                                    }
-                                } else {
-                                    0
-                                };
-                                func.code.push(Instruction::new(Opcode::ChanNew, reg, 0, capacity));
-                                return reg;
-                            }
-                            gox_syntax::ast::TypeExprKind::Map(_) => {
-                                func.code.push(Instruction::new(Opcode::MapNew, reg, 0, 0));
-                                return reg;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            // Default for other calls
-            func.code.push(Instruction::new(Opcode::LoadInt, reg, 0, 0));
-        }
-        _ => {
-            // Complex expressions: default to 0 for now
-            func.code.push(Instruction::new(Opcode::LoadInt, reg, 0, 0));
-        }
-    }
-    reg
-}
-
 /// Check if a type expression refers to an interface type.
 fn is_interface_type_expr(types: &gox_analysis::TypeCheckResult, ty: &gox_syntax::ast::TypeExpr) -> bool {
     context::infer_type_from_type_expr(types, ty).0 == context::VarKind::Interface
+}
+
+/// Represents a package-level variable with its initializer for dependency analysis.
+struct VarInit {
+    name: Symbol,
+    value: gox_syntax::ast::Expr,
+    global_idx: u32,
+}
+
+/// Collect variable references from an expression.
+fn collect_var_refs(
+    expr: &gox_syntax::ast::Expr,
+    pkg_vars: &std::collections::HashSet<Symbol>,
+    refs: &mut std::collections::HashSet<Symbol>,
+) {
+    use gox_syntax::ast::ExprKind;
+    
+    match &expr.kind {
+        ExprKind::Ident(ident) => {
+            if pkg_vars.contains(&ident.symbol) {
+                refs.insert(ident.symbol);
+            }
+        }
+        ExprKind::Binary(bin) => {
+            collect_var_refs(&bin.left, pkg_vars, refs);
+            collect_var_refs(&bin.right, pkg_vars, refs);
+        }
+        ExprKind::Unary(un) => {
+            collect_var_refs(&un.operand, pkg_vars, refs);
+        }
+        ExprKind::Call(call) => {
+            collect_var_refs(&call.func, pkg_vars, refs);
+            for arg in &call.args {
+                collect_var_refs(arg, pkg_vars, refs);
+            }
+        }
+        ExprKind::Index(idx) => {
+            collect_var_refs(&idx.expr, pkg_vars, refs);
+            collect_var_refs(&idx.index, pkg_vars, refs);
+        }
+        ExprKind::Selector(sel) => {
+            collect_var_refs(&sel.expr, pkg_vars, refs);
+        }
+        ExprKind::Paren(inner) => {
+            collect_var_refs(inner, pkg_vars, refs);
+        }
+        ExprKind::CompositeLit(comp) => {
+            for elem in &comp.elems {
+                if let Some(ref key) = &elem.key {
+                    if let gox_syntax::ast::CompositeLitKey::Expr(key_expr) = key {
+                        collect_var_refs(key_expr, pkg_vars, refs);
+                    }
+                }
+                collect_var_refs(&elem.value, pkg_vars, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Topological sort of variables based on dependencies.
+/// Returns sorted variable indices or error if cycle detected.
+fn topo_sort_vars(
+    vars: &[VarInit],
+    pkg_vars: &std::collections::HashSet<Symbol>,
+) -> Result<Vec<usize>, CodegenError> {
+    use std::collections::{HashMap, HashSet};
+    
+    // Build dependency graph
+    let mut deps: HashMap<Symbol, HashSet<Symbol>> = HashMap::new();
+    let name_to_idx: HashMap<Symbol, usize> = vars.iter()
+        .enumerate()
+        .map(|(i, v)| (v.name, i))
+        .collect();
+    
+    for var in vars {
+        let mut refs = HashSet::new();
+        collect_var_refs(&var.value, pkg_vars, &mut refs);
+        refs.remove(&var.name); // Remove self-reference
+        deps.insert(var.name, refs);
+    }
+    
+    // Kahn's algorithm for topological sort
+    let mut in_degree: HashMap<Symbol, usize> = vars.iter()
+        .map(|v| (v.name, 0))
+        .collect();
+    
+    for (_, dep_set) in &deps {
+        for dep in dep_set {
+            if let Some(degree) = in_degree.get_mut(dep) {
+                *degree += 1;
+            }
+        }
+    }
+    
+    let mut queue: Vec<Symbol> = in_degree.iter()
+        .filter(|(_, &d)| d == 0)
+        .map(|(&s, _)| s)
+        .collect();
+    
+    let mut sorted = Vec::new();
+    
+    while let Some(var) = queue.pop() {
+        sorted.push(name_to_idx[&var]);
+        
+        if let Some(var_deps) = deps.get(&var) {
+            for dep in var_deps {
+                if let Some(degree) = in_degree.get_mut(dep) {
+                    *degree -= 1;
+                    if *degree == 0 {
+                        queue.push(*dep);
+                    }
+                }
+            }
+        }
+    }
+    
+    if sorted.len() != vars.len() {
+        return Err(CodegenError::Internal("initialization cycle detected".to_string()));
+    }
+    
+    Ok(sorted)
 }
 
 /// Constant value for inlining.
@@ -411,7 +505,7 @@ fn generate_module_init(
     let mut func = FunctionDef::new("$init");
     func.local_slots = 0;
     
-    // Call each package's var init first, then init() in dependency order
+    // Call each package's var init first, then all init() functions in dependency order
     for pkg in &project.packages {
         // Call $var_init if package has var declarations
         let var_init_name = format!("{}.$var_init", pkg.name);
@@ -419,10 +513,12 @@ fn generate_module_init(
             func.code.push(Instruction::with_flags(Opcode::Call, 0, var_init_idx as u16, 0, 0));
         }
         
-        // Call init() if package has init function
-        let init_name = format!("{}.$init", pkg.name);
-        if let Some(&init_idx) = cross_pkg_funcs.get(&init_name) {
-            func.code.push(Instruction::with_flags(Opcode::Call, 0, init_idx as u16, 0, 0));
+        // Call all init() functions in source order
+        for i in 0..pkg.init_funcs.len() {
+            let init_name = format!("{}.$init_{}", pkg.name, i);
+            if let Some(&init_idx) = cross_pkg_funcs.get(&init_name) {
+                func.code.push(Instruction::with_flags(Opcode::Call, 0, init_idx as u16, 0, 0));
+            }
         }
     }
     

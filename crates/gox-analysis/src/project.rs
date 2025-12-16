@@ -69,8 +69,8 @@ pub struct ParsedPackage {
     pub files: Vec<(PathBuf, ast::File)>,
     pub interner: SymbolInterner,
     pub imports: Vec<ResolvedImport>,
-    /// Has init() function(s)
-    pub has_init: bool,
+    /// init() function indices (file_idx, decl_idx) in source order
+    pub init_funcs: Vec<(usize, usize)>,
     /// Has package-level var declarations (implicit init)
     pub has_var_decls: bool,
 }
@@ -105,8 +105,8 @@ pub struct TypedPackage {
     pub imports: Vec<ResolvedImport>,
     /// Init order index (0 = first to init)
     pub init_order: usize,
-    /// Has init() function(s)
-    pub has_init: bool,
+    /// init() function indices (file_idx, decl_idx) in source order
+    pub init_funcs: Vec<(usize, usize)>,
     /// Has package-level var declarations
     pub has_var_decls: bool,
 }
@@ -243,8 +243,12 @@ fn parse_packages(
         let mut shared_interner = SymbolInterner::new();
         let mut parsed_files = Vec::new();
         let mut raw_imports = Vec::new();
-        let mut has_init = false;
+        let mut init_funcs = Vec::new();
         let mut has_var_decls = false;
+        
+        // Sort files by filename for deterministic order (Go spec)
+        let mut files = files;
+        files.sort_by(|a, b| a.0.file_name().cmp(&b.0.file_name()));
         
         for (path, content) in files {
             let file_id = FileId::new(file_id_counter);
@@ -261,12 +265,14 @@ fn parse_packages(
                 }
             }
             
+            let file_idx = parsed_files.len();
+            
             // Check for init() and var declarations
-            for decl in &ast.decls {
+            for (decl_idx, decl) in ast.decls.iter().enumerate() {
                 match decl {
                     Decl::Func(f) => {
                         if shared_interner.resolve(f.name.symbol) == Some("init") {
-                            has_init = true;
+                            init_funcs.push((file_idx, decl_idx));
                         }
                     }
                     Decl::Var(_) => {
@@ -300,7 +306,7 @@ fn parse_packages(
             files: parsed_files,
             interner: shared_interner,
             imports,
-            has_init,
+            init_funcs,
             has_var_decls,
         };
         
@@ -407,7 +413,7 @@ fn load_stdlib_packages(
                     files,
                     interner: pkg_interner,
                     imports: Vec::new(),
-                    has_init: false,
+                    init_funcs: Vec::new(),
                     has_var_decls: false,
                 };
                 packages.insert(pkg_name, parsed);
@@ -516,7 +522,7 @@ fn typecheck_package(
             exports: HashMap::new(),
             imports: parsed.imports,
             init_order,
-            has_init: parsed.has_init,
+            init_funcs: parsed.init_funcs,
             has_var_decls: parsed.has_var_decls,
         });
     }
@@ -559,7 +565,7 @@ fn typecheck_package(
         exports,
         imports: parsed.imports,
         init_order,
-        has_init: parsed.has_init,
+        init_funcs: parsed.init_funcs,
         has_var_decls: parsed.has_var_decls,
     })
 }

@@ -1,0 +1,25 @@
+// Test: Multiple init() functions in a package
+// Go allows multiple init functions, called in source order
+package main
+
+var order []int
+
+func init() {
+    order = append(order, 1)
+}
+
+func init() {
+    order = append(order, 2)
+}
+
+func init() {
+    order = append(order, 3)
+}
+
+func main() {
+    assert(len(order) == 3, "should have 3 elements")
+    assert(order[0] == 1, "first init should add 1")
+    assert(order[1] == 2, "second init should add 2")
+    assert(order[2] == 3, "third init should add 3")
+    println("multi_init: ALL TESTS PASSED")
+}

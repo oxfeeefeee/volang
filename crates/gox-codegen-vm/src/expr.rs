@@ -478,6 +478,11 @@ fn compile_call(
     if let ExprKind::Ident(ident) = &call.func.kind {
         let name = ctx.interner.resolve(ident.symbol).unwrap_or("");
         
+        // Go spec: init functions cannot be called explicitly
+        if name == "init" {
+            return Err(CodegenError::Internal("init function cannot be called".to_string()));
+        }
+        
         match name {
             "len" => return compile_builtin_len(ctx, fctx, call),
             "cap" => return compile_builtin_cap(ctx, fctx, call),

@@ -553,7 +553,10 @@ impl<'a> TypeCollector<'a> {
         }
 
         let sym = decl.name.symbol;
-        if !self.check_redeclaration(sym, decl.name.span) {
+        let name = self.interner.resolve(sym).unwrap_or("");
+        
+        // Go allows multiple init() functions - skip redeclaration check for init
+        if name != "init" && !self.check_redeclaration(sym, decl.name.span) {
             return;
         }
 
