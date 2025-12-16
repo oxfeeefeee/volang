@@ -394,7 +394,7 @@ impl<'a, 'm> CodegenContextRef<'a, 'm> {
         
         for param in &func.sig.params {
             // Infer VarKind and type_sym from parameter type
-            let (kind, type_sym) = infer_type_from_type_expr(self.result, &param.ty);
+            let (kind, type_sym) = infer_type_from_type_expr_with_interner(self.result, &param.ty, Some(self.interner));
             for name in &param.names {
                 fctx.param_count += 1;
                 fctx.param_slots += 1;
@@ -631,7 +631,7 @@ impl<'a> CodegenContext<'a> {
         
         // Allocate registers for parameters with type info
         for param in &func.sig.params {
-            let (kind, type_sym) = infer_type_from_type_expr(self.result, &param.ty);
+            let (kind, type_sym) = infer_type_from_type_expr_with_interner(self.result, &param.ty, Some(self.interner));
             let slots = if kind == VarKind::Interface { 2 } else { 1 };
             for name in &param.names {
                 fctx.param_count += 1;
@@ -729,6 +729,11 @@ impl<'a> CodegenContext<'a> {
 
 /// Infer VarKind and type_sym from a parameter type expression
 pub fn infer_type_from_type_expr(result: &TypeCheckResult, ty: &gox_syntax::ast::TypeExpr) -> (VarKind, Option<Symbol>) {
+    infer_type_from_type_expr_with_interner(result, ty, None)
+}
+
+/// Infer VarKind and type_sym from a parameter type expression, with optional interner for basic type checking
+pub fn infer_type_from_type_expr_with_interner(result: &TypeCheckResult, ty: &gox_syntax::ast::TypeExpr, interner: Option<&gox_common::SymbolInterner>) -> (VarKind, Option<Symbol>) {
     use gox_syntax::ast::TypeExprKind;
     use gox_analysis::Type;
     
@@ -738,6 +743,18 @@ pub fn infer_type_from_type_expr(result: &TypeCheckResult, ty: &gox_syntax::ast:
         TypeExprKind::Struct(s) => (VarKind::Struct(s.fields.len() as u16), None),
         TypeExprKind::Obx(_) => (VarKind::Obx, None),
         TypeExprKind::Ident(ident) => {
+            // Check basic types first if we have an interner
+            if let Some(interner) = interner {
+                if let Some(name) = interner.resolve(ident.symbol) {
+                    match name {
+                        "string" => return (VarKind::String, None),
+                        "float64" | "float32" => return (VarKind::Float, None),
+                        "int" | "int64" | "int32" | "int16" | "int8" |
+                        "uint" | "uint64" | "uint32" | "uint16" | "uint8" | "byte" => return (VarKind::Int, None),
+                        _ => {}
+                    }
+                }
+            }
             // Named type - check if struct, object, or interface
             for named in &result.named_types {
                 if named.name == ident.symbol {

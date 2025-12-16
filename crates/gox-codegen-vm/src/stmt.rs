@@ -433,11 +433,15 @@ fn infer_var_kind_and_type(ctx: &CodegenContext, fctx: Option<&FuncContext>, exp
             (VarKind::Other, None)
         }
         ExprKind::FloatLit(_) => (VarKind::Float, None),
+        ExprKind::StringLit(_) => (VarKind::String, None),
         ExprKind::Binary(bin) => {
             // If either operand is float, result is float
-            let (left_kind, _) = infer_var_kind_and_type(ctx, None, &bin.left);
-            let (right_kind, _) = infer_var_kind_and_type(ctx, None, &bin.right);
-            if left_kind == VarKind::Float || right_kind == VarKind::Float {
+            // If either operand is string (for +), result is string
+            let (left_kind, _) = infer_var_kind_and_type(ctx, fctx, &bin.left);
+            let (right_kind, _) = infer_var_kind_and_type(ctx, fctx, &bin.right);
+            if left_kind == VarKind::String || right_kind == VarKind::String {
+                (VarKind::String, None)
+            } else if left_kind == VarKind::Float || right_kind == VarKind::Float {
                 (VarKind::Float, None)
             } else {
                 (VarKind::Other, None)

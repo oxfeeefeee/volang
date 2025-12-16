@@ -338,6 +338,26 @@ pub fn is_float_expr(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax
     }
 }
 
+/// Check if an expression is a string type.
+fn is_string_expr(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
+    use gox_syntax::ast::ExprKind;
+    match &expr.kind {
+        ExprKind::StringLit(_) => true,
+        ExprKind::Ident(ident) => {
+            if let Some(local) = fctx.lookup_local(ident.symbol) {
+                matches!(local.kind, crate::context::VarKind::String)
+            } else {
+                false
+            }
+        }
+        ExprKind::Paren(inner) => is_string_expr(ctx, fctx, inner),
+        ExprKind::Binary(bin) if bin.op == BinaryOp::Add => {
+            is_string_expr(ctx, fctx, &bin.left) || is_string_expr(ctx, fctx, &bin.right)
+        }
+        _ => false,
+    }
+}
+
 /// Compile binary expression.
 fn compile_binary(
     ctx: &mut CodegenContext,
@@ -352,6 +372,16 @@ fn compile_binary(
     let left = compile_expr(ctx, fctx, &binary.left)?;
     let right = compile_expr(ctx, fctx, &binary.right)?;
     let dst = fctx.regs.alloc(1);
+    
+    // Detect string concatenation
+    let left_is_str = is_string_expr(ctx, fctx, &binary.left);
+    let right_is_str = is_string_expr(ctx, fctx, &binary.right);
+    let is_string = binary.op == BinaryOp::Add && (left_is_str || right_is_str);
+    
+    if is_string {
+        fctx.emit(Opcode::StrConcat, dst, left, right);
+        return Ok(dst);
+    }
     
     // Detect if operands are floats
     let is_float = is_float_expr(ctx, fctx, &binary.left) || is_float_expr(ctx, fctx, &binary.right);
