@@ -130,13 +130,15 @@ pub fn typecheck_files(
     // Phase 2: Resolve types
     let resolve_result = resolve_types(collect_result, interner, diagnostics);
 
-    // Phase 3: Check function bodies from all files
+    // Phase 3: Check declarations from all files
     let mut checker = check_types(&resolve_result, interner, diagnostics);
 
     for file in files {
         for decl in &file.decls {
-            if let Decl::Func(func) = decl {
-                checker.check_func_body(func);
+            match decl {
+                Decl::Func(func) => checker.check_func_body(func),
+                Decl::Var(var) => checker.check_pkg_var_decl(var),
+                _ => {}
             }
         }
     }
@@ -193,7 +195,7 @@ pub fn typecheck_files_with_imports(
     // Phase 2: Resolve types
     let resolve_result = resolve_types(collect_result, interner, diagnostics);
 
-    // Phase 3: Check function bodies from all files
+    // Phase 3: Check declarations from all files
     let mut checker = check_types(&resolve_result, interner, diagnostics);
     
     // Set imported packages for cross-package call checking
@@ -201,8 +203,10 @@ pub fn typecheck_files_with_imports(
 
     for file in files {
         for decl in &file.decls {
-            if let Decl::Func(func) = decl {
-                checker.check_func_body(func);
+            match decl {
+                Decl::Func(func) => checker.check_func_body(func),
+                Decl::Var(var) => checker.check_pkg_var_decl(var),
+                _ => {}
             }
         }
     }

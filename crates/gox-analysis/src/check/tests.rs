@@ -461,6 +461,28 @@ var x int = 2
 }
 
 #[test]
+fn test_pkg_var_type_mismatch() {
+    // Error code 2603: VarInitTypeMismatch
+    let source = r#"
+package main
+var x int = "string"
+func main() {}
+"#;
+    assert!(check_has_error(source, 2603));
+}
+
+#[test]
+fn test_pkg_var_undefined_in_init() {
+    // Error code 2100: Undefined
+    let source = r#"
+package main
+var x = undefined_var
+func main() {}
+"#;
+    assert!(check_has_error(source, 2100));
+}
+
+#[test]
 fn test_error_undefined() {
     // Error code 2100: Undefined
     let source = r#"

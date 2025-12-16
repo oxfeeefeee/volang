@@ -267,6 +267,30 @@ impl<'a> TypeChecker<'a> {
         // Pop function scope
         self.pop_scope();
     }
+
+    /// Checks a package-level variable declaration.
+    pub fn check_pkg_var_decl(&mut self, decl: &ast::VarDecl) {
+        for spec in &decl.specs {
+            // Determine the declared type (if any)
+            let declared_ty = spec.ty.as_ref().map(|t| self.resolve_type_expr(t));
+
+            // Check initializer values
+            let value_types: Vec<Type> = spec.values.iter()
+                .map(|v| self.check_expr(v))
+                .collect();
+
+            // Validate type compatibility
+            for (i, name) in spec.names.iter().enumerate() {
+                if let Some(ref ty) = declared_ty {
+                    // Type is declared - check initializer compatibility
+                    if i < value_types.len() && !self.is_assignable(&value_types[i], ty) {
+                        self.error(TypeError::VarInitTypeMismatch, name.span);
+                    }
+                }
+                // Note: we don't define vars here since they're already in package scope
+            }
+        }
+    }
 }
 
 impl<'a> TypeChecker<'a> {
