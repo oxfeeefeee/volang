@@ -384,13 +384,14 @@ fn collect_var_refs(
 
 /// Topological sort of variables based on dependencies.
 /// Returns sorted variable indices or error if cycle detected.
+/// Variables with no dependencies are initialized first.
 fn topo_sort_vars(
     vars: &[VarInit],
     pkg_vars: &std::collections::HashSet<Symbol>,
 ) -> Result<Vec<usize>, CodegenError> {
     use std::collections::{HashMap, HashSet};
     
-    // Build dependency graph
+    // Build dependency graph: deps[var] = set of variables that var depends on
     let mut deps: HashMap<Symbol, HashSet<Symbol>> = HashMap::new();
     let name_to_idx: HashMap<Symbol, usize> = vars.iter()
         .enumerate()
@@ -404,19 +405,25 @@ fn topo_sort_vars(
         deps.insert(var.name, refs);
     }
     
-    // Kahn's algorithm for topological sort
-    let mut in_degree: HashMap<Symbol, usize> = vars.iter()
-        .map(|v| (v.name, 0))
+    // Build reverse graph: dependents[var] = set of variables that depend on var
+    let mut dependents: HashMap<Symbol, HashSet<Symbol>> = vars.iter()
+        .map(|v| (v.name, HashSet::new()))
         .collect();
     
-    for (_, dep_set) in &deps {
-        for dep in dep_set {
-            if let Some(degree) = in_degree.get_mut(dep) {
-                *degree += 1;
+    for (var, var_deps) in &deps {
+        for dep in var_deps {
+            if let Some(dep_set) = dependents.get_mut(dep) {
+                dep_set.insert(*var);
             }
         }
     }
     
+    // in_degree[var] = number of variables that var depends on (not yet initialized)
+    let mut in_degree: HashMap<Symbol, usize> = deps.iter()
+        .map(|(var, var_deps)| (*var, var_deps.len()))
+        .collect();
+    
+    // Start with variables that have no dependencies
     let mut queue: Vec<Symbol> = in_degree.iter()
         .filter(|(_, &d)| d == 0)
         .map(|(&s, _)| s)
@@ -427,12 +434,13 @@ fn topo_sort_vars(
     while let Some(var) = queue.pop() {
         sorted.push(name_to_idx[&var]);
         
-        if let Some(var_deps) = deps.get(&var) {
-            for dep in var_deps {
-                if let Some(degree) = in_degree.get_mut(dep) {
+        // For each variable that depends on this one, decrement its in_degree
+        if let Some(var_dependents) = dependents.get(&var) {
+            for dependent in var_dependents {
+                if let Some(degree) = in_degree.get_mut(dependent) {
                     *degree -= 1;
                     if *degree == 0 {
-                        queue.push(*dep);
+                        queue.push(*dependent);
                     }
                 }
             }

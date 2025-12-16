@@ -62,6 +62,8 @@ pub struct VarTypePlaceholder {
     pub name: Symbol,
     /// The type expression (if specified).
     pub ty: Option<ast::TypeExpr>,
+    /// The initializer expression (for type inference).
+    pub init_expr: Option<ast::Expr>,
 }
 
 /// A placeholder for a function's signature (resolved in Phase 2).
@@ -330,7 +332,11 @@ impl<'a> TypeCollector<'a> {
     }
     
     /// Finishes collection and returns the result.
-    pub fn finish(self) -> CollectResult {
+    pub fn finish(mut self) -> CollectResult {
+        // Second pass: infer types for variables with initializers
+        // (now all variable names are in scope)
+        self.infer_var_types();
+        
         CollectResult {
             scope: self.scope,
             named_types: self.named_types,
@@ -355,30 +361,71 @@ impl<'a> TypeCollector<'a> {
             for (i, name) in spec.names.iter().enumerate() {
                 let sym = name.symbol;
                 if self.check_redeclaration(sym, name.span) {
-                    // Determine type: explicit type, inferred from initializer, or Invalid
-                    let ty = if let Some(ref ty_expr) = spec.ty {
-                        // Track for type resolution
+                    // First pass: just register the variable name
+                    // Type will be resolved later (explicit type) or inferred in second pass
+                    if let Some(ref ty_expr) = spec.ty {
+                        // Track for type resolution in Phase 2
                         self.var_types.push(VarTypePlaceholder {
                             name: sym,
                             ty: Some(ty_expr.clone()),
+                            init_expr: None,
                         });
-                        Type::Invalid // Will be resolved in Phase 2
                     } else if i < spec.values.len() {
-                        // Infer type from initializer (simple cases)
-                        self.infer_type_from_expr(&spec.values[i])
-                    } else {
-                        Type::Invalid
-                    };
+                        // Track for type inference in second pass
+                        self.var_types.push(VarTypePlaceholder {
+                            name: sym,
+                            ty: None,
+                            init_expr: Some(spec.values[i].clone()),
+                        });
+                    }
                     
+                    // Insert with Invalid type - will be resolved later
                     self.scope.insert(
                         sym,
                         Entity::Var(VarEntity {
-                            ty,
+                            ty: Type::Invalid,
                             constant: None,
                             span: name.span,
                         }),
                     );
                 }
+            }
+        }
+    }
+    
+    /// Second pass: infer types for variables with initializers (after all names are collected)
+    /// Uses iterative approach to handle forward references
+    fn infer_var_types(&mut self) {
+        // Iterate until no more types can be inferred (handles forward references)
+        let max_iterations = self.var_types.len() + 1;
+        for _ in 0..max_iterations {
+            let mut made_progress = false;
+            
+            for placeholder in &self.var_types {
+                if placeholder.ty.is_none() {
+                    if let Some(ref init_expr) = placeholder.init_expr {
+                        // Check if current type is still Invalid
+                        let current_ty = if let Some(Entity::Var(v)) = self.scope.lookup(placeholder.name) {
+                            v.ty.clone()
+                        } else {
+                            continue;
+                        };
+                        
+                        if current_ty == Type::Invalid {
+                            let inferred_ty = self.infer_type_from_expr(init_expr);
+                            if inferred_ty != Type::Invalid {
+                                if let Some(Entity::Var(v)) = self.scope.lookup_local_mut(placeholder.name) {
+                                    v.ty = inferred_ty;
+                                    made_progress = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !made_progress {
+                break;
             }
         }
     }
@@ -394,15 +441,43 @@ impl<'a> TypeCollector<'a> {
                 let name = self.interner.resolve(ident.symbol).unwrap_or("");
                 match name {
                     "true" | "false" => Type::Basic(BasicType::Bool),
-                    _ => Type::Invalid,
+                    "nil" => Type::Nil,
+                    _ => {
+                        // Look up variable in scope
+                        if let Some(Entity::Var(var)) = self.scope.lookup(ident.symbol) {
+                            return var.ty.clone();
+                        }
+                        Type::Invalid
+                    }
                 }
             }
+            // Handle binary expressions - infer from operands
+            ExprKind::Binary(bin) => {
+                let left_ty = self.infer_type_from_expr(&bin.left);
+                let right_ty = self.infer_type_from_expr(&bin.right);
+                // For arithmetic/comparison, return left type (or right if left is invalid)
+                if left_ty != Type::Invalid {
+                    left_ty
+                } else {
+                    right_ty
+                }
+            }
+            // Handle unary expressions
+            ExprKind::Unary(un) => self.infer_type_from_expr(&un.operand),
+            // Handle parenthesized expressions
+            ExprKind::Paren(inner) => self.infer_type_from_expr(inner),
             // Handle make/new calls - infer type from first argument
             ExprKind::Call(call) => {
                 if let ExprKind::Ident(func_ident) = &call.func.kind {
                     let func_name = self.interner.resolve(func_ident.symbol).unwrap_or("");
                     if (func_name == "make" || func_name == "new") && !call.args.is_empty() {
                         return self.infer_type_from_type_arg(&call.args[0]);
+                    }
+                    // Look up function return type
+                    if let Some(Entity::Func(func)) = self.scope.lookup(func_ident.symbol) {
+                        if !func.sig.results.is_empty() {
+                            return func.sig.results[0].clone();
+                        }
                     }
                 }
                 Type::Invalid

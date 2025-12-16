@@ -47,6 +47,7 @@ use crate::collect::{CollectResult, FuncSigPlaceholder, MethodPlaceholder, Named
 use crate::errors::TypeError;
 use crate::constant::Constant;
 use crate::scope::{Entity, Scope};
+use crate::types::BasicType;
 use crate::types::{
     ArrayType, ChanDir, ChanType, Field, FuncType, InterfaceType,
     MapType, Method, NamedTypeId, NamedTypeInfo, SliceType, StructType, Type,
@@ -122,11 +123,12 @@ impl<'a> TypeResolver<'a> {
             self.resolve_named_type(NamedTypeId(i as u32));
         }
 
-        // Resolve variable types
-        self.resolve_var_types();
-
-        // Resolve function signatures
+        // Resolve function signatures BEFORE variable types
+        // (so function return types are known when inferring var types)
         self.resolve_func_sigs();
+
+        // Resolve variable types (may depend on function return types)
+        self.resolve_var_types();
 
         // Resolve methods and associate them with their receiver types
         self.resolve_methods();
@@ -148,7 +150,61 @@ impl<'a> TypeResolver<'a> {
                 if let Some(Entity::Var(v)) = self.scope.lookup_local_mut(var.name) {
                     v.ty = resolved_ty;
                 }
+            } else if let Some(ref init_expr) = var.init_expr {
+                // Try to infer type from initializer (now that function sigs are resolved)
+                let current_ty = if let Some(Entity::Var(v)) = self.scope.lookup(var.name) {
+                    v.ty.clone()
+                } else {
+                    continue;
+                };
+                
+                if current_ty == Type::Invalid {
+                    let inferred_ty = self.infer_type_from_expr(init_expr);
+                    if inferred_ty != Type::Invalid {
+                        if let Some(Entity::Var(v)) = self.scope.lookup_local_mut(var.name) {
+                            v.ty = inferred_ty;
+                        }
+                    }
+                }
             }
+        }
+    }
+    
+    /// Infer type from expression (for var initialization after function signatures are resolved)
+    fn infer_type_from_expr(&self, expr: &ast::Expr) -> Type {
+        use gox_syntax::ast::ExprKind;
+        match &expr.kind {
+            ExprKind::IntLit(_) => Type::Basic(BasicType::Int),
+            ExprKind::FloatLit(_) => Type::Basic(BasicType::Float64),
+            ExprKind::StringLit(_) => Type::Basic(BasicType::String),
+            ExprKind::Ident(ident) => {
+                if let Some(Entity::Var(var)) = self.scope.lookup(ident.symbol) {
+                    return var.ty.clone();
+                }
+                Type::Invalid
+            }
+            ExprKind::Binary(bin) => {
+                let left_ty = self.infer_type_from_expr(&bin.left);
+                if left_ty != Type::Invalid {
+                    left_ty
+                } else {
+                    self.infer_type_from_expr(&bin.right)
+                }
+            }
+            ExprKind::Unary(un) => self.infer_type_from_expr(&un.operand),
+            ExprKind::Paren(inner) => self.infer_type_from_expr(inner),
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(func_ident) = &call.func.kind {
+                    // Look up function return type
+                    if let Some(Entity::Func(func)) = self.scope.lookup(func_ident.symbol) {
+                        if !func.sig.results.is_empty() {
+                            return func.sig.results[0].clone();
+                        }
+                    }
+                }
+                Type::Invalid
+            }
+            _ => Type::Invalid,
         }
     }
 
