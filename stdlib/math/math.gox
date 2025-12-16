@@ -1,0 +1,73 @@
+package math
+
+// Constants
+const (
+    E   = 2.71828182845904523536
+    Pi  = 3.14159265358979323846
+    Phi = 1.61803398874989484820
+
+    Sqrt2   = 1.41421356237309504880
+    SqrtE   = 1.64872127070012814684
+    SqrtPi  = 1.77245385090551602729
+    SqrtPhi = 1.27201964951406896425
+
+    Ln2    = 0.693147180559945309417
+    Log2E  = 1.44269504088896340736
+    Ln10   = 2.30258509299404568401
+    Log10E = 0.434294481903251827651
+
+    MaxFloat64 = 1.79769313486231570815e+308
+    SmallestNonzeroFloat64 = 4.94065645841246544177e-324
+    MaxInt = 9223372036854775807
+    MinInt = -9223372036854775808
+)
+
+// Basic functions
+native func Abs(x float64) float64
+native func Max(x, y float64) float64
+native func Min(x, y float64) float64
+native func Dim(x, y float64) float64
+native func Mod(x, y float64) float64
+native func Remainder(x, y float64) float64
+
+// Power and root functions
+native func Sqrt(x float64) float64
+native func Cbrt(x float64) float64
+native func Pow(x, y float64) float64
+native func Pow10(n int) float64
+native func Exp(x float64) float64
+native func Exp2(x float64) float64
+native func Expm1(x float64) float64
+native func Log(x float64) float64
+native func Log10(x float64) float64
+native func Log2(x float64) float64
+native func Log1p(x float64) float64
+
+// Trigonometric functions
+native func Sin(x float64) float64
+native func Cos(x float64) float64
+native func Tan(x float64) float64
+native func Asin(x float64) float64
+native func Acos(x float64) float64
+native func Atan(x float64) float64
+native func Atan2(y, x float64) float64
+native func Sinh(x float64) float64
+native func Cosh(x float64) float64
+native func Tanh(x float64) float64
+
+// Rounding functions
+native func Ceil(x float64) float64
+native func Floor(x float64) float64
+native func Trunc(x float64) float64
+native func Round(x float64) float64
+native func RoundToEven(x float64) float64
+
+// Special functions
+native func Hypot(x, y float64) float64
+native func Inf(sign int) float64
+native func IsInf(x float64, sign int) bool
+native func IsNaN(x float64) bool
+native func NaN() float64
+native func Signbit(x float64) bool
+native func Copysign(x, y float64) float64
+

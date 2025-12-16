@@ -2,8 +2,9 @@
 
 pub mod builtin;
 pub mod fmt;
-pub mod strings;
+pub mod math;
 pub mod strconv;
+pub mod strings;
 
 use gox_vm::NativeRegistry;
 
@@ -11,6 +12,7 @@ use gox_vm::NativeRegistry;
 pub fn register_all(registry: &mut NativeRegistry) {
     builtin::register(registry);
     fmt::register(registry);
-    strings::register(registry);
+    math::register(registry);
     strconv::register(registry);
+    strings::register(registry);
 }
