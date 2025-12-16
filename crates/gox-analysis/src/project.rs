@@ -10,7 +10,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gox_common::vfs::FileSet;
-use gox_common::{DiagnosticSink, SymbolInterner};
+use gox_common::diagnostics::DiagnosticEmitter;
+use gox_common::{DiagnosticSink, SourceMap, SymbolInterner};
 use gox_module::vfs::Vfs;
 use gox_syntax::{parse_with_interner, ast};
 use gox_syntax::ast::Decl;
@@ -73,7 +74,6 @@ impl ImportPath {
 }
 
 /// A parsed package (before type checking).
-#[derive(Debug)]
 pub struct ParsedPackage {
     pub name: String,
     pub dir: PathBuf,
@@ -83,6 +83,8 @@ pub struct ParsedPackage {
     pub init_funcs: Vec<(usize, usize)>,
     /// Has package-level var declarations (implicit init)
     pub has_var_decls: bool,
+    /// Source map for error reporting
+    pub source_map: SourceMap,
 }
 
 /// Exported symbol from a package.
@@ -264,12 +266,17 @@ fn parse_packages(
         let mut raw_imports = Vec::new();
         let mut init_funcs = Vec::new();
         let mut has_var_decls = false;
+        let mut source_map = SourceMap::new();
         
         // Sort files by filename for deterministic order (Go spec)
         let mut files = files;
         files.sort_by(|a, b| a.0.file_name().cmp(&b.0.file_name()));
         
         for (path, content) in files {
+            // Add file to source map for error reporting
+            let file_name = path.to_string_lossy().to_string();
+            source_map.add_file(file_name, content.clone());
+            
             // Take ownership temporarily, then put it back
             let interner_owned = std::mem::take(shared_interner);
             let (ast, _diag, interner) = parse_with_interner(&content, base_offset, interner_owned);
@@ -334,6 +341,7 @@ fn parse_packages(
             imports,
             init_funcs,
             has_var_decls,
+            source_map,
         };
         
         result.insert(pkg_name, parsed);
@@ -435,12 +443,15 @@ fn load_stdlib_packages(
         if let Some(vfs_pkg) = vfs.resolve(&pkg_name) {
             let mut files = Vec::new();
             let mut stdlib_base = 0u32;
+            let mut source_map = SourceMap::new();
             
             // Use shared interner to ensure symbols are consistent across packages
             let mut current_interner = std::mem::take(shared_interner);
             
             for vfs_file in &vfs_pkg.files {
                 let content = &vfs_file.content;
+                let file_name = vfs_file.path.to_string_lossy().to_string();
+                source_map.add_file(file_name, content.clone());
                 let (ast, _diag, new_interner) = parse_with_interner(content, stdlib_base, current_interner);
                 current_interner = new_interner;
                 stdlib_base += content.len() as u32 + 1;
@@ -458,6 +469,7 @@ fn load_stdlib_packages(
                     imports: Vec::new(),
                     init_funcs: Vec::new(),
                     has_var_decls: false,
+                    source_map,
                 };
                 packages.insert(pkg_name, parsed);
             }
@@ -596,21 +608,8 @@ fn typecheck_package(
     );
     
     if diag.has_errors() {
-        let first_path = &parsed.files[0].0;
-        let mut error_details = format!(
-            "Type errors in package {:?}:\n", first_path.parent().unwrap_or(first_path.as_path())
-        );
-        for d in diag.iter() {
-            let span_info = d.labels.first()
-                .map(|l| format!(" (at {}:{})", l.span.start.0, l.span.end.0))
-                .unwrap_or_default();
-            error_details.push_str(&format!(
-                "  [E{:04}] {}{}\n",
-                d.code.unwrap_or(0),
-                d.message,
-                span_info
-            ));
-        }
+        let emitter = DiagnosticEmitter::new(&parsed.source_map);
+        let error_details = emitter.emit_all_to_string(&diag);
         return Err(ProjectError::TypeCheck(error_details));
     }
     
