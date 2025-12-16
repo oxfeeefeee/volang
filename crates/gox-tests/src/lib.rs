@@ -23,6 +23,11 @@ mod tests {
         
         let summary = run_all(&test_dir);
         
+        // Always print statistics
+        eprintln!("\n══════════════════════════════════════════");
+        eprintln!("  GoX Test Results: {} passed, {} failed", summary.passed, summary.failed);
+        eprintln!("══════════════════════════════════════════\n");
+        
         if !summary.success() {
             let mut msg = format!("\n{} tests failed:\n", summary.failed);
             for failure in &summary.failures {
@@ -33,7 +38,6 @@ mod tests {
                     }
                 }
             }
-            msg.push_str(&format!("\nResults: {} passed, {} failed\n", summary.passed, summary.failed));
             panic!("{}", msg);
         }
     }

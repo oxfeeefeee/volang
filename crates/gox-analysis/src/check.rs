@@ -89,8 +89,9 @@ pub struct TypeChecker<'a> {
     package_exported_types: std::collections::HashMap<String, std::collections::HashMap<String, std::collections::HashMap<String, Type>>>,
     /// Local type declarations (function-scoped types).
     local_types: Vec<NamedTypeInfo>,
-    /// Expression types: span_start -> Type (for codegen to look up any expression's type)
-    pub expr_types: std::collections::HashMap<u32, Type>,
+    /// Expression types: (span_start, span_end) -> Type (for codegen to look up any expression's type)
+    /// Uses full span as key to distinguish nested expressions with same start position.
+    pub expr_types: std::collections::HashMap<(u32, u32), Type>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -119,8 +120,9 @@ impl<'a> TypeChecker<'a> {
     }
     
     /// Records the type of an expression for later use by codegen.
+    /// Uses (start, end) as key to distinguish nested expressions (e.g., `m` vs `m[1]`).
     fn record_expr_type(&mut self, expr: &Expr, ty: Type) {
-        self.expr_types.insert(expr.span.start.0, ty);
+        self.expr_types.insert((expr.span.start.0, expr.span.end.0), ty);
     }
     
     /// Sets imported packages for cross-package call resolution.

@@ -546,7 +546,7 @@ impl<'a> CodegenContext<'a> {
     
     /// Look up the type of an expression using the type checker's expr_types map.
     pub fn lookup_expr_type(&self, expr: &gox_syntax::ast::Expr) -> Option<gox_analysis::Type> {
-        self.result.expr_types.get(&expr.span.start.0).cloned()
+        self.result.expr_types.get(&(expr.span.start.0, expr.span.end.0)).cloned()
     }
     
     /// Convert a Type to VarKind for codegen purposes.

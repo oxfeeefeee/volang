@@ -95,9 +95,9 @@ pub struct TypeCheckResult {
     pub scope: Scope,
     /// The resolved named types.
     pub named_types: Vec<NamedTypeInfo>,
-    /// Expression types: span_start -> Type
-    /// Allows looking up the type of any expression by its source position.
-    pub expr_types: std::collections::HashMap<u32, Type>,
+    /// Expression types: (span_start, span_end) -> Type
+    /// Uses full span as key to distinguish nested expressions with same start position.
+    pub expr_types: std::collections::HashMap<(u32, u32), Type>,
 }
 
 /// Type-checks a GoX source file.
