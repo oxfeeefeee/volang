@@ -5,19 +5,19 @@
 //! for correct precedence handling.
 
 mod decl;
-mod stmt;
 mod expr;
+mod stmt;
 mod types;
 
+use gox_common::diagnostics::DiagnosticSink;
 use gox_common::source::FileId;
 use gox_common::span::{BytePos, Span};
-use gox_common::symbol::{Ident, Symbol, SymbolInterner};
-use gox_common::diagnostics::DiagnosticSink;
+use gox_common::symbol::{Ident, SymbolInterner};
 
-use crate::errors::SyntaxError;
-use crate::token::{Token, TokenKind};
-use crate::lexer::Lexer;
 use crate::ast::*;
+use crate::errors::SyntaxError;
+use crate::lexer::Lexer;
+use crate::token::{Token, TokenKind};
 
 /// Parse result type.
 pub type ParseResult<T> = Result<T, ()>;
@@ -48,7 +48,7 @@ impl<'a> Parser<'a> {
         let mut lexer = Lexer::new(file_id, source);
         let current = lexer.next_token();
         let peek = lexer.next_token();
-        
+
         Self {
             file_id,
             source,
@@ -66,7 +66,7 @@ impl<'a> Parser<'a> {
         let mut lexer = Lexer::new(file_id, source);
         let current = lexer.next_token();
         let peek = lexer.next_token();
-        
+
         Self {
             file_id,
             source,
@@ -102,7 +102,7 @@ impl<'a> Parser<'a> {
     /// Parses a complete source file.
     pub fn parse_file(&mut self) -> ParseResult<File> {
         let start = self.current.span.start;
-        
+
         // Parse package clause
         let package = if self.at(TokenKind::Package) {
             self.advance();
@@ -112,14 +112,14 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        
+
         // Parse imports
         let mut imports = Vec::new();
         while self.at(TokenKind::Import) {
             let parsed = self.parse_import_or_group()?;
             imports.extend(parsed);
         }
-        
+
         // Parse top-level declarations
         let mut decls = Vec::new();
         while !self.at_eof() {
@@ -131,7 +131,7 @@ impl<'a> Parser<'a> {
                 Err(()) => self.synchronize_to_decl(),
             }
         }
-        
+
         let end = self.current.span.end;
         Ok(File {
             package,
@@ -145,7 +145,7 @@ impl<'a> Parser<'a> {
     fn parse_import_or_group(&mut self) -> ParseResult<Vec<ImportDecl>> {
         let start = self.current.span.start;
         self.expect(TokenKind::Import)?;
-        
+
         // Check for grouped imports: import ( ... )
         if self.eat(TokenKind::LParen) {
             let mut imports = Vec::new();
@@ -166,36 +166,47 @@ impl<'a> Parser<'a> {
     /// If require_semi is true, expect a semicolon after the import path
     fn parse_import_spec(&mut self, start: BytePos, require_semi: bool) -> ParseResult<ImportDecl> {
         use crate::ast::ImportKind;
-        
+
         // Check for optional alias (identifier before path)
         // Supported forms:
         //   import "path"           - standard import
-        //   import @"alias"         - external import  
+        //   import @"alias"         - external import
         //   import name "path"      - standard import with alias
         //   import name @"alias"    - external import with alias
         //   import . "path"         - dot import
         //   import _ "path"         - blank import
-        let alias = if self.at(TokenKind::Ident) && (self.peek_is(TokenKind::StringLit) || self.peek_is(TokenKind::RawStringLit) || self.peek_is(TokenKind::At)) {
+        let alias = if self.at(TokenKind::Ident)
+            && (self.peek_is(TokenKind::StringLit)
+                || self.peek_is(TokenKind::RawStringLit)
+                || self.peek_is(TokenKind::At))
+        {
             Some(self.parse_ident()?)
-        } else if self.at(TokenKind::Dot) && (self.peek_is(TokenKind::StringLit) || self.peek_is(TokenKind::RawStringLit) || self.peek_is(TokenKind::At)) {
+        } else if self.at(TokenKind::Dot)
+            && (self.peek_is(TokenKind::StringLit)
+                || self.peek_is(TokenKind::RawStringLit)
+                || self.peek_is(TokenKind::At))
+        {
             // Dot import: import . "path"
             let dot_span = self.current.span;
             self.advance();
             let dot_sym = self.interner.intern(".");
-            Some(Ident { symbol: dot_sym, span: dot_span })
+            Some(Ident {
+                symbol: dot_sym,
+                span: dot_span,
+            })
         } else {
             None
         };
-        
+
         // Check for @ (external import marker)
         let kind = if self.eat(TokenKind::At) {
             ImportKind::External
         } else {
             ImportKind::Standard
         };
-        
+
         let path = self.parse_string_lit()?;
-        
+
         // Handle semicolon based on context
         if require_semi {
             self.expect_semi();
@@ -203,7 +214,7 @@ impl<'a> Parser<'a> {
             // In grouped imports, semicolons are inserted by lexer or optional
             self.eat(TokenKind::Semicolon);
         }
-        
+
         Ok(ImportDecl {
             kind,
             path,
@@ -217,7 +228,10 @@ impl<'a> Parser<'a> {
     // =========================================================================
 
     fn advance(&mut self) -> Token {
-        let token = std::mem::replace(&mut self.current, std::mem::replace(&mut self.peek, self.lexer.next_token()));
+        let token = std::mem::replace(
+            &mut self.current,
+            std::mem::replace(&mut self.peek, self.lexer.next_token()),
+        );
         token
     }
 
@@ -267,10 +281,6 @@ impl<'a> Parser<'a> {
         &self.source[span.to_range()]
     }
 
-    fn intern(&mut self, s: &str) -> Symbol {
-        self.interner.intern(s)
-    }
-
     fn make_ident(&mut self, token: &Token) -> Ident {
         let text = &self.source[token.span.to_range()];
         let symbol = self.interner.intern(text);
@@ -283,15 +293,21 @@ impl<'a> Parser<'a> {
 
     fn error(&mut self, message: impl Into<String>) {
         let span = self.current.span;
-        self.diagnostics.emit(SyntaxError::UnexpectedToken.at_with_message(self.file_id, span, message));
+        self.diagnostics
+            .emit(SyntaxError::UnexpectedToken.at_with_message(self.file_id, span, message));
     }
 
     fn error_at(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics.emit(SyntaxError::UnexpectedToken.at_with_message(self.file_id, span, message));
+        self.diagnostics
+            .emit(SyntaxError::UnexpectedToken.at_with_message(self.file_id, span, message));
     }
 
     fn error_expected(&mut self, expected: &str) {
-        self.error(format!("expected {}, found {}", expected, self.current.kind.as_str()));
+        self.error(format!(
+            "expected {}, found {}",
+            expected,
+            self.current.kind.as_str()
+        ));
     }
 
     fn synchronize_to_decl(&mut self) {
@@ -377,7 +393,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_block(&mut self) -> ParseResult<Block> {
         let start = self.current.span.start;
         self.expect(TokenKind::LBrace)?;
-        
+
         let mut stmts = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at_eof() {
             match self.parse_stmt() {
@@ -385,7 +401,7 @@ impl<'a> Parser<'a> {
                 Err(()) => self.synchronize_to_stmt(),
             }
         }
-        
+
         let end_token = self.expect(TokenKind::RBrace)?;
         Ok(Block {
             stmts,
@@ -465,22 +481,26 @@ mod tests {
 
     #[test]
     fn test_package_with_import() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             package main
             import "fmt"
-        "#);
+        "#,
+        );
         assert!(file.package.is_some());
         assert_eq!(file.imports.len(), 1);
     }
 
     #[test]
     fn test_multiple_imports() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             package main
             import "fmt"
             import "os"
             import "strings"
-        "#);
+        "#,
+        );
         assert_eq!(file.imports.len(), 3);
     }
 
@@ -528,13 +548,15 @@ mod tests {
 
     #[test]
     fn test_var_decl_grouped() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             var (
                 a int
                 b = 1
                 c, d string
             )
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Var(v) => {
                 assert_eq!(v.specs.len(), 3);
@@ -559,13 +581,15 @@ mod tests {
 
     #[test]
     fn test_const_decl_grouped() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             const (
                 a = 1
                 b
                 c = 3
             )
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Const(c) => {
                 assert_eq!(c.specs.len(), 3);
@@ -591,32 +615,34 @@ mod tests {
 
     #[test]
     fn test_type_decl_struct() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             type Person struct {
                 name string
                 age int
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
-            Decl::Type(t) => {
-                match &t.ty.kind {
-                    TypeExprKind::Struct(s) => {
-                        assert_eq!(s.fields.len(), 2);
-                    }
-                    _ => panic!("expected struct type"),
+            Decl::Type(t) => match &t.ty.kind {
+                TypeExprKind::Struct(s) => {
+                    assert_eq!(s.fields.len(), 2);
                 }
-            }
+                _ => panic!("expected struct type"),
+            },
             _ => panic!("expected type decl"),
         }
     }
 
     #[test]
     fn test_type_decl_object() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             type Counter object {
                 count int
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Type(t) => {
                 assert!(matches!(t.ty.kind, TypeExprKind::Obx(_)));
@@ -684,11 +710,13 @@ mod tests {
 
     #[test]
     fn test_interface_decl() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             interface Reader {
                 Read(p []byte) int
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Interface(i) => {
                 assert_eq!(i.elems.len(), 1);
@@ -716,14 +744,12 @@ mod tests {
     fn test_expr_call() {
         let file = parse_ok("var x = foo(1, 2, 3)");
         match &file.decls[0] {
-            Decl::Var(v) => {
-                match &v.specs[0].values[0].kind {
-                    ExprKind::Call(c) => {
-                        assert_eq!(c.args.len(), 3);
-                    }
-                    _ => panic!("expected call expr"),
+            Decl::Var(v) => match &v.specs[0].values[0].kind {
+                ExprKind::Call(c) => {
+                    assert_eq!(c.args.len(), 3);
                 }
-            }
+                _ => panic!("expected call expr"),
+            },
             _ => panic!("expected var decl"),
         }
     }
@@ -765,14 +791,12 @@ mod tests {
     fn test_expr_composite_lit() {
         let file = parse_ok("var x = Point{x: 1, y: 2}");
         match &file.decls[0] {
-            Decl::Var(v) => {
-                match &v.specs[0].values[0].kind {
-                    ExprKind::CompositeLit(c) => {
-                        assert_eq!(c.elems.len(), 2);
-                    }
-                    _ => panic!("expected composite lit"),
+            Decl::Var(v) => match &v.specs[0].values[0].kind {
+                ExprKind::CompositeLit(c) => {
+                    assert_eq!(c.elems.len(), 2);
                 }
-            }
+                _ => panic!("expected composite lit"),
+            },
             _ => panic!("expected var decl"),
         }
     }
@@ -797,7 +821,10 @@ mod tests {
         let file = parse_ok("var x [10]int");
         match &file.decls[0] {
             Decl::Var(v) => {
-                assert!(matches!(v.specs[0].ty.as_ref().unwrap().kind, TypeExprKind::Array(_)));
+                assert!(matches!(
+                    v.specs[0].ty.as_ref().unwrap().kind,
+                    TypeExprKind::Array(_)
+                ));
             }
             _ => panic!("expected var decl"),
         }
@@ -808,7 +835,10 @@ mod tests {
         let file = parse_ok("var x []int");
         match &file.decls[0] {
             Decl::Var(v) => {
-                assert!(matches!(v.specs[0].ty.as_ref().unwrap().kind, TypeExprKind::Slice(_)));
+                assert!(matches!(
+                    v.specs[0].ty.as_ref().unwrap().kind,
+                    TypeExprKind::Slice(_)
+                ));
             }
             _ => panic!("expected var decl"),
         }
@@ -819,7 +849,10 @@ mod tests {
         let file = parse_ok("var x map[string]int");
         match &file.decls[0] {
             Decl::Var(v) => {
-                assert!(matches!(v.specs[0].ty.as_ref().unwrap().kind, TypeExprKind::Map(_)));
+                assert!(matches!(
+                    v.specs[0].ty.as_ref().unwrap().kind,
+                    TypeExprKind::Map(_)
+                ));
             }
             _ => panic!("expected var decl"),
         }
@@ -829,14 +862,12 @@ mod tests {
     fn test_type_chan() {
         let file = parse_ok("var x chan int");
         match &file.decls[0] {
-            Decl::Var(v) => {
-                match &v.specs[0].ty.as_ref().unwrap().kind {
-                    TypeExprKind::Chan(c) => {
-                        assert_eq!(c.dir, ChanDir::Both);
-                    }
-                    _ => panic!("expected chan type"),
+            Decl::Var(v) => match &v.specs[0].ty.as_ref().unwrap().kind {
+                TypeExprKind::Chan(c) => {
+                    assert_eq!(c.dir, ChanDir::Both);
                 }
-            }
+                _ => panic!("expected chan type"),
+            },
             _ => panic!("expected var decl"),
         }
     }
@@ -845,14 +876,12 @@ mod tests {
     fn test_type_send_chan() {
         let file = parse_ok("var x chan<- int");
         match &file.decls[0] {
-            Decl::Var(v) => {
-                match &v.specs[0].ty.as_ref().unwrap().kind {
-                    TypeExprKind::Chan(c) => {
-                        assert_eq!(c.dir, ChanDir::Send);
-                    }
-                    _ => panic!("expected chan type"),
+            Decl::Var(v) => match &v.specs[0].ty.as_ref().unwrap().kind {
+                TypeExprKind::Chan(c) => {
+                    assert_eq!(c.dir, ChanDir::Send);
                 }
-            }
+                _ => panic!("expected chan type"),
+            },
             _ => panic!("expected var decl"),
         }
     }
@@ -861,14 +890,12 @@ mod tests {
     fn test_type_recv_chan() {
         let file = parse_ok("var x <-chan int");
         match &file.decls[0] {
-            Decl::Var(v) => {
-                match &v.specs[0].ty.as_ref().unwrap().kind {
-                    TypeExprKind::Chan(c) => {
-                        assert_eq!(c.dir, ChanDir::Recv);
-                    }
-                    _ => panic!("expected chan type"),
+            Decl::Var(v) => match &v.specs[0].ty.as_ref().unwrap().kind {
+                TypeExprKind::Chan(c) => {
+                    assert_eq!(c.dir, ChanDir::Recv);
                 }
-            }
+                _ => panic!("expected chan type"),
+            },
             _ => panic!("expected var decl"),
         }
     }
@@ -877,15 +904,13 @@ mod tests {
     fn test_type_func() {
         let file = parse_ok("var x func(int) string");
         match &file.decls[0] {
-            Decl::Var(v) => {
-                match &v.specs[0].ty.as_ref().unwrap().kind {
-                    TypeExprKind::Func(f) => {
-                        assert_eq!(f.params.len(), 1);
-                        assert_eq!(f.results.len(), 1);
-                    }
-                    _ => panic!("expected func type"),
+            Decl::Var(v) => match &v.specs[0].ty.as_ref().unwrap().kind {
+                TypeExprKind::Func(f) => {
+                    assert_eq!(f.params.len(), 1);
+                    assert_eq!(f.results.len(), 1);
                 }
-            }
+                _ => panic!("expected func type"),
+            },
             _ => panic!("expected var decl"),
         }
     }
@@ -896,18 +921,24 @@ mod tests {
 
     #[test]
     fn test_stmt_if() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 if x > 0 {
                     return 1
                 }
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
                 // Find the if statement (there may be empty statements from semicolons)
-                let if_stmts: Vec<_> = body.stmts.iter().filter(|s| matches!(s.kind, StmtKind::If(_))).collect();
+                let if_stmts: Vec<_> = body
+                    .stmts
+                    .iter()
+                    .filter(|s| matches!(s.kind, StmtKind::If(_)))
+                    .collect();
                 assert_eq!(if_stmts.len(), 1);
             }
             _ => panic!("expected func decl"),
@@ -916,7 +947,8 @@ mod tests {
 
     #[test]
     fn test_stmt_if_else() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 if x > 0 {
                     return 1
@@ -924,7 +956,8 @@ mod tests {
                     return 0
                 }
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -941,13 +974,15 @@ mod tests {
 
     #[test]
     fn test_stmt_for_cond() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 for x < 10 {
                     x++
                 }
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -964,13 +999,15 @@ mod tests {
 
     #[test]
     fn test_stmt_for_three() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 for i := 0; i < 10; i++ {
                     x++
                 }
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -987,7 +1024,8 @@ mod tests {
 
     #[test]
     fn test_stmt_switch() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 switch x {
                 case 1:
@@ -998,7 +1036,8 @@ mod tests {
                     return 0
                 }
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -1015,11 +1054,13 @@ mod tests {
 
     #[test]
     fn test_stmt_short_var_decl() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 x := 1
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -1031,12 +1072,14 @@ mod tests {
 
     #[test]
     fn test_stmt_assign() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 x = 1
                 y += 2
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -1049,12 +1092,14 @@ mod tests {
 
     #[test]
     fn test_stmt_inc_dec() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 x++
                 y--
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -1073,11 +1118,13 @@ mod tests {
 
     #[test]
     fn test_stmt_return() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 return 1, 2
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();
@@ -1094,12 +1141,14 @@ mod tests {
 
     #[test]
     fn test_stmt_go_defer() {
-        let file = parse_ok(r#"
+        let file = parse_ok(
+            r#"
             func main() {
                 go foo()
                 defer bar()
             }
-        "#);
+        "#,
+        );
         match &file.decls[0] {
             Decl::Func(f) => {
                 let body = f.body.as_ref().unwrap();

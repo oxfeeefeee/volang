@@ -23,6 +23,7 @@ impl Symbol {
     /// # Safety
     /// The caller must ensure the value corresponds to a valid interned symbol.
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn from_raw(raw: u32) -> Self {
         use string_interner::Symbol as _;
         Self(DefaultSymbol::try_from_usize(raw as usize))

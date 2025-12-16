@@ -310,11 +310,6 @@ impl FuncContext {
         }
     }
     
-    /// Mark a variable as captured (will use upval_box)
-    pub fn mark_captured(&mut self, sym: Symbol) {
-        self.captured_vars.insert(sym);
-    }
-    
     /// Check if a variable is captured
     pub fn is_captured(&self, sym: Symbol) -> bool {
         self.captured_vars.contains(&sym)
@@ -497,18 +492,6 @@ impl<'a, 'm> CodegenContextRef<'a, 'm> {
     
 }
 
-/// Convert ValueKind to FFI TypeTag (which is just an alias to ValueKind).
-/// This function is now trivial since TypeTag = ValueKind.
-pub fn value_kind_to_type_tag(kind: ValueKind) -> gox_vm::ffi::TypeTag {
-    kind
-}
-
-/// Backward compatible alias.
-#[deprecated(note = "Use value_kind_to_type_tag instead")]
-pub fn var_kind_to_type_tag(kind: &ValueKind) -> gox_vm::ffi::TypeTag {
-    *kind
-}
-
 /// Convert ValueKind to runtime builtin type ID.
 pub fn value_kind_to_builtin_type(kind: ValueKind) -> u16 {
     use gox_vm::types::builtin;
@@ -537,12 +520,6 @@ pub fn value_kind_to_builtin_type(kind: ValueKind) -> u16 {
         ValueKind::Struct => builtin::INT64 as u16, // struct uses inline slots, not a type ID
         ValueKind::Obx => builtin::INT64 as u16,    // object uses GcRef
     }
-}
-
-/// Backward compatible alias.
-#[deprecated(note = "Use value_kind_to_builtin_type instead")]
-pub fn var_kind_to_builtin_type(kind: &ValueKind) -> u16 {
-    value_kind_to_builtin_type(*kind)
 }
 
 impl<'a> CodegenContext<'a> {

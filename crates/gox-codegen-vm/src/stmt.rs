@@ -185,7 +185,6 @@ fn compile_short_var(
     fctx: &mut FuncContext,
     sv: &ShortVarDecl,
 ) -> Result<(), CodegenError> {
-    use crate::context::VarKind;
     use gox_syntax::ast::ExprKind;
     
     for (i, name) in sv.names.iter().enumerate() {
@@ -199,7 +198,7 @@ fn compile_short_var(
             }
         } else {
             // Determine the type kind and type symbol from the RHS expression
-            let mut type_info = if i < sv.values.len() {
+            let type_info = if i < sv.values.len() {
                 let info = infer_var_kind_and_type(ctx, Some(fctx), &sv.values[i]);
                 // Also check if it's a float expression using fctx
                 if info.kind == ValueKind::Int64 && expr::is_float_expr(ctx, fctx, &sv.values[i]) {
@@ -211,7 +210,7 @@ fn compile_short_var(
                 TypeInfo::new(ValueKind::Int64)
             };
             let (mut kind, mut type_sym) = (type_info.kind, type_info.type_sym);
-            let mut field_count = type_info.field_count;
+            let field_count = type_info.field_count;
             
             // Check if RHS is an identifier referencing a struct/object variable
             // Or if it's an Index expression into a map (for nested maps)
@@ -468,7 +467,6 @@ fn is_interface_expr(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax
 pub fn infer_runtime_type_id(ctx: &CodegenContext, fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> u16 {
     use gox_syntax::ast::ExprKind;
     use gox_vm::types::builtin;
-    use crate::context::VarKind;
     
     match &expr.kind {
         ExprKind::IntLit(_) => builtin::INT64 as u16,
@@ -509,7 +507,7 @@ pub fn infer_runtime_type_id(ctx: &CodegenContext, fctx: &FuncContext, expr: &go
         ExprKind::Call(_) => {
             // Use unified lookup for all function calls
             if let Some(kind) = ctx.lookup_call_return_type(expr) {
-                return crate::context::var_kind_to_builtin_type(&kind);
+                return crate::context::value_kind_to_builtin_type(kind);
             }
             builtin::INT64 as u16
         }
@@ -732,7 +730,6 @@ fn compile_assign(
 /// Check if an expression is a map type (for range iteration)
 fn is_map_expr(fctx: &FuncContext, expr: &gox_syntax::ast::Expr) -> bool {
     use gox_syntax::ast::ExprKind;
-    use crate::context::VarKind;
     if let ExprKind::Ident(ident) = &expr.kind {
         if let Some(local) = fctx.lookup_local(ident.symbol) {
             return local.kind == ValueKind::Map;
@@ -1014,7 +1011,6 @@ fn compile_defer(
         // Compile the function to call
         if let ExprKind::Ident(ident) = &call.func.kind {
             // Direct function call
-            let func_name = ctx.interner.resolve(ident.symbol).unwrap_or("");
             if let Some(&func_idx) = ctx.func_indices.get(&ident.symbol) {
                 let arg_start = fctx.regs.current();
                 let arg_count = call.args.len() as u16;
@@ -1102,14 +1098,12 @@ fn compile_switch(
     
     // Track jump addresses for patching
     let mut case_end_jumps: Vec<usize> = Vec::new();
-    let mut default_body_start: Option<usize> = None;
     let mut default_body: Option<&Vec<Stmt>> = None;
     
     // Process each case
     for case in &sw.cases {
         if case.exprs.is_empty() {
             // Default case - save for last
-            default_body_start = Some(fctx.pc());
             default_body = Some(&case.body);
             continue;
         }

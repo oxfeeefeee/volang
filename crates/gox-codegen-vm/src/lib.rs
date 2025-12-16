@@ -52,9 +52,6 @@ pub fn compile(
 /// Packages are compiled in init order (dependencies first).
 /// A module-level $init function is generated that calls all package inits.
 pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
-    use gox_vm::instruction::Instruction;
-    
-    
     let mut module = Module::new(&project.main_package);
     
     // Build cross-package function index: "pkg.Func" -> func_idx

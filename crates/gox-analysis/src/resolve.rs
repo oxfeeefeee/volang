@@ -40,7 +40,7 @@
 
 use std::collections::HashSet;
 
-use gox_common::{DiagnosticSink, Span, Symbol, SymbolInterner};
+use gox_common::{DiagnosticSink, Symbol, SymbolInterner};
 use gox_syntax::ast::{self, TypeExprKind};
 
 use crate::collect::{CollectResult, FuncSigPlaceholder, MethodPlaceholder, NamedTypePlaceholder, VarTypePlaceholder};
@@ -323,7 +323,7 @@ impl<'a> TypeResolver<'a> {
     /// Resolves an AST type expression to an internal Type.
     fn resolve_type_expr(&mut self, expr: &ast::TypeExpr) -> Type {
         match &expr.kind {
-            TypeExprKind::Ident(ident) => self.resolve_type_name(ident.symbol, expr.span),
+            TypeExprKind::Ident(ident) => self.resolve_type_name(ident.symbol),
 
             TypeExprKind::Selector(sel) => {
                 // Qualified type: pkg.Type - resolve as external type reference
@@ -440,7 +440,7 @@ impl<'a> TypeResolver<'a> {
     }
 
     /// Resolves a type name to a Type.
-    fn resolve_type_name(&mut self, name: Symbol, span: Span) -> Type {
+    fn resolve_type_name(&mut self, name: Symbol) -> Type {
         // Look up in scope
         match self.scope.lookup(name) {
             Some(Entity::Var(v)) => {

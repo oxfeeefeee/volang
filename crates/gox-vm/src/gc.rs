@@ -84,6 +84,7 @@ struct ObjectEntry {
 pub struct Gc {
     all_objects: Vec<ObjectEntry>,
     gray_queue: Vec<GcRef>,
+    #[allow(dead_code)]
     state: GcState,
     current_white: u8,
     

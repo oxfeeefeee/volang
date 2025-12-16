@@ -36,9 +36,7 @@ use gox_syntax::ast::{self, BinaryOp, Decl, File, UnaryOp};
 
 use crate::constant::Constant;
 use crate::errors::TypeError;
-use crate::scope::{
-    BuiltinKind, Entity, FuncEntity, Scope, ScopeKind, TypeEntity, VarEntity,
-};
+use crate::scope::{BuiltinKind, Entity, FuncEntity, Scope, ScopeKind, TypeEntity, VarEntity};
 use crate::types::{BasicType, FuncType, NamedTypeId, Type, UntypedKind};
 
 /// The result of Phase 1 type collection.
@@ -243,8 +241,8 @@ impl<'a> TypeCollector<'a> {
             (syms.float32_sym, BasicType::Float32),
             (syms.float64_sym, BasicType::Float64),
             (syms.string_sym, BasicType::String),
-            (syms.byte_sym, BasicType::Uint8),  // byte = uint8
-            (syms.rune_sym, BasicType::Int32),  // rune = int32
+            (syms.byte_sym, BasicType::Uint8), // byte = uint8
+            (syms.rune_sym, BasicType::Int32), // rune = int32
         ];
 
         for (sym, basic) in types {
@@ -323,20 +321,20 @@ impl<'a> TypeCollector<'a> {
         self.collect_decls(file);
         self.finish()
     }
-    
+
     /// Collects declarations from a file (can be called multiple times for multi-file packages).
     pub fn collect_decls(&mut self, file: &File) {
         for decl in &file.decls {
             self.collect_decl(decl);
         }
     }
-    
+
     /// Finishes collection and returns the result.
     pub fn finish(mut self) -> CollectResult {
         // Second pass: infer types for variables with initializers
         // (now all variable names are in scope)
         self.infer_var_types();
-        
+
         CollectResult {
             scope: self.scope,
             named_types: self.named_types,
@@ -360,7 +358,7 @@ impl<'a> TypeCollector<'a> {
         for spec in &decl.specs {
             for (i, name) in spec.names.iter().enumerate() {
                 let sym = name.symbol;
-                if self.check_redeclaration(sym, name.span) {
+                if self.check_redeclaration(sym) {
                     // First pass: just register the variable name
                     // Type will be resolved later (explicit type) or inferred in second pass
                     if let Some(ref ty_expr) = spec.ty {
@@ -378,7 +376,7 @@ impl<'a> TypeCollector<'a> {
                             init_expr: Some(spec.values[i].clone()),
                         });
                     }
-                    
+
                     // Insert with Invalid type - will be resolved later
                     self.scope.insert(
                         sym,
@@ -392,7 +390,7 @@ impl<'a> TypeCollector<'a> {
             }
         }
     }
-    
+
     /// Second pass: infer types for variables with initializers (after all names are collected)
     /// Uses iterative approach to handle forward references
     fn infer_var_types(&mut self) {
@@ -400,21 +398,24 @@ impl<'a> TypeCollector<'a> {
         let max_iterations = self.var_types.len() + 1;
         for _ in 0..max_iterations {
             let mut made_progress = false;
-            
+
             for placeholder in &self.var_types {
                 if placeholder.ty.is_none() {
                     if let Some(ref init_expr) = placeholder.init_expr {
                         // Check if current type is still Invalid
-                        let current_ty = if let Some(Entity::Var(v)) = self.scope.lookup(placeholder.name) {
-                            v.ty.clone()
-                        } else {
-                            continue;
-                        };
-                        
+                        let current_ty =
+                            if let Some(Entity::Var(v)) = self.scope.lookup(placeholder.name) {
+                                v.ty.clone()
+                            } else {
+                                continue;
+                            };
+
                         if current_ty == Type::Invalid {
                             let inferred_ty = self.infer_type_from_expr(init_expr);
                             if inferred_ty != Type::Invalid {
-                                if let Some(Entity::Var(v)) = self.scope.lookup_local_mut(placeholder.name) {
+                                if let Some(Entity::Var(v)) =
+                                    self.scope.lookup_local_mut(placeholder.name)
+                                {
                                     v.ty = inferred_ty;
                                     made_progress = true;
                                 }
@@ -423,13 +424,13 @@ impl<'a> TypeCollector<'a> {
                     }
                 }
             }
-            
+
             if !made_progress {
                 break;
             }
         }
     }
-    
+
     /// Infer type from a simple expression (for var initialization).
     fn infer_type_from_expr(&self, expr: &ast::Expr) -> Type {
         use ast::ExprKind;
@@ -485,7 +486,7 @@ impl<'a> TypeCollector<'a> {
             _ => Type::Invalid,
         }
     }
-    
+
     /// Infer type from a type argument expression (for make/new).
     fn infer_type_from_type_arg(&self, expr: &ast::Expr) -> Type {
         use ast::ExprKind;
@@ -508,7 +509,7 @@ impl<'a> TypeCollector<'a> {
         for spec in &decl.specs {
             for (i, name) in spec.names.iter().enumerate() {
                 let sym = name.symbol;
-                if self.check_redeclaration(sym, name.span) {
+                if self.check_redeclaration(sym) {
                     // Evaluate constant value if possible
                     let (mut ty, constant) = if i < spec.values.len() {
                         self.eval_const_expr(&spec.values[i])
@@ -516,7 +517,7 @@ impl<'a> TypeCollector<'a> {
                         // Use previous spec's expression pattern (iota continues)
                         (Type::Invalid, None)
                     };
-                    
+
                     // If there's an explicit type annotation, use it
                     // (e.g., `const FB float64 = 1 << 100`)
                     if spec.ty.is_some() {
@@ -537,7 +538,7 @@ impl<'a> TypeCollector<'a> {
             self.iota += 1;
         }
     }
-    
+
     /// Infer type from a type expression.
     fn infer_type_from_type_expr(&self, ty_expr: &ast::TypeExpr) -> Type {
         use ast::TypeExprKind;
@@ -575,16 +576,24 @@ impl<'a> TypeCollector<'a> {
                     ast::ChanDir::Send => crate::types::ChanDir::SendOnly,
                     ast::ChanDir::Recv => crate::types::ChanDir::RecvOnly,
                 };
-                Type::Chan(crate::types::ChanType { elem: Box::new(elem_ty), dir })
+                Type::Chan(crate::types::ChanType {
+                    elem: Box::new(elem_ty),
+                    dir,
+                })
             }
             TypeExprKind::Map(m) => {
                 let key_ty = self.infer_type_from_type_expr(&m.key);
                 let value_ty = self.infer_type_from_type_expr(&m.value);
-                Type::Map(crate::types::MapType { key: Box::new(key_ty), value: Box::new(value_ty) })
+                Type::Map(crate::types::MapType {
+                    key: Box::new(key_ty),
+                    value: Box::new(value_ty),
+                })
             }
             TypeExprKind::Slice(elem) => {
                 let elem_ty = self.infer_type_from_type_expr(elem);
-                Type::Slice(crate::types::SliceType { elem: Box::new(elem_ty) })
+                Type::Slice(crate::types::SliceType {
+                    elem: Box::new(elem_ty),
+                })
             }
             _ => Type::Invalid,
         }
@@ -592,7 +601,7 @@ impl<'a> TypeCollector<'a> {
 
     fn collect_type(&mut self, decl: &ast::TypeDecl) {
         let sym = decl.name.symbol;
-        if !self.check_redeclaration(sym, decl.name.span) {
+        if !self.check_redeclaration(sym) {
             return;
         }
 
@@ -629,9 +638,9 @@ impl<'a> TypeCollector<'a> {
 
         let sym = decl.name.symbol;
         let name = self.interner.resolve(sym).unwrap_or("");
-        
+
         // Go allows multiple init() functions - skip redeclaration check for init
-        if name != "init" && !self.check_redeclaration(sym, decl.name.span) {
+        if name != "init" && !self.check_redeclaration(sym) {
             return;
         }
 
@@ -660,7 +669,7 @@ impl<'a> TypeCollector<'a> {
 
     fn collect_interface(&mut self, decl: &ast::InterfaceDecl) {
         let sym = decl.name.symbol;
-        if !self.check_redeclaration(sym, decl.name.span) {
+        if !self.check_redeclaration(sym) {
             return;
         }
 
@@ -693,7 +702,7 @@ impl<'a> TypeCollector<'a> {
 
     /// Checks for redeclaration and reports an error if found.
     /// Returns true if the name can be declared.
-    fn check_redeclaration(&mut self, sym: Symbol, span: Span) -> bool {
+    fn check_redeclaration(&mut self, sym: Symbol) -> bool {
         if let Some(existing) = self.scope.lookup_local(sym) {
             let existing_span = match existing {
                 Entity::Var(v) => v.span,
@@ -705,14 +714,14 @@ impl<'a> TypeCollector<'a> {
             };
 
             let name = self.interner.resolve(sym).unwrap_or("<unknown>");
-            self.diagnostics.emit(
-                TypeError::Redeclared.with_message(TypeError::Redeclared.with_name(name)),
-            );
+            self.diagnostics
+                .emit(TypeError::Redeclared.with_message(TypeError::Redeclared.with_name(name)));
 
             if !existing_span.is_dummy() {
-                self.diagnostics.emit(
-                    Diagnostic::note(format!("previous declaration of {}", name)),
-                );
+                self.diagnostics.emit(Diagnostic::note(format!(
+                    "previous declaration of {}",
+                    name
+                )));
             }
 
             false
@@ -768,10 +777,7 @@ impl<'a> TypeCollector<'a> {
                 }
                 // Check for true/false
                 if id.symbol == self.builtin_symbols.true_sym {
-                    return (
-                        Type::Untyped(UntypedKind::Bool),
-                        Some(Constant::Bool(true)),
-                    );
+                    return (Type::Untyped(UntypedKind::Bool), Some(Constant::Bool(true)));
                 }
                 if id.symbol == self.builtin_symbols.false_sym {
                     return (
@@ -904,7 +910,10 @@ fn parse_int_literal(s: &str) -> Result<i64, ()> {
         i64::from_str_radix(&s[2..], 8).map_err(|_| ())
     } else if s.starts_with("0b") || s.starts_with("0B") {
         i64::from_str_radix(&s[2..], 2).map_err(|_| ())
-    } else if s.starts_with('0') && s.len() > 1 && s.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+    } else if s.starts_with('0')
+        && s.len() > 1
+        && s.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+    {
         // Legacy octal
         i64::from_str_radix(&s[1..], 8).map_err(|_| ())
     } else {
@@ -921,7 +930,7 @@ fn parse_int_literal(s: &str) -> Result<i64, ()> {
 pub fn parse_rune_literal(s: &str) -> Option<char> {
     // Remove surrounding quotes if present (only first and last)
     let s = if s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2 {
-        &s[1..s.len()-1]
+        &s[1..s.len() - 1]
     } else {
         s
     };
@@ -930,13 +939,13 @@ pub fn parse_rune_literal(s: &str) -> Option<char> {
         let escape_char = s.chars().nth(1)?;
         match escape_char {
             // Simple escapes
-            'a' => Some('\x07'),  // bell
-            'b' => Some('\x08'),  // backspace
-            'f' => Some('\x0C'),  // form feed
-            'n' => Some('\n'),    // newline
-            'r' => Some('\r'),    // carriage return
-            't' => Some('\t'),    // horizontal tab
-            'v' => Some('\x0B'),  // vertical tab
+            'a' => Some('\x07'), // bell
+            'b' => Some('\x08'), // backspace
+            'f' => Some('\x0C'), // form feed
+            'n' => Some('\n'),   // newline
+            'r' => Some('\r'),   // carriage return
+            't' => Some('\t'),   // horizontal tab
+            'v' => Some('\x0B'), // vertical tab
             '\\' => Some('\\'),
             '\'' => Some('\''),
             '"' => Some('"'),
@@ -1004,12 +1013,12 @@ pub fn collect_types_multi(
     diagnostics: &mut DiagnosticSink,
 ) -> CollectResult {
     let mut collector = TypeCollector::new(interner, diagnostics);
-    
+
     // Collect declarations from all files
     for file in files {
         collector.collect_decls(file);
     }
-    
+
     collector.finish()
 }
 
@@ -1047,19 +1056,19 @@ mod tests {
     fn collect_source(source: &str) -> (CollectResult, DiagnosticSink, SymbolInterner) {
         let file_id = FileId::new(0);
         let (file, _parse_diag, interner) = parse(file_id, source);
-        
+
         let mut collect_diag = DiagnosticSink::new();
         let result = collect_types(&file, &interner, &mut collect_diag);
-        
+
         (result, collect_diag, interner)
     }
 
     #[test]
     fn test_collect_var_decl() {
         let (result, diag, interner) = collect_source("package main\nvar x int");
-        
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("x").unwrap();
         assert!(result.scope.lookup(x_sym).is_some());
     }
@@ -1067,9 +1076,9 @@ mod tests {
     #[test]
     fn test_collect_const_decl() {
         let (result, diag, interner) = collect_source("package main\nconst Pi = 3.14");
-        
+
         assert!(!diag.has_errors());
-        
+
         let pi_sym = interner.get("Pi").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(pi_sym) {
             assert!(v.constant.is_some());
@@ -1087,22 +1096,21 @@ mod tests {
 
     #[test]
     fn test_collect_const_iota() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst (\n  A = iota\n  B\n  C\n)"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\nconst (\n  A = iota\n  B\n  C\n)");
+
         assert!(!diag.has_errors());
-        
+
         let a_sym = interner.get("A").unwrap();
         let b_sym = interner.get("B").unwrap();
         let c_sym = interner.get("C").unwrap();
-        
+
         if let Some(Entity::Var(v)) = result.scope.lookup(a_sym) {
             assert_eq!(v.constant, Some(Constant::int(0)));
         } else {
             panic!("expected var entity for A");
         }
-        
+
         // B and C don't have values in this simple test since we don't
         // carry forward the expression pattern yet
     }
@@ -1110,9 +1118,9 @@ mod tests {
     #[test]
     fn test_collect_type_decl() {
         let (result, diag, interner) = collect_source("package main\ntype MyInt int");
-        
+
         assert!(!diag.has_errors());
-        
+
         let myint_sym = interner.get("MyInt").unwrap();
         assert!(result.scope.lookup(myint_sym).is_some());
         assert_eq!(result.named_types.len(), 1);
@@ -1121,34 +1129,36 @@ mod tests {
 
     #[test]
     fn test_collect_func_decl() {
-        let (result, diag, interner) = collect_source(
-            "package main\nfunc add(a, b int) int { return a + b }"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\nfunc add(a, b int) int { return a + b }");
+
         assert!(!diag.has_errors());
-        
+
         let add_sym = interner.get("add").unwrap();
-        assert!(matches!(result.scope.lookup(add_sym), Some(Entity::Func(_))));
+        assert!(matches!(
+            result.scope.lookup(add_sym),
+            Some(Entity::Func(_))
+        ));
     }
 
     #[test]
     fn test_collect_interface_decl() {
-        let (result, diag, interner) = collect_source(
-            "package main\ninterface Reader { Read(buf []byte) int }"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\ninterface Reader { Read(buf []byte) int }");
+
         assert!(!diag.has_errors());
-        
+
         let reader_sym = interner.get("Reader").unwrap();
-        assert!(matches!(result.scope.lookup(reader_sym), Some(Entity::Type(_))));
+        assert!(matches!(
+            result.scope.lookup(reader_sym),
+            Some(Entity::Type(_))
+        ));
     }
 
     #[test]
     fn test_collect_duplicate_error() {
-        let (_, diag, _) = collect_source(
-            "package main\nvar x int\nvar x string"
-        );
-        
+        let (_, diag, _) = collect_source("package main\nvar x int\nvar x string");
+
         assert!(diag.has_errors());
     }
 
@@ -1156,11 +1166,11 @@ mod tests {
     fn test_collect_builtin_types() {
         // Use source that references built-in types so they get interned
         let (result, _, interner) = collect_source("package main\nvar x int\nvar y string");
-        
+
         // Check that built-in types are in the universe scope
         let int_sym = interner.get("int").unwrap();
         assert!(result.scope.lookup(int_sym).is_some());
-        
+
         let string_sym = interner.get("string").unwrap();
         assert!(result.scope.lookup(string_sym).is_some());
     }
@@ -1168,27 +1178,34 @@ mod tests {
     #[test]
     fn test_collect_builtin_funcs() {
         // Use source that references built-in functions so they get interned
-        let (result, _, interner) = collect_source("package main\nfunc f() { len(nil); make([]int, 0) }");
-        
+        let (result, _, interner) =
+            collect_source("package main\nfunc f() { len(nil); make([]int, 0) }");
+
         let len_sym = interner.get("len").unwrap();
-        assert!(matches!(result.scope.lookup(len_sym), Some(Entity::Builtin(BuiltinKind::Len))));
-        
+        assert!(matches!(
+            result.scope.lookup(len_sym),
+            Some(Entity::Builtin(BuiltinKind::Len))
+        ));
+
         let make_sym = interner.get("make").unwrap();
-        assert!(matches!(result.scope.lookup(make_sym), Some(Entity::Builtin(BuiltinKind::Make))));
+        assert!(matches!(
+            result.scope.lookup(make_sym),
+            Some(Entity::Builtin(BuiltinKind::Make))
+        ));
     }
 
     #[test]
     fn test_collect_builtin_consts() {
         // Use source that references built-in constants so they get interned
         let (result, _, interner) = collect_source("package main\nvar x = true\nvar y = nil");
-        
+
         let true_sym = interner.get("true").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(true_sym) {
             assert_eq!(v.constant, Some(Constant::Bool(true)));
         } else {
             panic!("expected var entity for true");
         }
-        
+
         let nil_sym = interner.get("nil").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(nil_sym) {
             assert_eq!(v.constant, Some(Constant::Nil));
@@ -1199,12 +1216,10 @@ mod tests {
 
     #[test]
     fn test_collect_const_expr_binary() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 1 + 2 * 3"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 1 + 2 * 3");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             // Note: without proper precedence in eval, this might be wrong
@@ -1217,12 +1232,10 @@ mod tests {
 
     #[test]
     fn test_collect_const_expr_shift() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst KB = 1 << 10"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst KB = 1 << 10");
+
         assert!(!diag.has_errors());
-        
+
         let kb_sym = interner.get("KB").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(kb_sym) {
             assert_eq!(v.constant, Some(Constant::int(1024)));
@@ -1233,12 +1246,10 @@ mod tests {
 
     #[test]
     fn test_collect_const_unary_neg() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = -42"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = -42");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(-42)));
@@ -1249,12 +1260,10 @@ mod tests {
 
     #[test]
     fn test_collect_const_unary_not() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = !true"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = !true");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::Bool(false)));
@@ -1265,12 +1274,10 @@ mod tests {
 
     #[test]
     fn test_collect_const_bitwise() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 0xFF & 0x0F"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 0xFF & 0x0F");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(0x0F)));
@@ -1283,14 +1290,17 @@ mod tests {
     fn test_collect_const_string_concat() {
         let (result, diag, interner) = collect_source(
             r#"package main
-const X = "hello" + " world""#
+const X = "hello" + " world""#,
         );
-        
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
-            assert_eq!(v.constant, Some(Constant::String("hello world".to_string())));
+            assert_eq!(
+                v.constant,
+                Some(Constant::String("hello world".to_string()))
+            );
         } else {
             panic!("expected var entity for X");
         }
@@ -1298,12 +1308,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_comparison() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 1 < 2"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 1 < 2");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::Bool(true)));
@@ -1314,12 +1322,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_logical() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = true && false"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = true && false");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::Bool(false)));
@@ -1330,12 +1336,11 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_reference_other() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst A = 10\nconst B = A + 5"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\nconst A = 10\nconst B = A + 5");
+
         assert!(!diag.has_errors());
-        
+
         let b_sym = interner.get("B").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(b_sym) {
             assert_eq!(v.constant, Some(Constant::int(15)));
@@ -1346,29 +1351,29 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_multiple_vars() {
-        let (result, diag, interner) = collect_source(
-            "package main\nvar a, b, c int"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nvar a, b, c int");
+
         assert!(!diag.has_errors());
-        
+
         for name in ["a", "b", "c"] {
             let sym = interner.get(name).unwrap();
-            assert!(result.scope.lookup(sym).is_some(), "expected {} to be declared", name);
+            assert!(
+                result.scope.lookup(sym).is_some(),
+                "expected {} to be declared",
+                name
+            );
         }
     }
 
     #[test]
     fn test_collect_multiple_consts() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst x, y = 1, 2"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst x, y = 1, 2");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("x").unwrap();
         let y_sym = interner.get("y").unwrap();
-        
+
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(1)));
         }
@@ -1379,49 +1384,54 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_struct_type() {
-        let (result, diag, interner) = collect_source(
-            "package main\ntype Point struct { x, y int }"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\ntype Point struct { x, y int }");
+
         assert!(!diag.has_errors());
-        
+
         let point_sym = interner.get("Point").unwrap();
-        assert!(matches!(result.scope.lookup(point_sym), Some(Entity::Type(_))));
+        assert!(matches!(
+            result.scope.lookup(point_sym),
+            Some(Entity::Type(_))
+        ));
         assert_eq!(result.named_types.len(), 1);
     }
 
     #[test]
     fn test_collect_object_type() {
-        let (result, diag, interner) = collect_source(
-            "package main\ntype Counter object { value int }"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\ntype Counter object { value int }");
+
         assert!(!diag.has_errors());
-        
+
         let counter_sym = interner.get("Counter").unwrap();
-        assert!(matches!(result.scope.lookup(counter_sym), Some(Entity::Type(_))));
+        assert!(matches!(
+            result.scope.lookup(counter_sym),
+            Some(Entity::Type(_))
+        ));
     }
 
     #[test]
     fn test_collect_func_with_params() {
-        let (result, diag, interner) = collect_source(
-            "package main\nfunc add(a int, b int) int { return a + b }"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\nfunc add(a int, b int) int { return a + b }");
+
         assert!(!diag.has_errors());
-        
+
         let add_sym = interner.get("add").unwrap();
-        assert!(matches!(result.scope.lookup(add_sym), Some(Entity::Func(_))));
+        assert!(matches!(
+            result.scope.lookup(add_sym),
+            Some(Entity::Func(_))
+        ));
     }
 
     #[test]
     fn test_collect_func_variadic() {
-        let (result, diag, interner) = collect_source(
-            "package main\nfunc sum(nums ...int) int { return 0 }"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\nfunc sum(nums ...int) int { return 0 }");
+
         assert!(!diag.has_errors());
-        
+
         let sum_sym = interner.get("sum").unwrap();
         if let Some(Entity::Func(f)) = result.scope.lookup(sum_sym) {
             assert!(f.sig.variadic);
@@ -1433,23 +1443,21 @@ const X = "hello" + " world""#
     #[test]
     fn test_collect_interface_with_methods() {
         let (result, diag, interner) = collect_source(
-            "package main\ninterface ReadWriter { Read(buf []byte) int; Write(buf []byte) int }"
+            "package main\ninterface ReadWriter { Read(buf []byte) int; Write(buf []byte) int }",
         );
-        
+
         assert!(!diag.has_errors());
-        
+
         let rw_sym = interner.get("ReadWriter").unwrap();
         assert!(matches!(result.scope.lookup(rw_sym), Some(Entity::Type(_))));
     }
 
     #[test]
     fn test_collect_const_paren_expr() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = (1 + 2) * 3"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = (1 + 2) * 3");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(9)));
@@ -1460,12 +1468,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_rune() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 'A'"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 'A'");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::Rune('A')));
@@ -1476,12 +1482,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_hex() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 0xDEADBEEF"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 0xDEADBEEF");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(0xDEADBEEF)));
@@ -1492,12 +1496,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_octal() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 0o755"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 0o755");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(0o755)));
@@ -1508,12 +1510,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_binary() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 0b1010"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 0b1010");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(0b1010)));
@@ -1524,39 +1524,32 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_duplicate_type_error() {
-        let (_, diag, _) = collect_source(
-            "package main\ntype X int\ntype X string"
-        );
-        
+        let (_, diag, _) = collect_source("package main\ntype X int\ntype X string");
+
         assert!(diag.has_errors());
     }
 
     #[test]
     fn test_collect_duplicate_func_error() {
-        let (_, diag, _) = collect_source(
-            "package main\nfunc f() {}\nfunc f() {}"
-        );
-        
+        let (_, diag, _) = collect_source("package main\nfunc f() {}\nfunc f() {}");
+
         assert!(diag.has_errors());
     }
 
     #[test]
     fn test_collect_duplicate_const_error() {
-        let (_, diag, _) = collect_source(
-            "package main\nconst X = 1\nconst X = 2"
-        );
-        
+        let (_, diag, _) = collect_source("package main\nconst X = 1\nconst X = 2");
+
         assert!(diag.has_errors());
     }
 
     #[test]
     fn test_collect_iota_expression() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst (\n  KB = 1 << (10 * iota)\n  MB\n  GB\n)"
-        );
-        
+        let (result, diag, interner) =
+            collect_source("package main\nconst (\n  KB = 1 << (10 * iota)\n  MB\n  GB\n)");
+
         assert!(!diag.has_errors());
-        
+
         let kb_sym = interner.get("KB").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(kb_sym) {
             // 1 << (10 * 0) = 1
@@ -1568,12 +1561,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_division() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 10 / 3"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 10 / 3");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(3)));
@@ -1584,12 +1575,10 @@ const X = "hello" + " world""#
 
     #[test]
     fn test_collect_const_modulo() {
-        let (result, diag, interner) = collect_source(
-            "package main\nconst X = 10 % 3"
-        );
-        
+        let (result, diag, interner) = collect_source("package main\nconst X = 10 % 3");
+
         assert!(!diag.has_errors());
-        
+
         let x_sym = interner.get("X").unwrap();
         if let Some(Entity::Var(v)) = result.scope.lookup(x_sym) {
             assert_eq!(v.constant, Some(Constant::int(1)));
@@ -1642,7 +1631,7 @@ const X = "hello" + " world""#
         assert_eq!(parse_rune_literal("'\\u0041'"), Some('A'));
         assert_eq!(parse_rune_literal("'\\u4e2d'"), Some('中'));
         assert_eq!(parse_rune_literal("'\\u0000'"), Some('\0'));
-        
+
         // \U with 8 hex digits
         assert_eq!(parse_rune_literal("'\\U00000041'"), Some('A'));
         assert_eq!(parse_rune_literal("'\\U0001F389'"), Some('🎉'));
@@ -1652,7 +1641,7 @@ const X = "hello" + " world""#
     #[test]
     fn test_parse_rune_octal_escape() {
         assert_eq!(parse_rune_literal("'\\000'"), Some('\0'));
-        assert_eq!(parse_rune_literal("'\\101'"), Some('A'));  // 65 in octal
+        assert_eq!(parse_rune_literal("'\\101'"), Some('A')); // 65 in octal
         assert_eq!(parse_rune_literal("'\\012'"), Some('\n')); // 10 in octal
         assert_eq!(parse_rune_literal("'\\177'"), Some('\x7F')); // 127 in octal
     }

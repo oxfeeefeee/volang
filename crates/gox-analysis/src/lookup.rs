@@ -54,16 +54,10 @@ impl EmbeddedType {
     }
 }
 
-/// Represents either a found item or a collision.
-#[derive(Debug, Clone)]
-enum FieldOrCollision {
-    Field(Type, Vec<usize>, bool),
-    Collision,
-}
-
+/// Represents either a found method or a collision during method set computation.
 #[derive(Debug, Clone)]
 enum MethodOrCollision {
-    Method(FuncType, Vec<usize>, bool),
+    Method(FuncType),
     Collision,
 }
 
@@ -114,10 +108,6 @@ impl<'a> Lookup<'a> {
             // Embedded types found at current depth
             let mut next: Vec<EmbeddedType> = vec![];
 
-            // Field and method sets at current depth (for collision detection)
-            let mut field_set: HashMap<Symbol, FieldOrCollision> = HashMap::new();
-            let mut method_set: HashMap<Symbol, MethodOrCollision> = HashMap::new();
-
             for et in &current {
                 let mut search_ty = et.ty.clone();
 
@@ -152,19 +142,6 @@ impl<'a> Lookup<'a> {
                             continue; // Can't have matching field
                         }
 
-                        // Add all methods to method_set for collision detection
-                        for (i, method) in info.methods.iter().enumerate() {
-                            let mut indices = et.indices.clone();
-                            indices.push(i);
-                            add_to_method_set(
-                                &mut method_set,
-                                method,
-                                indices,
-                                et.indirect,
-                                et.multiples,
-                            );
-                        }
-
                         // Continue with underlying type
                         search_ty = info.underlying.clone();
                     }
@@ -188,20 +165,6 @@ impl<'a> Lookup<'a> {
                                     et.indirect,
                                 ));
                                 continue;
-                            }
-
-                            // Add to field_set for collision detection
-                            if let Some(field_name) = field.name {
-                                let mut indices = et.indices.clone();
-                                indices.push(i);
-                                add_to_field_set(
-                                    &mut field_set,
-                                    field_name,
-                                    field.ty.clone(),
-                                    indices,
-                                    et.indirect,
-                                    et.multiples,
-                                );
                             }
 
                             // Collect embedded fields for next depth search
@@ -242,18 +205,6 @@ impl<'a> Lookup<'a> {
                                 et.indirect,
                             ));
                         }
-
-                        // Add all methods to method_set
-                        for method in &full_methods.methods {
-                            let indices = et.indices.clone();
-                            add_to_method_set(
-                                &mut method_set,
-                                method,
-                                indices,
-                                et.indirect,
-                                et.multiples,
-                            );
-                        }
                     }
                     _ => {}
                 }
@@ -265,7 +216,7 @@ impl<'a> Lookup<'a> {
             }
 
             // Consolidate multiples for next depth
-            current = consolidate_multiples(next, self);
+            current = consolidate_multiples(next);
         }
 
         LookupResult::NotFound
@@ -306,14 +257,10 @@ impl<'a> Lookup<'a> {
                         let info = &self.named_types[idx];
 
                         // Add methods from this named type
-                        for (i, method) in info.methods.iter().enumerate() {
-                            let mut indices = et.indices.clone();
-                            indices.push(i);
+                        for method in &info.methods {
                             add_to_method_set(
                                 &mut depth_methods,
                                 method,
-                                indices,
-                                et.indirect,
                                 et.multiples,
                             );
                         }
@@ -352,14 +299,10 @@ impl<'a> Lookup<'a> {
                         }
                     }
                     Type::Interface(iface) => {
-                        for (i, method) in iface.methods.iter().enumerate() {
-                            let mut indices = et.indices.clone();
-                            indices.push(i);
+                        for method in &iface.methods {
                             add_to_method_set(
                                 &mut depth_methods,
                                 method,
-                                indices,
-                                true, // interface methods are always indirect
                                 et.multiples,
                             );
                         }
@@ -388,14 +331,14 @@ impl<'a> Lookup<'a> {
                 }
             }
 
-            current = consolidate_multiples(next, self);
+            current = consolidate_multiples(next);
         }
 
         // Convert to MethodSet, excluding collisions
         let methods: Vec<Method> = result
             .into_iter()
             .filter_map(|(name, entry)| match entry {
-                MethodOrCollision::Method(sig, _, _) => Some(Method { name, sig }),
+                MethodOrCollision::Method(sig) => Some(Method { name, sig }),
                 MethodOrCollision::Collision => None,
             })
             .collect();
@@ -499,36 +442,10 @@ impl<'a> Lookup<'a> {
     }
 }
 
-/// Adds a field to the field set, handling collisions.
-fn add_to_field_set(
-    set: &mut HashMap<Symbol, FieldOrCollision>,
-    name: Symbol,
-    ty: Type,
-    indices: Vec<usize>,
-    indirect: bool,
-    multiples: bool,
-) {
-    if multiples {
-        set.insert(name, FieldOrCollision::Collision);
-        return;
-    }
-
-    match set.entry(name) {
-        std::collections::hash_map::Entry::Occupied(mut e) => {
-            e.insert(FieldOrCollision::Collision);
-        }
-        std::collections::hash_map::Entry::Vacant(e) => {
-            e.insert(FieldOrCollision::Field(ty, indices, indirect));
-        }
-    }
-}
-
 /// Adds a method to the method set, handling collisions.
 fn add_to_method_set(
     set: &mut HashMap<Symbol, MethodOrCollision>,
     method: &Method,
-    indices: Vec<usize>,
-    indirect: bool,
     multiples: bool,
 ) {
     if multiples {
@@ -541,13 +458,13 @@ fn add_to_method_set(
             e.insert(MethodOrCollision::Collision);
         }
         std::collections::hash_map::Entry::Vacant(e) => {
-            e.insert(MethodOrCollision::Method(method.sig.clone(), indices, indirect));
+            e.insert(MethodOrCollision::Method(method.sig.clone()));
         }
     }
 }
 
 /// Consolidates multiple embedded types with the same underlying type.
-fn consolidate_multiples(list: Vec<EmbeddedType>, lookup: &Lookup) -> Vec<EmbeddedType> {
+fn consolidate_multiples(list: Vec<EmbeddedType>) -> Vec<EmbeddedType> {
     if list.is_empty() {
         return vec![];
     }

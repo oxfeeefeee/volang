@@ -5,7 +5,6 @@
 //! - LocalVfs: Local packages (relative paths)
 //! - ModVfs: External module dependencies
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -85,15 +84,11 @@ pub trait PackageSource: Send + Sync {
 /// Standard library VFS.
 pub struct StdVfs {
     root: PathBuf,
-    cache: HashMap<String, VfsPackage>,
 }
 
 impl StdVfs {
     pub fn new(root: PathBuf) -> Self {
-        Self {
-            root,
-            cache: HashMap::new(),
-        }
+        Self { root }
     }
     
     fn load_package(&self, import_path: &str) -> Option<VfsPackage> {

@@ -3,7 +3,7 @@
 use crate::instruction::Instruction;
 use crate::types::TypeMeta;
 use gox_common::ValueKind;
-use std::io::{Read, Write, Cursor};
+use std::io::{Read, Cursor};
 
 /// Magic bytes for bytecode files.
 pub const MAGIC: [u8; 4] = *b"GOXB";

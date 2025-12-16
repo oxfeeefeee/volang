@@ -19,32 +19,6 @@ pub fn infer_type_tag(ctx: &CodegenContext, _fctx: &FuncContext, expr: &Expr) ->
         .map_or(TypeTag::Int64, |ty| type_to_tag(&ty))
 }
 
-/// Convert TypeExpr to FFI TypeTag.
-fn type_expr_to_tag(ctx: &CodegenContext, ty: &gox_syntax::ast::TypeExpr) -> TypeTag {
-    use gox_syntax::ast::TypeExprKind;
-    match &ty.kind {
-        TypeExprKind::Ident(ident) => {
-            let name = ctx.interner.resolve(ident.symbol).unwrap_or("");
-            match name {
-                "string" => TypeTag::String,
-                "bool" => TypeTag::Bool,
-                "int" | "int64" => TypeTag::Int64,
-                "int32" => TypeTag::Int32,
-                "int16" => TypeTag::Int16,
-                "int8" => TypeTag::Int8,
-                "uint" | "uint64" => TypeTag::Uint64,
-                "uint32" => TypeTag::Uint32,
-                "uint16" => TypeTag::Uint16,
-                "uint8" | "byte" => TypeTag::Uint8,
-                "float64" => TypeTag::Float64,
-                "float32" => TypeTag::Float32,
-                _ => TypeTag::Int64,
-            }
-        }
-        _ => TypeTag::Int64,
-    }
-}
-
 /// Convert analysis Type to FFI TypeTag.
 fn type_to_tag(ty: &Type) -> TypeTag {
     use gox_analysis::types::UntypedKind;
@@ -1007,42 +981,6 @@ fn compile_native_call(
     Ok(arg_start)
 }
 
-/// Get TypeTag for an expression based on literal type or variable kind.
-/// This is used for native calls that need type information.
-fn get_type_tag(ctx: &CodegenContext, expr: &gox_syntax::ast::Expr) -> u8 {
-    use gox_syntax::ast::ExprKind;
-    use gox_vm::ffi::TypeTag;
-
-    match &expr.kind {
-        ExprKind::IntLit(_) => TypeTag::Int as u8,
-        ExprKind::FloatLit(_) => TypeTag::Float64 as u8,
-        ExprKind::StringLit(_) => TypeTag::String as u8,
-        ExprKind::Ident(ident) => {
-            let name = ctx.interner.resolve(ident.symbol).unwrap_or("");
-            if name == "true" || name == "false" {
-                TypeTag::Bool as u8
-            } else if name == "nil" {
-                TypeTag::Nil as u8
-            } else {
-                // Default to Int for unknown identifiers
-                // The actual type tag will be inferred by infer_type_tag_with_fctx if called
-                TypeTag::Int as u8
-            }
-        }
-        ExprKind::Binary(_) => {
-            // For binary expressions, check if it's a string operation
-            // We can't check without fctx, so default to Int
-            TypeTag::Int as u8
-        }
-        ExprKind::Call(_) | ExprKind::Selector(_) => {
-            // For function calls, we can't determine type without more context
-            // Default to Int - this will be fixed by using infer_type_tag_with_fctx
-            TypeTag::Int as u8
-        }
-        _ => TypeTag::Int as u8,
-    }
-}
-
 fn compile_index(
     ctx: &mut CodegenContext,
     fctx: &mut FuncContext,
@@ -1587,46 +1525,6 @@ pub fn get_type_slot_count(ctx: &CodegenContext, ty: &gox_analysis::Type) -> u16
             1
         }
         _ => 1,
-    }
-}
-
-/// Find the full path of field indices to access a field (including through embedded fields)
-/// Returns a vector of field indices representing the path to the target field
-fn find_field_path(
-    ctx: &CodegenContext,
-    ty: &gox_analysis::Type,
-    field_name: gox_common::Symbol,
-) -> Option<Vec<u16>> {
-    use gox_analysis::Type;
-
-    match ty {
-        Type::Struct(s) | Type::Obx(s) => {
-            // First, look for direct field
-            for (idx, field) in s.fields.iter().enumerate() {
-                if field.name == Some(field_name) {
-                    return Some(vec![idx as u16]);
-                }
-            }
-
-            // Then, search in embedded fields
-            for (idx, field) in s.fields.iter().enumerate() {
-                if field.embedded {
-                    if let Some(mut path) = find_field_path(ctx, &field.ty, field_name) {
-                        // Prepend the embedded field's index
-                        path.insert(0, idx as u16);
-                        return Some(path);
-                    }
-                }
-            }
-            None
-        }
-        Type::Named(id) => {
-            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
-                return find_field_path(ctx, &named.underlying, field_name);
-            }
-            None
-        }
-        _ => None,
     }
 }
 
@@ -2332,7 +2230,7 @@ fn compile_conversion_expr(
                     // Named type conversion - use existing logic
                     if let Some(info) = ctx.get_named_type_info(type_ident.symbol) {
                         match &info.underlying {
-                            Type::Interface(iface) => {
+                            Type::Interface(_) => {
                                 let dst = fctx.regs.alloc(1);
                                 let type_tag = infer_type_tag(ctx, fctx, &conv.expr);
                                 fctx.emit(Opcode::BoxInterface, dst, type_tag as u16, src);

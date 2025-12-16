@@ -804,10 +804,7 @@ impl Vm {
                         // Directly sent to a waiting receiver
                         // Store value in receiver's register (they're blocked on ChanRecv)
                         // and unblock them
-                        if let Some(recv_fiber) = self.scheduler.get_mut(receiver_id) {
-                            // The receiver is waiting with their dest register info
-                            // For simplicity, we'll use a different approach
-                        }
+                        // Note: The receiver fiber will handle picking up the value
                         self.scheduler.unblock(receiver_id);
                     }
                     Ok(None) => {

@@ -198,14 +198,12 @@ fn cmd_build(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mod_file_path = project_dir.join("gox.mod");
 
     // Check if gox.mod exists (optional for simple projects)
-    let module_name = if mod_file_path.exists() {
+    if mod_file_path.exists() {
         let mod_file = ModFile::parse_file(&mod_file_path)?;
         println!("Building module: {}", mod_file.module);
-        mod_file.module
     } else {
         println!("Building project in: {}", project_dir.display());
-        "main".to_string()
-    };
+    }
 
     // Collect all .gox files
     let fs = RealFs;

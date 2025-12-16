@@ -1,6 +1,5 @@
 //! Native implementations for the rand package.
 
-use gox_vm::gc::Gc;
 use gox_vm::native::{NativeCtx, NativeResult, NativeRegistry};
 use gox_vm::objects::{array, slice};
 use gox_vm::types::builtin;

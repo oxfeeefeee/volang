@@ -1,7 +1,6 @@
 //! Native implementations for the os package.
 
-use gox_vm::gc::GcRef;
-use gox_vm::native::{NativeCtx, NativeResult, NativeRegistry};
+use gox_vm::native::{NativeCtx, NativeRegistry, NativeResult};
 use gox_vm::objects::{array, slice, string};
 use gox_vm::types::builtin;
 
@@ -12,17 +11,17 @@ pub fn register(registry: &mut NativeRegistry) {
     registry.register("os.Unsetenv", native_unsetenv);
     registry.register("os.Environ", native_environ);
     registry.register("os.LookupEnv", native_lookup_env);
-    
+
     // Process
     registry.register("os.Exit", native_exit);
     registry.register("os.Getpid", native_getpid);
     registry.register("os.Getuid", native_getuid);
     registry.register("os.Getgid", native_getgid);
-    
+
     // Working directory
     registry.register("os.Getwd", native_getwd);
     registry.register("os.Chdir", native_chdir);
-    
+
     // Hostname
     registry.register("os.Hostname", native_hostname);
 }
@@ -56,7 +55,7 @@ fn native_environ(ctx: &mut NativeCtx) -> NativeResult {
     let env_vars: Vec<String> = std::env::vars()
         .map(|(k, v)| format!("{}={}", k, v))
         .collect();
-    
+
     let gc = ctx.gc();
     let arr = array::create(gc, builtin::ARRAY, builtin::STRING, 1, env_vars.len());
     for (i, s) in env_vars.iter().enumerate() {
@@ -143,4 +142,3 @@ fn native_hostname(ctx: &mut NativeCtx) -> NativeResult {
     ctx.ret_nil(1); // nil error
     NativeResult::Ok(2)
 }
-
