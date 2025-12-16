@@ -60,10 +60,14 @@ impl ImportPath {
     /// Check if import path is a standard library package.
     /// Known stdlib packages from the spec.
     fn is_stdlib(path: &str) -> bool {
-        matches!(path,
+        // Check if it's a known stdlib package or under a stdlib parent
+        let base = path.split('/').next().unwrap_or(path);
+        matches!(base,
             "fmt" | "os" | "io" | "strings" | "strconv" | "math" | "time" |
             "sync" | "context" | "errors" | "log" | "sort" | "bytes" | "bufio" |
-            "encoding" | "net" | "path" | "regexp" | "reflect" | "runtime" | "testing"
+            "encoding" | "net" | "path" | "regexp" | "reflect" | "runtime" | "testing" |
+            "unicode" | "rand" | "crypto" | "hash" | "compress" | "archive" | "image" |
+            "html" | "text" | "database" | "debug" | "go" | "plugin" | "syscall" | "unsafe"
         )
     }
 }
