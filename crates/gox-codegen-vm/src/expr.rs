@@ -571,21 +571,27 @@ fn compile_call(
             // Then try package.Function calls
             let pkg = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
             let full_name = format!("{}.{}", pkg, method);
+            eprintln!("DEBUG codegen: trying pkg call: pkg={}, method={}, full_name={}", pkg, method, full_name);
 
             // Try cross-package function
             if let Some(func_idx) = ctx.lookup_cross_pkg_func(&full_name) {
+                eprintln!("DEBUG codegen: {} found as cross-pkg func idx={}", full_name, func_idx);
                 return compile_func_call(ctx, fctx, func_idx, call);
             }
 
             // Try native functions (already registered or register now)
             if let Some(native_idx) = ctx.lookup_native(&full_name) {
+                eprintln!("DEBUG codegen: {} found as already-registered native idx={}", full_name, native_idx);
                 return compile_native_call(ctx, fctx, native_idx, call);
             }
 
             // Check if this is a native function from imported package
             if ctx.is_native_func(pkg_ident.symbol, sel.sel.symbol) {
+                eprintln!("DEBUG codegen: registering native call {}", full_name);
                 let native_idx = ctx.register_native(&full_name, 1, 1);
                 return compile_native_call(ctx, fctx, native_idx, call);
+            } else {
+                eprintln!("DEBUG codegen: {} is NOT a native func", full_name);
             }
         }
 

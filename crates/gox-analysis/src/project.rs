@@ -206,7 +206,7 @@ pub fn analyze_project(file_set: FileSet, vfs: &Vfs) -> Result<Project, ProjectE
     
     for (init_order, pkg_name) in sorted_names.iter().enumerate() {
         let parsed = parsed_packages.remove(pkg_name).unwrap();
-        let typed = typecheck_package(parsed, &package_exports, &package_exported_types, &interner, init_order)?;
+        let typed = typecheck_package(parsed, &package_exports, &package_exported_types, &mut interner, init_order)?;
         package_exports.insert(pkg_name.clone(), typed.exports.clone());
         package_exported_types.insert(pkg_name.clone(), typed.exported_types.clone());
         typed_packages.push(typed);
@@ -412,7 +412,7 @@ fn resolve_imports(packages: &mut HashMap<String, ParsedPackage>) -> Result<(), 
 fn load_stdlib_packages(
     packages: &mut HashMap<String, ParsedPackage>,
     vfs: &Vfs,
-    _interner: &mut SymbolInterner,
+    shared_interner: &mut SymbolInterner,
 ) -> Result<(), ProjectError> {
     // Collect all stdlib imports
     let mut stdlib_imports: HashSet<String> = HashSet::new();
@@ -431,16 +431,21 @@ fn load_stdlib_packages(
         }
         
         if let Some(vfs_pkg) = vfs.resolve(&pkg_name) {
-            let mut pkg_interner = SymbolInterner::new();
             let mut files = Vec::new();
             let file_id = FileId::new(0); // Dummy file ID for stdlib
             
+            // Use shared interner to ensure symbols are consistent across packages
+            let mut current_interner = std::mem::take(shared_interner);
+            
             for vfs_file in &vfs_pkg.files {
                 let content = &vfs_file.content;
-                let (ast, _diag, new_interner) = parse_with_interner(file_id, content, pkg_interner);
-                pkg_interner = new_interner;
+                let (ast, _diag, new_interner) = parse_with_interner(file_id, content, current_interner);
+                current_interner = new_interner;
                 files.push((vfs_file.path.clone(), ast));
             }
+            
+            // Put the interner back
+            *shared_interner = current_interner;
             
             if !files.is_empty() {
                 let parsed = ParsedPackage {
@@ -545,7 +550,7 @@ fn typecheck_package(
     parsed: ParsedPackage,
     package_exports: &HashMap<String, HashMap<String, ExportedSymbol>>,
     package_exported_types: &HashMap<String, HashMap<String, ExportedType>>,
-    interner: &SymbolInterner,
+    interner: &mut SymbolInterner,
     init_order: usize,
 ) -> Result<TypedPackage, ProjectError> {
     if parsed.files.is_empty() {
@@ -565,6 +570,15 @@ fn typecheck_package(
     
     // Collect all ASTs
     let file_refs: Vec<&ast::File> = parsed.files.iter().map(|(_, ast)| ast).collect();
+    
+    // Pre-intern all imported package names so they can be found during type checking
+    // This is necessary because import paths are string literals, not identifiers
+    for import in &parsed.imports {
+        let local_name = import.alias.as_ref().unwrap_or(&import.package_name);
+        if !local_name.is_empty() {
+            interner.intern(local_name);
+        }
+    }
     
     // Type check all files together with the shared interner
     // Pass imported package exports for cross-package symbol resolution

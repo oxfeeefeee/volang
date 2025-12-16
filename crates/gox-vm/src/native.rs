@@ -205,14 +205,7 @@ impl<'a> NativeCtx<'a> {
     pub fn format_arg(&self, idx: usize) -> String {
         match self.arg_type(idx) {
             TypeTag::Nil => "nil".into(),
-            TypeTag::Bool => {
-                if self.arg_bool(idx) {
-                    "true"
-                } else {
-                    "false"
-                }
-                .into()
-            }
+            TypeTag::Bool => if self.arg_bool(idx) { "true" } else { "false" }.into(),
             TypeTag::Int
             | TypeTag::Int8
             | TypeTag::Int16
@@ -242,7 +235,7 @@ impl<'a> NativeCtx<'a> {
         if self.arg_count == 0 {
             return String::new();
         }
-        
+
         let mut output = self.format_arg(0);
         for i in 1..self.arg_count {
             output.push(' ');
@@ -312,10 +305,9 @@ mod tests {
 
         let mut registry = NativeRegistry::new();
         registry.register("test.Dummy", dummy);
-        
+
         assert!(registry.get("test.Dummy").is_some());
         assert!(registry.get("nonexistent").is_none());
         assert_eq!(registry.len(), 1);
     }
 }
-

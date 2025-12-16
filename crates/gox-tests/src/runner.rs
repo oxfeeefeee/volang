@@ -181,41 +181,57 @@ pub fn run_single_file(path: &Path) -> TestResult {
         return TestResult::pass(&path_str);
     }
     
-    // 2. Type check (only if not parser-only test)
-    let mut typecheck_diag = DiagnosticSink::new();
-    let _typecheck_result = gox_analysis::typecheck_file(&file, &interner, &mut typecheck_diag);
+    // Check if source has imports - if so, skip single-file typecheck
+    // and go directly to project compilation which handles imports
+    let has_imports = test.source.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.starts_with("import ")
+            || trimmed.starts_with("import\"")
+            || trimmed.starts_with("import(")
+    });
     
-    // Combine parse errors and typecheck errors for checking
-    let mut all_errors = format_diagnostics(&parse_diag);
-    let typecheck_errors = format_diagnostics(&typecheck_diag);
-    if !all_errors.is_empty() && !typecheck_errors.is_empty() {
-        all_errors.push('\n');
-    }
-    all_errors.push_str(&typecheck_errors);
-    
-    // Check typecheck section if present
-    if let Some(expected) = &test.typecheck {
-        let actual = all_errors;
-        if expected.trim() == "OK" {
-            if parse_diag.has_errors() || typecheck_diag.has_errors() {
-                return TestResult::fail(&path_str, format!(
-                    "unexpected error: {}", actual
-                ));
-            }
-        } else {
-            if !errors_match(&actual, expected) {
-                return TestResult::fail(&path_str, format!(
-                    "typecheck mismatch\nExpected:\n{}\nActual:\n{}", expected, actual
-                ));
-            }
-            // If expecting errors, don't try to run
-            return TestResult::pass(&path_str);
+    // 2. Type check (only if not parser-only test and no imports)
+    if !has_imports {
+        let mut typecheck_diag = DiagnosticSink::new();
+        let _typecheck_result = gox_analysis::typecheck_file(&file, &interner, &mut typecheck_diag);
+        
+        // Combine parse errors and typecheck errors for checking
+        let mut all_errors = format_diagnostics(&parse_diag);
+        let typecheck_errors = format_diagnostics(&typecheck_diag);
+        if !all_errors.is_empty() && !typecheck_errors.is_empty() {
+            all_errors.push('\n');
         }
-        // Typecheck-only test done
-        return TestResult::pass(&path_str);
-    } else if parse_diag.has_errors() || typecheck_diag.has_errors() {
+        all_errors.push_str(&typecheck_errors);
+        
+        // Check typecheck section if present
+        if let Some(expected) = &test.typecheck {
+            let actual = all_errors;
+            if expected.trim() == "OK" {
+                if parse_diag.has_errors() || typecheck_diag.has_errors() {
+                    return TestResult::fail(&path_str, format!(
+                        "unexpected error: {}", actual
+                    ));
+                }
+            } else {
+                if !errors_match(&actual, expected) {
+                    return TestResult::fail(&path_str, format!(
+                        "typecheck mismatch\nExpected:\n{}\nActual:\n{}", expected, actual
+                    ));
+                }
+                // If expecting errors, don't try to run
+                return TestResult::pass(&path_str);
+            }
+            // Typecheck-only test done
+            return TestResult::pass(&path_str);
+        } else if parse_diag.has_errors() || typecheck_diag.has_errors() {
+            return TestResult::fail(&path_str, format!(
+                "error: {}", all_errors
+            ));
+        }
+    } else if parse_diag.has_errors() {
+        // Still report parse errors even for import tests
         return TestResult::fail(&path_str, format!(
-            "error: {}", all_errors
+            "parse error: {}", format_diagnostics(&parse_diag)
         ));
     }
     
@@ -315,6 +331,27 @@ pub fn run_multi_file(dir: &Path) -> TestResult {
     }
 }
 
+/// Get the stdlib root path (relative to workspace root).
+fn get_stdlib_root() -> PathBuf {
+    // Try CARGO_MANIFEST_DIR first (available during cargo test)
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        // manifest_dir is crates/gox-tests, go up to workspace root
+        let workspace = PathBuf::from(manifest_dir)
+            .parent().unwrap()
+            .parent().unwrap()
+            .to_path_buf();
+        return workspace.join("stdlib");
+    }
+    
+    // Fallback: try GOX_STD environment variable
+    if let Ok(std_root) = std::env::var("GOX_STD") {
+        return PathBuf::from(std_root);
+    }
+    
+    // Last resort: current directory + stdlib
+    PathBuf::from("stdlib")
+}
+
 /// Compile a project directory, returns the module.
 fn compile_project_dir(dir: &Path) -> Result<gox_vm::Module, String> {
     // Collect source files
@@ -322,8 +359,13 @@ fn compile_project_dir(dir: &Path) -> Result<gox_vm::Module, String> {
     let file_set = FileSet::collect(&real_fs, dir)
         .map_err(|e| format!("collect error: {}", e))?;
     
-    // Analyze
-    let vfs_config = VfsConfig::from_env(dir.to_path_buf());
+    // Analyze with correct stdlib path
+    let std_root = get_stdlib_root();
+    let mod_root = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join(".gox/mod"))
+        .unwrap_or_else(|_| dir.join(".gox/mod"));
+    
+    let vfs_config = VfsConfig::new(std_root, dir.to_path_buf(), mod_root);
     let analysis_vfs = vfs_config.to_vfs();
     let project = analyze_project(file_set, &analysis_vfs)
         .map_err(|e| format!("analysis error: {}", e))?;
@@ -335,7 +377,11 @@ fn compile_project_dir(dir: &Path) -> Result<gox_vm::Module, String> {
 
 /// Run a compiled module.
 fn run_module(module: gox_vm::Module) -> Result<(), String> {
-    let mut vm = gox_vm::Vm::new();
+    // Create native function registry with stdlib natives
+    let mut natives = gox_vm::NativeRegistry::new();
+    gox_runtime_vm::natives::register_all(&mut natives);
+    
+    let mut vm = gox_vm::Vm::with_natives(natives);
     vm.load_module(module);
     
     match vm.run() {

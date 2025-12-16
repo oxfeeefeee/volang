@@ -500,6 +500,7 @@ impl Vm {
                     }
                 };
                 
+                
                 // Pause GC during native call
                 self.gc.pause_gc();
                 

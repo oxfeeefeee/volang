@@ -80,6 +80,10 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         }
     }
     
+    // Shared indices across all packages (initialize early for native func registration)
+    let mut native_indices: HashMap<String, u32> = HashMap::new();
+    let mut const_indices: HashMap<String, u16> = HashMap::new();
+    
     // Second pass: collect all function declarations from ALL packages
     let mut pkg_func_indices: Vec<HashMap<Symbol, u32>> = Vec::new();
     
@@ -96,6 +100,16 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
             for decl in &file.decls {
                 if let Decl::Func(func) = decl {
                     let func_name = project.interner.resolve(func.name.symbol).unwrap_or("");
+                    
+                    // Handle native functions separately - register them in native_indices
+                    if func.is_native {
+                        // Register native function with qualified name
+                        let qualified_name = format!("{}.{}", pkg.name, func_name);
+                        let native_idx = module.add_native(&qualified_name, 1, 1);
+                        native_indices.insert(qualified_name, native_idx);
+                        continue; // Don't add to regular functions
+                    }
+                    
                     let idx = module.functions.len() as u32;
                     
                     // Track interface parameters
@@ -162,10 +176,6 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         module.functions.push(FunctionDef::new(&format!("$var_init_{}", pkg.name)));
     }
     
-    // Shared indices across all packages
-    let mut native_indices: HashMap<String, u32> = HashMap::new();
-    let mut const_indices: HashMap<String, u16> = HashMap::new();
-    
     // Collect cross-package constants: "pkg.ConstName" -> const_pool_idx
     for pkg in &project.packages {
         let pkg_consts = collect_const_values(&pkg.types.scope, &project.interner, &mut module);
@@ -207,6 +217,11 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         for file in &pkg.files {
             for decl in &file.decls {
                 if let Decl::Func(func) = decl {
+                    // Skip native functions - they have no body to compile
+                    if func.is_native {
+                        continue;
+                    }
+                    
                     let mut ctx = context::CodegenContext::new(file, &pkg.types, &project.interner);
                     ctx.func_indices = func_indices.clone();
                     ctx.cross_pkg_funcs = cross_pkg_funcs.clone();
@@ -243,7 +258,12 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     native_indices = ctx.native_indices;
                     const_indices = ctx.const_indices;
                     module.constants = ctx.module.constants;
-                    module.natives = ctx.module.natives;
+                    // Merge natives from ctx (don't replace - we may have pre-registered natives)
+                    for native in ctx.module.natives {
+                        if !module.natives.iter().any(|n| n.name == native.name) {
+                            module.natives.push(native);
+                        }
+                    }
                     // Merge back any closure functions
                     for closure_func in ctx.module.functions {
                         module.functions.push(closure_func);

@@ -377,6 +377,7 @@ dependencies = [
  "gox-codegen-vm",
  "gox-common",
  "gox-module",
+ "gox-runtime-vm",
  "gox-syntax",
  "gox-vm",
 ]
