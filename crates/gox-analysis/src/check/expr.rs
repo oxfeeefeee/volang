@@ -362,11 +362,15 @@ impl<'a> TypeChecker<'a> {
                 if b.is_integer() && to.is_integer() {
                     return true;
                 }
+                // int/rune -> string (converts to UTF-8 character)
+                if b.is_integer() && to == BasicType::String {
+                    return true;
+                }
                 b == to
             }
             Type::Untyped(k) => match k {
                 UntypedKind::Bool => to == BasicType::Bool,
-                UntypedKind::Int | UntypedKind::Rune => to.is_integer() || to.is_float(),
+                UntypedKind::Int | UntypedKind::Rune => to.is_integer() || to.is_float() || to == BasicType::String,
                 UntypedKind::Float => to.is_float(),
                 UntypedKind::String => to == BasicType::String,
             },

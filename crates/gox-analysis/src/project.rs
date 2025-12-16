@@ -580,9 +580,21 @@ fn typecheck_package(
     
     if diag.has_errors() {
         let first_path = &parsed.files[0].0;
-        return Err(ProjectError::TypeCheck(format!(
-            "Type errors in package {:?}", first_path.parent().unwrap_or(first_path.as_path())
-        )));
+        let mut error_details = format!(
+            "Type errors in package {:?}:\n", first_path.parent().unwrap_or(first_path.as_path())
+        );
+        for d in diag.iter() {
+            let span_info = d.labels.first()
+                .map(|l| format!(" (at {}:{})", l.span.start.0, l.span.end.0))
+                .unwrap_or_default();
+            error_details.push_str(&format!(
+                "  [E{:04}] {}{}\n",
+                d.code.unwrap_or(0),
+                d.message,
+                span_info
+            ));
+        }
+        return Err(ProjectError::TypeCheck(error_details));
     }
     
     // Collect exported symbols (capitalized names)

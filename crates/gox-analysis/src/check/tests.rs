@@ -437,4 +437,3 @@ fn test_check_chained_comparison() {
     let ty = check_expr_type("package main", "1 < 2 && 2 < 3 && 3 < 4");
     assert!(matches!(ty, Type::Untyped(UntypedKind::Bool)));
 }
-
