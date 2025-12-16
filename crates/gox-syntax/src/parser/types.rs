@@ -13,7 +13,16 @@ impl<'a> Parser<'a> {
         let kind = match self.current.kind {
             TokenKind::Ident => {
                 let ident = self.parse_ident()?;
-                TypeExprKind::Ident(ident)
+                // Check for qualified type: pkg.Type
+                if self.eat(TokenKind::Dot) {
+                    let sel = self.parse_ident()?;
+                    TypeExprKind::Selector(Box::new(SelectorTypeExpr { 
+                        pkg: ident, 
+                        sel 
+                    }))
+                } else {
+                    TypeExprKind::Ident(ident)
+                }
             }
             TokenKind::LBracket => {
                 self.advance();

@@ -235,6 +235,7 @@ impl<'src> Lexer<'src> {
             '}' => { self.advance(); TokenKind::RBrace }
             ',' => { self.advance(); TokenKind::Comma }
             ';' => { self.advance(); TokenKind::Semicolon }
+            '@' => { self.advance(); TokenKind::At }
 
             // Dot or ellipsis
             '.' => {

@@ -10,7 +10,7 @@ mod expr;
 mod types;
 
 use gox_common::source::FileId;
-use gox_common::span::Span;
+use gox_common::span::{BytePos, Span};
 use gox_common::symbol::{Ident, Symbol, SymbolInterner};
 use gox_common::diagnostics::DiagnosticSink;
 
@@ -116,7 +116,8 @@ impl<'a> Parser<'a> {
         // Parse imports
         let mut imports = Vec::new();
         while self.at(TokenKind::Import) {
-            imports.push(self.parse_import_decl()?);
+            let parsed = self.parse_import_or_group()?;
+            imports.extend(parsed);
         }
         
         // Parse top-level declarations
@@ -140,13 +141,73 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_import_decl(&mut self) -> ParseResult<ImportDecl> {
+    /// Parse import or grouped imports: `import "path"` or `import ( ... )`
+    fn parse_import_or_group(&mut self) -> ParseResult<Vec<ImportDecl>> {
         let start = self.current.span.start;
         self.expect(TokenKind::Import)?;
+        
+        // Check for grouped imports: import ( ... )
+        if self.eat(TokenKind::LParen) {
+            let mut imports = Vec::new();
+            while !self.at(TokenKind::RParen) && !self.at_eof() {
+                imports.push(self.parse_import_spec(start, false)?);
+            }
+            self.expect(TokenKind::RParen)?;
+            self.expect_semi();
+            Ok(imports)
+        } else {
+            // Single import - requires semicolon
+            let import = self.parse_import_spec(start, true)?;
+            Ok(vec![import])
+        }
+    }
+
+    /// Parse a single import spec (path with optional alias)
+    /// If require_semi is true, expect a semicolon after the import path
+    fn parse_import_spec(&mut self, start: BytePos, require_semi: bool) -> ParseResult<ImportDecl> {
+        use crate::ast::ImportKind;
+        
+        // Check for optional alias (identifier before path)
+        // Supported forms:
+        //   import "path"           - standard import
+        //   import @"alias"         - external import  
+        //   import name "path"      - standard import with alias
+        //   import name @"alias"    - external import with alias
+        //   import . "path"         - dot import
+        //   import _ "path"         - blank import
+        let alias = if self.at(TokenKind::Ident) && (self.peek_is(TokenKind::StringLit) || self.peek_is(TokenKind::RawStringLit) || self.peek_is(TokenKind::At)) {
+            Some(self.parse_ident()?)
+        } else if self.at(TokenKind::Dot) && (self.peek_is(TokenKind::StringLit) || self.peek_is(TokenKind::RawStringLit) || self.peek_is(TokenKind::At)) {
+            // Dot import: import . "path"
+            let dot_span = self.current.span;
+            self.advance();
+            let dot_sym = self.interner.intern(".");
+            Some(Ident { symbol: dot_sym, span: dot_span })
+        } else {
+            None
+        };
+        
+        // Check for @ (external import marker)
+        let kind = if self.eat(TokenKind::At) {
+            ImportKind::External
+        } else {
+            ImportKind::Standard
+        };
+        
         let path = self.parse_string_lit()?;
-        self.expect_semi();
+        
+        // Handle semicolon based on context
+        if require_semi {
+            self.expect_semi();
+        } else {
+            // In grouped imports, semicolons are inserted by lexer or optional
+            self.eat(TokenKind::Semicolon);
+        }
+        
         Ok(ImportDecl {
+            kind,
             path,
+            alias,
             span: Span::new(start, self.current.span.start),
         })
     }

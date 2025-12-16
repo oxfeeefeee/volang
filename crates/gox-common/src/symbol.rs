@@ -59,6 +59,7 @@ impl fmt::Debug for Symbol {
 ///
 /// This is the central registry for all interned strings. It ensures that
 /// each unique string is stored only once, and provides fast lookup.
+#[derive(Clone)]
 pub struct SymbolInterner {
     interner: StringInterner<StringBackend<DefaultSymbol>>,
 }

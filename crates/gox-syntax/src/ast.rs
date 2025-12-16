@@ -19,11 +19,24 @@ pub struct File {
     pub span: Span,
 }
 
+/// The kind of import (local/stdlib vs external).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportKind {
+    /// Standard library or local package: `import "fmt"`, `import "utils"`
+    Standard,
+    /// External dependency with @ marker: `import @"gin"`
+    External,
+}
+
 /// An import declaration.
 #[derive(Debug, Clone)]
 pub struct ImportDecl {
+    /// The kind of import (standard/local vs external).
+    pub kind: ImportKind,
     /// The import path (string literal).
     pub path: StringLit,
+    /// Optional alias for the import (e.g., `import m "math"`).
+    pub alias: Option<Ident>,
     /// The span of the import declaration.
     pub span: Span,
 }
@@ -223,6 +236,8 @@ pub struct TypeExpr {
 pub enum TypeExprKind {
     /// A named type: `int`, `MyType`
     Ident(Ident),
+    /// A qualified type: `pkg.Type`
+    Selector(Box<SelectorTypeExpr>),
     /// An array type: `[N]T`
     Array(Box<ArrayType>),
     /// A slice type: `[]T`
@@ -239,6 +254,15 @@ pub enum TypeExprKind {
     Obx(Box<StructType>),
     /// An interface type: `interface { ... }`
     Interface(Box<InterfaceType>),
+}
+
+/// A qualified type expression: `pkg.Type`
+#[derive(Debug, Clone)]
+pub struct SelectorTypeExpr {
+    /// The package identifier.
+    pub pkg: Ident,
+    /// The type name.
+    pub sel: Ident,
 }
 
 /// An array type.
@@ -1143,6 +1167,10 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
 pub fn walk_type_expr<V: Visitor>(visitor: &mut V, ty: &TypeExpr) {
     match &ty.kind {
         TypeExprKind::Ident(i) => visitor.visit_ident(i),
+        TypeExprKind::Selector(s) => {
+            visitor.visit_ident(&s.pkg);
+            visitor.visit_ident(&s.sel);
+        }
         TypeExprKind::Array(a) => {
             visitor.visit_expr(&a.len);
             visitor.visit_type_expr(&a.elem);

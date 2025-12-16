@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use gox_analysis::{Project, TypeCheckResult};
 use gox_common::{Symbol, SymbolInterner};
 use gox_syntax::ast::{Decl, File};
-use gox_vm::bytecode::{FunctionDef, Module};
+use gox_vm::bytecode::{Constant, FunctionDef, Module};
 use gox_vm::instruction::Opcode;
 
 pub use context::CodegenContext;
@@ -70,7 +70,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                 if let Decl::Var(var) = decl {
                     for spec in &var.specs {
                         for name in &spec.names {
-                            let var_name = pkg.interner.resolve(name.symbol).unwrap_or("");
+                            let var_name = project.interner.resolve(name.symbol).unwrap_or("");
                             let idx = module.add_global(var_name, 1);
                             global_indices.insert((pkg.name.clone(), name.symbol), idx);
                         }
@@ -95,7 +95,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         for file in &pkg.files {
             for decl in &file.decls {
                 if let Decl::Func(func) = decl {
-                    let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
+                    let func_name = project.interner.resolve(func.name.symbol).unwrap_or("");
                     let idx = module.functions.len() as u32;
                     
                     // Track interface parameters
@@ -117,7 +117,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     
                     // Register method with receiver type
                     if let Some(ref receiver) = func.receiver {
-                        let type_name = pkg.interner.resolve(receiver.ty.symbol).unwrap_or("");
+                        let type_name = project.interner.resolve(receiver.ty.symbol).unwrap_or("");
                         let method_key = format!("{}.{}", type_name, func_name);
                         method_table.insert(method_key, idx);
                         // Don't add methods to func_indices - they're looked up via method_table
@@ -166,6 +166,29 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     let mut native_indices: HashMap<String, u32> = HashMap::new();
     let mut const_indices: HashMap<String, u16> = HashMap::new();
     
+    // Collect cross-package constants: "pkg.ConstName" -> const_pool_idx
+    for pkg in &project.packages {
+        let pkg_consts = collect_const_values(&pkg.types.scope, &project.interner, &mut module);
+        for (sym, const_val) in &pkg_consts {
+            if let Some(name) = project.interner.resolve(*sym) {
+                // Only export capitalized constants
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    let cross_key = format!("{}.{}", pkg.name, name);
+                    match const_val {
+                        ConstValue::Int(v) => {
+                            let idx = module.constants.len() as u16;
+                            module.constants.push(Constant::Int(*v));
+                            const_indices.insert(cross_key, idx);
+                        }
+                        ConstValue::FloatIdx(idx) => {
+                            const_indices.insert(cross_key, *idx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     // Fourth pass: compile all function bodies
     for (pkg_idx, pkg) in project.packages.iter().enumerate() {
         let func_indices = &pkg_func_indices[pkg_idx];
@@ -179,12 +202,12 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
         
         // Collect constant values from scope for inlining
         // Float constants are added to the module's constant pool
-        let pkg_consts: HashMap<Symbol, ConstValue> = collect_const_values(&pkg.types.scope, &pkg.interner, &mut module);
+        let pkg_consts: HashMap<Symbol, ConstValue> = collect_const_values(&pkg.types.scope, &project.interner, &mut module);
         
         for file in &pkg.files {
             for decl in &file.decls {
                 if let Decl::Func(func) = decl {
-                    let mut ctx = context::CodegenContext::new(file, &pkg.types, &pkg.interner);
+                    let mut ctx = context::CodegenContext::new(file, &pkg.types, &project.interner);
                     ctx.func_indices = func_indices.clone();
                     ctx.cross_pkg_funcs = cross_pkg_funcs.clone();
                     ctx.global_indices = pkg_globals.clone();
@@ -199,11 +222,11 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     ctx.module.constants = module.constants.clone();
                     
                     let func_def = ctx.compile_func_body(func)?;
-                    let func_name = pkg.interner.resolve(func.name.symbol).unwrap_or("");
+                    let func_name = project.interner.resolve(func.name.symbol).unwrap_or("");
                     
                     // Look up function index - methods use method_table, init uses cross_pkg_funcs
                     let idx = if let Some(ref receiver) = func.receiver {
-                        let type_name = pkg.interner.resolve(receiver.ty.symbol).unwrap_or("");
+                        let type_name = project.interner.resolve(receiver.ty.symbol).unwrap_or("");
                         let method_key = format!("{}.{}", type_name, func_name);
                         *method_table.get(&method_key).unwrap() as usize
                     } else if func_name == "init" {
@@ -235,7 +258,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
             if let Some(&var_init_idx) = cross_pkg_funcs.get(&var_init_name) {
                 // Create a context for compiling var initializers
                 let first_file = pkg.files.first().unwrap();
-                let mut ctx = context::CodegenContext::new(first_file, &pkg.types, &pkg.interner);
+                let mut ctx = context::CodegenContext::new(first_file, &pkg.types, &project.interner);
                 ctx.func_indices = func_indices.clone();
                 ctx.cross_pkg_funcs = cross_pkg_funcs.clone();
                 ctx.global_indices = pkg_globals.clone();

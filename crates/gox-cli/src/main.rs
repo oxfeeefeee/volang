@@ -171,11 +171,19 @@ fn cmd_get(module_version: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("  (actual download not implemented yet)");
     }
 
+    // Generate alias from module path (use last path component)
+    // e.g., "github.com/gin-gonic/gin" -> "gin"
+    let alias = module
+        .rsplit('/')
+        .next()
+        .unwrap_or(module)
+        .to_string();
+
     // Add to gox.mod
-    mod_file.add_require(module.to_string(), version.to_string());
+    mod_file.add_require(alias.clone(), module.to_string(), version.to_string());
     mod_file.write_file(&mod_file_path)?;
 
-    println!("Added {}@{} to gox.mod", module, version);
+    println!("Added {} = {}@{} to gox.mod", alias, module, version);
     Ok(())
 }
 

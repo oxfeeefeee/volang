@@ -522,6 +522,7 @@ fn compile_call(
                 let local_reg = local.reg;
                 let local_type_sym = local.type_sym;
                 
+                
                 // Check if this is an interface variable - needs dynamic dispatch
                 if local_kind == crate::context::VarKind::Interface {
                     return compile_interface_method_call(ctx, fctx, local_reg, method, call);
@@ -540,6 +541,13 @@ fn compile_call(
                         if let Some((embedded_type_name, field_offset, func_idx)) = find_promoted_method(ctx, ty, method, 0) {
                             return compile_promoted_method_call(ctx, fctx, local_reg, &embedded_type_name, field_offset, func_idx, call);
                         }
+                    }
+                }
+                
+                // Fallback for cross-package types: search method_table by method name
+                for (key, &func_idx) in ctx.method_table.iter() {
+                    if key.ends_with(&format!(".{}", method)) {
+                        return compile_method_call(ctx, fctx, func_idx, local_reg, call);
                     }
                 }
             }
@@ -1069,6 +1077,23 @@ fn compile_selector(
     fctx: &mut FuncContext,
     sel: &SelectorExpr,
 ) -> Result<u16, CodegenError> {
+    // Check for cross-package constant/variable reference: pkg.Const or pkg.Var
+    if let ExprKind::Ident(pkg_ident) = &sel.expr.kind {
+        let pkg_name = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
+        let sel_name = ctx.interner.resolve(sel.sel.symbol).unwrap_or("");
+        
+        // Check if this is a package name (not a local variable)
+        if fctx.lookup_local(pkg_ident.symbol).is_none() && !ctx.func_indices.contains_key(&pkg_ident.symbol) {
+            // Try cross-package constant lookup
+            let cross_pkg_key = format!("{}.{}", pkg_name, sel_name);
+            if let Some(&const_idx) = ctx.const_indices.get(&cross_pkg_key) {
+                let dst = fctx.regs.alloc(1);
+                fctx.emit(Opcode::LoadConst, dst, const_idx, 0);
+                return Ok(dst);
+            }
+        }
+    }
+    
     let obj = compile_expr(ctx, fctx, &sel.expr)?;
     
     // Check for local type field access first
@@ -2269,7 +2294,41 @@ fn compile_type_conversion(
     // Compile the source expression
     let src = compile_expr(ctx, fctx, &call.args[0])?;
     
-    // Get target type info
+    // Check for basic type conversions first
+    if let Some(type_name) = ctx.interner.resolve(type_sym) {
+        match type_name {
+            "string" => {
+                // For int -> string, we pass through and let runtime handle it
+                // The println function can handle int values directly
+                return Ok(src);
+            }
+            "int" | "int64" => {
+                let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
+                if src_tag == gox_vm::ffi::TypeTag::Float64 {
+                    let dst = fctx.regs.alloc(1);
+                    fctx.emit(Opcode::F64ToI64, dst, src, 0);
+                    return Ok(dst);
+                }
+                return Ok(src);
+            }
+            "float64" => {
+                let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
+                if src_tag == gox_vm::ffi::TypeTag::Int64 {
+                    let dst = fctx.regs.alloc(1);
+                    fctx.emit(Opcode::I64ToF64, dst, src, 0);
+                    return Ok(dst);
+                }
+                return Ok(src);
+            }
+            "bool" | "int8" | "int16" | "int32" | "uint" | "uint8" | "uint16" | "uint32" | "uint64" | "byte" | "float32" | "rune" => {
+                // For these basic types, just pass through (same or compatible representation)
+                return Ok(src);
+            }
+            _ => {}
+        }
+    }
+    
+    // Get target type info for named types
     let type_info = ctx.get_named_type_info(type_sym);
     
     if let Some(info) = type_info {

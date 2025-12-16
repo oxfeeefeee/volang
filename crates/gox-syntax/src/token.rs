@@ -232,6 +232,8 @@ pub enum TokenKind {
     Dot,
     /// `...`
     Ellipsis,
+    /// `@` (used for external imports: @"alias")
+    At,
 }
 
 impl TokenKind {
@@ -477,6 +479,7 @@ impl TokenKind {
             TokenKind::Colon => ":",
             TokenKind::Dot => ".",
             TokenKind::Ellipsis => "...",
+            TokenKind::At => "@",
         }
     }
 }

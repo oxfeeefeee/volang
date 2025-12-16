@@ -132,6 +132,7 @@ impl<'a> Lookup<'a> {
 
                     if idx < self.named_types.len() {
                         let info = &self.named_types[idx];
+                        
 
                         // Look for method on this named type
                         if let Some((i, method)) = info.methods.iter().enumerate()

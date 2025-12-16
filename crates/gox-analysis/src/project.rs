@@ -22,12 +22,14 @@ use crate::{typecheck_files_with_imports, TypeCheckResult};
 /// Import declaration with resolved package reference.
 #[derive(Debug, Clone)]
 pub struct ResolvedImport {
-    /// The import path as written (e.g., "./math")
+    /// The import path as written (e.g., "./math" or "gin" for external)
     pub path: String,
     /// The resolved package name (e.g., "math")
     pub package_name: String,
     /// Optional alias (e.g., `import m "./math"` -> alias = "m")
     pub alias: Option<String>,
+    /// Whether this is an external import (@"alias" syntax)
+    pub is_external: bool,
 }
 
 /// Import path classification.
@@ -37,27 +39,32 @@ pub enum ImportPath {
     Local(PathBuf),
     /// "fmt", "os" - standard library package
     Stdlib(String),
-    /// "github.com/user/pkg" - external module (not yet supported)
-    External(String),
+    /// External module via @"alias" syntax (resolved from gox.mod)
+    External { alias: String, module: String, version: String },
 }
 
 impl ImportPath {
+    /// Parse a standard import path (without @ marker).
+    /// For external imports, use parse_external instead.
     pub fn parse(import_str: &str) -> Self {
         if import_str.starts_with("./") || import_str.starts_with("../") {
             ImportPath::Local(PathBuf::from(import_str))
         } else if Self::is_stdlib(import_str) {
             ImportPath::Stdlib(import_str.to_string())
         } else {
-            ImportPath::External(import_str.to_string())
+            // For non-external imports without ./ prefix, treat as local project path
+            ImportPath::Local(PathBuf::from(import_str))
         }
     }
     
     /// Check if import path is a standard library package.
-    /// Go convention: stdlib has no dots (domain names like github.com have dots).
-    /// Examples: "fmt", "os", "encoding/json" are stdlib
-    ///           "github.com/user/pkg" is external
+    /// Known stdlib packages from the spec.
     fn is_stdlib(path: &str) -> bool {
-        !path.contains('.')
+        matches!(path,
+            "fmt" | "os" | "io" | "strings" | "strconv" | "math" | "time" |
+            "sync" | "context" | "errors" | "log" | "sort" | "bytes" | "bufio" |
+            "encoding" | "net" | "path" | "regexp" | "reflect" | "runtime" | "testing"
+        )
     }
 }
 
@@ -67,7 +74,6 @@ pub struct ParsedPackage {
     pub name: String,
     pub dir: PathBuf,
     pub files: Vec<(PathBuf, ast::File)>,
-    pub interner: SymbolInterner,
     pub imports: Vec<ResolvedImport>,
     /// init() function indices (file_idx, decl_idx) in source order
     pub init_funcs: Vec<(usize, usize)>,
@@ -91,16 +97,24 @@ pub enum ExportKind {
     Type,
 }
 
+/// Exported type with its methods.
+#[derive(Debug, Clone)]
+pub struct ExportedType {
+    pub name: String,
+    pub methods: HashMap<String, Type>,
+}
+
 /// A type-checked package.
 #[derive(Debug)]
 pub struct TypedPackage {
     pub name: String,
     pub dir: PathBuf,
     pub files: Vec<ast::File>,
-    pub interner: SymbolInterner,
     pub types: TypeCheckResult,
     /// Exported symbols (capitalized names)
     pub exports: HashMap<String, ExportedSymbol>,
+    /// Exported types with their methods
+    pub exported_types: HashMap<String, ExportedType>,
     /// Resolved imports for this package
     pub imports: Vec<ResolvedImport>,
     /// Init order index (0 = first to init)
@@ -188,11 +202,13 @@ pub fn analyze_project(file_set: FileSet, vfs: &Vfs) -> Result<Project, ProjectE
     // Step 4: Type check packages in dependency order
     let mut typed_packages = Vec::new();
     let mut package_exports: HashMap<String, HashMap<String, ExportedSymbol>> = HashMap::new();
+    let mut package_exported_types: HashMap<String, HashMap<String, ExportedType>> = HashMap::new();
     
     for (init_order, pkg_name) in sorted_names.iter().enumerate() {
         let parsed = parsed_packages.remove(pkg_name).unwrap();
-        let typed = typecheck_package(parsed, &package_exports, &interner, init_order)?;
+        let typed = typecheck_package(parsed, &package_exports, &package_exported_types, &interner, init_order)?;
         package_exports.insert(pkg_name.clone(), typed.exports.clone());
+        package_exported_types.insert(pkg_name.clone(), typed.exported_types.clone());
         typed_packages.push(typed);
     }
     
@@ -221,7 +237,7 @@ pub fn analyze_project(file_set: FileSet, vfs: &Vfs) -> Result<Project, ProjectE
 /// Parse all files and group them by package.
 fn parse_packages(
     file_set: &FileSet,
-    _interner: &mut SymbolInterner,
+    shared_interner: &mut SymbolInterner,
 ) -> Result<HashMap<String, ParsedPackage>, ProjectError> {
     // First, group files by directory
     let mut files_by_dir: HashMap<PathBuf, Vec<(PathBuf, String)>> = HashMap::new();
@@ -239,8 +255,7 @@ fn parse_packages(
             continue;
         }
         
-        // Parse all files in this package with a shared interner
-        let mut shared_interner = SymbolInterner::new();
+        // Use the shared interner across all packages
         let mut parsed_files = Vec::new();
         let mut raw_imports = Vec::new();
         let mut init_funcs = Vec::new();
@@ -254,14 +269,20 @@ fn parse_packages(
             let file_id = FileId::new(file_id_counter);
             file_id_counter += 1;
             
-            let (ast, _diag, interner) = parse_with_interner(file_id, &content, shared_interner);
-            shared_interner = interner;
+            // Take ownership temporarily, then put it back
+            let interner_owned = std::mem::take(shared_interner);
+            let (ast, _diag, interner) = parse_with_interner(file_id, &content, interner_owned);
+            *shared_interner = interner;
             
-            // Extract imports (no alias support in current AST)
+            // Extract imports with kind and alias info from AST
             for imp in &ast.imports {
                 if let Some(raw) = shared_interner.resolve(imp.path.raw) {
                     let path_str = raw.trim_matches('"').to_string();
-                    raw_imports.push((path_str, None));
+                    let is_external = imp.kind == ast::ImportKind::External;
+                    let alias = imp.alias.as_ref()
+                        .and_then(|a| shared_interner.resolve(a.symbol))
+                        .map(|s| s.to_string());
+                    raw_imports.push((path_str, alias, is_external));
                 }
             }
             
@@ -287,16 +308,20 @@ fn parse_packages(
         
         // Get package name
         let pkg_name = parsed_files[0].1.package.as_ref()
-            .and_then(|p| shared_interner.resolve(p.symbol))
+            .and_then(|p| {
+                let resolved = shared_interner.resolve(p.symbol);
+                    resolved
+            })
             .unwrap_or("main")
             .to_string();
         
         // Create unresolved imports (will be resolved later)
         let imports: Vec<ResolvedImport> = raw_imports.into_iter()
-            .map(|(path, alias)| ResolvedImport {
+            .map(|(path, alias, is_external)| ResolvedImport {
                 path: path.clone(),
                 package_name: String::new(), // Will be resolved
                 alias,
+                is_external,
             })
             .collect();
         
@@ -304,7 +329,6 @@ fn parse_packages(
             name: pkg_name.clone(),
             dir: dir.clone(),
             files: parsed_files,
-            interner: shared_interner,
             imports,
             init_funcs,
             has_var_decls,
@@ -332,6 +356,17 @@ fn resolve_imports(packages: &mut HashMap<String, ParsedPackage>) -> Result<(), 
         let pkg = packages.get_mut(&pkg_name).unwrap();
         
         for import in &mut pkg.imports {
+            // External imports (@"alias") are resolved via gox.mod lookup
+            // The path contains the alias, resolution happens at build time
+            if import.is_external {
+                // For external imports, package_name will be set during
+                // dependency resolution from gox.mod. For now, use the alias
+                // as a placeholder package name.
+                import.package_name = import.path.clone();
+                continue;
+            }
+            
+            // Standard imports: check stdlib first, then local
             let import_path = ImportPath::parse(&import.path);
             
             match import_path {
@@ -362,8 +397,9 @@ fn resolve_imports(packages: &mut HashMap<String, ParsedPackage>) -> Result<(), 
                     // The actual implementation is via native functions
                     import.package_name = pkg_name;
                 }
-                ImportPath::External(path) => {
-                    return Err(ProjectError::ExternalImport(path));
+                ImportPath::External { .. } => {
+                    // This case won't happen for non-external imports
+                    unreachable!()
                 }
             }
         }
@@ -411,7 +447,6 @@ fn load_stdlib_packages(
                     name: pkg_name.clone(),
                     dir: PathBuf::from(format!("stdlib/{}", pkg_name)),
                     files,
-                    interner: pkg_interner,
                     imports: Vec::new(),
                     init_funcs: Vec::new(),
                     has_var_decls: false,
@@ -509,7 +544,8 @@ fn topological_sort(packages: &HashMap<String, ParsedPackage>) -> Result<Vec<Str
 fn typecheck_package(
     parsed: ParsedPackage,
     package_exports: &HashMap<String, HashMap<String, ExportedSymbol>>,
-    _interner: &SymbolInterner,
+    package_exported_types: &HashMap<String, HashMap<String, ExportedType>>,
+    interner: &SymbolInterner,
     init_order: usize,
 ) -> Result<TypedPackage, ProjectError> {
     if parsed.files.is_empty() {
@@ -517,8 +553,8 @@ fn typecheck_package(
             name: parsed.name,
             dir: parsed.dir,
             files: Vec::new(),
-            interner: parsed.interner,
             types: TypeCheckResult::default(),
+            exported_types: HashMap::new(),
             exports: HashMap::new(),
             imports: parsed.imports,
             init_order,
@@ -535,10 +571,11 @@ fn typecheck_package(
     let mut diag = DiagnosticSink::new();
     let types = typecheck_files_with_imports(
         &file_refs, 
-        &parsed.interner, 
+        interner, 
         &mut diag,
         &parsed.imports,
         package_exports,
+        package_exported_types,
     );
     
     if diag.has_errors() {
@@ -549,7 +586,10 @@ fn typecheck_package(
     }
     
     // Collect exported symbols (capitalized names)
-    let exports = collect_exports(&parsed.files, &parsed.interner, &types);
+    let exports = collect_exports(&parsed.files, interner, &types);
+    
+    // Collect exported types with their methods
+    let exported_types = collect_exported_types(&parsed.files, interner, &types);
     
     let all_files: Vec<ast::File> = parsed.files
         .into_iter()
@@ -560,9 +600,9 @@ fn typecheck_package(
         name: parsed.name,
         dir: parsed.dir,
         files: all_files,
-        interner: parsed.interner,
         types,
         exports,
+        exported_types,
         imports: parsed.imports,
         init_order,
         init_funcs: parsed.init_funcs,
@@ -578,10 +618,14 @@ fn collect_exports(
 ) -> HashMap<String, ExportedSymbol> {
     let mut exports = HashMap::new();
     
-    for (_, file) in files {
+    for (_path, file) in files {
         for decl in &file.decls {
             match decl {
                 Decl::Func(f) => {
+                    // Skip methods (functions with receivers)
+                    if f.receiver.is_some() {
+                        continue;
+                    }
                     if let Some(name) = interner.resolve(f.name.symbol) {
                         if is_exported(name) && name != "init" {
                             // Look up function type from scope
@@ -591,7 +635,6 @@ fn collect_exports(
                                     _ => None,
                                 })
                                 .unwrap_or(Type::Invalid);
-                            
                             exports.insert(name.to_string(), ExportedSymbol {
                                 name: name.to_string(),
                                 ty,
@@ -668,6 +711,65 @@ fn collect_exports(
 /// Check if a name is exported (starts with uppercase).
 fn is_exported(name: &str) -> bool {
     name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+}
+
+/// Collect exported types with their methods from a package.
+fn collect_exported_types(
+    files: &[(PathBuf, ast::File)],
+    interner: &SymbolInterner,
+    types: &TypeCheckResult,
+) -> HashMap<String, ExportedType> {
+    let mut exported_types: HashMap<String, ExportedType> = HashMap::new();
+    
+    // First pass: collect exported type names
+    for (_path, file) in files {
+        for decl in &file.decls {
+            if let Decl::Type(t) = decl {
+                if let Some(name) = interner.resolve(t.name.symbol) {
+                    if is_exported(name) {
+                        exported_types.insert(name.to_string(), ExportedType {
+                            name: name.to_string(),
+                            methods: HashMap::new(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    // Second pass: collect methods for exported types
+    for (_path, file) in files {
+        for decl in &file.decls {
+            if let Decl::Func(f) = decl {
+                // Only process methods (functions with receivers)
+                if let Some(ref recv) = f.receiver {
+                    // Get the receiver type name
+                    let recv_type_name = interner.resolve(recv.ty.symbol).map(|s| s.to_string());
+                    if let Some(type_name) = recv_type_name {
+                        // Check if this is an exported type
+                        if let Some(exported_type) = exported_types.get_mut(&type_name) {
+                            // Get method name
+                            if let Some(method_name) = interner.resolve(f.name.symbol) {
+                                // Find method signature from named_types
+                                let method_ty = types.named_types.iter()
+                                    .find(|info| interner.resolve(info.name) == Some(&type_name))
+                                    .and_then(|info| {
+                                        info.methods.iter()
+                                            .find(|m| m.name == f.name.symbol)
+                                            .map(|m| Type::Func(m.sig.clone()))
+                                    })
+                                    .unwrap_or(Type::Invalid);
+                                
+                                exported_type.methods.insert(method_name.to_string(), method_ty);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    exported_types
 }
 
 #[cfg(test)]

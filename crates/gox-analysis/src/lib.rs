@@ -155,6 +155,7 @@ pub fn typecheck_files_with_imports(
     diagnostics: &mut DiagnosticSink,
     imports: &[project::ResolvedImport],
     package_exports: &std::collections::HashMap<String, std::collections::HashMap<String, project::ExportedSymbol>>,
+    package_exported_types: &std::collections::HashMap<String, std::collections::HashMap<String, project::ExportedType>>,
 ) -> TypeCheckResult {
     // Phase 1: Collect declarations from all files
     let mut collect_result = collect_types_multi(files, interner, diagnostics);
@@ -189,7 +190,7 @@ pub fn typecheck_files_with_imports(
     let mut checker = check_types(&resolve_result, interner, diagnostics);
     
     // Set imported packages for cross-package call checking
-    checker.set_imported_packages(imports, package_exports);
+    checker.set_imported_packages(imports, package_exports, package_exported_types);
 
     for file in files {
         for decl in &file.decls {

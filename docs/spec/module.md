@@ -121,52 +121,123 @@ A module path may appear at **only one version** across the entire closure.
 
 ### 6.1 Import Syntax
 
-GoX supports the following import forms:
+GoX uses the `@` symbol to distinguish external dependencies from local/standard library packages:
 
 ```go
-import "path/to/package"
-import alias "path/to/package"
-import . "path/to/package"      // Dot import (import all exported names)
-import _ "path/to/package"      // Blank import (init only)
+import (
+    // Standard library (no marker)
+    "fmt"
+    "strings"
+    
+    // Local project packages (no marker, relative to project root)
+    "utils"
+    "handlers/api"
+    
+    // External dependencies (@ marker, must be declared in gox.mod)
+    @"gin"
+    @"jwt"
+)
 ```
 
-### 6.2 Package Paths vs Module Paths
+**Supported import forms:**
 
-- `require` declares **modules**.
-- `import` targets **packages** inside modules.
+```go
+import "path"              // Standard library or local package
+import @"alias"            // External dependency (defined in gox.mod)
+import name "path"         // With alias
+import name @"alias"       // External dependency with alias
+import . "path"            // Dot import (import all exported names)
+import _ "path"            // Blank import (init only)
+```
 
-A package import path is resolved by first identifying which module owns it, then mapping the remainder to a directory inside that module.
+### 6.2 Dependency Declaration in gox.mod
+
+```
+module myproject
+
+require gin github.com/gin-gonic/gin v1.9.0
+require jwt github.com/golang-jwt/jwt v5.0.0
+```
+
+Format: `require <alias> <module-path> <version>`
+
+- **alias**: The name used in source code with `@"xxx"`
+- **module-path**: The actual repository URL
+- **version**: Exact version number
 
 ### 6.3 Resolution Algorithm
 
 For an import path `P`:
 
-1. **Standard library**
-   - If `P` starts with `std/`:
-     - Resolve to the compiler's internal standard library location
-     - If not found: error
+1. **External dependency** (`@"P"` form)
+   - Look up alias `P` in the gox.mod require list
+   - If found: map to `.goxdeps/<module-path>@<version>/`
+   - If not found: error (undeclared external dependency)
 
-2. **Owning module by longest prefix match**
-   - Let `S` be the set of module paths in the closure plus the root module path.
-   - Find the longest module path `M` in `S` such that `P == M` or `P` starts with `M + "/"`.
-   - If none found: error (missing dependency or missing `require`)
+2. **Standard library** (`"P"` where P is a known stdlib package)
+   - Resolve to the compiler's internal standard library location
+   - Known stdlib packages: `fmt`, `os`, `io`, `strings`, `strconv`, `math`, `time`, `sync`, `context`, `errors`, `log`, `sort`, `bytes`, `bufio`, `encoding`, `net`, `path`, `regexp`, `reflect`, `runtime`, `testing`, etc.
 
-3. **Map to filesystem**
-   - If `M` is the root module:
-     - The package directory is `<project-root>/<rest>/`
-   - If `M` is a dependency module at version `V`:
-     - The package directory is `.goxdeps/<M>@<V>/<rest>/`
-   - Where `<rest>` is:
-     - empty if `P == M` (package at module root), otherwise the path suffix after `M/`.
+3. **Local project package** (`"P"` where P is not stdlib)
+   - Look for directory `<project-root>/<P>/`
+   - Supports nesting: `"handlers/api"` → `./handlers/api/`
+   - If not found: error
 
-**Example** (root module `github.com/myuser/myproject` and `require github.com/foo/bar v1.2.3`):
+### 6.4 Projects Without gox.mod
 
-| Import Path | Resolution |
-|-------------|------------|
-| `"std/io"` | Standard library `io` package |
-| `"github.com/myuser/myproject/util"` | `./util/` |
-| `"github.com/foo/bar"` | `.goxdeps/github.com/foo/bar@v1.2.3/` |
-| `"github.com/foo/bar/sub"` | `.goxdeps/github.com/foo/bar@v1.2.3/sub/` |
+The `gox.mod` file is optional. When a project has no `gox.mod`:
+
+- `@"xxx"` will fail (no alias definitions to look up)
+- `"xxx"` works normally: resolves as stdlib → project directory
+- Suitable for simple projects with no external dependencies
+
+No special code handling is required—the resolution algorithm naturally handles this case.
+
+### 6.5 Example
+
+**Project structure:**
+```
+myproject/
+├── gox.mod
+├── main.gox
+├── utils/
+│   └── strings.gox
+└── handlers/
+    └── api/
+        └── handler.gox
+```
+
+**gox.mod:**
+```
+module myproject
+
+require gin github.com/gin-gonic/gin v1.9.0
+require validator github.com/go-playground/validator v10.0.0
+```
+
+**main.gox:**
+```go
+package main
+
+import (
+    "fmt"              // Standard library
+    "utils"            // Local: ./utils/
+    "handlers/api"     // Local: ./handlers/api/
+    
+    @"gin"             // External: github.com/gin-gonic/gin
+    @"validator"       // External: github.com/go-playground/validator
+)
+```
+
+### 6.6 Advantages of This Design
+
+| Benefit | Description |
+|---------|-------------|
+| **Clear distinction** | `@` marker instantly shows external vs local |
+| **No URL in source** | Library migration only requires changing gox.mod |
+| **No ambiguity** | stdlib `fmt` and external `@"fmt"` (if any) don't conflict |
+| **Compile-time check** | `@"xxx"` must be declared in gox.mod |
+| **IDE friendly** | Easy to implement syntax highlighting and autocomplete |
 
 ## 7. Package Rules
 

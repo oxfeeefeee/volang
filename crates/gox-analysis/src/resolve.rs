@@ -325,6 +325,15 @@ impl<'a> TypeResolver<'a> {
         match &expr.kind {
             TypeExprKind::Ident(ident) => self.resolve_type_name(ident.symbol, expr.span),
 
+            TypeExprKind::Selector(sel) => {
+                // Qualified type: pkg.Type - resolve as external type reference
+                // For now, treat as Invalid since cross-package types need special handling
+                let _pkg_name = self.interner.resolve(sel.pkg.symbol).unwrap_or("");
+                let _type_name = self.interner.resolve(sel.sel.symbol).unwrap_or("");
+                // TODO: Proper cross-package type resolution
+                Type::Invalid
+            }
+
             TypeExprKind::Array(arr) => {
                 let len = self.eval_array_length(&arr.len);
                 let elem = self.resolve_type_expr(&arr.elem);

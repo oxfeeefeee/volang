@@ -306,6 +306,11 @@ impl<'a> AstPrinter<'a> {
             TypeExprKind::Ident(id) => {
                 write!(self.output, "{}", self.resolve_symbol(id.symbol)).unwrap();
             }
+            TypeExprKind::Selector(sel) => {
+                write!(self.output, "{}.{}", 
+                    self.resolve_symbol(sel.pkg.symbol),
+                    self.resolve_symbol(sel.sel.symbol)).unwrap();
+            }
             TypeExprKind::Array(arr) => {
                 write!(self.output, "[").unwrap();
                 self.write_expr_inline(&arr.len);

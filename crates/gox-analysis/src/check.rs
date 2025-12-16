@@ -85,6 +85,8 @@ pub struct TypeChecker<'a> {
     imported_packages: std::collections::HashSet<String>,
     /// Imported package exports (pkg_name -> symbol_name -> type).
     package_exports: std::collections::HashMap<String, std::collections::HashMap<String, Type>>,
+    /// Imported package exported types with methods (pkg_name -> type_name -> method_name -> type).
+    package_exported_types: std::collections::HashMap<String, std::collections::HashMap<String, std::collections::HashMap<String, Type>>>,
     /// Local type declarations (function-scoped types).
     local_types: Vec<NamedTypeInfo>,
 }
@@ -108,6 +110,7 @@ impl<'a> TypeChecker<'a> {
             has_named_returns: false,
             imported_packages: std::collections::HashSet::new(),
             package_exports: std::collections::HashMap::new(),
+            package_exported_types: std::collections::HashMap::new(),
             local_types: Vec::new(),
         }
     }
@@ -117,6 +120,7 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         imports: &[crate::project::ResolvedImport],
         exports: &std::collections::HashMap<String, std::collections::HashMap<String, crate::project::ExportedSymbol>>,
+        exported_types: &std::collections::HashMap<String, std::collections::HashMap<String, crate::project::ExportedType>>,
     ) {
         for import in imports {
             if !import.package_name.is_empty() {
@@ -130,6 +134,15 @@ impl<'a> TypeChecker<'a> {
                         .map(|(name, sym)| (name.clone(), sym.ty.clone()))
                         .collect();
                     self.package_exports.insert(local_name.clone(), type_map);
+                }
+                
+                // Copy the exported types with methods for this package
+                if let Some(pkg_types) = exported_types.get(&import.package_name) {
+                    let mut types_map: std::collections::HashMap<String, std::collections::HashMap<String, Type>> = std::collections::HashMap::new();
+                    for (type_name, exported_type) in pkg_types {
+                        types_map.insert(type_name.clone(), exported_type.methods.clone());
+                    }
+                    self.package_exported_types.insert(local_name.clone(), types_map);
                 }
             }
         }
@@ -613,6 +626,10 @@ impl<'a> TypeChecker<'a> {
             if let Some(Entity::Type(type_entity)) = self.lookup(ident.symbol) {
                 return self.check_type_conversion(type_entity.id, &call.args, span);
             }
+            // Check for basic type conversion: string(x), int(x), etc.
+            if let Some(basic_ty) = self.resolve_basic_type_name(ident.symbol) {
+                return self.check_basic_type_conversion(basic_ty, &call.args, span);
+            }
         }
 
         let func_ty = self.check_expr(&call.func);
@@ -643,6 +660,72 @@ impl<'a> TypeChecker<'a> {
         } else {
             self.error(TypeError::CannotConvert, span);
             Type::Invalid
+        }
+    }
+    
+    /// Resolves a basic type name to its Type.
+    fn resolve_basic_type_name(&self, symbol: Symbol) -> Option<BasicType> {
+        let name = self.interner.resolve(symbol)?;
+        match name {
+            "bool" => Some(BasicType::Bool),
+            "int" | "int8" | "int16" | "int32" | "int64" => Some(BasicType::Int),
+            "uint" | "uint8" | "uint16" | "uint32" | "uint64" | "byte" => Some(BasicType::Int),
+            "float32" | "float64" => Some(BasicType::Float64),
+            "string" => Some(BasicType::String),
+            "rune" => Some(BasicType::Int),
+            _ => None,
+        }
+    }
+    
+    /// Checks a basic type conversion: string(x), int(x), etc.
+    fn check_basic_type_conversion(&mut self, target: BasicType, args: &[Expr], span: Span) -> Type {
+        if args.len() != 1 {
+            self.error(TypeError::WrongArgCount, span);
+            return Type::Invalid;
+        }
+        
+        let arg_ty = self.check_expr(&args[0]);
+        let target_ty = Type::Basic(target);
+        
+        // Check if conversion is valid
+        if self.is_basic_convertible(&arg_ty, target) {
+            target_ty
+        } else {
+            self.error(TypeError::CannotConvert, span);
+            Type::Invalid
+        }
+    }
+    
+    /// Checks if a value can be converted to a basic type.
+    fn is_basic_convertible(&self, from: &Type, to: BasicType) -> bool {
+        let from_u = self.underlying_type(from);
+        
+        match to {
+            BasicType::String => {
+                // int/rune to string, []byte to string, []rune to string
+                matches!(&from_u, 
+                    Type::Basic(BasicType::Int) | 
+                    Type::Basic(BasicType::String) |
+                    Type::Slice(_))
+            }
+            BasicType::Int => {
+                // numeric types, string (for rune), bool can convert to int
+                matches!(&from_u,
+                    Type::Basic(BasicType::Int) |
+                    Type::Basic(BasicType::Float64) |
+                    Type::Basic(BasicType::Bool))
+            }
+            BasicType::Float64 => {
+                // int can convert to float
+                matches!(&from_u,
+                    Type::Basic(BasicType::Int) |
+                    Type::Basic(BasicType::Float64))
+            }
+            BasicType::Bool => {
+                // bool to bool
+                matches!(&from_u, Type::Basic(BasicType::Bool))
+            }
+            _ => from_u == Type::Basic(to),
         }
     }
     
@@ -1039,6 +1122,12 @@ impl<'a> TypeChecker<'a> {
         
         let base_ty = self.check_expr(&sel.expr);
         let field_name = sel.sel.symbol;
+        let field_name_str = self.interner.resolve(field_name).unwrap_or("<unknown>");
+
+        // Check if base_ty is a cross-package type and look up method from exported types
+        if let Some(method_ty) = self.lookup_cross_package_method(&base_ty, field_name_str) {
+            return method_ty;
+        }
 
         // Resolve local types to their underlying type for lookup
         let lookup_ty = self.resolve_for_lookup(&base_ty);
@@ -1049,24 +1138,41 @@ impl<'a> TypeChecker<'a> {
             LookupResult::Field(ty, _indices, _indirect) => ty,
             LookupResult::Method(sig, _indices, _indirect) => Type::Func(sig),
             LookupResult::Ambiguous(_indices) => {
-                let name = self.interner.resolve(field_name).unwrap_or("<unknown>");
                 self.error_msg(
                     TypeError::NoFieldOrMethod,
                     sel.sel.span,
-                    format!("ambiguous selector {}", name),
+                    format!("ambiguous selector {}", field_name_str),
                 );
                 Type::Invalid
             }
             LookupResult::NotFound => {
-                let name = self.interner.resolve(field_name).unwrap_or("<unknown>");
                 self.error_msg(
                     TypeError::NoFieldOrMethod,
                     sel.sel.span,
-                    TypeError::NoFieldOrMethod.with_name(name),
+                    TypeError::NoFieldOrMethod.with_name(field_name_str),
                 );
                 Type::Invalid
             }
         }
+    }
+    
+    /// Look up a method on a cross-package type.
+    /// 
+    /// This handles the case where a variable's type is from another package.
+    /// Since named_types is per-package, we can't rely on the NamedTypeId to look up
+    /// the type name. Instead, we search all exported types for the method.
+    fn lookup_cross_package_method(&self, _base_ty: &Type, method_name: &str) -> Option<Type> {
+        // Search all imported packages' exported types for this method
+        // This is a fallback when the normal Lookup doesn't find the method
+        for (_pkg_name, pkg_types) in &self.package_exported_types {
+            for (_type_name, type_methods) in pkg_types {
+                if let Some(method_ty) = type_methods.get(method_name) {
+                    return Some(method_ty.clone());
+                }
+            }
+        }
+        
+        None
     }
 
     /// Checks a function literal.

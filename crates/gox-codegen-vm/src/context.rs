@@ -698,6 +698,16 @@ impl<'a> CodegenContext<'a> {
     
     /// Check if a symbol is a type name (for type conversions).
     pub fn is_type_name(&self, sym: Symbol) -> bool {
+        // Check basic types first
+        if let Some(name) = self.interner.resolve(sym) {
+            match name {
+                "bool" | "int" | "int8" | "int16" | "int32" | "int64" |
+                "uint" | "uint8" | "uint16" | "uint32" | "uint64" | "byte" |
+                "float32" | "float64" | "string" | "rune" => return true,
+                _ => {}
+            }
+        }
+        // Then check named types
         for named in &self.result.named_types {
             if named.name == sym {
                 return true;
