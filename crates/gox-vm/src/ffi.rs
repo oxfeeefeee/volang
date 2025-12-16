@@ -30,10 +30,16 @@ impl GoxValue {
         match tag {
             TypeTag::Nil => GoxValue::Nil,
             TypeTag::Bool => GoxValue::Bool(raw != 0),
-            TypeTag::Int | TypeTag::Int8 | TypeTag::Int16 | TypeTag::Int32 | TypeTag::Int64 |
-            TypeTag::Uint | TypeTag::Uint8 | TypeTag::Uint16 | TypeTag::Uint32 | TypeTag::Uint64 => {
-                GoxValue::Int(raw as i64)
-            }
+            TypeTag::Int
+            | TypeTag::Int8
+            | TypeTag::Int16
+            | TypeTag::Int32
+            | TypeTag::Int64
+            | TypeTag::Uint
+            | TypeTag::Uint8
+            | TypeTag::Uint16
+            | TypeTag::Uint32
+            | TypeTag::Uint64 => GoxValue::Int(raw as i64),
             TypeTag::Float32 => GoxValue::Float(f32::from_bits(raw as u32) as f64),
             TypeTag::Float64 => GoxValue::Float(f64::from_bits(raw)),
             TypeTag::String => GoxValue::String(raw as GcRef),
@@ -41,7 +47,10 @@ impl GoxValue {
             TypeTag::Map => GoxValue::Map(raw as GcRef),
             TypeTag::Struct => GoxValue::Struct(raw as GcRef),
             TypeTag::Obx => GoxValue::Obx(raw as GcRef),
-            TypeTag::Interface => GoxValue::Interface { type_id: 0, value: raw },
+            TypeTag::Interface => GoxValue::Interface {
+                type_id: 0,
+                value: raw,
+            },
             // New types added to ValueKind
             TypeTag::Array => GoxValue::Slice(raw as GcRef), // Arrays are similar to slices at runtime
             TypeTag::Channel => GoxValue::Int(raw as i64),   // Channel handle
@@ -53,7 +62,13 @@ impl GoxValue {
     pub fn to_raw(&self) -> u64 {
         match self {
             GoxValue::Nil => 0,
-            GoxValue::Bool(b) => if *b { 1 } else { 0 },
+            GoxValue::Bool(b) => {
+                if *b {
+                    1
+                } else {
+                    0
+                }
+            }
             GoxValue::Int(i) => *i as u64,
             GoxValue::Float(f) => f.to_bits(),
             GoxValue::String(ptr) => *ptr as u64,
