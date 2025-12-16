@@ -177,7 +177,16 @@ fn compile_ident(
         _ => {
             // First check local variables
             if let Some(local) = fctx.lookup_local(ident.symbol) {
-                Ok(local.reg)
+                let reg = local.reg;
+                let is_captured = local.is_captured;
+                if is_captured {
+                    // Variable is in upval_box - need to read through it
+                    let dst = fctx.regs.alloc(1);
+                    fctx.emit(Opcode::UpvalGet, dst, reg, 0);
+                    Ok(dst)
+                } else {
+                    Ok(reg)
+                }
             }
             // Check upvalues (for closures)
             else if let Some(location) = fctx.resolve_var(ident.symbol) {
@@ -185,12 +194,21 @@ fn compile_ident(
                 match location {
                     VarLocation::Local(reg) => Ok(reg),
                     VarLocation::Upvalue(idx) => {
-                        // Load upvalue into a register
-                        // ClosureGet needs the closure reference - use register 0 (closure self)
-                        let dst = fctx.regs.alloc(1);
-                        // In a closure, register 0 implicitly holds the closure reference
-                        fctx.emit(Opcode::ClosureGet, dst, 0, idx);
-                        Ok(dst)
+                        // Check if this upvalue is boxed (needs UpvalGet dereference)
+                        let is_boxed = fctx.upvalues.get(idx as usize).map(|u| u.is_boxed).unwrap_or(false);
+                        
+                        let upval_reg = fctx.regs.alloc(1);
+                        fctx.emit(Opcode::ClosureGet, upval_reg, 0, idx);
+                        
+                        if is_boxed {
+                            // Dereference the upval_box to get the actual value
+                            let dst = fctx.regs.alloc(1);
+                            fctx.emit(Opcode::UpvalGet, dst, upval_reg, 0);
+                            Ok(dst)
+                        } else {
+                            // Direct value, no dereference needed
+                            Ok(upval_reg)
+                        }
                     }
                 }
             }
@@ -1658,6 +1676,38 @@ fn compile_func_lit(
     }
     
     closure_fctx.ret_slots = func_lit.sig.results.len() as u16;
+    
+    // Scan for captured variables in nested closures
+    // Include parent locals so nested closures can capture grandparent variables
+    {
+        let mut defined: std::collections::HashSet<gox_common::Symbol> = std::collections::HashSet::new();
+        // Add params
+        for param in &func_lit.sig.params {
+            for name in &param.names {
+                defined.insert(name.symbol);
+            }
+        }
+        // Add parent locals (these are visible to this closure and nested closures)
+        for (sym, _) in &fctx.locals {
+            defined.insert(*sym);
+        }
+        // Add parent upvalues (also visible)
+        for upval in &fctx.upvalues {
+            defined.insert(upval.name);
+        }
+        closure_fctx.captured_vars = crate::context::scan_captured_vars(&func_lit.body, &defined);
+        
+        // Pre-capture variables that nested closures need from parent scope
+        // This ensures they're available in this closure's upvalues for nested closures to access
+        for sym in closure_fctx.captured_vars.clone() {
+            // If this variable is not a local param, it must be from parent scope
+            let is_param = func_lit.sig.params.iter().any(|p| p.names.iter().any(|n| n.symbol == sym));
+            if !is_param {
+                // Force capture from parent by calling resolve_var
+                closure_fctx.resolve_var(sym);
+            }
+        }
+    }
     
     // Compile the closure body
     crate::stmt::compile_block(ctx, &mut closure_fctx, &func_lit.body)?;

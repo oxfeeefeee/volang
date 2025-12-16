@@ -160,6 +160,9 @@ pub enum Opcode {
     ClosureGet,       // a = closure.upvalues[b]
     ClosureSet,       // closure.upvalues[a] = b
     ClosureCall,      // call closure at a, args at b, c=arg_count, flags=ret_count
+    UpvalNew,         // a = new upval_box (for reference capture)
+    UpvalGet,         // a = upval_box[b].value
+    UpvalSet,         // upval_box[a].value = b
     
     // ============ Goroutine ============
     Go = 190,         // go call func at a, args at b, c=arg_count
@@ -301,6 +304,9 @@ impl Opcode {
             181 => Self::ClosureGet,
             182 => Self::ClosureSet,
             183 => Self::ClosureCall,
+            184 => Self::UpvalNew,
+            185 => Self::UpvalGet,
+            186 => Self::UpvalSet,
             
             190 => Self::Go,
             191 => Self::Yield,

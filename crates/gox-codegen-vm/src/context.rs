@@ -72,6 +72,7 @@ pub struct LocalVar {
     pub slots: u16,
     pub kind: VarKind,
     pub type_sym: Option<Symbol>,  // Named type symbol for struct/object
+    pub is_captured: bool,         // True if captured by a closure (uses upval_box)
 }
 
 /// Upvalue info for closures
@@ -81,6 +82,7 @@ pub struct Upvalue {
     pub index: u16,        // Index in the closure's upvalue array
     pub is_local: bool,    // true if captured from immediate parent, false if from grandparent
     pub parent_index: u16, // Index in parent's locals (if is_local) or upvalues (if !is_local)
+    pub is_boxed: bool,    // true if the value is in an upval_box (needs UpvalGet to dereference)
 }
 
 /// Where a variable is located
@@ -117,6 +119,8 @@ pub struct FuncContext {
     pub parent_upvalues: Option<Vec<Upvalue>>,
     /// Local type declarations (symbol -> (slot_count, field_names))
     pub local_types: HashMap<Symbol, (u16, Vec<Symbol>)>,
+    /// Variables that will be captured by closures (need upval_box)
+    pub captured_vars: std::collections::HashSet<Symbol>,
 }
 
 impl FuncContext {
@@ -134,6 +138,7 @@ impl FuncContext {
             parent_locals: None,
             parent_upvalues: None,
             local_types: HashMap::new(),
+            captured_vars: std::collections::HashSet::new(),
         }
     }
     
@@ -152,11 +157,12 @@ impl FuncContext {
             parent_locals: Some(parent_locals),
             parent_upvalues: Some(parent_upvalues),
             local_types: HashMap::new(),
+            captured_vars: std::collections::HashSet::new(),
         }
     }
     
     /// Add an upvalue and return its index
-    pub fn add_upvalue(&mut self, name: Symbol, is_local: bool, parent_index: u16) -> u16 {
+    pub fn add_upvalue(&mut self, name: Symbol, is_local: bool, parent_index: u16, is_boxed: bool) -> u16 {
         // Check if already captured
         for upval in &self.upvalues {
             if upval.name == name {
@@ -169,6 +175,7 @@ impl FuncContext {
             index,
             is_local,
             parent_index,
+            is_boxed,
         });
         index
     }
@@ -190,7 +197,9 @@ impl FuncContext {
         // Try to capture from parent's locals
         if let Some(ref parent_locals) = self.parent_locals {
             if let Some(parent_local) = parent_locals.get(&sym) {
-                let upval_idx = self.add_upvalue(sym, true, parent_local.reg);
+                // is_boxed = true if parent local is captured (has upval_box)
+                let is_boxed = parent_local.is_captured;
+                let upval_idx = self.add_upvalue(sym, true, parent_local.reg, is_boxed);
                 return Some(VarLocation::Upvalue(upval_idx));
             }
         }
@@ -199,8 +208,8 @@ impl FuncContext {
         if let Some(ref parent_upvalues) = self.parent_upvalues {
             for parent_upval in parent_upvalues {
                 if parent_upval.name == sym {
-                    // Capture from parent's upvalue (is_local=false means from parent's upvalue)
-                    let upval_idx = self.add_upvalue(sym, false, parent_upval.index);
+                    // Capture from parent's upvalue - inherit is_boxed from parent
+                    let upval_idx = self.add_upvalue(sym, false, parent_upval.index, parent_upval.is_boxed);
                     return Some(VarLocation::Upvalue(upval_idx));
                 }
             }
@@ -261,13 +270,17 @@ impl FuncContext {
     
     pub fn define_local_with_kind(&mut self, ident: Ident, slots: u16, kind: VarKind) -> u16 {
         let reg = self.regs.alloc(slots);
-        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, type_sym: None });
+        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, type_sym: None, is_captured: false });
         reg
     }
     
     pub fn define_local_with_type(&mut self, ident: Ident, slots: u16, kind: VarKind, type_sym: Option<Symbol>) -> u16 {
+        self.define_local_full(ident, slots, kind, type_sym, false)
+    }
+    
+    pub fn define_local_full(&mut self, ident: Ident, slots: u16, kind: VarKind, type_sym: Option<Symbol>, is_captured: bool) -> u16 {
         let reg = self.regs.alloc(slots);
-        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, type_sym });
+        self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, type_sym, is_captured });
         reg
     }
     
@@ -296,6 +309,16 @@ impl FuncContext {
             ret_slots: self.ret_slots,
             code: self.code,
         }
+    }
+    
+    /// Mark a variable as captured (will use upval_box)
+    pub fn mark_captured(&mut self, sym: Symbol) {
+        self.captured_vars.insert(sym);
+    }
+    
+    /// Check if a variable is captured
+    pub fn is_captured(&self, sym: Symbol) -> bool {
+        self.captured_vars.contains(&sym)
     }
 }
 
@@ -620,6 +643,22 @@ impl<'a> CodegenContext<'a> {
         // Calculate return slots
         fctx.ret_slots = func.sig.results.len() as u16;
         
+        // Scan for captured variables before compiling body
+        if let Some(ref body) = func.body {
+            // Build initial defined set from parameters
+            let mut defined: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+            if let Some(ref receiver) = func.receiver {
+                defined.insert(receiver.name.symbol);
+            }
+            for param in &func.sig.params {
+                for name in &param.names {
+                    defined.insert(name.symbol);
+                }
+            }
+            // Scan for variables captured by nested closures
+            fctx.captured_vars = scan_captured_vars(body, &defined);
+        }
+        
         // Compile function body
         if let Some(ref body) = func.body {
             crate::stmt::compile_block(self, &mut fctx, body)?;
@@ -761,5 +800,318 @@ pub fn emit_deep_struct_copy(
         } else {
             fctx.emit(Opcode::SetField, dst, f as u16, tmp);
         }
+    }
+}
+
+/// Scan a block for variables captured by nested closures.
+/// Returns a set of symbols that are referenced inside FuncLit but defined in outer scope.
+pub fn scan_captured_vars(
+    block: &gox_syntax::ast::Block,
+    defined: &std::collections::HashSet<Symbol>,
+) -> std::collections::HashSet<Symbol> {
+    let mut captured = std::collections::HashSet::new();
+    let mut local_defined = defined.clone();
+    
+    for stmt in &block.stmts {
+        // Clone to avoid borrow conflict
+        let current_defined = local_defined.clone();
+        scan_stmt_for_captures(stmt, &current_defined, &mut captured, &mut local_defined);
+    }
+    
+    captured
+}
+
+fn scan_stmt_for_captures(
+    stmt: &gox_syntax::ast::Stmt,
+    outer_defined: &std::collections::HashSet<Symbol>,
+    captured: &mut std::collections::HashSet<Symbol>,
+    local_defined: &mut std::collections::HashSet<Symbol>,
+) {
+    use gox_syntax::ast::{StmtKind, ForClause};
+    
+    match &stmt.kind {
+        StmtKind::ShortVar(sv) => {
+            for expr in &sv.values {
+                scan_expr_for_captures(expr, outer_defined, captured);
+            }
+            for name in &sv.names {
+                local_defined.insert(name.symbol);
+            }
+        }
+        StmtKind::Var(var_decl) => {
+            for spec in &var_decl.specs {
+                for expr in &spec.values {
+                    scan_expr_for_captures(expr, outer_defined, captured);
+                }
+                for name in &spec.names {
+                    local_defined.insert(name.symbol);
+                }
+            }
+        }
+        StmtKind::Assign(assign) => {
+            for expr in &assign.rhs {
+                scan_expr_for_captures(expr, outer_defined, captured);
+            }
+            for expr in &assign.lhs {
+                scan_expr_for_captures(expr, outer_defined, captured);
+            }
+        }
+        StmtKind::Expr(expr) => {
+            scan_expr_for_captures(expr, outer_defined, captured);
+        }
+        StmtKind::Return(ret) => {
+            for expr in &ret.values {
+                scan_expr_for_captures(expr, outer_defined, captured);
+            }
+        }
+        StmtKind::If(if_stmt) => {
+            if let Some(init) = &if_stmt.init {
+                let mut init_defined = local_defined.clone();
+                scan_stmt_for_captures(init, outer_defined, captured, &mut init_defined);
+            }
+            scan_expr_for_captures(&if_stmt.cond, outer_defined, captured);
+            let mut body_defined = local_defined.clone();
+            for s in &if_stmt.then.stmts {
+                scan_stmt_for_captures(s, outer_defined, captured, &mut body_defined);
+            }
+            if let Some(else_stmt) = &if_stmt.else_ {
+                let mut else_defined = local_defined.clone();
+                scan_stmt_for_captures(else_stmt, outer_defined, captured, &mut else_defined);
+            }
+        }
+        StmtKind::For(for_stmt) => {
+            let mut loop_defined = local_defined.clone();
+            match &for_stmt.clause {
+                ForClause::Cond(cond) => {
+                    if let Some(c) = cond {
+                        scan_expr_for_captures(c, outer_defined, captured);
+                    }
+                }
+                ForClause::Three { init, cond, post } => {
+                    if let Some(i) = init {
+                        scan_stmt_for_captures(i, outer_defined, captured, &mut loop_defined);
+                    }
+                    if let Some(c) = cond {
+                        scan_expr_for_captures(c, outer_defined, captured);
+                    }
+                    if let Some(p) = post {
+                        scan_stmt_for_captures(p, outer_defined, captured, &mut loop_defined);
+                    }
+                }
+                ForClause::Range { key, value, expr, .. } => {
+                    scan_expr_for_captures(expr, outer_defined, captured);
+                    if let Some(k) = key {
+                        loop_defined.insert(k.symbol);
+                    }
+                    if let Some(v) = value {
+                        loop_defined.insert(v.symbol);
+                    }
+                }
+            }
+            for s in &for_stmt.body.stmts {
+                scan_stmt_for_captures(s, outer_defined, captured, &mut loop_defined);
+            }
+        }
+        StmtKind::Block(block) => {
+            let mut block_defined = local_defined.clone();
+            for s in &block.stmts {
+                scan_stmt_for_captures(s, outer_defined, captured, &mut block_defined);
+            }
+        }
+        StmtKind::Send(send) => {
+            scan_expr_for_captures(&send.chan, outer_defined, captured);
+            scan_expr_for_captures(&send.value, outer_defined, captured);
+        }
+        _ => {}
+    }
+}
+
+fn scan_expr_for_captures(
+    expr: &gox_syntax::ast::Expr,
+    outer_defined: &std::collections::HashSet<Symbol>,
+    captured: &mut std::collections::HashSet<Symbol>,
+) {
+    use gox_syntax::ast::ExprKind;
+    
+    match &expr.kind {
+        ExprKind::FuncLit(func_lit) => {
+            // This is a closure - scan its body for references to outer variables
+            let mut closure_defined: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+            // Add params to closure's defined set
+            for param in &func_lit.sig.params {
+                for name in &param.names {
+                    closure_defined.insert(name.symbol);
+                }
+            }
+            // Scan closure body for direct references
+            for stmt in &func_lit.body.stmts {
+                scan_closure_body_for_outer_refs(stmt, outer_defined, &closure_defined, captured);
+            }
+            // Also scan for nested closure captures - variables captured by nested closures
+            // need to be captured by this closure too (to pass through the chain)
+            // Pass outer_defined so nested closures can see grandparent variables
+            let nested_captured = scan_captured_vars(&func_lit.body, outer_defined);
+            for sym in nested_captured {
+                captured.insert(sym);
+            }
+        }
+        ExprKind::Call(call) => {
+            scan_expr_for_captures(&call.func, outer_defined, captured);
+            for arg in &call.args {
+                scan_expr_for_captures(arg, outer_defined, captured);
+            }
+        }
+        ExprKind::Binary(bin) => {
+            scan_expr_for_captures(&bin.left, outer_defined, captured);
+            scan_expr_for_captures(&bin.right, outer_defined, captured);
+        }
+        ExprKind::Unary(un) => {
+            scan_expr_for_captures(&un.operand, outer_defined, captured);
+        }
+        ExprKind::Index(idx) => {
+            scan_expr_for_captures(&idx.expr, outer_defined, captured);
+            scan_expr_for_captures(&idx.index, outer_defined, captured);
+        }
+        ExprKind::Selector(sel) => {
+            scan_expr_for_captures(&sel.expr, outer_defined, captured);
+        }
+        ExprKind::Paren(p) => {
+            scan_expr_for_captures(p, outer_defined, captured);
+        }
+        _ => {}
+    }
+}
+
+/// Scan closure body for references to outer-scope variables
+fn scan_closure_body_for_outer_refs(
+    stmt: &gox_syntax::ast::Stmt,
+    outer_defined: &std::collections::HashSet<Symbol>,
+    closure_defined: &std::collections::HashSet<Symbol>,
+    captured: &mut std::collections::HashSet<Symbol>,
+) {
+    use gox_syntax::ast::{StmtKind, ForClause};
+    
+    match &stmt.kind {
+        StmtKind::ShortVar(sv) => {
+            for expr in &sv.values {
+                scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+            }
+        }
+        StmtKind::Var(var_decl) => {
+            for spec in &var_decl.specs {
+                for expr in &spec.values {
+                    scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+                }
+            }
+        }
+        StmtKind::Assign(assign) => {
+            for expr in &assign.lhs {
+                scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+            }
+            for expr in &assign.rhs {
+                scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+            }
+        }
+        StmtKind::Expr(expr) => {
+            scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+        }
+        StmtKind::Return(ret) => {
+            for expr in &ret.values {
+                scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+            }
+        }
+        StmtKind::If(if_stmt) => {
+            scan_closure_expr_for_outer_refs(&if_stmt.cond, outer_defined, closure_defined, captured);
+            for s in &if_stmt.then.stmts {
+                scan_closure_body_for_outer_refs(s, outer_defined, closure_defined, captured);
+            }
+            if let Some(else_stmt) = &if_stmt.else_ {
+                scan_closure_body_for_outer_refs(else_stmt, outer_defined, closure_defined, captured);
+            }
+        }
+        StmtKind::For(for_stmt) => {
+            match &for_stmt.clause {
+                ForClause::Cond(cond) => {
+                    if let Some(c) = cond {
+                        scan_closure_expr_for_outer_refs(c, outer_defined, closure_defined, captured);
+                    }
+                }
+                ForClause::Three { cond, .. } => {
+                    if let Some(c) = cond {
+                        scan_closure_expr_for_outer_refs(c, outer_defined, closure_defined, captured);
+                    }
+                }
+                ForClause::Range { expr, .. } => {
+                    scan_closure_expr_for_outer_refs(expr, outer_defined, closure_defined, captured);
+                }
+            }
+            for s in &for_stmt.body.stmts {
+                scan_closure_body_for_outer_refs(s, outer_defined, closure_defined, captured);
+            }
+        }
+        StmtKind::Block(block) => {
+            for s in &block.stmts {
+                scan_closure_body_for_outer_refs(s, outer_defined, closure_defined, captured);
+            }
+        }
+        StmtKind::Send(send) => {
+            scan_closure_expr_for_outer_refs(&send.chan, outer_defined, closure_defined, captured);
+            scan_closure_expr_for_outer_refs(&send.value, outer_defined, closure_defined, captured);
+        }
+        _ => {}
+    }
+}
+
+fn scan_closure_expr_for_outer_refs(
+    expr: &gox_syntax::ast::Expr,
+    outer_defined: &std::collections::HashSet<Symbol>,
+    closure_defined: &std::collections::HashSet<Symbol>,
+    captured: &mut std::collections::HashSet<Symbol>,
+) {
+    use gox_syntax::ast::ExprKind;
+    
+    match &expr.kind {
+        ExprKind::Ident(ident) => {
+            // If this ident is defined in outer scope but not in closure, it's captured
+            if outer_defined.contains(&ident.symbol) && !closure_defined.contains(&ident.symbol) {
+                captured.insert(ident.symbol);
+            }
+        }
+        ExprKind::Call(call) => {
+            scan_closure_expr_for_outer_refs(&call.func, outer_defined, closure_defined, captured);
+            for arg in &call.args {
+                scan_closure_expr_for_outer_refs(arg, outer_defined, closure_defined, captured);
+            }
+        }
+        ExprKind::Binary(bin) => {
+            scan_closure_expr_for_outer_refs(&bin.left, outer_defined, closure_defined, captured);
+            scan_closure_expr_for_outer_refs(&bin.right, outer_defined, closure_defined, captured);
+        }
+        ExprKind::Unary(un) => {
+            scan_closure_expr_for_outer_refs(&un.operand, outer_defined, closure_defined, captured);
+        }
+        ExprKind::Index(idx) => {
+            scan_closure_expr_for_outer_refs(&idx.expr, outer_defined, closure_defined, captured);
+            scan_closure_expr_for_outer_refs(&idx.index, outer_defined, closure_defined, captured);
+        }
+        ExprKind::Selector(sel) => {
+            scan_closure_expr_for_outer_refs(&sel.expr, outer_defined, closure_defined, captured);
+        }
+        ExprKind::Paren(p) => {
+            scan_closure_expr_for_outer_refs(p, outer_defined, closure_defined, captured);
+        }
+        ExprKind::FuncLit(func_lit) => {
+            // Nested closure - scan it too
+            let mut nested_closure_defined = closure_defined.clone();
+            for param in &func_lit.sig.params {
+                for name in &param.names {
+                    nested_closure_defined.insert(name.symbol);
+                }
+            }
+            for s in &func_lit.body.stmts {
+                scan_closure_body_for_outer_refs(s, outer_defined, &nested_closure_defined, captured);
+            }
+        }
+        _ => {}
     }
 }

@@ -512,6 +512,24 @@ pub mod closure {
         debug_assert!(idx < upvalue_count(closure));
         Gc::write_slot(closure, UPVAL_START + idx, val);
     }
+    
+    // === Upval Box (for reference capture semantics) ===
+    // A single-slot heap object that holds a captured variable's value.
+    // Multiple closures can share the same upval_box to see mutations.
+    
+    pub fn create_upval_box(gc: &mut Gc, type_id: TypeId) -> GcRef {
+        let uv = gc.alloc(type_id, 1);
+        Gc::write_slot(uv, 0, 0);
+        uv
+    }
+    
+    pub fn get_upval_box(uv: GcRef) -> u64 {
+        Gc::read_slot(uv, 0)
+    }
+    
+    pub fn set_upval_box(uv: GcRef, value: u64) {
+        Gc::write_slot(uv, 0, value);
+    }
 }
 
 /// Interface object layout (2 slots inline, not heap allocated):

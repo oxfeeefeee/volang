@@ -1055,6 +1055,26 @@ impl Vm {
                 }
             }
             
+            Opcode::UpvalNew => {
+                // a=dest: create new upval_box for reference capture
+                let uv = closure::create_upval_box(&mut self.gc, builtin::CLOSURE);
+                self.write_reg(fiber_id, a, uv as u64);
+            }
+            
+            Opcode::UpvalGet => {
+                // a=dest, b=upval_box: read value from upval_box
+                let uv = self.read_reg(fiber_id, b) as GcRef;
+                let val = closure::get_upval_box(uv);
+                self.write_reg(fiber_id, a, val);
+            }
+            
+            Opcode::UpvalSet => {
+                // a=upval_box, b=value: write value to upval_box
+                let uv = self.read_reg(fiber_id, a) as GcRef;
+                let val = self.read_reg(fiber_id, b);
+                closure::set_upval_box(uv, val);
+            }
+            
             // ============ Goroutine ============
             Opcode::Go => {
                 // a=func_id, b=arg_start, c=arg_count

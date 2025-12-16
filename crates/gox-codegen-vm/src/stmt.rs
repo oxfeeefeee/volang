@@ -278,10 +278,26 @@ fn compile_short_var(
                 None
             };
             
-            let dst = fctx.define_local_with_type(*name, 1, kind, type_sym);
+            // Check if this variable will be captured by a closure
+            let is_captured = fctx.is_captured(name.symbol);
+            
+            let dst = fctx.define_local_full(*name, 1, kind, type_sym, is_captured);
+            
             if i < sv.values.len() {
                 let src = expr::compile_expr(ctx, fctx, &sv.values[i])?;
-                if src != dst {
+                
+                if is_captured {
+                    // Create upval_box and store value in it
+                    fctx.emit(Opcode::UpvalNew, dst, 0, 0);
+                    if let Some(_field_count) = src_struct_info {
+                        // Deep copy struct into temp, then store in upval
+                        let tmp = fctx.regs.alloc(1);
+                        crate::context::emit_deep_struct_copy(ctx.result, fctx, tmp, src, type_sym);
+                        fctx.emit(Opcode::UpvalSet, dst, tmp, 0);
+                    } else {
+                        fctx.emit(Opcode::UpvalSet, dst, src, 0);
+                    }
+                } else if src != dst {
                     // Check if we need struct copy
                     if let Some(_field_count) = src_struct_info {
                         // Deep copy struct including nested structs
@@ -290,6 +306,9 @@ fn compile_short_var(
                         fctx.emit(Opcode::Mov, dst, src, 0);
                     }
                 }
+            } else if is_captured {
+                // No initial value but captured - create empty upval_box
+                fctx.emit(Opcode::UpvalNew, dst, 0, 0);
             }
         }
     }
@@ -544,6 +563,7 @@ fn compile_assign(
                 if let Some(local) = fctx.lookup_local(ident.symbol) {
                     let dst = local.reg;
                     let local_kind = local.kind;
+                    let is_captured = local.is_captured;
                     
                     // Handle compound assignment to local variable
                     match assign.op {
@@ -562,6 +582,10 @@ fn compile_assign(
                                     let type_id = infer_runtime_type_id(ctx, fctx, &assign.rhs[i]);
                                     fctx.emit(Opcode::BoxInterface, dst, type_id, src);
                                 }
+                            } else if is_captured {
+                                // Variable is in upval_box - write through it
+                                let src = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
+                                fctx.emit(Opcode::UpvalSet, dst, src, 0);
                             } else {
                                 let src = expr::compile_expr(ctx, fctx, &assign.rhs[i])?;
                                 if src != dst {

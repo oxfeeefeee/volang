@@ -199,6 +199,9 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::ClosureGet => format!("ClosureGet r{}, r{}, {}", a, b, c),
         Opcode::ClosureSet => format!("ClosureSet r{}, {}, r{}", a, b, c),
         Opcode::ClosureCall => format!("ClosureCall r{}, r{}, {} (ret={})", a, b, c, flags),
+        Opcode::UpvalNew => format!("UpvalNew r{}", a),
+        Opcode::UpvalGet => format!("UpvalGet r{}, r{}", a, b),
+        Opcode::UpvalSet => format!("UpvalSet r{}, r{}", a, b),
         
         Opcode::Go => format!("Go {}, r{}, {}", a, b, c),
         Opcode::Yield => "Yield".to_string(),
