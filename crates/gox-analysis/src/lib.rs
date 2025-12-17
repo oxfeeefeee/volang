@@ -83,7 +83,7 @@ pub use types::{Type, BasicType, UntypedKind, NamedTypeId, NamedTypeInfo, Method
 pub use scope::{Scope, ScopeKind, Entity, BuiltinKind};
 pub use constant::Constant;
 pub use collect::{collect_types, collect_types_multi, parse_rune_literal, CollectResult};
-pub use resolve::{resolve_types, ResolveResult};
+pub use resolve::{resolve_types, resolve_types_with_imports, ResolveResult};
 pub use check::{check_types, TypeChecker};
 pub use project::{analyze_project, Project, TypedPackage, ProjectError};
 
@@ -192,8 +192,26 @@ pub fn typecheck_files_with_imports(
         }
     }
     
-    // Phase 2: Resolve types
-    let resolve_result = resolve_types(collect_result, interner, diagnostics);
+    // Build imported types map for Phase 2 cross-package type resolution
+    let mut imported_types_map: std::collections::HashMap<String, std::collections::HashMap<String, types::Type>> = 
+        std::collections::HashMap::new();
+    for import in imports {
+        if !import.package_name.is_empty() {
+            let local_name = import.alias.as_ref().unwrap_or(&import.package_name);
+            if let Some(pkg_types) = package_exported_types.get(&import.package_name) {
+                let mut type_map: std::collections::HashMap<String, types::Type> = 
+                    std::collections::HashMap::new();
+                for (type_name, _exported_type) in pkg_types {
+                    // Create a placeholder struct type for cross-package types
+                    type_map.insert(type_name.clone(), types::Type::Struct(types::StructType { fields: vec![] }));
+                }
+                imported_types_map.insert(local_name.clone(), type_map);
+            }
+        }
+    }
+    
+    // Phase 2: Resolve types with imported types
+    let resolve_result = resolve_types_with_imports(collect_result, interner, diagnostics, imported_types_map);
 
     // Phase 3: Check declarations from all files
     let mut checker = check_types(&resolve_result, interner, diagnostics);

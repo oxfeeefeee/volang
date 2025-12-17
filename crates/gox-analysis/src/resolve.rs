@@ -38,7 +38,7 @@
 //! // result.named_types[id] contains the resolved type info
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use gox_common::{DiagnosticSink, Span, Symbol, SymbolInterner};
 use gox_syntax::ast::{self, TypeExprKind};
@@ -85,6 +85,10 @@ pub struct TypeResolver<'a> {
     resolving: HashSet<NamedTypeId>,
     /// Whether we're inside an object/slice/map/interface (breaks cycles).
     in_indirect: bool,
+    /// Imported package names (for cross-package type resolution).
+    imported_packages: HashSet<String>,
+    /// Exported types from imported packages: pkg_name -> type_name -> Type.
+    imported_types: HashMap<String, HashMap<String, Type>>,
 }
 
 impl<'a> TypeResolver<'a> {
@@ -106,7 +110,17 @@ impl<'a> TypeResolver<'a> {
             named_types: Vec::with_capacity(placeholder_count),
             resolving: HashSet::new(),
             in_indirect: false,
+            imported_packages: HashSet::new(),
+            imported_types: HashMap::new(),
         }
+    }
+
+    /// Sets imported package types for cross-package type resolution.
+    pub fn set_imported_types(&mut self, imported_types: HashMap<String, HashMap<String, Type>>) {
+        for pkg_name in imported_types.keys() {
+            self.imported_packages.insert(pkg_name.clone());
+        }
+        self.imported_types = imported_types;
     }
 
     /// Resolves all types and returns the result.
@@ -342,10 +356,18 @@ impl<'a> TypeResolver<'a> {
 
             TypeExprKind::Selector(sel) => {
                 // Qualified type: pkg.Type - resolve as external type reference
-                // For now, treat as Invalid since cross-package types need special handling
-                let _pkg_name = self.interner.resolve(sel.pkg.symbol).unwrap_or("");
-                let _type_name = self.interner.resolve(sel.sel.symbol).unwrap_or("");
-                // TODO: Proper cross-package type resolution
+                let pkg_name = self.interner.resolve(sel.pkg.symbol).unwrap_or("");
+                let type_name = self.interner.resolve(sel.sel.symbol).unwrap_or("");
+                
+                // Look up in imported types
+                if let Some(pkg_types) = self.imported_types.get(pkg_name) {
+                    if let Some(ty) = pkg_types.get(type_name) {
+                        return ty.clone();
+                    }
+                }
+                
+                // Type not found in imports - just return Invalid without error
+                // The type checker will report the error if needed
                 Type::Invalid
             }
 
@@ -682,6 +704,18 @@ pub fn resolve_types(
     diagnostics: &mut DiagnosticSink,
 ) -> ResolveResult {
     let resolver = TypeResolver::new(collect_result, interner, diagnostics);
+    resolver.resolve()
+}
+
+/// Convenience function to run Phase 2 resolution with imported types.
+pub fn resolve_types_with_imports(
+    collect_result: CollectResult,
+    interner: &SymbolInterner,
+    diagnostics: &mut DiagnosticSink,
+    imported_types: HashMap<String, HashMap<String, Type>>,
+) -> ResolveResult {
+    let mut resolver = TypeResolver::new(collect_result, interner, diagnostics);
+    resolver.set_imported_types(imported_types);
     resolver.resolve()
 }
 
