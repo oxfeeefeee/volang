@@ -577,3 +577,19 @@ func main() {
 "#;
     assert!(check_has_error(source, 2700));
 }
+
+#[test]
+fn test_pointer_field_access() {
+    // Test that pointer types allow field access through auto-deref
+    let source = r#"
+package main
+type S struct { x int; y int }
+func main() {
+    p := &S{10, 20}
+    var _ = p.x
+}
+"#;
+    let (diag, _) = check_source(source);
+    // Should NOT have errors - pointer field access should work
+    assert!(!diag.has_errors(), "Pointer field access should work: {:?}", diag);
+}

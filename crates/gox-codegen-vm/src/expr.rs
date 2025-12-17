@@ -1218,7 +1218,13 @@ fn is_embedded_type_access(
 ) -> bool {
     use gox_analysis::Type;
 
-    match ty {
+    // Auto-deref pointer types
+    let deref_ty = match ty {
+        Type::Pointer(inner) => inner.as_ref(),
+        other => other,
+    };
+
+    match deref_ty {
         Type::Struct(s) => {
             for field in &s.fields {
                 if field.embedded {
@@ -1262,7 +1268,13 @@ fn find_flat_field_index_with_offset(
 ) -> Option<u16> {
     use gox_analysis::Type;
 
-    match ty {
+    // Auto-deref pointer types
+    let deref_ty = match ty {
+        Type::Pointer(inner) => inner.as_ref(),
+        other => other,
+    };
+
+    match deref_ty {
         Type::Struct(s) => {
             // First pass: check all direct (non-embedded) fields for shadowing
             let mut current_offset = base_offset;
