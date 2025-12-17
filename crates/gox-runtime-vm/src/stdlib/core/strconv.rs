@@ -5,15 +5,14 @@
 use gox_vm::{NativeCtx, NativeRegistry, NativeResult};
 
 /// Register strconv functions.
+/// GoX implementations: FormatBool, ParseBool (in stdlib/strconv/strconv.gox)
 pub fn register(registry: &mut NativeRegistry) {
     registry.register("strconv.Atoi", native_atoi);
     registry.register("strconv.Itoa", native_itoa);
     registry.register("strconv.ParseInt", native_parse_int);
     registry.register("strconv.ParseFloat", native_parse_float);
-    registry.register("strconv.ParseBool", native_parse_bool);
     registry.register("strconv.FormatInt", native_format_int);
     registry.register("strconv.FormatFloat", native_format_float);
-    registry.register("strconv.FormatBool", native_format_bool);
     registry.register("strconv.Quote", native_quote);
 }
 
@@ -99,29 +98,6 @@ fn native_parse_float(ctx: &mut NativeCtx) -> NativeResult {
     }
 }
 
-/// strconv.ParseBool(s string) (bool, error)
-fn native_parse_bool(ctx: &mut NativeCtx) -> NativeResult {
-    let s = ctx.arg_str(0);
-    let result = match s.to_lowercase().as_str() {
-        "1" | "t" | "true" => Some(true),
-        "0" | "f" | "false" => Some(false),
-        _ => None,
-    };
-    
-    match result {
-        Some(v) => {
-            ctx.ret_bool(0, v);
-            ctx.ret_nil(1);
-            NativeResult::Ok(2)
-        }
-        None => {
-            ctx.ret_bool(0, false);
-            ctx.ret_i64(1, 1); // error
-            NativeResult::Ok(2)
-        }
-    }
-}
-
 /// strconv.FormatInt(i, base int) string
 fn native_format_int(ctx: &mut NativeCtx) -> NativeResult {
     let i = ctx.arg_i64(0);
@@ -173,13 +149,6 @@ fn native_format_float(ctx: &mut NativeCtx) -> NativeResult {
     };
     
     ctx.ret_string(0, &result);
-    NativeResult::Ok(1)
-}
-
-/// strconv.FormatBool(b bool) string
-fn native_format_bool(ctx: &mut NativeCtx) -> NativeResult {
-    let b = ctx.arg_bool(0);
-    ctx.ret_string(0, if b { "true" } else { "false" });
     NativeResult::Ok(1)
 }
 

@@ -5,34 +5,25 @@ use gox_vm::native::{NativeCtx, NativeResult, NativeRegistry};
 use gox_vm::objects::{array, slice};
 use gox_vm::types::builtin;
 
+/// Register bytes native functions.
+/// GoX implementations: Equal, Compare, HasPrefix, HasSuffix, Contains, TrimPrefix, TrimSuffix
 pub fn register(registry: &mut NativeRegistry) {
-    // Comparison
-    registry.register("bytes.Equal", native_equal);
-    registry.register("bytes.Compare", native_compare);
-    
-    // Search
-    registry.register("bytes.Contains", native_contains);
+    // Search (native: search algorithms)
     registry.register("bytes.Index", native_index);
     registry.register("bytes.LastIndex", native_last_index);
     registry.register("bytes.Count", native_count);
-    registry.register("bytes.HasPrefix", native_has_prefix);
-    registry.register("bytes.HasSuffix", native_has_suffix);
     registry.register("bytes.IndexByte", native_index_byte);
     registry.register("bytes.LastIndexByte", native_last_index_byte);
     
-    // Transformation
+    // Transformation (native: Unicode + allocation)
     registry.register("bytes.ToLower", native_to_lower);
     registry.register("bytes.ToUpper", native_to_upper);
     registry.register("bytes.TrimSpace", native_trim_space);
     registry.register("bytes.Trim", native_trim);
-    registry.register("bytes.TrimPrefix", native_trim_prefix);
-    registry.register("bytes.TrimSuffix", native_trim_suffix);
     
-    // Construction
+    // Construction (native: allocation)
     registry.register("bytes.Repeat", native_repeat);
     registry.register("bytes.Join", native_join);
-    
-    // Splitting
     registry.register("bytes.Split", native_split);
 }
 
@@ -54,42 +45,7 @@ fn create_byte_slice(gc: &mut Gc, data: &[u8]) -> GcRef {
     slice::from_array(gc, builtin::SLICE, arr)
 }
 
-// ============ Comparison ============
-
-fn native_equal(ctx: &mut NativeCtx) -> NativeResult {
-    let a = read_bytes(ctx.arg_ref(0));
-    let b = read_bytes(ctx.arg_ref(1));
-    ctx.ret_bool(0, a == b);
-    NativeResult::Ok(1)
-}
-
-fn native_compare(ctx: &mut NativeCtx) -> NativeResult {
-    let a = read_bytes(ctx.arg_ref(0));
-    let b = read_bytes(ctx.arg_ref(1));
-    let result = match a.cmp(&b) {
-        std::cmp::Ordering::Less => -1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 1,
-    };
-    ctx.ret_i64(0, result);
-    NativeResult::Ok(1)
-}
-
 // ============ Search ============
-
-fn native_contains(ctx: &mut NativeCtx) -> NativeResult {
-    let b = read_bytes(ctx.arg_ref(0));
-    let subslice = read_bytes(ctx.arg_ref(1));
-    
-    if subslice.is_empty() {
-        ctx.ret_bool(0, true);
-        return NativeResult::Ok(1);
-    }
-    
-    let result = b.windows(subslice.len()).any(|w| w == subslice);
-    ctx.ret_bool(0, result);
-    NativeResult::Ok(1)
-}
 
 fn native_index(ctx: &mut NativeCtx) -> NativeResult {
     let b = read_bytes(ctx.arg_ref(0));
@@ -138,20 +94,6 @@ fn native_count(ctx: &mut NativeCtx) -> NativeResult {
         .filter(|w| *w == sep)
         .count();
     ctx.ret_i64(0, count as i64);
-    NativeResult::Ok(1)
-}
-
-fn native_has_prefix(ctx: &mut NativeCtx) -> NativeResult {
-    let b = read_bytes(ctx.arg_ref(0));
-    let prefix = read_bytes(ctx.arg_ref(1));
-    ctx.ret_bool(0, b.starts_with(&prefix));
-    NativeResult::Ok(1)
-}
-
-fn native_has_suffix(ctx: &mut NativeCtx) -> NativeResult {
-    let b = read_bytes(ctx.arg_ref(0));
-    let suffix = read_bytes(ctx.arg_ref(1));
-    ctx.ret_bool(0, b.ends_with(&suffix));
     NativeResult::Ok(1)
 }
 
@@ -205,34 +147,6 @@ fn native_trim(ctx: &mut NativeCtx) -> NativeResult {
     let s = String::from_utf8_lossy(&b);
     let trimmed = s.trim_matches(|c: char| cutset.contains(c));
     let slice_ref = create_byte_slice(ctx.gc(), trimmed.as_bytes());
-    ctx.ret_ref(0, slice_ref);
-    NativeResult::Ok(1)
-}
-
-fn native_trim_prefix(ctx: &mut NativeCtx) -> NativeResult {
-    let b = read_bytes(ctx.arg_ref(0));
-    let prefix = read_bytes(ctx.arg_ref(1));
-    
-    let result = if b.starts_with(&prefix) {
-        &b[prefix.len()..]
-    } else {
-        &b[..]
-    };
-    let slice_ref = create_byte_slice(ctx.gc(), result);
-    ctx.ret_ref(0, slice_ref);
-    NativeResult::Ok(1)
-}
-
-fn native_trim_suffix(ctx: &mut NativeCtx) -> NativeResult {
-    let b = read_bytes(ctx.arg_ref(0));
-    let suffix = read_bytes(ctx.arg_ref(1));
-    
-    let result = if b.ends_with(&suffix) {
-        &b[..b.len() - suffix.len()]
-    } else {
-        &b[..]
-    };
-    let slice_ref = create_byte_slice(ctx.gc(), result);
     ctx.ret_ref(0, slice_ref);
     NativeResult::Ok(1)
 }

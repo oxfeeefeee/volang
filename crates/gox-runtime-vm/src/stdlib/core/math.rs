@@ -2,12 +2,10 @@
 
 use gox_vm::native::{NativeCtx, NativeResult, NativeRegistry};
 
+/// Register math native functions.
+/// GoX implementations: Abs, Max, Min, Dim (in stdlib/math/math.gox)
 pub fn register(registry: &mut NativeRegistry) {
-    // Basic functions
-    registry.register("math.Abs", native_abs);
-    registry.register("math.Max", native_max);
-    registry.register("math.Min", native_min);
-    registry.register("math.Dim", native_dim);
+    // Basic functions (native: FPU operations)
     registry.register("math.Mod", native_mod);
     registry.register("math.Remainder", native_remainder);
     
@@ -54,33 +52,6 @@ pub fn register(registry: &mut NativeRegistry) {
 }
 
 // ============ Basic functions ============
-
-fn native_abs(ctx: &mut NativeCtx) -> NativeResult {
-    let x = ctx.arg_f64(0);
-    ctx.ret_f64(0, x.abs());
-    NativeResult::Ok(1)
-}
-
-fn native_max(ctx: &mut NativeCtx) -> NativeResult {
-    let x = ctx.arg_f64(0);
-    let y = ctx.arg_f64(1);
-    ctx.ret_f64(0, x.max(y));
-    NativeResult::Ok(1)
-}
-
-fn native_min(ctx: &mut NativeCtx) -> NativeResult {
-    let x = ctx.arg_f64(0);
-    let y = ctx.arg_f64(1);
-    ctx.ret_f64(0, x.min(y));
-    NativeResult::Ok(1)
-}
-
-fn native_dim(ctx: &mut NativeCtx) -> NativeResult {
-    let x = ctx.arg_f64(0);
-    let y = ctx.arg_f64(1);
-    ctx.ret_f64(0, (x - y).max(0.0));
-    NativeResult::Ok(1)
-}
 
 fn native_mod(ctx: &mut NativeCtx) -> NativeResult {
     let x = ctx.arg_f64(0);

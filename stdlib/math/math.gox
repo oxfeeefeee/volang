@@ -22,13 +22,49 @@ const (
     MinInt = -9223372036854775808
 )
 
-// Basic functions
-func Abs(x float64) float64
-func Max(x, y float64) float64
-func Min(x, y float64) float64
-func Dim(x, y float64) float64
-func Mod(x, y float64) float64
-func Remainder(x, y float64) float64
+// ============================================================
+// GoX implementations (pure logic)
+// ============================================================
+
+// Abs returns the absolute value of x.
+func Abs(x float64) float64 {
+    if x < 0 {
+        return -x
+    }
+    return x
+}
+
+// Max returns the larger of x or y.
+func Max(x, y float64) float64 {
+    if x > y {
+        return x
+    }
+    return y
+}
+
+// Min returns the smaller of x or y.
+func Min(x, y float64) float64 {
+    if x < y {
+        return x
+    }
+    return y
+}
+
+// Dim returns the maximum of x-y or 0.
+func Dim(x, y float64) float64 {
+    v := x - y
+    if v > 0 {
+        return v
+    }
+    return 0
+}
+
+// ============================================================
+// Native functions (FPU operations, expensive algorithms)
+// ============================================================
+
+func Mod(x, y float64) float64       // native: FPU
+func Remainder(x, y float64) float64 // native: FPU
 
 // Power and root functions
 func Sqrt(x float64) float64
