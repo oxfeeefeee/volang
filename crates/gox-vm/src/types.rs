@@ -1,7 +1,7 @@
 //! Type metadata and type system.
 
 use std::collections::HashMap;
-use gox_common::ValueKind;
+use gox_common_core::ValueKind;
 
 /// Type ID (index into type table).
 pub type TypeId = u32;
@@ -307,5 +307,5 @@ impl TypeTable {
 }
 
 // Re-export TypeKind as an alias for backward compatibility
-#[deprecated(note = "Use gox_common::ValueKind instead")]
+#[deprecated(note = "Use gox_common_core::ValueKind instead")]
 pub type TypeKind = ValueKind;

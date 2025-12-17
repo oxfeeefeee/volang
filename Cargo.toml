@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+  # Core (no_std)
+  "crates/gox-common-core",
+  
   # Frontend
   "crates/gox-common",
   "crates/gox-syntax",

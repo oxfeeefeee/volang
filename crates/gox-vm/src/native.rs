@@ -23,7 +23,7 @@ use crate::objects::string;
 use crate::types::builtin;
 
 // Re-export TypeTag for native function implementations
-pub use gox_common::ValueKind as TypeTag;
+pub use gox_common_core::ValueKind as TypeTag;
 
 /// Native function signature - direct register access.
 pub type NativeFn = fn(ctx: &mut NativeCtx) -> NativeResult;

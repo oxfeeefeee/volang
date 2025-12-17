@@ -30,4 +30,4 @@ pub use native::{NativeFn, NativeCtx, NativeResult, NativeRegistry, TypeTag};
 pub use ffi::GoxValue;
 
 // Re-export ValueKind from common
-pub use gox_common::ValueKind;
+pub use gox_common_core::ValueKind;

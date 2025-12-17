@@ -6,7 +6,7 @@ license.workspace = true
 description = "Custom virtual machine runtime for GoX"
 
 [dependencies]
-gox-common = { path = "../gox-common" }
+gox-common-core = { path = "../gox-common-core" }
 indexmap = "2"
 
 [dev-dependencies]

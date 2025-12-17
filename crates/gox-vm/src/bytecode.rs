@@ -2,7 +2,7 @@
 
 use crate::instruction::Instruction;
 use crate::types::TypeMeta;
-use gox_common::ValueKind;
+use gox_common_core::ValueKind;
 use std::io::{Read, Cursor};
 
 /// Magic bytes for bytecode files.

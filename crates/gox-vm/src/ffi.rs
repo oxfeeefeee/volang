@@ -7,7 +7,7 @@ use crate::gc::GcRef;
 use crate::objects::string;
 
 // Re-export ValueKind as TypeTag for backward compatibility
-pub use gox_common::ValueKind as TypeTag;
+pub use gox_common_core::ValueKind as TypeTag;
 
 /// A typed value for FFI.
 #[derive(Debug, Clone)]

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Shared infrastructure for the GoX compiler: source management, diagnostics, and symbols"
 
 [dependencies]
+gox-common-core = { path = "../gox-common-core" }
 thiserror = "1.0"
 codespan-reporting = "0.11"
 string-interner = "0.17"

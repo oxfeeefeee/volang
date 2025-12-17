@@ -273,12 +273,17 @@ name = "gox-common"
 version = "0.1.0"
 dependencies = [
  "codespan-reporting",
+ "gox-common-core",
  "rustc-hash",
  "serde",
  "string-interner",
  "termcolor",
  "thiserror",
 ]
+
+[[package]]
+name = "gox-common-core"
+version = "0.1.0"
 
 [[package]]
 name = "gox-jit"
@@ -356,7 +361,7 @@ dependencies = [
 name = "gox-vm"
 version = "0.1.0"
 dependencies = [
- "gox-common",
+ "gox-common-core",
  "indexmap",
 ]
 
