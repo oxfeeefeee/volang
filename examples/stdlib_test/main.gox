@@ -1,0 +1,27 @@
+package main
+
+import "strings"
+import "strconv"
+import "math"
+
+func main() int {
+    println("=== strings ===")
+    s := "hello world"
+    if strings.Contains(s, "world") {
+        println("Contains: ok")
+    }
+    println(strings.ToUpper("hello"))
+    println(strings.Join(strings.Split("a,b,c", ","), "-"))
+    println(strings.TrimSpace("  hello  "))
+    println(strings.Replace("hello", "l", "L", 1))
+    
+    println("\n=== strconv ===")
+    println(strconv.Itoa(123))
+    
+    println("\n=== math ===")
+    println(math.Abs(-3.14))
+    println(math.Max(1.0, 2.0))
+    println(math.Sqrt(16.0))
+    
+    return 0
+}

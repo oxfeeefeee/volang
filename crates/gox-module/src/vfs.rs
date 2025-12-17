@@ -29,7 +29,42 @@ impl VfsConfig {
     pub fn from_env(project_dir: PathBuf) -> Self {
         let std_root = std::env::var("GOX_STD")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| project_dir.join("std"));
+            .unwrap_or_else(|_| {
+                // Try common locations for stdlib
+                // 1. Project dir's "stdlib" folder
+                let in_project = project_dir.join("stdlib");
+                if in_project.is_dir() {
+                    return in_project;
+                }
+                // 2. Parent dir's "stdlib" (for examples/)
+                if let Some(parent) = project_dir.parent() {
+                    let in_parent = parent.join("stdlib");
+                    if in_parent.is_dir() {
+                        return in_parent;
+                    }
+                    // 3. Grandparent (for examples/subdir/)
+                    if let Some(grandparent) = parent.parent() {
+                        let in_grandparent = grandparent.join("stdlib");
+                        if in_grandparent.is_dir() {
+                            return in_grandparent;
+                        }
+                    }
+                }
+                // 4. Relative to executable
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(exe_dir) = exe.parent() {
+                        // Check ../stdlib (development) and ../lib/gox/stdlib (installed)
+                        for rel in &["../../../stdlib", "../../stdlib", "../stdlib", "../lib/gox/stdlib"] {
+                            let p = exe_dir.join(rel);
+                            if p.is_dir() {
+                                return p;
+                            }
+                        }
+                    }
+                }
+                // Fallback
+                project_dir.join("stdlib")
+            });
         
         let mod_root = dirs::home_dir()
             .map(|h| h.join(".gox/mod"))
