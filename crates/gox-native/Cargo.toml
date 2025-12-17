@@ -1,0 +1,19 @@
+[package]
+name = "gox-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native executable compilation for GoX using Cranelift"
+
+[dependencies]
+gox-common = { path = "../gox-common" }
+gox-vm = { path = "../gox-vm" }
+gox-runtime-core = { path = "../gox-runtime-core" }
+
+# Cranelift dependencies (commented until ready to implement)
+# cranelift-codegen = "0.113"
+# cranelift-frontend = "0.113"
+# cranelift-object = "0.113"
+# cranelift-native = "0.113"
+
+[dev-dependencies]

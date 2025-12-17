@@ -31,7 +31,7 @@ impl Precedence {
             TokenKind::Plus | TokenKind::Minus | TokenKind::Pipe | TokenKind::Caret => Precedence::Sum,
             TokenKind::Shl | TokenKind::Shr => Precedence::Shift,
             TokenKind::Star | TokenKind::Slash | TokenKind::Percent | TokenKind::Amp | TokenKind::AmpCaret => Precedence::Product,
-            TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot => Precedence::Postfix,
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot | TokenKind::Question => Precedence::Postfix,
             TokenKind::LBrace => Precedence::Postfix,
             _ => Precedence::Lowest,
         }
@@ -351,6 +351,14 @@ impl<'a> Parser<'a> {
                     self.error("expected type for composite literal");
                     Err(())
                 }
+            }
+            // Try-unwrap operator (error propagation)
+            TokenKind::Question => {
+                self.advance();
+                Ok(Expr {
+                    kind: ExprKind::TryUnwrap(Box::new(left)),
+                    span: Span::new(start, self.current.span.start),
+                })
             }
             _ => Ok(left),
         }

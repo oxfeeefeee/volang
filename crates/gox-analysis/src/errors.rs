@@ -192,6 +192,18 @@ pub enum TypeError {
     NotImplemented = 2950,
     /// Missing method for interface.
     MissingMethod = 2951,
+
+    // === Error Handling (2960-2969) ===
+    /// fail statement outside fallible function.
+    FailOutsideFallible = 2960,
+    /// fail with non-error type.
+    FailNonError = 2961,
+    /// errdefer outside fallible function.
+    ErrDeferOutsideFallible = 2962,
+    /// ? operator outside fallible function.
+    TryUnwrapOutsideFallible = 2963,
+    /// ? operator on non-fallible expression.
+    TryUnwrapNonFallible = 2964,
 }
 
 impl TypeError {
@@ -297,6 +309,13 @@ impl TypeError {
             TypeError::NotImplemented => "type does not implement interface",
             TypeError::MissingMethod => "missing method",
             TypeError::DerefNonPointer => "cannot dereference non-pointer type",
+
+            // Error Handling Errors
+            TypeError::FailOutsideFallible => "fail statement outside function returning error",
+            TypeError::FailNonError => "fail requires error type",
+            TypeError::ErrDeferOutsideFallible => "errdefer outside function returning error",
+            TypeError::TryUnwrapOutsideFallible => "? operator outside function returning error",
+            TypeError::TryUnwrapNonFallible => "? requires expression returning (..., error)",
         }
     }
 

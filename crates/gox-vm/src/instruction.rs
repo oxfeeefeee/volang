@@ -173,6 +173,7 @@ pub enum Opcode {
     // ============ Defer/Panic/Recover ============
     DeferPush = 200,  // defer func at a, args at b, c=arg_count
     DeferPop,         // pop and execute defers for current frame
+    ErrDeferPush,     // errdefer func at a, args at b, c=arg_count (only runs on error)
     Panic,            // panic with value at a
     Recover,          // a = recover()
     
@@ -317,8 +318,9 @@ impl Opcode {
             
             200 => Self::DeferPush,
             201 => Self::DeferPop,
-            202 => Self::Panic,
-            203 => Self::Recover,
+            202 => Self::ErrDeferPush,
+            203 => Self::Panic,
+            204 => Self::Recover,
             
             210 => Self::BoxInterface,
             211 => Self::UnboxInterface,

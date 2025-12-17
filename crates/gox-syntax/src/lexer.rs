@@ -423,6 +423,12 @@ impl<'src> Lexer<'src> {
                 }
             }
 
+            // Question mark (error propagation)
+            '?' => {
+                self.advance();
+                TokenKind::Question
+            }
+
             // String literals
             '"' => self.scan_string(),
             '`' => self.scan_raw_string(),
@@ -1151,5 +1157,152 @@ mod tests {
         // First token "foo" should be at positions 100-103
         assert_eq!(tokens[0].span.start.0, 100);
         assert_eq!(tokens[0].span.end.0, 103);
+    }
+
+    // ========== Error Handling Tokens ==========
+
+    #[test]
+    fn test_fail_keyword() {
+        assert_eq!(lex("fail"), vec![TokenKind::Fail, TokenKind::Eof]);
+        // fail is a keyword, not an identifier
+        assert_ne!(lex("fail"), vec![TokenKind::Ident, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_errdefer_keyword() {
+        assert_eq!(lex("errdefer"), vec![TokenKind::Errdefer, TokenKind::Eof]);
+        // errdefer is a keyword, not an identifier
+        assert_ne!(lex("errdefer"), vec![TokenKind::Ident, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_question_operator() {
+        assert_eq!(lex("?"), vec![TokenKind::Question, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_fail_statement() {
+        // fail expr
+        assert_eq!(
+            lex("fail err"),
+            vec![TokenKind::Fail, TokenKind::Ident, TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn test_errdefer_statement() {
+        // errdefer cleanup()
+        assert_eq!(
+            lex("errdefer cleanup()"),
+            vec![
+                TokenKind::Errdefer,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn test_try_unwrap_expression() {
+        // getValue()?
+        assert_eq!(
+            lex("getValue()?"),
+            vec![
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Question,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn test_question_after_call() {
+        // result := foo()?
+        assert_eq!(
+            lex("result := foo()?"),
+            vec![
+                TokenKind::Ident,
+                TokenKind::ColonEq,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Question,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn test_chained_try_unwrap() {
+        // a()?.b()?
+        assert_eq!(
+            lex("a()?.b()?"),
+            vec![
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Question,
+                TokenKind::Dot,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Question,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fail_with_error_literal() {
+        // fail errors.New("failed")
+        assert_eq!(
+            lex(r#"fail errors.New("failed")"#),
+            vec![
+                TokenKind::Fail,
+                TokenKind::Ident,
+                TokenKind::Dot,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::StringLit,
+                TokenKind::RParen,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn test_error_handling_in_function() {
+        // Complete error handling pattern
+        let code = r#"func foo() error {
+    errdefer cleanup()
+    result := bar()?
+    if result == nil {
+        fail ErrNotFound
+    }
+    return nil
+}"#;
+        let tokens = lex(code);
+        
+        // Check key tokens are present
+        assert!(tokens.contains(&TokenKind::Errdefer));
+        assert!(tokens.contains(&TokenKind::Question));
+        assert!(tokens.contains(&TokenKind::Fail));
+    }
+
+    #[test]
+    fn test_fail_not_identifier_prefix() {
+        // "failure" should be an identifier, not fail + ure
+        assert_eq!(lex("failure"), vec![TokenKind::Ident, TokenKind::Eof]);
+        assert_eq!(lex("failing"), vec![TokenKind::Ident, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_errdefer_not_identifier_prefix() {
+        // "errdeferred" should be an identifier
+        assert_eq!(lex("errdeferred"), vec![TokenKind::Ident, TokenKind::Eof]);
     }
 }

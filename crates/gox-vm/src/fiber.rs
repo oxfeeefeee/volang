@@ -99,6 +99,8 @@ pub struct DeferEntry {
     pub func_id: u32,
     pub arg_count: u8,
     pub args: [u64; 8],
+    /// Whether this is an errdefer (only runs on error return).
+    pub is_errdefer: bool,
 }
 
 impl DeferEntry {
@@ -108,6 +110,7 @@ impl DeferEntry {
             func_id,
             arg_count: 0,
             args: [0; 8],
+            is_errdefer: false,
         }
     }
 }

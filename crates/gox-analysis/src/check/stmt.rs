@@ -38,6 +38,8 @@ impl<'a> TypeChecker<'a> {
             StmtKind::Send(send) => self.check_send(send),
             StmtKind::Go(go) => self.check_go(go),
             StmtKind::Defer(defer) => self.check_defer(defer),
+            StmtKind::ErrDefer(errdefer) => self.check_errdefer(errdefer),
+            StmtKind::Fail(fail) => self.check_fail(fail),
             StmtKind::Select(sel) => self.check_select(sel),
             StmtKind::Labeled(labeled) => self.check_stmt(&labeled.stmt),
             StmtKind::Var(var_decl) => self.check_var_decl(var_decl),
@@ -578,6 +580,33 @@ impl<'a> TypeChecker<'a> {
         // defer statement requires a function call
         if !matches!(&defer.call.kind, ExprKind::Call(_)) {
             self.error(TypeError::NotCallable, defer.call.span);
+        }
+    }
+
+    /// Checks an errdefer statement.
+    fn check_errdefer(&mut self, errdefer: &ast::ErrDeferStmt) {
+        // errdefer is only valid in functions that return error
+        if !self.is_fallible_function() {
+            self.error(TypeError::ErrDeferOutsideFallible, errdefer.call.span);
+        }
+        let _ty = self.check_expr(&errdefer.call);
+        // errdefer statement requires a function call
+        if !matches!(&errdefer.call.kind, ExprKind::Call(_)) {
+            self.error(TypeError::NotCallable, errdefer.call.span);
+        }
+    }
+
+    /// Checks a fail statement.
+    fn check_fail(&mut self, fail: &ast::FailStmt) {
+        // fail is only valid in functions that return error
+        if !self.is_fallible_function() {
+            self.error(TypeError::FailOutsideFallible, fail.error.span);
+            return;
+        }
+        let error_ty = self.check_expr(&fail.error);
+        // The error expression must be assignable to error type
+        if !self.is_error_type(&error_ty) {
+            self.error(TypeError::FailNonError, fail.error.span);
         }
     }
 

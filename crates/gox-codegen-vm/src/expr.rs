@@ -86,6 +86,8 @@ pub fn compile_expr(
         ExprKind::TypeAsExpr(_) => Err(CodegenError::Internal(
             "type expression used as value".to_string(),
         )),
+        // Try-unwrap operator (error propagation with ?)
+        ExprKind::TryUnwrap(inner) => compile_try_unwrap(ctx, fctx, inner),
     }
 }
 
@@ -2368,4 +2370,40 @@ fn compile_type_conversion(
 
     // Unknown type - just pass through
     Ok(src)
+}
+
+/// Compile try-unwrap expression (? operator for error propagation).
+fn compile_try_unwrap(
+    ctx: &mut CodegenContext,
+    fctx: &mut FuncContext,
+    inner: &Expr,
+) -> Result<u16, CodegenError> {
+    // Compile the inner expression which returns (..., error)
+    let result_reg = compile_expr(ctx, fctx, inner)?;
+    
+    // For a call that returns (T, error), the result is in consecutive registers
+    // result_reg = T, result_reg+1 = error
+    // We need to check if error is nil, and if not, propagate it
+    
+    let error_reg = result_reg + 1;
+    
+    // Check if error is nil
+    let cond_reg = fctx.regs.alloc(1);
+    fctx.emit(Opcode::IsNil, cond_reg, error_reg, 0);
+    
+    // If error is nil, skip the fail path
+    let jump_ok_pc = fctx.pc();
+    fctx.emit(Opcode::JumpIf, cond_reg, 0, 0);
+    
+    // Error path: return with the error
+    fctx.emit(Opcode::Return, error_reg, 1, 0);
+    
+    // Patch jump to skip error path
+    let ok_offset = (fctx.pc() as i32) - (jump_ok_pc as i32);
+    fctx.patch_jump(jump_ok_pc, ok_offset);
+    
+    fctx.regs.free(1); // Free cond_reg
+    
+    // Return the non-error value (result_reg)
+    Ok(result_reg)
 }

@@ -58,6 +58,18 @@ impl<'a> Parser<'a> {
                 self.expect_semi();
                 StmtKind::Defer(DeferStmt { call })
             }
+            TokenKind::Errdefer => {
+                self.advance();
+                let call = self.parse_expr()?;
+                self.expect_semi();
+                StmtKind::ErrDefer(ErrDeferStmt { call })
+            }
+            TokenKind::Fail => {
+                self.advance();
+                let error = self.parse_expr()?;
+                self.expect_semi();
+                StmtKind::Fail(FailStmt { error })
+            }
             TokenKind::Break => {
                 self.advance();
                 let label = if self.at(TokenKind::Ident) {

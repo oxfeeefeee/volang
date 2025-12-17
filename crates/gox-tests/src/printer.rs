@@ -626,6 +626,18 @@ impl<'a> AstPrinter<'a> {
                 self.write_indent();
                 writeln!(self.output, "Type {{ name: \"{}\", ty: ... }},", self.resolve_symbol(t.name.symbol)).unwrap();
             }
+            StmtKind::ErrDefer(d) => {
+                self.write_indent();
+                write!(self.output, "ErrDefer {{ call: ").unwrap();
+                self.write_expr_inline(&d.call);
+                writeln!(self.output, " }},").unwrap();
+            }
+            StmtKind::Fail(f) => {
+                self.write_indent();
+                write!(self.output, "Fail {{ error: ").unwrap();
+                self.write_expr_inline(&f.error);
+                writeln!(self.output, " }},").unwrap();
+            }
         }
     }
 
@@ -748,6 +760,10 @@ impl<'a> AstPrinter<'a> {
             }
             ExprKind::TypeAsExpr(t) => {
                 self.write_type_inline(t);
+            }
+            ExprKind::TryUnwrap(e) => {
+                self.write_expr_inline(e);
+                write!(self.output, "?").unwrap();
             }
         }
     }

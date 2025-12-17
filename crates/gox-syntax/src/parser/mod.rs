@@ -1200,4 +1200,236 @@ mod tests {
         // Check that spans have been offset
         assert!(file.span.start.0 >= 100);
     }
+
+    // =========================================================================
+    // Error handling statement tests
+    // =========================================================================
+
+    #[test]
+    fn test_fail_statement_simple() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                fail err
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                assert!(matches!(body.stmts[0].kind, StmtKind::Fail(_)));
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_fail_statement_with_call() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                fail errors.New("failed")
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                assert!(matches!(body.stmts[0].kind, StmtKind::Fail(_)));
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_errdefer_statement() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                errdefer cleanup()
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                assert!(matches!(body.stmts[0].kind, StmtKind::ErrDefer(_)));
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_errdefer_with_method_call() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                errdefer tx.Rollback()
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                assert!(matches!(body.stmts[0].kind, StmtKind::ErrDefer(_)));
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_try_unwrap_expression() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                x := bar()?
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                if let StmtKind::ShortVar(sv) = &body.stmts[0].kind {
+                    assert!(matches!(sv.values[0].kind, ExprKind::TryUnwrap(_)));
+                } else {
+                    panic!("expected short var decl");
+                }
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_try_unwrap_chained() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                x := a()?.b()?
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                if let StmtKind::ShortVar(sv) = &body.stmts[0].kind {
+                    // The outer expression should be TryUnwrap
+                    assert!(matches!(sv.values[0].kind, ExprKind::TryUnwrap(_)));
+                } else {
+                    panic!("expected short var decl");
+                }
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_try_unwrap_as_statement() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                doSomething()?
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                if let StmtKind::Expr(expr) = &body.stmts[0].kind {
+                    assert!(matches!(expr.kind, ExprKind::TryUnwrap(_)));
+                } else {
+                    panic!("expected expr stmt");
+                }
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_combined_error_handling() {
+        // Test a complete error handling pattern
+        let file = parse_ok(
+            r#"
+            func processFile(path string) error {
+                f := open(path)?
+                defer f.Close()
+                errdefer cleanup(path)
+                
+                data := read(f)?
+                result := process(data)?
+                
+                if result == nil {
+                    fail ErrNotFound
+                }
+                
+                return nil
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                // Should have multiple statements including TryUnwrap, Defer, ErrDefer, Fail
+                let has_errdefer = body.stmts.iter().any(|s| matches!(s.kind, StmtKind::ErrDefer(_)));
+                let has_defer = body.stmts.iter().any(|s| matches!(s.kind, StmtKind::Defer(_)));
+                let has_fail = body.stmts.iter().any(|s| {
+                    if let StmtKind::If(if_stmt) = &s.kind {
+                        if_stmt.then.stmts.iter().any(|s| matches!(s.kind, StmtKind::Fail(_)))
+                    } else {
+                        false
+                    }
+                });
+                assert!(has_errdefer, "should have errdefer");
+                assert!(has_defer, "should have defer");
+                assert!(has_fail, "should have fail");
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_fail_in_if_block() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                if x == nil {
+                    fail ErrNil
+                }
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                if let StmtKind::If(if_stmt) = &body.stmts[0].kind {
+                    assert!(matches!(if_stmt.then.stmts[0].kind, StmtKind::Fail(_)));
+                } else {
+                    panic!("expected if stmt");
+                }
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_errdefer() {
+        let file = parse_ok(
+            r#"
+            func foo() error {
+                errdefer cleanup1()
+                errdefer cleanup2()
+                errdefer cleanup3()
+            }
+        "#,
+        );
+        match &file.decls[0] {
+            Decl::Func(f) => {
+                let body = f.body.as_ref().unwrap();
+                assert_eq!(body.stmts.len(), 3);
+                for stmt in &body.stmts {
+                    assert!(matches!(stmt.kind, StmtKind::ErrDefer(_)));
+                }
+            }
+            _ => panic!("expected func decl"),
+        }
+    }
 }

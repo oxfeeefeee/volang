@@ -440,6 +440,55 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Returns true if the current function is fallible (returns error as last type).
+    pub(crate) fn is_fallible_function(&self) -> bool {
+        if let Some(last) = self.return_types.last() {
+            self.is_error_type(last)
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if the given type is the error interface type.
+    pub(crate) fn is_error_type(&self, ty: &Type) -> bool {
+        // Check if the type is the predeclared error interface
+        // error is an interface with a single method: Error() string
+        match ty {
+            Type::Named(id) => {
+                // Check if this is the predeclared "error" type by name
+                if let Some(info) = self.named_types.get(id.0 as usize) {
+                    let name = self.interner.resolve(info.name).unwrap_or("");
+                    if name == "error" {
+                        return true;
+                    }
+                    // Check if the underlying type is an error interface
+                    return self.is_error_interface(&info.underlying);
+                }
+                false
+            }
+            Type::Interface(iface) => self.is_error_interface(&Type::Interface(iface.clone())),
+            _ => false,
+        }
+    }
+
+    /// Returns true if the type is an interface with just Error() string method.
+    fn is_error_interface(&self, ty: &Type) -> bool {
+        if let Type::Interface(iface) = ty {
+            if iface.methods.len() == 1 {
+                if let Some(m) = iface.methods.first() {
+                    let method_name = self.interner.resolve(m.name).unwrap_or("");
+                    if method_name == "Error" {
+                        let f = &m.sig;
+                        return f.params.is_empty()
+                            && f.results.len() == 1
+                            && matches!(f.results[0], Type::Basic(BasicType::String));
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Resolves a function signature to a FuncType.
     fn resolve_func_sig(&self, sig: &ast::FuncSig) -> FuncType {
         let params: Vec<Type> = sig

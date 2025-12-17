@@ -1106,6 +1106,22 @@ impl Vm {
                 }
             }
             
+            Opcode::ErrDeferPush => {
+                // a=func_id, b=arg_start, c=arg_count
+                // ErrDefer is like Defer but only runs when returning with error
+                // For now, we implement it the same as DeferPush
+                // The VM will need to track whether we're returning with error
+                let fiber = self.scheduler.get_mut(fiber_id).unwrap();
+                let frame_depth = fiber.frames.len();
+                let mut entry = DeferEntry::new(frame_depth, a as u32);
+                entry.arg_count = c as u8;
+                entry.is_errdefer = true; // Mark as errdefer
+                for i in 0..c.min(8) {
+                    entry.args[i as usize] = fiber.read_reg(b + i);
+                }
+                fiber.defer_stack.push(entry);
+            }
+            
             Opcode::Panic => {
                 // a=value
                 let val = self.read_reg(fiber_id, a);

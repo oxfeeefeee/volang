@@ -210,6 +210,7 @@ fn format_instruction(instr: &Instruction) -> String {
         
         Opcode::DeferPush => format!("DeferPush {}, r{}, {}", a, b, c),
         Opcode::DeferPop => "DeferPop".to_string(),
+        Opcode::ErrDeferPush => format!("ErrDeferPush {}, r{}, {}", a, b, c),
         Opcode::Panic => format!("Panic r{}", a),
         Opcode::Recover => format!("Recover r{}", a),
         

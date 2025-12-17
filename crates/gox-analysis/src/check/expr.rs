@@ -43,6 +43,8 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Receive(recv) => self.check_receive(recv.as_ref(), expr.span),
             // Type used as expression (for make/new first argument)
             ExprKind::TypeAsExpr(ty) => self.resolve_type_expr(ty),
+            // Try-unwrap operator (error propagation with ?)
+            ExprKind::TryUnwrap(inner) => self.check_try_unwrap(inner, expr.span),
             _ => Type::Invalid,
         };
         // Record the type for codegen to look up later
@@ -1116,6 +1118,49 @@ impl<'a> TypeChecker<'a> {
             (Type::Untyped(_), _) => right.clone(),
             (_, Type::Untyped(_)) => left.clone(),
             _ => left.clone(), // Assume compatible
+        }
+    }
+
+    /// Checks a try-unwrap expression (? operator for error propagation).
+    fn check_try_unwrap(&mut self, inner: &Expr, span: Span) -> Type {
+        // ? is only valid in functions that return error
+        if !self.is_fallible_function() {
+            self.error(TypeError::TryUnwrapOutsideFallible, span);
+            return Type::Invalid;
+        }
+
+        let inner_ty = self.check_expr(inner);
+
+        // The inner expression must return (..., error)
+        // This can be a Tuple type (for multi-value returns) or just error type
+        match &inner_ty {
+            Type::Tuple(types) => {
+                // Check if last element is error
+                if let Some(last) = types.last() {
+                    if self.is_error_type(last) {
+                        // Return the non-error types
+                        let non_error: Vec<Type> = types.iter()
+                            .take(types.len() - 1)
+                            .cloned()
+                            .collect();
+                        return match non_error.len() {
+                            0 => Type::Tuple(vec![]), // Just error -> unit
+                            1 => non_error.into_iter().next().unwrap(),
+                            _ => Type::Tuple(non_error),
+                        };
+                    }
+                }
+                self.error(TypeError::TryUnwrapNonFallible, span);
+                Type::Invalid
+            }
+            ty if self.is_error_type(ty) => {
+                // Expression is just error type -> returns unit (empty tuple)
+                Type::Tuple(vec![])
+            }
+            _ => {
+                self.error(TypeError::TryUnwrapNonFallible, span);
+                Type::Invalid
+            }
         }
     }
 }

@@ -396,6 +396,10 @@ pub enum StmtKind {
     Go(GoStmt),
     /// A defer statement.
     Defer(DeferStmt),
+    /// An errdefer statement (runs only on error return).
+    ErrDefer(ErrDeferStmt),
+    /// A fail statement (returns error from fallible function).
+    Fail(FailStmt),
     /// A send statement.
     Send(SendStmt),
     /// A break statement.
@@ -624,6 +628,20 @@ pub struct DeferStmt {
     pub call: Expr,
 }
 
+/// An errdefer statement (runs only on error return).
+#[derive(Debug, Clone)]
+pub struct ErrDeferStmt {
+    /// The call expression to execute on error.
+    pub call: Expr,
+}
+
+/// A fail statement (returns error from fallible function).
+#[derive(Debug, Clone)]
+pub struct FailStmt {
+    /// The error expression to return.
+    pub error: Expr,
+}
+
 /// A send statement.
 #[derive(Debug, Clone)]
 pub struct SendStmt {
@@ -715,6 +733,8 @@ pub enum ExprKind {
     Paren(Box<Expr>),
     /// A type used as an expression (for make/new first argument).
     TypeAsExpr(Box<TypeExpr>),
+    /// A try-unwrap expression (error propagation with ?).
+    TryUnwrap(Box<Expr>),
 }
 
 /// An integer literal.
@@ -1100,6 +1120,8 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, stmt: &Stmt) {
         }
         StmtKind::Go(g) => visitor.visit_expr(&g.call),
         StmtKind::Defer(d) => visitor.visit_expr(&d.call),
+        StmtKind::ErrDefer(d) => visitor.visit_expr(&d.call),
+        StmtKind::Fail(f) => visitor.visit_expr(&f.error),
         StmtKind::Send(s) => {
             visitor.visit_expr(&s.chan);
             visitor.visit_expr(&s.value);
@@ -1169,6 +1191,7 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
         ExprKind::Receive(e) => visitor.visit_expr(e),
         ExprKind::Paren(e) => visitor.visit_expr(e),
         ExprKind::TypeAsExpr(t) => visitor.visit_type_expr(t),
+        ExprKind::TryUnwrap(e) => visitor.visit_expr(e),
     }
 }
 

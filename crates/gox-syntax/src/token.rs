@@ -126,6 +126,10 @@ pub enum TokenKind {
     Type,
     /// `var`
     Var,
+    /// `fail` (error handling)
+    Fail,
+    /// `errdefer` (error handling)
+    Errdefer,
 
     // Operators and punctuation
     /// `+`
@@ -230,6 +234,8 @@ pub enum TokenKind {
     Ellipsis,
     /// `@` (used for external imports: @"alias")
     At,
+    /// `?` (error propagation operator)
+    Question,
 }
 
 impl TokenKind {
@@ -262,6 +268,8 @@ impl TokenKind {
                 | TokenKind::Switch
                 | TokenKind::Type
                 | TokenKind::Var
+                | TokenKind::Fail
+                | TokenKind::Errdefer
         )
     }
 
@@ -330,8 +338,8 @@ impl TokenKind {
     ///
     /// Per the GoX spec, semicolons are inserted after:
     /// - Identifiers and literals
-    /// - Keywords: break, continue, fallthrough, return
-    /// - Operators: ++, --
+    /// - Keywords: break, continue, fallthrough, return, fail
+    /// - Operators: ++, --, ?
     /// - Closing delimiters: ), ], }
     pub const fn can_end_statement(self) -> bool {
         matches!(
@@ -346,11 +354,13 @@ impl TokenKind {
                 | TokenKind::Continue
                 | TokenKind::Fallthrough
                 | TokenKind::Return
+                | TokenKind::Fail
                 | TokenKind::PlusPlus
                 | TokenKind::MinusMinus
                 | TokenKind::RParen
                 | TokenKind::RBracket
                 | TokenKind::RBrace
+                | TokenKind::Question
         )
     }
 
@@ -382,6 +392,8 @@ impl TokenKind {
             "switch" => Some(TokenKind::Switch),
             "type" => Some(TokenKind::Type),
             "var" => Some(TokenKind::Var),
+            "fail" => Some(TokenKind::Fail),
+            "errdefer" => Some(TokenKind::Errdefer),
             _ => None,
         }
     }
@@ -424,6 +436,8 @@ impl TokenKind {
             TokenKind::Switch => "switch",
             TokenKind::Type => "type",
             TokenKind::Var => "var",
+            TokenKind::Fail => "fail",
+            TokenKind::Errdefer => "errdefer",
             TokenKind::Plus => "+",
             TokenKind::Minus => "-",
             TokenKind::Star => "*",
@@ -471,6 +485,7 @@ impl TokenKind {
             TokenKind::Dot => ".",
             TokenKind::Ellipsis => "...",
             TokenKind::At => "@",
+            TokenKind::Question => "?",
         }
     }
 }

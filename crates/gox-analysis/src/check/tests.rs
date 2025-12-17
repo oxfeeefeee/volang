@@ -684,3 +684,279 @@ func main() {
     let diag = check_via_typecheck_file(source);
     assert!(!diag.has_errors(), "Value receiver method should work: {:?}", diag);
 }
+
+// =========================================================================
+// Error handling tests
+// =========================================================================
+
+#[test]
+fn test_fail_in_fallible_function() {
+    // fail is valid in a function returning error
+    // Note: We use a custom error interface since 'error' may not be predeclared
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func foo() myError {
+    fail ErrNotFound
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    // Should not have "fail outside fallible function" error
+    let errors: Vec<_> = diag.iter().collect();
+    let has_fail_outside = errors.iter().any(|e| e.message.contains("outside function returning error"));
+    assert!(!has_fail_outside, "fail should be valid in function returning error: {:?}", errors);
+}
+
+#[test]
+fn test_fail_outside_fallible_function() {
+    // fail is invalid in a function not returning error
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func foo() int {
+    fail ErrNotFound
+    return 0
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(diag.has_errors(), "fail outside fallible function should be an error");
+}
+
+#[test]
+fn test_fail_in_void_function() {
+    // fail is invalid in a function with no return
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func foo() {
+    fail ErrNotFound
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(diag.has_errors(), "fail in void function should be an error");
+}
+
+#[test]
+fn test_errdefer_in_fallible_function() {
+    // errdefer is valid in a function returning error
+    let source = r#"
+package main
+type myError interface { Error() string }
+func cleanup() {}
+func foo() myError {
+    errdefer cleanup()
+    return nil
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_errdefer_outside = errors.iter().any(|e| e.message.contains("errdefer outside"));
+    assert!(!has_errdefer_outside, "errdefer should be valid in function returning error: {:?}", errors);
+}
+
+#[test]
+fn test_errdefer_outside_fallible_function() {
+    // errdefer is invalid in a function not returning error
+    let source = r#"
+package main
+type myError interface { Error() string }
+func cleanup() {}
+func foo() int {
+    errdefer cleanup()
+    return 0
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(diag.has_errors(), "errdefer outside fallible function should be an error");
+}
+
+#[test]
+fn test_errdefer_in_void_function() {
+    // errdefer is invalid in a function with no return
+    let source = r#"
+package main
+type myError interface { Error() string }
+func cleanup() {}
+func foo() {
+    errdefer cleanup()
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(diag.has_errors(), "errdefer in void function should be an error");
+}
+
+#[test]
+fn test_errdefer_requires_call() {
+    // errdefer requires a function call, not just an expression
+    let source = r#"
+package main
+type myError interface { Error() string }
+var x int
+func foo() myError {
+    errdefer x
+    return nil
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(diag.has_errors(), "errdefer with non-call should be an error");
+}
+
+#[test]
+fn test_multiple_errdefer() {
+    // Multiple errdefer statements should be valid
+    let source = r#"
+package main
+type myError interface { Error() string }
+func cleanup1() {}
+func cleanup2() {}
+func cleanup3() {}
+func foo() myError {
+    errdefer cleanup1()
+    errdefer cleanup2()
+    errdefer cleanup3()
+    return nil
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_errdefer_error = errors.iter().any(|e| e.message.contains("errdefer"));
+    assert!(!has_errdefer_error, "multiple errdefer should be valid: {:?}", errors);
+}
+
+#[test]
+fn test_fail_with_multiple_returns() {
+    // fail in a function with multiple return values
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func foo() (int, myError) {
+    fail ErrNotFound
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_fail_outside = errors.iter().any(|e| e.message.contains("outside function returning error"));
+    assert!(!has_fail_outside, "fail should be valid in function returning (T, error): {:?}", errors);
+}
+
+#[test]
+fn test_fail_with_three_returns() {
+    // fail in a function with three return values including error
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func foo() (int, string, myError) {
+    fail ErrNotFound
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_fail_outside = errors.iter().any(|e| e.message.contains("outside function returning error"));
+    assert!(!has_fail_outside, "fail should be valid in function returning (T1, T2, error): {:?}", errors);
+}
+
+#[test]
+fn test_fail_error_not_last_return() {
+    // fail is invalid if error is not the last return type
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func foo() (myError, int) {
+    fail ErrNotFound
+    return nil, 0
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(diag.has_errors(), "fail should be invalid when error is not last return type");
+}
+
+#[test]
+fn test_defer_vs_errdefer() {
+    // Both defer and errdefer can coexist
+    let source = r#"
+package main
+type myError interface { Error() string }
+func cleanup() {}
+func doClose() {}
+func foo() myError {
+    defer doClose()
+    errdefer cleanup()
+    return nil
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    // Filter out unrelated errors
+    let has_defer_error = errors.iter().any(|e| 
+        e.message.contains("defer") || e.message.contains("errdefer"));
+    assert!(!has_defer_error, "defer and errdefer should coexist: {:?}", errors);
+}
+
+#[test]
+fn test_fail_in_nested_function() {
+    // fail in a nested function literal should check the inner function
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+func outer() {
+    inner := func() myError {
+        fail ErrNotFound
+    }
+    _ = inner
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_fail_outside = errors.iter().any(|e| e.message.contains("outside function returning error"));
+    assert!(!has_fail_outside, "fail should be valid in nested function returning error: {:?}", errors);
+}
+
+#[test]
+fn test_errdefer_in_for_loop() {
+    // errdefer in a for loop body
+    let source = r#"
+package main
+type myError interface { Error() string }
+func cleanup() {}
+func foo() myError {
+    for i := 0; i < 10; i++ {
+        errdefer cleanup()
+    }
+    return nil
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_errdefer_error = errors.iter().any(|e| e.message.contains("errdefer outside"));
+    assert!(!has_errdefer_error, "errdefer in for loop should be valid: {:?}", errors);
+}
+
+#[test]
+fn test_fail_in_if_else() {
+    // fail in if-else branches
+    let source = r#"
+package main
+type myError interface { Error() string }
+var ErrNotFound myError
+var ErrInvalid myError
+func foo(x int) myError {
+    if x < 0 {
+        fail ErrInvalid
+    } else if x == 0 {
+        fail ErrNotFound
+    }
+    return nil
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    let errors: Vec<_> = diag.iter().collect();
+    let has_fail_outside = errors.iter().any(|e| e.message.contains("outside function returning error"));
+    assert!(!has_fail_outside, "fail in if-else should be valid: {:?}", errors);
+}
