@@ -85,6 +85,12 @@ pub enum RuntimeFunc {
     // === Fmt (2) ===
     FmtFormatValue,
     FmtPrintln,
+
+    // === Goroutine (4) ===
+    GoYield,
+    ChanSend,
+    ChanRecv,
+    ChanClose,
 }
 
 impl RuntimeFunc {
@@ -150,6 +156,11 @@ impl RuntimeFunc {
             // Fmt
             RuntimeFunc::FmtFormatValue => "gox_fmt_format_value",
             RuntimeFunc::FmtPrintln => "gox_fmt_println",
+            // Goroutine
+            RuntimeFunc::GoYield => "gox_yield",
+            RuntimeFunc::ChanSend => "gox_chan_send",
+            RuntimeFunc::ChanRecv => "gox_chan_recv",
+            RuntimeFunc::ChanClose => "gox_chan_close",
         }
     }
 
@@ -380,6 +391,24 @@ impl RuntimeFunc {
                 sig.params.push(AbiParam::new(I64));
                 sig.params.push(AbiParam::new(I64));
                 sig.returns.push(AbiParam::new(I64));
+            }
+
+            // === Goroutine ===
+            RuntimeFunc::GoYield => {
+                // No params, no return
+            }
+            RuntimeFunc::ChanSend => {
+                sig.params.push(AbiParam::new(I64));  // chan_ref
+                sig.params.push(AbiParam::new(I64));  // value
+                sig.returns.push(AbiParam::new(I8));  // success
+            }
+            RuntimeFunc::ChanRecv => {
+                sig.params.push(AbiParam::new(I64));  // chan_ref
+                sig.params.push(AbiParam::new(I64));  // ok_ptr
+                sig.returns.push(AbiParam::new(I64)); // value
+            }
+            RuntimeFunc::ChanClose => {
+                sig.params.push(AbiParam::new(I64));  // chan_ref
             }
         }
         

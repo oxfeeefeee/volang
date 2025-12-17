@@ -186,7 +186,7 @@ pub unsafe extern "C" fn gox_fmt_println(args: *const u64, tags: *const u8, argc
 }
 
 // =============================================================================
-// Summary: Total 51 C ABI functions
+// Summary: Total 51 C ABI functions (in runtime-core)
 // =============================================================================
 //
 // GC:        5 (alloc, read_slot, write_slot, write_barrier, mark_gray)
@@ -201,4 +201,6 @@ pub unsafe extern "C" fn gox_fmt_println(args: *const u64, tags: *const u8, argc
 // Strings:   5 (index, count, to_lower, to_upper, equal_fold) [std only]
 //            Note: GoX-implemented: contains, has_prefix, has_suffix, repeat, compare, replace_all
 // Fmt:       2 (format_value, println) [std only]
+//
+// Note: Goroutine functions (4) are in gox-runtime-native, not here.
 //

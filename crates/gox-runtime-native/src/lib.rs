@@ -17,8 +17,17 @@
 //! the same names exported by `gox-runtime-core`.
 
 mod symbols;
+pub mod goroutine;
 
 pub use symbols::{RuntimeSymbols, RuntimeSymbol};
 
 // Re-export core runtime types that native code might need
 pub use gox_runtime_core::ffi::*;
+
+// Re-export goroutine C ABI functions
+pub use goroutine::{
+    gox_yield,
+    gox_chan_send,
+    gox_chan_recv,
+    gox_chan_close,
+};
