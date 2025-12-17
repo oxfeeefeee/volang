@@ -1,42 +1,41 @@
 //! Native function implementations for the VM runtime.
+//!
+//! Organized into layers:
+//! - `builtin`: Language built-in functions (always loaded)
+//! - `core`: Core packages with no OS dependency
+//! - `std`: Standard packages requiring OS support
 
-pub mod base64;
 pub mod builtin;
-pub mod bytes;
-pub mod errors;
-pub mod fmt;
-pub mod hex;
-pub mod json;
-pub mod math;
-pub mod os;
-pub mod path;
-pub mod rand;
-pub mod regexp;
-pub mod sort;
-pub mod strconv;
-pub mod strings;
-pub mod time;
-pub mod unicode;
+pub mod core;
+pub mod std;
 
 use gox_vm::NativeRegistry;
 
-/// Register all native functions.
+/// Std mode for selective package loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StdMode {
+    /// Only core packages (no OS dependency)
+    Core,
+    /// All packages (default)
+    #[default]
+    Full,
+}
+
+/// Register native functions based on std mode.
 pub fn register_all(registry: &mut NativeRegistry) {
-    base64::register(registry);
+    register_with_mode(registry, StdMode::Full);
+}
+
+/// Register native functions with specified std mode.
+pub fn register_with_mode(registry: &mut NativeRegistry, mode: StdMode) {
+    // Always register builtin functions
     builtin::register(registry);
-    bytes::register(registry);
-    errors::register(registry);
-    fmt::register(registry);
-    hex::register(registry);
-    json::register(registry);
-    math::register(registry);
-    os::register(registry);
-    path::register(registry);
-    rand::register(registry);
-    regexp::register(registry);
-    sort::register(registry);
-    strconv::register(registry);
-    strings::register(registry);
-    time::register(registry);
-    unicode::register(registry);
+    
+    // Always register core packages
+    core::register_all(registry);
+    
+    // Register std packages only in Full mode
+    if mode == StdMode::Full {
+        std::register_all(registry);
+    }
 }

@@ -1,0 +1,120 @@
+# GoX Standard Library Package Registry
+# This file defines the official stdlib packages and their layer classification.
+
+[meta]
+version = "1.0"
+total_packages = 26
+
+# Layer definitions:
+# - core: No OS dependency, usable in embedded/WASM
+# - std: Requires OS support
+# - runtime: Requires deep VM integration
+
+[packages]
+
+# ============ Core Layer (11 packages) ============
+[packages.errors]
+layer = "core"
+status = "complete"
+
+[packages.strings]
+layer = "core"
+status = "complete"
+
+[packages.strconv]
+layer = "core"
+status = "complete"
+
+[packages.bytes]
+layer = "core"
+status = "complete"
+
+[packages.unicode]
+layer = "core"
+status = "complete"
+
+[packages.math]
+layer = "core"
+status = "complete"
+
+[packages.sort]
+layer = "core"
+status = "complete"
+
+[packages.regexp]
+layer = "core"
+status = "complete"
+
+[packages."encoding/json"]
+layer = "core"
+status = "complete"
+
+[packages."encoding/base64"]
+layer = "core"
+status = "complete"
+
+[packages."encoding/hex"]
+layer = "core"
+status = "complete"
+
+# ============ Std Layer (13 packages) ============
+[packages.fmt]
+layer = "std"
+status = "complete"
+
+[packages.io]
+layer = "std"
+status = "complete"
+
+[packages.os]
+layer = "std"
+status = "complete"
+
+[packages.path]
+layer = "std"
+status = "complete"
+
+[packages.filepath]
+layer = "std"
+status = "planned"
+
+[packages.bufio]
+layer = "std"
+status = "declared"
+
+[packages.rand]
+layer = "std"
+status = "complete"
+
+[packages.time]
+layer = "std"
+status = "complete"
+
+[packages.sync]
+layer = "std"
+status = "declared"
+
+[packages.context]
+layer = "std"
+status = "planned"
+
+[packages.net]
+layer = "std"
+status = "declared"
+
+[packages.log]
+layer = "std"
+status = "planned"
+
+[packages.flag]
+layer = "std"
+status = "planned"
+
+# ============ Runtime Layer (2 packages) ============
+[packages.reflect]
+layer = "runtime"
+status = "planned"
+
+[packages.runtime]
+layer = "runtime"
+status = "planned"
