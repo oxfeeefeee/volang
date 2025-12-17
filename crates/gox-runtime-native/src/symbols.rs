@@ -62,6 +62,7 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_interface_is_nil", ptr: ffi::gox_interface_is_nil as *const u8 },
             
             // Goroutine functions (from gox-runtime-native, not core)
+            RuntimeSymbol { name: "gox_go_spawn", ptr: crate::goroutine::gox_go_spawn as *const u8 },
             RuntimeSymbol { name: "gox_yield", ptr: crate::goroutine::gox_yield as *const u8 },
             RuntimeSymbol { name: "gox_chan_send", ptr: crate::goroutine::gox_chan_send as *const u8 },
             RuntimeSymbol { name: "gox_chan_recv", ptr: crate::goroutine::gox_chan_recv as *const u8 },

@@ -12,3 +12,6 @@ gox-runtime-core = { path = "../gox-runtime-core" }
 corosensei = "0.2"
 parking_lot = "0.12"
 crossbeam-deque = "0.8"
+
+# Dynamic function calls (unlimited arguments for go keyword)
+libffi = "3.2"

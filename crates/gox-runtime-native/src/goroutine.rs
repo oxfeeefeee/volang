@@ -649,6 +649,69 @@ pub unsafe extern "C" fn gox_chan_close(chan_ref: GcRef) {
     }
 }
 
+/// Spawn a new goroutine with the given function pointer and arguments.
+/// 
+/// Uses libffi for dynamic function calls - supports unlimited arguments.
+/// 
+/// # Safety
+/// - `func_ptr` must be a valid function pointer
+/// - `args_ptr` must point to valid memory containing `arg_count` u64 values
+#[no_mangle]
+pub unsafe extern "C" fn gox_go_spawn(func_ptr: u64, args_ptr: *const u64, arg_count: u64) {
+    let scheduler = match current_scheduler() {
+        Some(s) => s,
+        None => return,
+    };
+    
+    // Copy arguments
+    let args: Vec<u64> = if !args_ptr.is_null() && arg_count > 0 {
+        std::slice::from_raw_parts(args_ptr, arg_count as usize).to_vec()
+    } else {
+        Vec::new()
+    };
+    
+    let func_addr = func_ptr;
+    
+    scheduler.spawn(move |_yielder| {
+        use libffi::low::{ffi_cif, ffi_type, ffi_abi_FFI_DEFAULT_ABI, prep_cif, call, CodePtr};
+        
+        unsafe {
+            let arg_count = args.len();
+            
+            // Build argument types array (all u64/i64)
+            let mut arg_types: Vec<*mut ffi_type> = Vec::with_capacity(arg_count);
+            for _ in 0..arg_count {
+                arg_types.push(std::ptr::addr_of_mut!(libffi::low::types::sint64));
+            }
+            
+            // Prepare CIF (Call Interface)
+            let mut cif: ffi_cif = std::mem::zeroed();
+            prep_cif(
+                &mut cif,
+                ffi_abi_FFI_DEFAULT_ABI,
+                arg_count,
+                std::ptr::addr_of_mut!(libffi::low::types::void),  // return type: void
+                if arg_count > 0 { arg_types.as_mut_ptr() } else { std::ptr::null_mut() },
+            ).expect("go: libffi prep_cif failed");
+            
+            // Build argument values array
+            let mut arg_values: Vec<*mut std::ffi::c_void> = Vec::with_capacity(arg_count);
+            let mut arg_storage = args.clone();  // Need mutable storage
+            for i in 0..arg_count {
+                arg_values.push(&mut arg_storage[i] as *mut u64 as *mut _);
+            }
+            
+            // Call the function
+            let code_ptr = CodePtr::from_ptr(func_addr as *const _);
+            call::<()>(
+                &mut cif,
+                code_ptr,
+                if arg_count > 0 { arg_values.as_mut_ptr() } else { std::ptr::null_mut() },
+            );
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

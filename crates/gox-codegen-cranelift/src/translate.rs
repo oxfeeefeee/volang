@@ -929,6 +929,42 @@ impl FunctionTranslator {
             }
 
             // ==================== Goroutine operations ====================
+            Opcode::Go => {
+                // a=func_id, b=arg_start, c=arg_count
+                let func_idx = inst.a as u32;
+                let arg_start = inst.b;
+                let arg_count = inst.c as usize;
+                
+                // Get function address
+                let target_func_ref = self.get_gox_func_ref(builder, module, ctx, func_idx)?;
+                let func_addr = builder.ins().func_addr(I64, target_func_ref);
+                
+                // Allocate stack space for arguments (even if 0, pass valid pointer)
+                let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                    cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                    ((arg_count.max(1)) * 8) as u32,
+                    8,
+                ));
+                let args_ptr = builder.ins().stack_addr(I64, slot, 0);
+                
+                // Store arguments to stack
+                for i in 0..arg_count {
+                    let arg = builder.use_var(self.variables[(arg_start as usize) + i]);
+                    let offset = (i * 8) as i32;
+                    builder.ins().store(
+                        cranelift_codegen::ir::MemFlags::new(),
+                        arg,
+                        args_ptr,
+                        offset,
+                    );
+                }
+                
+                // Call runtime to spawn goroutine
+                let spawn_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::GoSpawn)?;
+                let count = builder.ins().iconst(I64, arg_count as i64);
+                builder.ins().call(spawn_ref, &[func_addr, args_ptr, count]);
+            }
+
             Opcode::Yield => {
                 let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::GoYield)?;
                 builder.ins().call(func_ref, &[]);

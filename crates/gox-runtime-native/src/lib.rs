@@ -26,6 +26,7 @@ pub use gox_runtime_core::ffi::*;
 
 // Re-export goroutine C ABI functions
 pub use goroutine::{
+    gox_go_spawn,
     gox_yield,
     gox_chan_send,
     gox_chan_recv,
