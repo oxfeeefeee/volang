@@ -14,6 +14,7 @@
 //!    └── WASI Binding (future)
 //! ```
 
+// Core packages (no OS dependency)
 #[cfg(feature = "std")]
 pub mod builtin;
 
@@ -22,3 +23,12 @@ pub mod strings;
 
 #[cfg(feature = "std")]
 pub mod fmt;
+
+pub mod hex;
+pub mod base64;
+pub mod unicode;
+pub mod rand;
+
+// Std packages (require OS support)
+#[cfg(feature = "std")]
+pub mod time;
