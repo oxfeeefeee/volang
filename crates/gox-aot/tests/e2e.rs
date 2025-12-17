@@ -11,6 +11,7 @@ use gox_syntax::parse;
 use gox_analysis::typecheck_file;
 use gox_codegen_vm::compile;
 use gox_vm::bytecode::Module as BytecodeModule;
+use gox_runtime_native::RuntimeSymbols;
 
 /// Compile GoX source to bytecode.
 fn source_to_bytecode(source: &str) -> BytecodeModule {
@@ -27,6 +28,11 @@ fn source_to_bytecode(source: &str) -> BytecodeModule {
 
 /// Setup JIT module for testing.
 fn setup_jit() -> (JITModule, cranelift_codegen::isa::CallConv) {
+    setup_jit_with_runtime(false)
+}
+
+/// Setup JIT module with optional runtime symbol linking.
+fn setup_jit_with_runtime(link_runtime: bool) -> (JITModule, cranelift_codegen::isa::CallConv) {
     let mut flag_builder = settings::builder();
     flag_builder.set("use_colocated_libcalls", "false").unwrap();
     flag_builder.set("is_pic", "false").unwrap();
@@ -34,7 +40,16 @@ fn setup_jit() -> (JITModule, cranelift_codegen::isa::CallConv) {
     let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
     let call_conv = isa.default_call_conv();
     
-    let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    
+    // Link runtime symbols if requested
+    if link_runtime {
+        let symbols = RuntimeSymbols::new();
+        for sym in symbols.iter() {
+            builder.symbol(sym.name, sym.ptr as *const u8);
+        }
+    }
+    
     let module = JITModule::new(builder);
     
     (module, call_conv)
@@ -45,7 +60,23 @@ fn compile_to_jit(
     bytecode: &BytecodeModule,
     func_name: &str,
 ) -> (*const u8, JITModule) {
-    let (mut module, call_conv) = setup_jit();
+    compile_to_jit_impl(bytecode, func_name, false)
+}
+
+/// Compile bytecode to JIT with runtime symbols linked.
+fn compile_to_jit_with_runtime(
+    bytecode: &BytecodeModule,
+    func_name: &str,
+) -> (*const u8, JITModule) {
+    compile_to_jit_impl(bytecode, func_name, true)
+}
+
+fn compile_to_jit_impl(
+    bytecode: &BytecodeModule,
+    func_name: &str,
+    link_runtime: bool,
+) -> (*const u8, JITModule) {
+    let (mut module, call_conv) = setup_jit_with_runtime(link_runtime);
     
     let mut compile_ctx = CompileContext::new(bytecode, call_conv);
     compile_ctx.declare_all_functions(&mut module).unwrap();
@@ -354,4 +385,32 @@ func main() {
     assert_eq!(gcd_fn(17, 13), 1);
     assert_eq!(gcd_fn(0, 5), 5);
     println!("✓ test_e2e_gcd passed");
+}
+
+#[test]
+fn test_e2e_select_default() {
+    // Test select with default case only (simplest case)
+    let source = r#"
+package main
+
+func testSelect() int {
+    select {
+    default:
+        return 42
+    }
+    return 0
+}
+
+func main() {
+}
+"#;
+    
+    let bytecode = source_to_bytecode(source);
+    let (code_ptr, _module) = compile_to_jit_with_runtime(&bytecode, "testSelect");
+    
+    let test_fn: fn() -> i64 = unsafe { std::mem::transmute(code_ptr) };
+    
+    // Should return 42 from default case
+    assert_eq!(test_fn(), 42);
+    println!("✓ test_e2e_select_default passed");
 }
