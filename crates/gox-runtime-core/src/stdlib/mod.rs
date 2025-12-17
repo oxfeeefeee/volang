@@ -29,6 +29,8 @@ pub mod base64;
 pub mod unicode;
 pub mod rand;
 pub mod json;
+pub mod strconv;
+pub mod bytes;
 
 // Std packages (require OS support)
 #[cfg(feature = "std")]
