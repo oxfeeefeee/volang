@@ -44,58 +44,49 @@ pub fn register(registry: &mut NativeRegistry) {
 fn native_contains(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let substr = ctx.arg_str(1);
-    ctx.ret_bool(0, s.contains(substr));
+    ctx.ret_bool(0, gox_runtime_core::stdlib::strings::contains(s, substr));
     NativeResult::Ok(1)
 }
 
 fn native_contains_any(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let chars = ctx.arg_str(1);
-    let result = chars.chars().any(|c| s.contains(c));
-    ctx.ret_bool(0, result);
+    ctx.ret_bool(0, gox_runtime_core::stdlib::strings::contains_any(s, chars));
     NativeResult::Ok(1)
 }
 
 fn native_has_prefix(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let prefix = ctx.arg_str(1);
-    ctx.ret_bool(0, s.starts_with(prefix));
+    ctx.ret_bool(0, gox_runtime_core::stdlib::strings::has_prefix(s, prefix));
     NativeResult::Ok(1)
 }
 
 fn native_has_suffix(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let suffix = ctx.arg_str(1);
-    ctx.ret_bool(0, s.ends_with(suffix));
+    ctx.ret_bool(0, gox_runtime_core::stdlib::strings::has_suffix(s, suffix));
     NativeResult::Ok(1)
 }
 
 fn native_index(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let substr = ctx.arg_str(1);
-    let idx = s.find(substr).map(|i| i as i64).unwrap_or(-1);
-    ctx.ret_i64(0, idx);
+    ctx.ret_i64(0, gox_runtime_core::stdlib::strings::index(s, substr));
     NativeResult::Ok(1)
 }
 
 fn native_last_index(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let substr = ctx.arg_str(1);
-    let idx = s.rfind(substr).map(|i| i as i64).unwrap_or(-1);
-    ctx.ret_i64(0, idx);
+    ctx.ret_i64(0, gox_runtime_core::stdlib::strings::last_index(s, substr));
     NativeResult::Ok(1)
 }
 
 fn native_count(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let substr = ctx.arg_str(1);
-    let count = if substr.is_empty() {
-        // Go behavior: empty substr returns len(s) + 1
-        s.chars().count() + 1
-    } else {
-        s.matches(substr).count()
-    };
-    ctx.ret_i64(0, count as i64);
+    ctx.ret_i64(0, gox_runtime_core::stdlib::strings::count(s, substr) as i64);
     NativeResult::Ok(1)
 }
 
@@ -103,30 +94,29 @@ fn native_count(ctx: &mut NativeCtx) -> NativeResult {
 
 fn native_to_lower(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
-    let result = s.to_lowercase();
+    let result = gox_runtime_core::stdlib::strings::to_lower(s);
     ctx.ret_string(0, &result);
     NativeResult::Ok(1)
 }
 
 fn native_to_upper(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
-    let result = s.to_uppercase();
+    let result = gox_runtime_core::stdlib::strings::to_upper(s);
     ctx.ret_string(0, &result);
     NativeResult::Ok(1)
 }
 
 fn native_trim_space(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0).to_string();
-    let result = s.trim();
+    let result = gox_runtime_core::stdlib::strings::trim_space(&s);
     ctx.ret_string(0, result);
     NativeResult::Ok(1)
 }
 
 fn native_trim(ctx: &mut NativeCtx) -> NativeResult {
-    let s = ctx.arg_str(0).to_string();
-    let cutset = ctx.arg_str(1).to_string();
-    let chars: Vec<char> = cutset.chars().collect();
-    let result: String = s.trim_matches(|c| chars.contains(&c)).to_string();
+    let s = ctx.arg_str(0);
+    let cutset = ctx.arg_str(1);
+    let result = gox_runtime_core::stdlib::strings::trim(s, cutset);
     ctx.ret_string(0, &result);
     NativeResult::Ok(1)
 }
@@ -134,16 +124,16 @@ fn native_trim(ctx: &mut NativeCtx) -> NativeResult {
 fn native_trim_prefix(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0).to_string();
     let prefix = ctx.arg_str(1).to_string();
-    let result = s.strip_prefix(prefix.as_str()).unwrap_or(&s).to_string();
-    ctx.ret_string(0, &result);
+    let result = gox_runtime_core::stdlib::strings::trim_prefix(&s, &prefix);
+    ctx.ret_string(0, result);
     NativeResult::Ok(1)
 }
 
 fn native_trim_suffix(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0).to_string();
     let suffix = ctx.arg_str(1).to_string();
-    let result = s.strip_suffix(suffix.as_str()).unwrap_or(&s).to_string();
-    ctx.ret_string(0, &result);
+    let result = gox_runtime_core::stdlib::strings::trim_suffix(&s, &suffix);
+    ctx.ret_string(0, result);
     NativeResult::Ok(1)
 }
 
@@ -152,12 +142,7 @@ fn native_replace(ctx: &mut NativeCtx) -> NativeResult {
     let old = ctx.arg_str(1);
     let new = ctx.arg_str(2);
     let n = ctx.arg_i64(3);
-    
-    let result = if n < 0 {
-        s.replace(old, new)
-    } else {
-        s.replacen(old, new, n as usize)
-    };
+    let result = gox_runtime_core::stdlib::strings::replace(s, old, new, n);
     ctx.ret_string(0, &result);
     NativeResult::Ok(1)
 }
@@ -166,7 +151,7 @@ fn native_replace_all(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let old = ctx.arg_str(1);
     let new = ctx.arg_str(2);
-    let result = s.replace(old, new);
+    let result = gox_runtime_core::stdlib::strings::replace_all(s, old, new);
     ctx.ret_string(0, &result);
     NativeResult::Ok(1)
 }
@@ -191,32 +176,19 @@ fn create_string_slice_owned(ctx: &mut NativeCtx, strings: Vec<String>) -> GcRef
 }
 
 fn native_split(ctx: &mut NativeCtx) -> NativeResult {
-    let s = ctx.arg_str(0).to_string();
-    let sep = ctx.arg_str(1).to_string();
-    
-    let parts: Vec<String> = if sep.is_empty() {
-        // Split into characters (UTF-8 aware)
-        s.chars().map(|c| c.to_string()).collect()
-    } else {
-        s.split(&sep).map(|p| p.to_string()).collect()
-    };
-    
+    let s = ctx.arg_str(0);
+    let sep = ctx.arg_str(1);
+    let parts = gox_runtime_core::stdlib::strings::split(s, sep);
     let slice_ref = create_string_slice_owned(ctx, parts);
     ctx.ret_ref(0, slice_ref);
     NativeResult::Ok(1)
 }
 
 fn native_split_n(ctx: &mut NativeCtx) -> NativeResult {
-    let s = ctx.arg_str(0).to_string();
-    let sep = ctx.arg_str(1).to_string();
+    let s = ctx.arg_str(0);
+    let sep = ctx.arg_str(1);
     let n = ctx.arg_i64(2) as usize;
-    
-    let parts: Vec<String> = if n == 0 {
-        vec![]
-    } else {
-        s.splitn(n, &sep).map(|p| p.to_string()).collect()
-    };
-    
+    let parts = gox_runtime_core::stdlib::strings::split_n(s, sep, n);
     let slice_ref = create_string_slice_owned(ctx, parts);
     ctx.ret_ref(0, slice_ref);
     NativeResult::Ok(1)
@@ -252,12 +224,10 @@ fn native_join(ctx: &mut NativeCtx) -> NativeResult {
 fn native_repeat(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let count = ctx.arg_i64(1);
-    
     if count < 0 {
         return NativeResult::Panic("strings.Repeat: negative count".to_string());
     }
-    
-    let result = s.repeat(count as usize);
+    let result = gox_runtime_core::stdlib::strings::repeat(s, count as usize);
     ctx.ret_string(0, &result);
     NativeResult::Ok(1)
 }
@@ -267,20 +237,14 @@ fn native_repeat(ctx: &mut NativeCtx) -> NativeResult {
 fn native_compare(ctx: &mut NativeCtx) -> NativeResult {
     let a = ctx.arg_str(0);
     let b = ctx.arg_str(1);
-    let result = match a.cmp(b) {
-        std::cmp::Ordering::Less => -1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 1,
-    };
-    ctx.ret_i64(0, result);
+    ctx.ret_i64(0, gox_runtime_core::stdlib::strings::compare(a, b));
     NativeResult::Ok(1)
 }
 
 fn native_equal_fold(ctx: &mut NativeCtx) -> NativeResult {
     let s = ctx.arg_str(0);
     let t = ctx.arg_str(1);
-    // Case-insensitive comparison
-    ctx.ret_bool(0, s.eq_ignore_ascii_case(t));
+    ctx.ret_bool(0, gox_runtime_core::stdlib::strings::equal_fold(s, t));
     NativeResult::Ok(1)
 }
 

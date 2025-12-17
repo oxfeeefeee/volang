@@ -17,3 +17,6 @@ pub mod ffi;
 pub mod api;
 pub mod gc;
 pub mod objects;
+
+#[cfg(feature = "std")]
+pub mod stdlib;
