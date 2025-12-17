@@ -593,3 +593,15 @@ func main() {
     // Should NOT have errors - pointer field access should work
     assert!(!diag.has_errors(), "Pointer field access should work: {:?}", diag);
 }
+
+#[test]
+fn test_addr_of_composite_lit() {
+    // Test that &Type{} works correctly
+    let source = r#"
+package main
+type S struct { x int; y int }
+var p = &S{10, 20}
+"#;
+    let (diag, _) = check_source(source);
+    assert!(!diag.has_errors(), "Address-of composite literal should work: {:?}", diag);
+}

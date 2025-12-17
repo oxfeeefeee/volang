@@ -1,6 +1,6 @@
 package main
 
-// Test struct value semantics
+// Test struct value semantics and pointer semantics
 
 type S struct {
     x int
@@ -32,14 +32,14 @@ func main() {
     assert(p.height == 22, "multi-field struct: p.height should be 22")
     assert(p.score == 33, "multi-field struct: p.score should be 33")
     
-    // Test 3: Slice literal
+    // Test 4: Slice literal
     items := []int{1, 2, 3}
     assert(len(items) == 3, "slice literal: len should be 3")
     
-    // Test 4: Struct with string and slice fields
+    // Test 5: Struct with string and slice fields
     c := Container{"hello", items}
     assert(len(c.name) == 5, "container name len should be 5")
     assert(len(c.items) == 3, "container items len should be 3")
     
-    println("struct_test: ALL PASSED")
+    println("struct_pointer_test: ALL PASSED")
 }
