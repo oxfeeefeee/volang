@@ -289,16 +289,20 @@ pub mod slice {
     }
 }
 
-/// Compute hash for a struct value (based on field values, not pointer)
+/// Compute hash for a struct value (based on field values, not pointer).
+/// Uses FxHash algorithm (from rustc) - fast polynomial hash for integers.
 pub fn struct_hash(obj: GcRef, field_count: usize) -> u64 {
-    // Simple FNV-1a hash for no_std compatibility
-    let mut hash: u64 = 0xcbf29ce484222325;
+    // Constant from rustc-hash, chosen for good distribution in MCG
+    const K: u64 = 0xf1357aea2e62a9c5;
+    // Non-zero seed to avoid hash(all-zeros) = 0
+    const SEED: u64 = 0x517cc1b727220a95;
+    
+    let mut hash = SEED;
     for i in 0..field_count {
         let val = Gc::read_slot(obj, i);
-        hash ^= val;
-        hash = hash.wrapping_mul(0x100000001b3);
+        hash = hash.wrapping_add(val).wrapping_mul(K);
     }
-    hash
+    hash.rotate_left(5)
 }
 
 /// Map object - uses Rust IndexMap internally.
