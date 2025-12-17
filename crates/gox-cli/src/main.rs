@@ -55,9 +55,9 @@ enum Commands {
         test: String,
     },
     
-    /// Run a bytecode text file (.goxt)
+    /// Run a GoX program (.gox source, .goxt bytecode text, or directory)
     Run {
-        /// Path to bytecode text file
+        /// Path to source file, bytecode file, or project directory
         file: String,
     },
     
@@ -264,21 +264,32 @@ fn cmd_check() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Run a bytecode file (.goxc, .goxb, or .goxt).
+/// Run a file (.gox source, .goxc/.goxb bytecode binary, or .goxt bytecode text).
 fn cmd_run(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     use gox_vm::{Module, VmResult};
     
-    let module = if file.ends_with(".goxc") || file.ends_with(".goxb") {
+    let path = std::path::Path::new(file);
+    
+    let module = if file.ends_with(".gox") {
+        // Source file - compile and run
+        run_source_file(path)?
+    } else if file.ends_with(".goxc") || file.ends_with(".goxb") {
         // Binary format
         let bytes = std::fs::read(file)?;
         Module::from_bytes(&bytes)?
-    } else {
+    } else if file.ends_with(".goxt") {
         // Text format (.goxt)
         let content = std::fs::read_to_string(file)?;
         bytecode_text::parse_text(&content).map_err(|e| e)?
+    } else {
+        // Try to detect: if it's a directory, treat as project; otherwise try as source
+        if path.is_dir() {
+            return cmd_build(file);
+        } else {
+            // Assume source file
+            run_source_file(path)?
+        }
     };
-    
-    println!("Running module: {}", module.name);
     
     let mut vm = gox_runtime_vm::create_vm();
     vm.load_module(module);
@@ -292,6 +303,36 @@ fn cmd_run(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         VmResult::Ok => Ok(()),
         VmResult::Yield => Err("unexpected yield".into()),
     }
+}
+
+/// Compile and return module from a single source file or its parent directory.
+fn run_source_file(path: &std::path::Path) -> Result<gox_vm::Module, Box<dyn std::error::Error>> {
+    use gox_common::vfs::{FileSet, RealFs};
+    use gox_analysis::analyze_project;
+    use gox_module::VfsConfig;
+    use gox_codegen_vm::compile_project;
+    
+    // If it's a file, use its parent directory as project root
+    let project_dir = if path.is_file() {
+        path.parent().unwrap_or(path).canonicalize()?
+    } else {
+        path.canonicalize()?
+    };
+    
+    let fs = RealFs;
+    let file_set = FileSet::collect(&fs, &project_dir)?;
+    
+    if file_set.files.is_empty() {
+        return Err("no .gox files found".into());
+    }
+    
+    let vfs_config = VfsConfig::from_env(project_dir);
+    let vfs = vfs_config.to_vfs();
+    
+    let project = analyze_project(file_set, &vfs).map_err(|e| format!("analysis error: {}", e))?;
+    let module = compile_project(&project).map_err(|e| format!("codegen error: {}", e))?;
+    
+    Ok(module)
 }
 
 /// Dump a bytecode file to text format.

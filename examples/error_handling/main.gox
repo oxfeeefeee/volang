@@ -1,0 +1,134 @@
+package main
+
+type myError interface {
+    Error() string
+}
+
+type SimpleError struct {
+    msg string
+}
+
+func (e SimpleError) Error() string {
+    return e.msg
+}
+
+func newError(msg string) myError {
+    return SimpleError{msg: msg}
+}
+
+// Helper functions for errdefer (since errdefer only works with GoX functions currently)
+func cleanup1() {
+    println("cleanup 1 executed")
+}
+
+func cleanup2() {
+    println("cleanup 2 executed")
+}
+
+func cleanup3() {
+    println("cleanup 3 executed")
+}
+
+func cleanupDefer() {
+    println("defer cleanup executed")
+}
+
+func cleanupErrdefer() {
+    println("errdefer cleanup executed")
+}
+
+// Test fail statement
+func mightFail(shouldFail bool) myError {
+    if shouldFail {
+        fail newError("intentional failure")
+    }
+    println("mightFail: success path")
+    return nil
+}
+
+// Test errdefer
+func withErrdefer(shouldFail bool) myError {
+    println("withErrdefer: start")
+    errdefer cleanupErrdefer()
+    
+    if shouldFail {
+        fail newError("failure after errdefer")
+    }
+    
+    println("withErrdefer: success path")
+    return nil
+}
+
+// Test multiple errdefer (LIFO order)
+func multipleErrdefer(shouldFail bool) myError {
+    println("multipleErrdefer: start")
+    
+    errdefer cleanup1()
+    errdefer cleanup2()
+    errdefer cleanup3()
+    
+    if shouldFail {
+        fail newError("failure with multiple errdefer")
+    }
+    
+    println("multipleErrdefer: success path")
+    return nil
+}
+
+// Test defer vs errdefer
+func deferVsErrdefer(shouldFail bool) myError {
+    println("deferVsErrdefer: start")
+    
+    defer cleanupDefer()
+    errdefer cleanupErrdefer()
+    
+    if shouldFail {
+        fail newError("failure to test defer vs errdefer")
+    }
+    
+    println("deferVsErrdefer: success path")
+    return nil
+}
+
+func main() int {
+    println("=== Test 1: fail on success path ===")
+    err := mightFail(false)
+    if err != nil {
+        println("ERROR: should not have failed")
+    }
+    
+    println("\n=== Test 2: fail on failure path ===")
+    err = mightFail(true)
+    if err != nil {
+        println("Got expected error")
+    }
+    
+    println("\n=== Test 3: errdefer on success path ===")
+    err = withErrdefer(false)
+    if err != nil {
+        println("ERROR: should not have failed")
+    }
+    
+    println("\n=== Test 4: errdefer on failure path ===")
+    err = withErrdefer(true)
+    if err != nil {
+        println("Got expected error, errdefer should have run")
+    }
+    
+    println("\n=== Test 5: multiple errdefer on failure ===")
+    err = multipleErrdefer(true)
+    if err != nil {
+        println("Got expected error, errdefers should run in LIFO order")
+    }
+    
+    println("\n=== Test 6: defer vs errdefer on success ===")
+    err = deferVsErrdefer(false)
+    println("(defer should have run, errdefer should NOT)")
+    
+    println("\n=== Test 7: defer vs errdefer on failure ===")
+    err = deferVsErrdefer(true)
+    println("(both defer and errdefer should have run)")
+    
+    println("\n=== All tests completed ===")
+    return 0
+}

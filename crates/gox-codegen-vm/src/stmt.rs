@@ -1209,16 +1209,14 @@ fn compile_fail(
 ) -> Result<(), CodegenError> {
     // fail expr - return with error value
     // This is equivalent to: return <zero values>, err
-    // For now, we assume the function returns (..., error) where error is the last value
+    // The error is an interface type, which occupies 2 slots (type_id, data)
     
-    // Compile the error expression
+    // Compile the error expression (returns 2 consecutive registers for interface)
     let error_reg = expr::compile_expr(ctx, fctx, &fail_stmt.error)?;
     
-    // Return with the error value (at position 0 for single error return,
-    // or at the last position for multi-value returns)
-    // For simplicity, we emit return with just the error value
-    // The VM will handle filling in zero values for other return values
-    fctx.emit(Opcode::Return, error_reg, 1, 0);
+    // Return with the error value (interface = 2 slots)
+    // This allows the VM to detect it as an error return
+    fctx.emit(Opcode::Return, error_reg, 2, 0);
     
     Ok(())
 }

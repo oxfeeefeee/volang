@@ -1306,32 +1306,79 @@ impl Vm {
     }
     
     fn do_return(&mut self, fiber_id: FiberId, ret_start: u16, ret_count: usize) -> VmResult {
-        // Execute defers first
-        {
-            let fiber = self.scheduler.get_mut(fiber_id).unwrap();
-            let defers = fiber.pop_frame_defers();
-            for _defer in defers {
-                // TODO: Execute defer function
-            }
-        }
+        // Check if this is an error return (last return value is non-nil interface)
+        // For functions returning error, the last slot pair is the error interface
+        let is_error_return = if ret_count >= 2 {
+            // Error interface is 2 slots: (type_id, data)
+            // If type_id != 0, there's an error
+            let err_type_slot = self.read_reg(fiber_id, ret_start + (ret_count - 2) as u16);
+            err_type_slot != 0
+        } else {
+            false
+        };
         
-        // Get return info from current frame
+        // Get return info from current frame BEFORE executing defers
         let (caller_ret_reg, caller_ret_count) = {
             let fiber = self.scheduler.get(fiber_id).unwrap();
             let frame = fiber.frame().unwrap();
             (frame.ret_reg, frame.ret_count as usize)
         };
         
-        // Copy return values
+        // Copy return values BEFORE executing defers (they might modify stack)
         let ret_vals: Vec<u64> = (0..ret_count).map(|i| self.read_reg(fiber_id, ret_start + i as u16)).collect();
         
-        // Pop frame
+        // Collect defers to execute (LIFO order)
+        let defers: Vec<_> = {
+            let fiber = self.scheduler.get_mut(fiber_id).unwrap();
+            fiber.pop_frame_defers()
+        };
+        
+        // Pop the current frame BEFORE executing defers
         {
             let fiber = self.scheduler.get_mut(fiber_id).unwrap();
             fiber.pop_frame();
         }
         
-        // If no more frames, fiber is done
+        // Execute defers (already in LIFO order from pop_frame_defers)
+        for defer in defers.into_iter() {
+            // Skip errdefer if not an error return
+            if defer.is_errdefer && !is_error_return {
+                continue;
+            }
+            
+            // Get function info
+            let func = self.module.as_ref().unwrap().get_function(defer.func_id);
+            if let Some(func) = func {
+                let local_slots = func.local_slots as usize;
+                
+                // Set up the defer call
+                {
+                    let fiber = self.scheduler.get_mut(fiber_id).unwrap();
+                    let arg_start = fiber.stack.len();
+                    fiber.stack.extend_from_slice(&defer.args[..defer.arg_count as usize]);
+                    
+                    fiber.frames.push(crate::fiber::CallFrame::new(
+                        defer.func_id,
+                        arg_start,
+                        0, // no return register for defer
+                        0, // no return values
+                    ));
+                    fiber.ensure_stack(local_slots + 64);
+                }
+                
+                // Execute the defer function synchronously
+                loop {
+                    match self.step() {
+                        VmResult::Ok => continue,
+                        VmResult::Yield => break, // Defer finished
+                        VmResult::Done => break,
+                        VmResult::Panic(msg) => return VmResult::Panic(msg),
+                    }
+                }
+            }
+        }
+        
+        // Check if fiber is done (no more frames after popping)
         let fiber = self.scheduler.get(fiber_id).unwrap();
         if fiber.frames.is_empty() {
             self.scheduler.kill(fiber_id);
