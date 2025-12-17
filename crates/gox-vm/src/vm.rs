@@ -1224,9 +1224,9 @@ impl Vm {
             
             // ============ Debug ============
             Opcode::DebugPrint => {
-                let type_tag = crate::ffi::TypeTag::from_u8(b as u8);
+                let type_tag = crate::value::TypeTag::from_u8(b as u8);
                 
-                let (val, inner_tag, is_iface) = if type_tag == crate::ffi::TypeTag::Interface {
+                let (val, inner_tag, is_iface) = if type_tag == crate::value::TypeTag::Interface {
                     let type_id = self.read_reg(fiber_id, a) as u32;
                     let data = self.read_reg(fiber_id, a + 1);
                     (data, type_id_to_tag(type_id), true)
@@ -1276,9 +1276,9 @@ impl Vm {
             Opcode::AssertArg => {
                 let fiber = self.scheduler.get(fiber_id).unwrap();
                 if fiber.assert_failed {
-                    let type_tag = crate::ffi::TypeTag::from_u8(b as u8);
+                    let type_tag = crate::value::TypeTag::from_u8(b as u8);
                     
-                    let (val, inner_tag, is_iface) = if type_tag == crate::ffi::TypeTag::Interface {
+                    let (val, inner_tag, is_iface) = if type_tag == crate::value::TypeTag::Interface {
                         let type_id = self.read_reg(fiber_id, a) as u32;
                         let data = self.read_reg(fiber_id, a + 1);
                         (data, type_id_to_tag(type_id), true)
@@ -1471,13 +1471,13 @@ impl Default for Vm {
 }
 
 /// Format a value for printing based on its type tag.
-fn format_value(val: u64, type_tag: crate::ffi::TypeTag) -> String {
+fn format_value(val: u64, type_tag: crate::value::TypeTag) -> String {
     match type_tag {
-        crate::ffi::TypeTag::Float32 => {
+        crate::value::TypeTag::Float32 => {
             let f = f32::from_bits(val as u32);
             format!("{}", f)
         }
-        crate::ffi::TypeTag::Float64 => {
+        crate::value::TypeTag::Float64 => {
             let f = f64::from_bits(val);
             if f.abs() >= 1e10 || (f != 0.0 && f.abs() < 1e-4) {
                 format!("{:e}", f)
@@ -1485,10 +1485,10 @@ fn format_value(val: u64, type_tag: crate::ffi::TypeTag) -> String {
                 format!("{}", f)
             }
         }
-        crate::ffi::TypeTag::Bool => {
+        crate::value::TypeTag::Bool => {
             if val != 0 { "true".to_string() } else { "false".to_string() }
         }
-        crate::ffi::TypeTag::String => {
+        crate::value::TypeTag::String => {
             let ptr = val as crate::gc::GcRef;
             if ptr.is_null() {
                 String::new()
@@ -1503,16 +1503,16 @@ fn format_value(val: u64, type_tag: crate::ffi::TypeTag) -> String {
 }
 
 /// Convert boxed type_id to TypeTag for formatting.
-fn type_id_to_tag(type_id: u32) -> crate::ffi::TypeTag {
+fn type_id_to_tag(type_id: u32) -> crate::value::TypeTag {
     use crate::types::builtin;
     match type_id {
-        0 => crate::ffi::TypeTag::Nil,
-        t if t == builtin::INT64 => crate::ffi::TypeTag::Int64,
-        t if t == builtin::INT32 => crate::ffi::TypeTag::Int32,
-        t if t == builtin::FLOAT64 => crate::ffi::TypeTag::Float64,
-        t if t == builtin::FLOAT32 => crate::ffi::TypeTag::Float32,
-        t if t == builtin::STRING => crate::ffi::TypeTag::String,
-        t if t == builtin::BOOL => crate::ffi::TypeTag::Bool,
-        _ => crate::ffi::TypeTag::Int64, // default
+        0 => crate::value::TypeTag::Nil,
+        t if t == builtin::INT64 => crate::value::TypeTag::Int64,
+        t if t == builtin::INT32 => crate::value::TypeTag::Int32,
+        t if t == builtin::FLOAT64 => crate::value::TypeTag::Float64,
+        t if t == builtin::FLOAT32 => crate::value::TypeTag::Float32,
+        t if t == builtin::STRING => crate::value::TypeTag::String,
+        t if t == builtin::BOOL => crate::value::TypeTag::Bool,
+        _ => crate::value::TypeTag::Int64, // default
     }
 }

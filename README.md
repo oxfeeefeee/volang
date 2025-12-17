@@ -33,9 +33,9 @@ gox/
 │   │  # ─────────── VM ───────────
 │   ├── gox-vm/               # VM core (interpreter, GC)
 │   │
-│   │  # ─────────── Native Backends (Cranelift) ───────────
+│   │  # ─────────── Cranelift Backends ───────────
 │   ├── gox-jit/              # JIT compilation
-│   ├── gox-native/           # AOT → native executable
+│   ├── gox-aot/              # AOT → native executable
 │   ├── gox-wasm/             # AOT → WebAssembly
 │   │
 │   │  # ─────────── Runtime ───────────
@@ -69,7 +69,7 @@ gox/
             ┌────────────────────┼────────────────────┐
             │                    │                    │
             ▼                    ▼                    ▼
-     gox-codegen-vm         gox-jit            gox-native/wasm
+     gox-codegen-vm         gox-jit              gox-aot/wasm
             │                    │                    │
             │                    │                    │
             ▼                    ▼                    ▼

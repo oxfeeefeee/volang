@@ -1,9 +1,9 @@
 [package]
-name = "gox-native"
+name = "gox-aot"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Native executable compilation for GoX using Cranelift"
+description = "AOT (Ahead-Of-Time) compilation for GoX using Cranelift"
 
 [dependencies]
 gox-common = { path = "../gox-common" }

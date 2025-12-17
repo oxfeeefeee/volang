@@ -5,7 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "Core runtime API definitions for GoX (shared across all backends)"
 
+[features]
+default = ["std"]
+std = []
+
 [dependencies]
 gox-common = { path = "../gox-common" }
+gox-common-core = { path = "../gox-common-core" }
+indexmap = "2"
 
 [dev-dependencies]

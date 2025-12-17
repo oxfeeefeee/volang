@@ -11,6 +11,7 @@ std = []  # Enable std features (bytecode loading from files, etc.)
 
 [dependencies]
 gox-common-core = { path = "../gox-common-core" }
+gox-runtime-core = { path = "../gox-runtime-core" }
 hashbrown = "0.14"
 indexmap = "2"
 

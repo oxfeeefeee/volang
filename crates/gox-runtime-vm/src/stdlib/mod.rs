@@ -1,4 +1,4 @@
-//! Native function implementations for the VM runtime.
+//! Standard library implementations for the VM runtime.
 //!
 //! Organized into layers:
 //! - `builtin`: Language built-in functions (always loaded)

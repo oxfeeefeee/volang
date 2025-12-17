@@ -23,7 +23,7 @@ pub mod objects;
 pub mod bytecode;
 pub mod vm;
 pub mod native;
-pub mod ffi;
+pub mod value;
 
 pub use gc::{Gc, GcRef, GcHeader, GcColor, NULL_REF};
 pub use types::{TypeId, TypeMeta, TypeTable, builtin};
@@ -35,8 +35,8 @@ pub use vm::{Vm, VmResult};
 // New zero-copy native API
 pub use native::{NativeFn, NativeCtx, NativeResult, NativeRegistry, TypeTag};
 
-// Legacy FFI types (for backward compatibility)
-pub use ffi::GoxValue;
+// Typed value for native functions
+pub use value::GoxValue;
 
 // Re-export ValueKind from common
 pub use gox_common_core::ValueKind;

@@ -378,7 +378,7 @@ fn compile_project_dir(dir: &Path) -> Result<gox_vm::Module, String> {
 fn run_module(module: gox_vm::Module) -> Result<(), String> {
     // Create native function registry with stdlib natives
     let mut natives = gox_vm::NativeRegistry::new();
-    gox_runtime_vm::natives::register_all(&mut natives);
+    gox_runtime_vm::stdlib::register_all(&mut natives);
     
     let mut vm = gox_vm::Vm::with_natives(natives);
     vm.load_module(module);

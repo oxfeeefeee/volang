@@ -250,6 +250,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gox-aot"
+version = "0.1.0"
+dependencies = [
+ "gox-common",
+ "gox-runtime-core",
+ "gox-vm",
+]
+
+[[package]]
 name = "gox-cli"
 version = "0.1.0"
 dependencies = [
@@ -310,19 +319,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "gox-native"
-version = "0.1.0"
-dependencies = [
- "gox-common",
- "gox-runtime-core",
- "gox-vm",
-]
-
-[[package]]
 name = "gox-runtime-core"
 version = "0.1.0"
 dependencies = [
  "gox-common",
+ "gox-common-core",
+ "indexmap",
 ]
 
 [[package]]
@@ -368,6 +370,7 @@ name = "gox-vm"
 version = "0.1.0"
 dependencies = [
  "gox-common-core",
+ "gox-runtime-core",
  "hashbrown 0.14.5",
  "indexmap",
 ]

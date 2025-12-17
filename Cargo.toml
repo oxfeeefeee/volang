@@ -16,9 +16,9 @@ members = [
   # VM
   "crates/gox-vm",
   
-  # Native Backends (Cranelift)
+  # Cranelift Backends
   "crates/gox-jit",
-  "crates/gox-native",
+  "crates/gox-aot",
   "crates/gox-wasm",
   
   # Runtime

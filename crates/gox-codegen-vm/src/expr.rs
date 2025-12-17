@@ -6,7 +6,7 @@ use gox_syntax::ast::{
     BinaryOp, CallExpr, ConversionExpr, Expr, ExprKind, SelectorExpr, TypeAssertExpr, UnaryOp,
 };
 use gox_vm::bytecode::Constant;
-use gox_vm::ffi::TypeTag;
+use gox_vm::value::TypeTag;
 use gox_vm::instruction::Opcode;
 
 use crate::context::{FuncContext, ValueKind};
@@ -2289,7 +2289,7 @@ fn compile_type_conversion(
             }
             "int" | "int64" => {
                 let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
-                if src_tag == gox_vm::ffi::TypeTag::Float64 {
+                if src_tag == gox_vm::value::TypeTag::Float64 {
                     let dst = fctx.regs.alloc(1);
                     fctx.emit(Opcode::F64ToI64, dst, src, 0);
                     return Ok(dst);
@@ -2298,7 +2298,7 @@ fn compile_type_conversion(
             }
             "float64" => {
                 let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
-                if src_tag == gox_vm::ffi::TypeTag::Int64 {
+                if src_tag == gox_vm::value::TypeTag::Int64 {
                     let dst = fctx.regs.alloc(1);
                     fctx.emit(Opcode::I64ToF64, dst, src, 0);
                     return Ok(dst);
@@ -2338,7 +2338,7 @@ fn compile_type_conversion(
             Type::Basic(BasicType::Int | BasicType::Int64) => {
                 // Source might be float -> int
                 let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
-                if src_tag == gox_vm::ffi::TypeTag::Float64 {
+                if src_tag == gox_vm::value::TypeTag::Float64 {
                     let dst = fctx.regs.alloc(1);
                     fctx.emit(Opcode::F64ToI64, dst, src, 0);
                     return Ok(dst);
@@ -2348,7 +2348,7 @@ fn compile_type_conversion(
             Type::Basic(BasicType::Float64) => {
                 // Source might be int -> float
                 let src_tag = infer_type_tag(ctx, fctx, &call.args[0]);
-                if src_tag == gox_vm::ffi::TypeTag::Int64 {
+                if src_tag == gox_vm::value::TypeTag::Int64 {
                     let dst = fctx.regs.alloc(1);
                     fctx.emit(Opcode::I64ToF64, dst, src, 0);
                     return Ok(dst);

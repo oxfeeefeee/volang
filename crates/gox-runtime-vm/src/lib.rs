@@ -4,10 +4,10 @@
 //! including native function implementations and Value/FFI conversion.
 
 pub mod context;
-pub mod natives;
+pub mod stdlib;
 
 use gox_vm::{Vm, NativeRegistry};
-pub use natives::StdMode;
+pub use stdlib::StdMode;
 
 /// Create a VM with all native functions registered (full std mode).
 pub fn create_vm() -> Vm {
@@ -17,6 +17,6 @@ pub fn create_vm() -> Vm {
 /// Create a VM with specified std mode.
 pub fn create_vm_with_mode(mode: StdMode) -> Vm {
     let mut registry = NativeRegistry::new();
-    natives::register_with_mode(&mut registry, mode);
+    stdlib::register_with_mode(&mut registry, mode);
     Vm::with_natives(registry)
 }

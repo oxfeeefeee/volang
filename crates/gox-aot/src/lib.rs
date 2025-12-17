@@ -1,4 +1,4 @@
-//! GoX Native Compiler
+//! GoX AOT Compiler
 //!
 //! This crate provides AOT (Ahead-Of-Time) compilation for GoX bytecode
 //! to native executables using Cranelift.

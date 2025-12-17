@@ -20,7 +20,7 @@ GoX supports multiple compilation backends to target different execution environ
         │                     │                     │
         ▼                     ▼                     ▼
    ┌─────────┐        ┌─────────────┐       ┌─────────────┐
-   │ gox-vm  │        │   gox-jit   │       │ gox-native  │
+   │ gox-vm  │        │   gox-jit   │       │ gox-aot  │
    │ (interp)│        │ (Cranelift) │       │ (Cranelift) │
    └─────────┘        └─────────────┘       └──────┬──────┘
         │                     │                    │
@@ -35,7 +35,7 @@ GoX supports multiple compilation backends to target different execution environ
 |---------|----------|---------|-----------|--------------|
 | `gox-vm` | Development, debugging | Fast | Low | Bytecode |
 | `gox-jit` | Long-running apps | Medium | High | Bytecode |
-| `gox-native` | Production deployment | Instant | High | Executable |
+| `gox-aot` | Production deployment | Instant | High | Executable |
 | `gox-wasm` | Web, sandboxed envs | Fast | Medium | .wasm file |
 
 ## 1. VM Interpreter (`gox-vm`)
@@ -71,7 +71,7 @@ Transparent JIT compilation using Cranelift. Hot functions are compiled to nativ
 gox run --jit main.gox
 ```
 
-## 3. Native Compiler (`gox-native`)
+## 3. Native Compiler (`gox-aot`)
 
 AOT (Ahead-Of-Time) compilation to standalone executables.
 
@@ -109,7 +109,7 @@ gox build --wasm main.gox -o main.wasm
 |---------|--------|-------|
 | `gox-vm` | ✅ Complete | Production ready |
 | `gox-jit` | 🚧 Scaffold | Cranelift integration pending |
-| `gox-native` | 🚧 Scaffold | Cranelift integration pending |
+| `gox-aot` | 🚧 Scaffold | Cranelift integration pending |
 | `gox-wasm` | 🚧 Scaffold | Cranelift integration pending |
 
 ## Cranelift Integration

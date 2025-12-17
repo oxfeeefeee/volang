@@ -1,4 +1,4 @@
-//! FFI types for native function calls.
+//! Typed value representation for native function calls.
 //!
 //! Native functions receive arguments as typed values (GoxValue),
 //! allowing proper formatting and type-safe operations.
