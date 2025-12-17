@@ -3,6 +3,7 @@
 //! Native functions receive arguments as typed values (GoxValue),
 //! allowing proper formatting and type-safe operations.
 
+use alloc::{format, string::{String, ToString}};
 use crate::gc::GcRef;
 use crate::objects::string;
 

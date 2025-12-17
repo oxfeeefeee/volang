@@ -4,6 +4,7 @@
 //! Data structures ready for incremental + generational (Phase 2-4).
 
 use alloc::alloc::{alloc, dealloc, Layout};
+use alloc::{vec, vec::Vec};
 
 /// GC color for tri-color marking.
 #[repr(u8)]

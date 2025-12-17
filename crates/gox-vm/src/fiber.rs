@@ -1,5 +1,7 @@
 //! Fiber (goroutine) implementation.
 
+use alloc::{vec, vec::Vec};
+
 use crate::gc::GcRef;
 
 /// Fiber ID.

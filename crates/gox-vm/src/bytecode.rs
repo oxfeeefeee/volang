@@ -1,5 +1,6 @@
 //! Bytecode module format and function definitions.
 
+use alloc::{string::{String, ToString}, vec, vec::Vec};
 use crate::instruction::Instruction;
 use crate::types::TypeMeta;
 use gox_common_core::ValueKind;

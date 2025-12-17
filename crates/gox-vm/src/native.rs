@@ -16,6 +16,7 @@
 //! }
 //! ```
 
+use alloc::{format, string::{String, ToString}, vec::Vec};
 use hashbrown::HashMap;
 
 use crate::gc::{Gc, GcRef};

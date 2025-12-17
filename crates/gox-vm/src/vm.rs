@@ -8,6 +8,8 @@ use crate::native::{NativeCtx, NativeFn, NativeRegistry, NativeResult};
 use crate::objects::{self, array, channel, closure, interface, map, slice, string};
 use crate::types::{builtin, TypeId, TypeTable};
 
+use alloc::{format, string::{String, ToString}, vec, vec::Vec};
+
 /// VM execution result.
 #[derive(Debug)]
 pub enum VmResult {
@@ -1233,11 +1235,14 @@ impl Vm {
                 };
                 
                 let s = format_value(val, inner_tag);
+                #[cfg(feature = "std")]
                 if is_iface {
                     println!("(interface){}", s);
                 } else {
                     println!("{}", s);
                 }
+                #[cfg(not(feature = "std"))]
+                let _ = (is_iface, s); // Suppress warnings
             }
             
             Opcode::AssertBegin => {
@@ -1250,11 +1255,14 @@ impl Vm {
                     let fiber = self.scheduler.get_mut(fiber_id).unwrap();
                     fiber.assert_failed = true;
                     fiber.assert_line = line;
+                    #[cfg(feature = "std")]
                     if arg_count > 0 {
                         eprint!("assertion failed: ");
                     } else {
                         eprintln!("assertion failed");
                     }
+                    #[cfg(not(feature = "std"))]
+                    let _ = arg_count;
                 } else {
                     // Assertion passed - skip arg_count AssertArg instructions + AssertEnd
                     let fiber = self.scheduler.get_mut(fiber_id).unwrap();
@@ -1279,11 +1287,14 @@ impl Vm {
                     };
                     
                     let s = format_value(val, inner_tag);
+                    #[cfg(feature = "std")]
                     if is_iface {
                         eprint!("(interface){}", s);
                     } else {
                         eprint!("{}", s);
                     }
+                    #[cfg(not(feature = "std"))]
+                    let _ = (is_iface, s);
                 }
             }
             
@@ -1291,8 +1302,13 @@ impl Vm {
                 let fiber = self.scheduler.get(fiber_id).unwrap();
                 if fiber.assert_failed {
                     let line = fiber.assert_line;
-                    eprintln!();
-                    eprintln!("  at line {}", line);
+                    #[cfg(feature = "std")]
+                    {
+                        eprintln!();
+                        eprintln!("  at line {}", line);
+                    }
+                    #[cfg(not(feature = "std"))]
+                    let _ = line;
                     return VmResult::Panic("assertion failed".into());
                 }
             }
