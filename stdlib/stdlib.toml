@@ -77,7 +77,7 @@ status = "complete"
 
 [packages.filepath]
 layer = "std"
-status = "planned"
+status = "declared"
 
 [packages.bufio]
 layer = "std"
@@ -97,7 +97,7 @@ status = "declared"
 
 [packages.context]
 layer = "std"
-status = "planned"
+status = "declared"
 
 [packages.net]
 layer = "std"
@@ -105,11 +105,11 @@ status = "declared"
 
 [packages.log]
 layer = "std"
-status = "planned"
+status = "declared"
 
 [packages.flag]
 layer = "std"
-status = "planned"
+status = "declared"
 
 # ============ Runtime Layer (2 packages) ============
 [packages.reflect]
