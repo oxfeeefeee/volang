@@ -260,7 +260,7 @@ impl<'a> TypeChecker<'a> {
                 match operand_ty {
                     Type::Pointer(inner) => *inner,
                     _ => {
-                        // TODO: Add proper error
+                        self.error(TypeError::DerefNonPointer, span);
                         Type::Invalid
                     }
                 }
@@ -644,10 +644,7 @@ impl<'a> TypeChecker<'a> {
         // Check elements based on the type
         let underlying = self.underlying_type(&lit_ty);
         // For pointer types, dereference to get the struct
-        let check_ty = match &underlying {
-            Type::Pointer(inner) => inner.as_ref(),
-            other => other,
-        };
+        let check_ty = underlying.deref_if_pointer();
         match check_ty {
             Type::Struct(s) => {
                 self.check_struct_lit_elems(&lit.elems, s);

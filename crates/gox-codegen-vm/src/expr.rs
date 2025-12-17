@@ -1219,10 +1219,7 @@ fn is_embedded_type_access(
     use gox_analysis::Type;
 
     // Auto-deref pointer types
-    let deref_ty = match ty {
-        Type::Pointer(inner) => inner.as_ref(),
-        other => other,
-    };
+    let deref_ty = ty.deref_if_pointer();
 
     match deref_ty {
         Type::Struct(s) => {
@@ -1269,10 +1266,7 @@ fn find_flat_field_index_with_offset(
     use gox_analysis::Type;
 
     // Auto-deref pointer types
-    let deref_ty = match ty {
-        Type::Pointer(inner) => inner.as_ref(),
-        other => other,
-    };
+    let deref_ty = ty.deref_if_pointer();
 
     match deref_ty {
         Type::Struct(s) => {

@@ -308,6 +308,15 @@ pub struct Method {
 }
 
 impl Type {
+    /// Returns the inner type if this is a pointer, otherwise returns self.
+    /// This is useful for auto-dereferencing pointer types in field/method access.
+    pub fn deref_if_pointer(&self) -> &Type {
+        match self {
+            Type::Pointer(inner) => inner.as_ref(),
+            other => other,
+        }
+    }
+
     /// Returns true if this is a value type (copied on assignment).
     pub fn is_value_type(&self) -> bool {
         match self {

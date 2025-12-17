@@ -153,10 +153,7 @@ impl<'a> Lookup<'a> {
                 }
 
                 // For pointer types (in underlying), dereference again
-                let deref_ty = match &search_ty {
-                    Type::Pointer(inner) => inner.as_ref(),
-                    other => other,
-                };
+                let deref_ty = search_ty.deref_if_pointer();
                 
                 // Search in the underlying type
                 match deref_ty {
@@ -302,10 +299,7 @@ impl<'a> Lookup<'a> {
                 }
 
                 // For pointer types, dereference to get the underlying struct
-                let deref_ty = match &search_ty {
-                    Type::Pointer(inner) => inner.as_ref(),
-                    other => other,
-                };
+                let deref_ty = search_ty.deref_if_pointer();
                 
                 match deref_ty {
                     Type::Struct(s) => {

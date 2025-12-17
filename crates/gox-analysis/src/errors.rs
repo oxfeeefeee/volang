@@ -84,6 +84,8 @@ pub enum TypeError {
     UnaryBitNotInteger = 2312,
     /// Unary + requires numeric operand.
     UnaryPosNumeric = 2313,
+    /// Unary * requires pointer operand.
+    DerefNonPointer = 2314,
 
     // === Builtin Function Errors (2400-2499) ===
     /// len requires exactly one argument.
@@ -294,6 +296,7 @@ impl TypeError {
             TypeError::InvalidCompositeLitType => "invalid type for composite literal",
             TypeError::NotImplemented => "type does not implement interface",
             TypeError::MissingMethod => "missing method",
+            TypeError::DerefNonPointer => "cannot dereference non-pointer type",
         }
     }
 
