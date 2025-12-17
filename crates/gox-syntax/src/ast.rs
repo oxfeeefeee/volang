@@ -153,6 +153,8 @@ pub struct Receiver {
     pub name: Ident,
     /// The receiver type name.
     pub ty: Ident,
+    /// Whether this is a pointer receiver (*T).
+    pub is_pointer: bool,
     /// The span of the receiver.
     pub span: Span,
 }

@@ -223,7 +223,13 @@ impl<'a> TypeChecker<'a> {
         if let Some(ref receiver) = func.receiver {
             // Look up the receiver type
             if let Some(Entity::Type(t)) = self.package_scope.lookup(receiver.ty.symbol) {
-                let receiver_ty = Type::Named(t.id);
+                let base_ty = Type::Named(t.id);
+                // Wrap in pointer if this is a pointer receiver
+                let receiver_ty = if receiver.is_pointer {
+                    Type::Pointer(Box::new(base_ty))
+                } else {
+                    base_ty
+                };
                 self.define_var(receiver.name.symbol, receiver_ty, receiver.name.span);
             }
         }

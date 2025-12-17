@@ -171,11 +171,19 @@ impl<'a> Parser<'a> {
         let start = self.current.span.start;
         self.expect(TokenKind::LParen)?;
         let name = self.parse_ident()?;
+        // Check for pointer receiver (*T)
+        let is_pointer = if self.at(TokenKind::Star) {
+            self.advance();
+            true
+        } else {
+            false
+        };
         let ty = self.parse_ident()?;
         self.expect(TokenKind::RParen)?;
         Ok(Receiver {
             name,
             ty,
+            is_pointer,
             span: Span::new(start, self.current.span.start),
         })
     }
