@@ -114,8 +114,8 @@ status = "declared"
 # ============ Runtime Layer (2 packages) ============
 [packages.reflect]
 layer = "runtime"
-status = "planned"
+status = "declared"
 
 [packages.runtime]
 layer = "runtime"
-status = "planned"
+status = "declared"
