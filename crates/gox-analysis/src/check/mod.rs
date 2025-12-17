@@ -308,7 +308,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(Entity::Type(t)) = self.lookup(name.symbol) {
                     return Type::Named(t.id);
                 }
-                // Check for basic types
+                // Check for basic types and predeclared types
                 let name_str = self.interner.resolve(name.symbol).unwrap_or("");
                 match name_str {
                     "int" => Type::Basic(BasicType::Int),
@@ -327,6 +327,7 @@ impl<'a> TypeChecker<'a> {
                     "string" => Type::Basic(BasicType::String),
                     "byte" => Type::Basic(BasicType::Uint8),
                     "rune" => Type::Basic(BasicType::Int32),
+                    "error" => self.predeclared_error_type(),
                     _ => Type::Invalid,
                 }
             }
@@ -487,6 +488,28 @@ impl<'a> TypeChecker<'a> {
             }
         }
         false
+    }
+    
+    /// Returns the predeclared error interface type.
+    /// error is defined as: interface { Error() string }
+    fn predeclared_error_type(&self) -> Type {
+        use crate::types::{InterfaceType, Method, FuncType};
+        use gox_common::Symbol;
+        // Use get() to find existing symbol, or create a dummy symbol
+        // The "Error" symbol should typically already exist from parsing
+        let error_method_name = self.interner.get("Error").unwrap_or(Symbol::DUMMY);
+        Type::Interface(InterfaceType {
+            methods: vec![Method {
+                name: error_method_name,
+                sig: FuncType {
+                    params: vec![],
+                    results: vec![Type::Basic(BasicType::String)],
+                    variadic: false,
+                },
+                is_pointer_receiver: false,
+            }],
+            embeds: vec![],
+        })
     }
 
     /// Resolves a function signature to a FuncType.

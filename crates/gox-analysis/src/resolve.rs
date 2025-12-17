@@ -478,6 +478,12 @@ impl<'a> TypeResolver<'a> {
 
     /// Resolves a type name to a Type.
     fn resolve_type_name(&mut self, name: Symbol, span: Span) -> Type {
+        // Check for predeclared types first
+        let name_str = self.interner.resolve(name).unwrap_or("");
+        if let Some(ty) = Self::predeclared_type(name_str, self.interner) {
+            return ty;
+        }
+        
         // Look up in scope
         match self.scope.lookup(name) {
             Some(Entity::Var(v)) => {
@@ -606,6 +612,44 @@ impl<'a> TypeResolver<'a> {
         }
 
         (methods, embeds)
+    }
+
+    /// Returns a predeclared type by name, or None if not predeclared.
+    fn predeclared_type(name: &str, interner: &SymbolInterner) -> Option<Type> {
+        match name {
+            "bool" => Some(Type::Basic(BasicType::Bool)),
+            "int" => Some(Type::Basic(BasicType::Int)),
+            "int8" => Some(Type::Basic(BasicType::Int8)),
+            "int16" => Some(Type::Basic(BasicType::Int16)),
+            "int32" | "rune" => Some(Type::Basic(BasicType::Int32)),
+            "int64" => Some(Type::Basic(BasicType::Int64)),
+            "uint" => Some(Type::Basic(BasicType::Uint)),
+            "uint8" | "byte" => Some(Type::Basic(BasicType::Uint8)),
+            "uint16" => Some(Type::Basic(BasicType::Uint16)),
+            "uint32" => Some(Type::Basic(BasicType::Uint32)),
+            "uint64" => Some(Type::Basic(BasicType::Uint64)),
+            "float32" => Some(Type::Basic(BasicType::Float32)),
+            "float64" => Some(Type::Basic(BasicType::Float64)),
+            "string" => Some(Type::Basic(BasicType::String)),
+            "error" => {
+                // Predeclared error interface: interface { Error() string }
+                use gox_common::Symbol;
+                let error_method_name = interner.get("Error").unwrap_or(Symbol::DUMMY);
+                Some(Type::Interface(InterfaceType {
+                    methods: vec![Method {
+                        name: error_method_name,
+                        sig: FuncType {
+                            params: vec![],
+                            results: vec![Type::Basic(BasicType::String)],
+                            variadic: false,
+                        },
+                        is_pointer_receiver: false,
+                    }],
+                    embeds: vec![],
+                }))
+            }
+            _ => None,
+        }
     }
 
     /// Evaluates an array length expression to a constant.

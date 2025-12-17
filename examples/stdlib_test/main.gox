@@ -16,6 +16,8 @@ func main() int {
     println(strings.Replace("hello", "l", "L", 1))
     
     println("\n=== strconv ===")
+    n, _ := strconv.Atoi("42")
+    println(n)
     println(strconv.Itoa(123))
     
     println("\n=== math ===")

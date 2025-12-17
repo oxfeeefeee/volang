@@ -1,6 +1,18 @@
 // Package strconv implements conversions to and from string representations of basic data types.
 package strconv
 
+// Atoi is equivalent to ParseInt(s, 10, 0), converted to type int.
+func Atoi(s string) (int, error)
+
+// ParseInt interprets a string s in the given base and bit size.
+func ParseInt(s string, base, bitSize int) (int64, error)
+
+// ParseFloat converts the string s to a floating-point number.
+func ParseFloat(s string, bitSize int) (float64, error)
+
+// ParseBool returns the boolean value represented by the string.
+func ParseBool(s string) (bool, error)
+
 // Itoa is equivalent to FormatInt(int64(i), 10).
 func Itoa(i int) string
 
