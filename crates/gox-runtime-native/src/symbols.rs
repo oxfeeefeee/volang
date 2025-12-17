@@ -73,6 +73,12 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_defer_pop", ptr: crate::goroutine::gox_defer_pop as *const u8 },
             RuntimeSymbol { name: "gox_panic", ptr: crate::goroutine::gox_panic as *const u8 },
             RuntimeSymbol { name: "gox_recover", ptr: crate::goroutine::gox_recover as *const u8 },
+            
+            // Select functions
+            RuntimeSymbol { name: "gox_select_start", ptr: crate::goroutine::gox_select_start as *const u8 },
+            RuntimeSymbol { name: "gox_select_add_send", ptr: crate::goroutine::gox_select_add_send as *const u8 },
+            RuntimeSymbol { name: "gox_select_add_recv", ptr: crate::goroutine::gox_select_add_recv as *const u8 },
+            RuntimeSymbol { name: "gox_select_exec", ptr: crate::goroutine::gox_select_exec as *const u8 },
         ];
         
         Self { symbols }

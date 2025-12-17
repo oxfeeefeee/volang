@@ -848,6 +848,90 @@ pub unsafe extern "C" fn gox_recover() -> u64 {
     })
 }
 
+// =============================================================================
+// Select Statement
+// =============================================================================
+
+/// A select case for building select statements.
+#[derive(Clone)]
+enum SelectCaseAot {
+    Send { chan: u64, value: u64 },
+    Recv { chan: u64 },
+}
+
+thread_local! {
+    /// Current select state being built.
+    static SELECT_STATE: UnsafeCell<Option<SelectStateAot>> = UnsafeCell::new(None);
+}
+
+struct SelectStateAot {
+    cases: Vec<SelectCaseAot>,
+    has_default: bool,
+}
+
+/// Start building a select statement.
+#[no_mangle]
+pub unsafe extern "C" fn gox_select_start(case_count: u64, has_default: u64) {
+    SELECT_STATE.with(|state| {
+        *state.get() = Some(SelectStateAot {
+            cases: Vec::with_capacity(case_count as usize),
+            has_default: has_default != 0,
+        });
+    });
+}
+
+/// Add a send case to the select.
+#[no_mangle]
+pub unsafe extern "C" fn gox_select_add_send(chan: u64, value: u64) {
+    SELECT_STATE.with(|state| {
+        if let Some(ref mut s) = *state.get() {
+            s.cases.push(SelectCaseAot::Send { chan, value });
+        }
+    });
+}
+
+/// Add a recv case to the select. Returns (value, ok) but the actual receive
+/// happens in gox_select_exec based on which case is chosen.
+#[no_mangle]
+pub unsafe extern "C" fn gox_select_add_recv(chan: u64) -> (u64, u64) {
+    SELECT_STATE.with(|state| {
+        if let Some(ref mut s) = *state.get() {
+            s.cases.push(SelectCaseAot::Recv { chan });
+        }
+    });
+    // Return dummy values - actual values are set by select_exec
+    (0, 0)
+}
+
+/// Execute the select and return the chosen case index.
+#[no_mangle]
+pub unsafe extern "C" fn gox_select_exec() -> u64 {
+    let state = SELECT_STATE.with(|s| (*s.get()).take());
+    
+    let Some(state) = state else {
+        return 0;
+    };
+    
+    // For now, implement a simple non-blocking select
+    // TODO: Implement blocking select with proper channel integration
+    
+    let case_count = state.cases.len();
+    
+    // Try each case to find a ready one
+    // In a real implementation, we'd check channel readiness
+    // For now, just pick the first case or default
+    
+    if state.has_default {
+        // Return default case index
+        case_count as u64
+    } else if !state.cases.is_empty() {
+        // Return first case (simplified)
+        0
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

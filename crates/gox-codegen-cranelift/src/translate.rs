@@ -1063,6 +1063,45 @@ impl FunctionTranslator {
                 builder.def_var(self.variables[inst.a as usize], result);
             }
 
+            // ==================== Select ====================
+            Opcode::SelectStart => {
+                // a=case_count, b=has_default
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::SelectStart)?;
+                let case_count = builder.ins().iconst(I64, inst.a as i64);
+                let has_default = builder.ins().iconst(I64, inst.b as i64);
+                builder.ins().call(func_ref, &[case_count, has_default]);
+            }
+
+            Opcode::SelectSend => {
+                // a=chan, b=value
+                let chan = builder.use_var(self.variables[inst.a as usize]);
+                let val = builder.use_var(self.variables[inst.b as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::SelectAddSend)?;
+                builder.ins().call(func_ref, &[chan, val]);
+            }
+
+            Opcode::SelectRecv => {
+                // a=dest, b=chan, c=ok_dest
+                let chan = builder.use_var(self.variables[inst.b as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::SelectAddRecv)?;
+                let call = builder.ins().call(func_ref, &[chan]);
+                let results = builder.inst_results(call);
+                let value = results[0];
+                let ok = results[1];
+                builder.def_var(self.variables[inst.a as usize], value);
+                if inst.c != 0 {
+                    builder.def_var(self.variables[inst.c as usize], ok);
+                }
+            }
+
+            Opcode::SelectEnd => {
+                // a=dest (chosen case index)
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::SelectExec)?;
+                let call = builder.ins().call(func_ref, &[]);
+                let result = builder.inst_results(call)[0];
+                builder.def_var(self.variables[inst.a as usize], result);
+            }
+
             // ==================== Not yet implemented ====================
             _ => {
                 bail!("Opcode {:?} not yet implemented in AOT compiler", inst.opcode());

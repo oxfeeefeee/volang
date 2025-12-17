@@ -35,4 +35,8 @@ pub use goroutine::{
     gox_defer_pop,
     gox_panic,
     gox_recover,
+    gox_select_start,
+    gox_select_add_send,
+    gox_select_add_recv,
+    gox_select_exec,
 };

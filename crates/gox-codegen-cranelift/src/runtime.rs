@@ -98,6 +98,12 @@ pub enum RuntimeFunc {
     DeferPop,
     Panic,
     Recover,
+
+    // === Select (4) ===
+    SelectStart,
+    SelectAddSend,
+    SelectAddRecv,
+    SelectExec,
 }
 
 impl RuntimeFunc {
@@ -174,6 +180,11 @@ impl RuntimeFunc {
             RuntimeFunc::DeferPop => "gox_defer_pop",
             RuntimeFunc::Panic => "gox_panic",
             RuntimeFunc::Recover => "gox_recover",
+            // Select
+            RuntimeFunc::SelectStart => "gox_select_start",
+            RuntimeFunc::SelectAddSend => "gox_select_add_send",
+            RuntimeFunc::SelectAddRecv => "gox_select_add_recv",
+            RuntimeFunc::SelectExec => "gox_select_exec",
         }
     }
 
@@ -443,6 +454,24 @@ impl RuntimeFunc {
             }
             RuntimeFunc::Recover => {
                 sig.returns.push(AbiParam::new(I64)); // recovered_value (0 if not panicking)
+            }
+
+            // === Select ===
+            RuntimeFunc::SelectStart => {
+                sig.params.push(AbiParam::new(I64));  // case_count
+                sig.params.push(AbiParam::new(I64));  // has_default
+            }
+            RuntimeFunc::SelectAddSend => {
+                sig.params.push(AbiParam::new(I64));  // chan_ref
+                sig.params.push(AbiParam::new(I64));  // value
+            }
+            RuntimeFunc::SelectAddRecv => {
+                sig.params.push(AbiParam::new(I64));  // chan_ref
+                sig.returns.push(AbiParam::new(I64)); // value
+                sig.returns.push(AbiParam::new(I64)); // ok
+            }
+            RuntimeFunc::SelectExec => {
+                sig.returns.push(AbiParam::new(I64)); // chosen_case_index
             }
         }
         
