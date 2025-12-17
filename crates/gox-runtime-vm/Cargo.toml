@@ -9,5 +9,6 @@ description = "VM runtime implementation for GoX"
 gox-common = { path = "../gox-common" }
 gox-runtime-core = { path = "../gox-runtime-core" }
 gox-vm = { path = "../gox-vm" }
+regex = "1"
 
 [dev-dependencies]

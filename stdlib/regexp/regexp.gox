@@ -1,0 +1,43 @@
+// Package regexp implements regular expression search.
+package regexp
+
+// Regexp is the representation of a compiled regular expression.
+type Regexp struct {
+    // internal fields handled by native code
+}
+
+// Compile parses a regular expression and returns a Regexp.
+func Compile(expr string) (*Regexp, error)
+
+// MustCompile is like Compile but panics if the expression cannot be parsed.
+func MustCompile(expr string) *Regexp
+
+// Match reports whether the string s contains any match of the pattern.
+func Match(pattern, s string) (bool, error)
+
+// MatchString reports whether the Regexp matches the string s.
+func (re *Regexp) MatchString(s string) bool
+
+// FindString returns a string holding the text of the leftmost match.
+func (re *Regexp) FindString(s string) string
+
+// FindStringIndex returns the index pair for the leftmost match.
+func (re *Regexp) FindStringIndex(s string) []int
+
+// FindAllString returns a slice of all matches.
+func (re *Regexp) FindAllString(s string, n int) []string
+
+// ReplaceAllString returns a copy of src with matches replaced by repl.
+func (re *Regexp) ReplaceAllString(src, repl string) string
+
+// ReplaceAllStringFunc returns a copy with matches replaced by the return value of repl.
+func (re *Regexp) ReplaceAllStringFunc(src string, repl func(string) string) string
+
+// Split slices s into substrings separated by the expression.
+func (re *Regexp) Split(s string, n int) []string
+
+// String returns the source text used to compile the regular expression.
+func (re *Regexp) String() string
+
+// QuoteMeta returns a string that escapes all regex metacharacters.
+func QuoteMeta(s string) string

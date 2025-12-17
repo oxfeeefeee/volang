@@ -4,6 +4,7 @@ import "strings"
 import "strconv"
 import "math"
 import "os"
+import "regexp"
 
 func main() int {
     println("=== strings ===")
@@ -33,6 +34,13 @@ func main() int {
     // Test working directory
     wd, _ := os.Getwd()
     println(wd)
+    
+    println("\n=== regexp ===")
+    matched, _ := regexp.Match("[0-9]+", "hello123world")
+    if matched {
+        println("Match: ok")
+    }
+    println(regexp.QuoteMeta("a.b*c"))
     
     return 0
 }

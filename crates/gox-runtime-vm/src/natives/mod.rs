@@ -10,6 +10,7 @@ pub mod math;
 pub mod os;
 pub mod path;
 pub mod rand;
+pub mod regexp;
 pub mod sort;
 pub mod strconv;
 pub mod strings;
@@ -30,6 +31,7 @@ pub fn register_all(registry: &mut NativeRegistry) {
     os::register(registry);
     path::register(registry);
     rand::register(registry);
+    regexp::register(registry);
     sort::register(registry);
     strconv::register(registry);
     strings::register(registry);
