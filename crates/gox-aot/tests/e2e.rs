@@ -414,3 +414,7 @@ func main() {
     assert_eq!(test_fn(), 42);
     println!("✓ test_e2e_select_default passed");
 }
+
+// Note: Full iterator test requires slice/map creation which needs more runtime support.
+// The iterator opcodes (IterBegin, IterNext, IterEnd) are implemented but need
+// container creation to be fully testable in e2e.
