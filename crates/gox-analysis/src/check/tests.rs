@@ -647,3 +647,40 @@ func main() {
     let diag = check_via_typecheck_file(source);
     assert!(!diag.has_errors(), "Pointer field access via typecheck_file should work: {:?}", diag);
 }
+
+#[test]
+fn test_pointer_receiver_method() {
+    // Test pointer receiver method declaration and call
+    let source = r#"
+package main
+type Point struct { x int; y int }
+func (p *Point) Move(dx, dy int) {
+    p.x = p.x + dx
+    p.y = p.y + dy
+}
+func main() {
+    pt := &Point{10, 20}
+    pt.Move(5, 10)
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(!diag.has_errors(), "Pointer receiver method should work: {:?}", diag);
+}
+
+#[test]
+fn test_value_receiver_method() {
+    // Test value receiver method declaration and call
+    let source = r#"
+package main
+type Point struct { x int; y int }
+func (p Point) Sum() int {
+    return p.x + p.y
+}
+func main() {
+    pt := Point{10, 20}
+    var _ = pt.Sum()
+}
+"#;
+    let diag = check_via_typecheck_file(source);
+    assert!(!diag.has_errors(), "Value receiver method should work: {:?}", diag);
+}
