@@ -24,6 +24,15 @@ pub fn register(registry: &mut NativeRegistry) {
 
     // Hostname
     registry.register("os.Hostname", native_hostname);
+    
+    // File operations
+    registry.register("os.ReadFile", native_read_file);
+    registry.register("os.WriteFile", native_write_file);
+    registry.register("os.Remove", native_remove);
+    registry.register("os.RemoveAll", native_remove_all);
+    registry.register("os.Mkdir", native_mkdir);
+    registry.register("os.MkdirAll", native_mkdir_all);
+    registry.register("os.Rename", native_rename);
 }
 
 fn native_getenv(ctx: &mut NativeCtx) -> NativeResult {
@@ -141,4 +150,99 @@ fn native_hostname(ctx: &mut NativeCtx) -> NativeResult {
     ctx.ret_string(0, &hostname);
     ctx.ret_nil(1); // nil error
     NativeResult::Ok(2)
+}
+
+// ==================== File Operations ====================
+
+fn native_read_file(ctx: &mut NativeCtx) -> NativeResult {
+    let name = ctx.arg_str(0).to_string();
+    match std::fs::read(&name) {
+        Ok(data) => {
+            let gc = ctx.gc();
+            let arr = array::create(gc, builtin::ARRAY, builtin::UINT8, 1, data.len());
+            for (i, &b) in data.iter().enumerate() {
+                array::set(arr, i, b as u64);
+            }
+            let result = slice::from_array(gc, builtin::SLICE, arr);
+            ctx.ret_ref(0, result);
+            ctx.ret_nil(1);
+        }
+        Err(e) => {
+            ctx.ret_nil(0);
+            ctx.ret_string(1, &e.to_string());
+        }
+    }
+    NativeResult::Ok(2)
+}
+
+fn native_write_file(ctx: &mut NativeCtx) -> NativeResult {
+    let name = ctx.arg_str(0).to_string();
+    let data_ref = ctx.arg_ref(1);
+    let _perm = ctx.arg_i64(2);
+    
+    // Extract bytes from slice
+    let len = if data_ref.is_null() { 0 } else { slice::len(data_ref) };
+    let mut data = Vec::with_capacity(len);
+    for i in 0..len {
+        data.push(slice::get(data_ref, i) as u8);
+    }
+    
+    match std::fs::write(&name, &data) {
+        Ok(()) => ctx.ret_nil(0),
+        Err(e) => ctx.ret_string(0, &e.to_string()),
+    }
+    NativeResult::Ok(1)
+}
+
+fn native_remove(ctx: &mut NativeCtx) -> NativeResult {
+    let name = ctx.arg_str(0).to_string();
+    match std::fs::remove_file(&name) {
+        Ok(()) => ctx.ret_nil(0),
+        Err(e) => ctx.ret_string(0, &e.to_string()),
+    }
+    NativeResult::Ok(1)
+}
+
+fn native_remove_all(ctx: &mut NativeCtx) -> NativeResult {
+    let path = ctx.arg_str(0).to_string();
+    let result = if std::path::Path::new(&path).is_dir() {
+        std::fs::remove_dir_all(&path)
+    } else {
+        std::fs::remove_file(&path)
+    };
+    match result {
+        Ok(()) => ctx.ret_nil(0),
+        Err(e) => ctx.ret_string(0, &e.to_string()),
+    }
+    NativeResult::Ok(1)
+}
+
+fn native_mkdir(ctx: &mut NativeCtx) -> NativeResult {
+    let name = ctx.arg_str(0).to_string();
+    let _perm = ctx.arg_i64(1);
+    match std::fs::create_dir(&name) {
+        Ok(()) => ctx.ret_nil(0),
+        Err(e) => ctx.ret_string(0, &e.to_string()),
+    }
+    NativeResult::Ok(1)
+}
+
+fn native_mkdir_all(ctx: &mut NativeCtx) -> NativeResult {
+    let path = ctx.arg_str(0).to_string();
+    let _perm = ctx.arg_i64(1);
+    match std::fs::create_dir_all(&path) {
+        Ok(()) => ctx.ret_nil(0),
+        Err(e) => ctx.ret_string(0, &e.to_string()),
+    }
+    NativeResult::Ok(1)
+}
+
+fn native_rename(ctx: &mut NativeCtx) -> NativeResult {
+    let oldpath = ctx.arg_str(0).to_string();
+    let newpath = ctx.arg_str(1).to_string();
+    match std::fs::rename(&oldpath, &newpath) {
+        Ok(()) => ctx.ret_nil(0),
+        Err(e) => ctx.ret_string(0, &e.to_string()),
+    }
+    NativeResult::Ok(1)
 }

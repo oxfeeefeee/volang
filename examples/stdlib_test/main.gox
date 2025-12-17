@@ -3,6 +3,7 @@ package main
 import "strings"
 import "strconv"
 import "math"
+import "os"
 
 func main() int {
     println("=== strings ===")
@@ -24,6 +25,14 @@ func main() int {
     println(math.Abs(-3.14))
     println(math.Max(1.0, 2.0))
     println(math.Sqrt(16.0))
+    
+    println("\n=== os ===")
+    // Test environment
+    println(os.Getenv("HOME"))
+    
+    // Test working directory
+    wd, _ := os.Getwd()
+    println(wd)
     
     return 0
 }
