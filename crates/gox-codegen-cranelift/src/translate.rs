@@ -1102,6 +1102,72 @@ impl FunctionTranslator {
                 builder.def_var(self.variables[inst.a as usize], result);
             }
 
+            // ==================== Iterator ====================
+            Opcode::IterBegin => {
+                // a=container, b=iter_type (0=slice, 1=map, 2=string)
+                let container = builder.use_var(self.variables[inst.a as usize]);
+                let iter_type = builder.ins().iconst(I64, inst.b as i64);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::IterBegin)?;
+                let call = builder.ins().call(func_ref, &[container, iter_type]);
+                let handle = builder.inst_results(call)[0];
+                // Store iterator handle in a dedicated variable
+                // Use a high register index to avoid conflicts
+                let iter_var_idx = self.variables.len().saturating_sub(1);
+                if iter_var_idx < self.variables.len() {
+                    builder.def_var(self.variables[iter_var_idx], handle);
+                }
+            }
+
+            Opcode::IterNext => {
+                // a=index_dest, b=value_dest, c=done_offset
+                // Get iterator handle from dedicated variable
+                let iter_var_idx = self.variables.len().saturating_sub(1);
+                let handle = if iter_var_idx < self.variables.len() {
+                    builder.use_var(self.variables[iter_var_idx])
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::IterNext)?;
+                let call = builder.ins().call(func_ref, &[handle]);
+                let results = builder.inst_results(call);
+                let done = results[0];
+                let key = results[1];
+                let value = results[2];
+                
+                // Store key and value
+                builder.def_var(self.variables[inst.a as usize], key);
+                builder.def_var(self.variables[inst.b as usize], value);
+                
+                // Branch based on done flag
+                // done=1 means jump to done_offset, done=0 means continue
+                let zero = builder.ins().iconst(I64, 0);
+                let is_done = builder.ins().icmp(IntCC::NotEqual, done, zero);
+                
+                // Calculate target PC for done case
+                let done_offset = inst.c as i16 as i32;
+                let target_pc = (pc as i32 + done_offset) as usize;
+                
+                if let Some(&target_block) = self.blocks.get(&target_pc) {
+                    let continue_block = builder.create_block();
+                    builder.ins().brif(is_done, target_block, &[], continue_block, &[]);
+                    builder.switch_to_block(continue_block);
+                }
+            }
+
+            Opcode::IterEnd => {
+                // Get iterator handle and free it
+                let iter_var_idx = self.variables.len().saturating_sub(1);
+                let handle = if iter_var_idx < self.variables.len() {
+                    builder.use_var(self.variables[iter_var_idx])
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::IterEnd)?;
+                builder.ins().call(func_ref, &[handle]);
+            }
+
             // ==================== Not yet implemented ====================
             _ => {
                 bail!("Opcode {:?} not yet implemented in AOT compiler", inst.opcode());

@@ -104,6 +104,11 @@ pub enum RuntimeFunc {
     SelectAddSend,
     SelectAddRecv,
     SelectExec,
+
+    // === Iterator (3) ===
+    IterBegin,
+    IterNext,
+    IterEnd,
 }
 
 impl RuntimeFunc {
@@ -185,6 +190,10 @@ impl RuntimeFunc {
             RuntimeFunc::SelectAddSend => "gox_select_add_send",
             RuntimeFunc::SelectAddRecv => "gox_select_add_recv",
             RuntimeFunc::SelectExec => "gox_select_exec",
+            // Iterator
+            RuntimeFunc::IterBegin => "gox_iter_begin",
+            RuntimeFunc::IterNext => "gox_iter_next",
+            RuntimeFunc::IterEnd => "gox_iter_end",
         }
     }
 
@@ -472,6 +481,22 @@ impl RuntimeFunc {
             }
             RuntimeFunc::SelectExec => {
                 sig.returns.push(AbiParam::new(I64)); // chosen_case_index
+            }
+
+            // === Iterator ===
+            RuntimeFunc::IterBegin => {
+                sig.params.push(AbiParam::new(I64));  // container_ref
+                sig.params.push(AbiParam::new(I64));  // iter_type (0=slice, 1=map, 2=string)
+                sig.returns.push(AbiParam::new(I64)); // iterator_handle
+            }
+            RuntimeFunc::IterNext => {
+                sig.params.push(AbiParam::new(I64));  // iterator_handle
+                sig.returns.push(AbiParam::new(I64)); // done (0=continue, 1=done)
+                sig.returns.push(AbiParam::new(I64)); // key/index
+                sig.returns.push(AbiParam::new(I64)); // value
+            }
+            RuntimeFunc::IterEnd => {
+                sig.params.push(AbiParam::new(I64));  // iterator_handle
             }
         }
         

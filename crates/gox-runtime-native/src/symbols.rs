@@ -79,6 +79,11 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_select_add_send", ptr: crate::goroutine::gox_select_add_send as *const u8 },
             RuntimeSymbol { name: "gox_select_add_recv", ptr: crate::goroutine::gox_select_add_recv as *const u8 },
             RuntimeSymbol { name: "gox_select_exec", ptr: crate::goroutine::gox_select_exec as *const u8 },
+            
+            // Iterator functions
+            RuntimeSymbol { name: "gox_iter_begin", ptr: crate::goroutine::gox_iter_begin as *const u8 },
+            RuntimeSymbol { name: "gox_iter_next", ptr: crate::goroutine::gox_iter_next as *const u8 },
+            RuntimeSymbol { name: "gox_iter_end", ptr: crate::goroutine::gox_iter_end as *const u8 },
         ];
         
         Self { symbols }

@@ -932,6 +932,148 @@ pub unsafe extern "C" fn gox_select_exec() -> u64 {
     }
 }
 
+// =============================================================================
+// Iterator
+// =============================================================================
+
+/// Iterator state for AOT runtime.
+#[derive(Clone)]
+enum IterStateAot {
+    Slice { ptr: u64, len: usize, elem_size: usize, index: usize },
+    Map { map_ref: u64, index: usize },
+    String { str_ref: u64, byte_pos: usize },
+}
+
+thread_local! {
+    /// Iterator stack for current thread.
+    static ITER_STACK: UnsafeCell<Vec<IterStateAot>> = UnsafeCell::new(Vec::new());
+}
+
+/// Begin iteration over a container.
+/// Returns an iterator handle (index into iter stack).
+#[no_mangle]
+pub unsafe extern "C" fn gox_iter_begin(container: u64, iter_type: u64) -> u64 {
+    use gox_runtime_core::gc::Gc;
+    
+    let state = match iter_type {
+        0 => {
+            // Slice iteration
+            if container == 0 {
+                IterStateAot::Slice { ptr: 0, len: 0, elem_size: 8, index: 0 }
+            } else {
+                // Read slice header: ptr at slot 0, len at slot 1
+                let ptr = Gc::read_slot(container as *mut _, 0);
+                let len = Gc::read_slot(container as *mut _, 1) as usize;
+                let elem_size = Gc::read_slot(container as *mut _, 3) as usize; // elem_size at slot 3
+                IterStateAot::Slice { ptr, len, elem_size: elem_size.max(1), index: 0 }
+            }
+        }
+        1 => {
+            // Map iteration
+            IterStateAot::Map { map_ref: container, index: 0 }
+        }
+        2 => {
+            // String iteration
+            IterStateAot::String { str_ref: container, byte_pos: 0 }
+        }
+        _ => {
+            // Unknown type - create empty iterator
+            IterStateAot::Slice { ptr: 0, len: 0, elem_size: 8, index: 0 }
+        }
+    };
+    
+    ITER_STACK.with(|stack| {
+        let stack = &mut *stack.get();
+        stack.push(state);
+        (stack.len() - 1) as u64
+    })
+}
+
+/// Get next element from iterator.
+/// Returns (done, key, value) where done=1 means iteration complete.
+#[no_mangle]
+pub unsafe extern "C" fn gox_iter_next(_handle: u64) -> (u64, u64, u64) {
+    use gox_runtime_core::gc::Gc;
+    
+    ITER_STACK.with(|stack| {
+        let stack = &mut *stack.get();
+        let Some(state) = stack.last_mut() else {
+            return (1, 0, 0); // done
+        };
+        
+        match state {
+            IterStateAot::Slice { ptr, len, elem_size, index } => {
+                if *index >= *len {
+                    (1, 0, 0) // done
+                } else {
+                    let idx = *index;
+                    let value = if *ptr != 0 {
+                        // Read value from array backing store
+                        let arr_ptr = *ptr as *mut u8;
+                        let offset = idx * *elem_size;
+                        if *elem_size == 8 {
+                            *(arr_ptr.add(offset) as *const u64)
+                        } else {
+                            // Read smaller element sizes
+                            let mut val = 0u64;
+                            std::ptr::copy_nonoverlapping(
+                                arr_ptr.add(offset),
+                                &mut val as *mut u64 as *mut u8,
+                                *elem_size
+                            );
+                            val
+                        }
+                    } else {
+                        0
+                    };
+                    *index += 1;
+                    (0, idx as u64, value)
+                }
+            }
+            IterStateAot::Map { map_ref, index } => {
+                if *map_ref == 0 {
+                    return (1, 0, 0);
+                }
+                // Read map state pointer from slot 0
+                let map_ptr = Gc::read_slot(*map_ref as *mut _, 0) as *const u8;
+                if map_ptr.is_null() {
+                    return (1, 0, 0);
+                }
+                // Simplified: just increment and return done
+                // TODO: Proper map iteration using runtime-core
+                *index += 1;
+                (1, 0, 0) // For now, skip map iteration
+            }
+            IterStateAot::String { str_ref, byte_pos } => {
+                if *str_ref == 0 {
+                    return (1, 0, 0);
+                }
+                // Read string data
+                let str_ptr = Gc::read_slot(*str_ref as *mut _, 0) as *const u8;
+                let str_len = Gc::read_slot(*str_ref as *mut _, 1) as usize;
+                
+                if *byte_pos >= str_len || str_ptr.is_null() {
+                    (1, 0, 0) // done
+                } else {
+                    let pos = *byte_pos;
+                    let byte = *str_ptr.add(pos);
+                    *byte_pos += 1;
+                    (0, pos as u64, byte as u64)
+                }
+            }
+        }
+    })
+}
+
+/// End iteration and clean up.
+#[no_mangle]
+pub unsafe extern "C" fn gox_iter_end(_handle: u64) {
+    ITER_STACK.with(|stack| {
+        let stack = &mut *stack.get();
+        stack.pop();
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

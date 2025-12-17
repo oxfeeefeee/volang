@@ -39,4 +39,7 @@ pub use goroutine::{
     gox_select_add_send,
     gox_select_add_recv,
     gox_select_exec,
+    gox_iter_begin,
+    gox_iter_next,
+    gox_iter_end,
 };
