@@ -117,29 +117,10 @@ pub unsafe extern "C" fn gox_builtin_cap(type_tag: u8, ptr: GcRef) -> usize {
 }
 
 // =============================================================================
-// Stdlib: Strings C ABI (14 functions)
+// Stdlib: Strings C ABI (native functions only)
+// Note: GoX-implemented functions (HasPrefix, HasSuffix, Contains, Repeat,
+//       Compare, ReplaceAll) are compiled directly by Cranelift
 // =============================================================================
-#[cfg(feature = "std")]
-#[no_mangle]
-pub unsafe extern "C" fn gox_strings_contains(s: GcRef, substr: GcRef) -> bool {
-    use crate::objects::string;
-    crate::stdlib::strings::contains(string::as_str(s), string::as_str(substr))
-}
-
-#[cfg(feature = "std")]
-#[no_mangle]
-pub unsafe extern "C" fn gox_strings_has_prefix(s: GcRef, prefix: GcRef) -> bool {
-    use crate::objects::string;
-    crate::stdlib::strings::has_prefix(string::as_str(s), string::as_str(prefix))
-}
-
-#[cfg(feature = "std")]
-#[no_mangle]
-pub unsafe extern "C" fn gox_strings_has_suffix(s: GcRef, suffix: GcRef) -> bool {
-    use crate::objects::string;
-    crate::stdlib::strings::has_suffix(string::as_str(s), string::as_str(suffix))
-}
-
 #[cfg(feature = "std")]
 #[no_mangle]
 pub unsafe extern "C" fn gox_strings_index(s: GcRef, substr: GcRef) -> i64 {
@@ -168,35 +149,6 @@ pub unsafe extern "C" fn gox_strings_to_upper(gc: *mut Gc, s: GcRef, type_id: Ty
     use crate::objects::string;
     let result = crate::stdlib::strings::to_upper(string::as_str(s));
     string::from_rust_str(&mut *gc, type_id, &result)
-}
-
-#[cfg(feature = "std")]
-#[no_mangle]
-pub unsafe extern "C" fn gox_strings_replace_all(
-    gc: *mut Gc, s: GcRef, old: GcRef, new: GcRef, type_id: TypeId
-) -> GcRef {
-    use crate::objects::string;
-    let result = crate::stdlib::strings::replace_all(
-        string::as_str(s), string::as_str(old), string::as_str(new)
-    );
-    string::from_rust_str(&mut *gc, type_id, &result)
-}
-
-#[cfg(feature = "std")]
-#[no_mangle]
-pub unsafe extern "C" fn gox_strings_repeat(
-    gc: *mut Gc, s: GcRef, n: usize, type_id: TypeId
-) -> GcRef {
-    use crate::objects::string;
-    let result = crate::stdlib::strings::repeat(string::as_str(s), n);
-    string::from_rust_str(&mut *gc, type_id, &result)
-}
-
-#[cfg(feature = "std")]
-#[no_mangle]
-pub unsafe extern "C" fn gox_strings_compare(s: GcRef, t: GcRef) -> i64 {
-    use crate::objects::string;
-    crate::stdlib::strings::compare(string::as_str(s), string::as_str(t))
 }
 
 #[cfg(feature = "std")]
@@ -234,7 +186,7 @@ pub unsafe extern "C" fn gox_fmt_println(args: *const u64, tags: *const u8, argc
 }
 
 // =============================================================================
-// Summary: Total 57 C ABI functions
+// Summary: Total 51 C ABI functions
 // =============================================================================
 //
 // GC:        5 (alloc, read_slot, write_slot, write_barrier, mark_gray)
@@ -246,7 +198,7 @@ pub unsafe extern "C" fn gox_fmt_println(args: *const u64, tags: *const u8, argc
 // Closure:   8 (create, func_id, upvalue_count, get/set_upvalue, upval_box_*)
 // Interface: 3 (unbox_type, unbox_data, is_nil)
 // Builtin:   2 (len, cap) [std only]
-// Strings:  11 (contains, has_prefix, has_suffix, index, count, to_lower, 
-//              to_upper, replace_all, repeat, compare, equal_fold) [std only]
+// Strings:   5 (index, count, to_lower, to_upper, equal_fold) [std only]
+//            Note: GoX-implemented: contains, has_prefix, has_suffix, repeat, compare, replace_all
 // Fmt:       2 (format_value, println) [std only]
 //
