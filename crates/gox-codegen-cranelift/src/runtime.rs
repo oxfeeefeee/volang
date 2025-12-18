@@ -124,8 +124,8 @@ pub enum RuntimeFunc {
     // === Function Table (1) ===
     FuncTablePtr,
 
-    // === Native Dispatch (1) ===
-    NativeCall,
+    // === Extern Dispatch (1) ===
+    ExternCall,
 }
 
 impl RuntimeFunc {
@@ -222,8 +222,8 @@ impl RuntimeFunc {
             RuntimeFunc::AssertEnd => "gox_assert_end",
             // Function table
             RuntimeFunc::FuncTablePtr => "gox_func_table_ptr",
-            // Native dispatch
-            RuntimeFunc::NativeCall => "gox_native_call",
+            // Extern dispatch
+            RuntimeFunc::ExternCall => "gox_extern_call",
         }
     }
 
@@ -587,8 +587,8 @@ impl RuntimeFunc {
                 sig.returns.push(AbiParam::new(I64));  // table pointer
             }
             
-            // === Native Dispatch ===
-            RuntimeFunc::NativeCall => {
+            // === Extern Dispatch ===
+            RuntimeFunc::ExternCall => {
                 // (name_ptr, name_len, args_ptr, arg_count, rets_ptr, ret_count) -> i32
                 sig.params.push(AbiParam::new(I64));  // name_ptr
                 sig.params.push(AbiParam::new(I64));  // name_len

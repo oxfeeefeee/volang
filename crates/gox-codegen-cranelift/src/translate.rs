@@ -1516,8 +1516,8 @@ impl FunctionTranslator {
                 let arg_count = builder.ins().iconst(I64, pair_count as i64);
                 let ret_count_val = builder.ins().iconst(I64, ret_count as i64);
                 
-                // Call gox_native_call
-                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::NativeCall)?;
+                // Call gox_extern_call
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::ExternCall)?;
                 let call = builder.ins().call(func_ref, &[name_ptr, name_len, args_ptr, arg_count, rets_ptr, ret_count_val]);
                 let _result = builder.inst_results(call)[0]; // error code, TODO: check
                 
