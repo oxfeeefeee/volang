@@ -20,6 +20,20 @@ use gox_vm::instruction::{Instruction, Opcode};
 use crate::context::CompileContext;
 use crate::runtime::RuntimeFunc;
 
+/// Get elem_bytes for array storage based on element type.
+/// Maps TypeId to byte size (1/2/4/8) for compact storage.
+fn elem_type_to_bytes(elem_type: u32) -> usize {
+    use gox_common_core::ValueKind;
+    // TypeId for builtins equals ValueKind as u32
+    match ValueKind::from_u8(elem_type as u8) {
+        ValueKind::Bool | ValueKind::Int8 | ValueKind::Uint8 => 1,
+        ValueKind::Int16 | ValueKind::Uint16 => 2,
+        ValueKind::Int32 | ValueKind::Uint32 | ValueKind::Float32 => 4,
+        // 64-bit types and all references use 8 bytes
+        _ => 8,
+    }
+}
+
 /// Translates a single function's bytecode to Cranelift IR.
 pub struct FunctionTranslator {
     /// Variables for local slots
@@ -771,7 +785,9 @@ impl FunctionTranslator {
                 // a=dest, b=elem_type, c=len
                 let type_id = builder.ins().iconst(cranelift_codegen::ir::types::I32, 1); // ARRAY type_id
                 let elem_type = builder.ins().iconst(cranelift_codegen::ir::types::I32, inst.b as i64);
-                let elem_size = builder.ins().iconst(I64, 1); // Default elem_size=1
+                // Use correct elem_bytes based on element type (1/2/4/8 bytes)
+                let elem_bytes = elem_type_to_bytes(inst.b as u32);
+                let elem_size = builder.ins().iconst(I64, elem_bytes as i64);
                 let len = builder.ins().iconst(I64, inst.c as i64);
                 let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::ArrayCreate)?;
                 let call = builder.ins().call(func_ref, &[type_id, elem_type, elem_size, len]);

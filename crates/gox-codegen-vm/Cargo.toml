@@ -7,6 +7,7 @@ description = "Custom VM bytecode generation for GoX"
 
 [dependencies]
 gox-common = { path = "../gox-common" }
+gox-common-core = { path = "../gox-common-core" }
 gox-syntax = { path = "../gox-syntax" }
 gox-analysis = { path = "../gox-analysis" }
 gox-vm = { path = "../gox-vm" }

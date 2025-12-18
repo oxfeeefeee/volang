@@ -581,6 +581,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "gox-common",
+ "gox-common-core",
  "gox-runtime-native",
  "gox-vm",
 ]
@@ -591,6 +592,7 @@ version = "0.1.0"
 dependencies = [
  "gox-analysis",
  "gox-common",
+ "gox-common-core",
  "gox-runtime-vm",
  "gox-syntax",
  "gox-vm",

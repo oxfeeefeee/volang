@@ -1836,17 +1836,17 @@ fn compile_composite_lit(
                 }
             }
         }
-        TypeExprKind::Slice(_) => {
+        TypeExprKind::Slice(elem_type_expr) => {
             // Create slice with initial elements
             let num_elems = lit.elems.len();
             if num_elems == 0 {
                 // Empty slice - create nil
                 fctx.emit(Opcode::LoadNil, dst, 0, 0);
             } else {
-                // Create underlying array
-                // elem_type=2 is INT (from gox_vm::types::builtin::INT)
+                // Get element type from slice type expression
+                let elem_type_id = type_expr_to_elem_type(ctx, elem_type_expr);
                 let arr_reg = fctx.regs.alloc(1);
-                fctx.emit(Opcode::ArrayNew, arr_reg, 2, num_elems as u16);
+                fctx.emit(Opcode::ArrayNew, arr_reg, elem_type_id, num_elems as u16);
 
                 // Initialize array elements
                 for (idx, elem) in lit.elems.iter().enumerate() {
@@ -1954,11 +1954,11 @@ fn compile_composite_lit(
                 }
             }
         }
-        TypeExprKind::Array(_) => {
+        TypeExprKind::Array(arr_type) => {
             // Array literal [N]T{...}
             let num_elems = lit.elems.len();
-            // elem_type=2 is INT (from gox_vm::types::builtin::INT)
-            fctx.emit(Opcode::ArrayNew, dst, 2, num_elems as u16);
+            let elem_type_id = type_expr_to_elem_type(ctx, &arr_type.elem);
+            fctx.emit(Opcode::ArrayNew, dst, elem_type_id, num_elems as u16);
 
             // Initialize array elements
             for (idx, elem) in lit.elems.iter().enumerate() {
@@ -2499,4 +2499,47 @@ fn compile_try_unwrap(
     
     // Return the non-error value (result_reg)
     Ok(result_reg)
+}
+
+/// Convert a type expression to element type ID for array creation.
+/// Returns the ValueKind as u16 for builtin types.
+fn type_expr_to_elem_type(ctx: &CodegenContext, type_expr: &gox_syntax::ast::TypeExpr) -> u16 {
+    use gox_syntax::ast::TypeExprKind;
+    use gox_common_core::ValueKind;
+    
+    match &type_expr.kind {
+        TypeExprKind::Ident(ident) => {
+            if let Some(name) = ctx.interner.resolve(ident.symbol) {
+                match name {
+                    "bool" => ValueKind::Bool as u16,
+                    "int" => ValueKind::Int as u16,
+                    "int8" => ValueKind::Int8 as u16,
+                    "int16" => ValueKind::Int16 as u16,
+                    "int32" | "rune" => ValueKind::Int32 as u16,
+                    "int64" => ValueKind::Int64 as u16,
+                    "uint" => ValueKind::Uint as u16,
+                    "uint8" | "byte" => ValueKind::Uint8 as u16,
+                    "uint16" => ValueKind::Uint16 as u16,
+                    "uint32" => ValueKind::Uint32 as u16,
+                    "uint64" => ValueKind::Uint64 as u16,
+                    "float32" => ValueKind::Float32 as u16,
+                    "float64" => ValueKind::Float64 as u16,
+                    "string" => ValueKind::String as u16,
+                    // Default to Int for unknown types (backward compatible)
+                    _ => ValueKind::Int as u16,
+                }
+            } else {
+                ValueKind::Int as u16
+            }
+        }
+        TypeExprKind::Pointer(_) => ValueKind::Pointer as u16,
+        TypeExprKind::Slice(_) => ValueKind::Slice as u16,
+        TypeExprKind::Array(_) => ValueKind::Array as u16,
+        TypeExprKind::Map(_) => ValueKind::Map as u16,
+        TypeExprKind::Struct(_) => ValueKind::Struct as u16,
+        TypeExprKind::Interface(_) => ValueKind::Interface as u16,
+        TypeExprKind::Func(_) => ValueKind::Closure as u16,
+        TypeExprKind::Chan(_) => ValueKind::Channel as u16,
+        TypeExprKind::Selector(_) => ValueKind::Int as u16, // Qualified type name
+    }
 }

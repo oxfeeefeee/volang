@@ -7,6 +7,7 @@ description = "Shared Cranelift code generation for GoX AOT and JIT compilation"
 
 [dependencies]
 gox-common = { path = "../gox-common" }
+gox-common-core = { path = "../gox-common-core" }
 gox-vm = { path = "../gox-vm" }
 gox-runtime-native = { path = "../gox-runtime-native" }
 

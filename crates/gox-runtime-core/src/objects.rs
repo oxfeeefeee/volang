@@ -249,14 +249,18 @@ pub mod array {
     }
     
     /// Get raw byte pointer for packed byte arrays.
+    /// Panics if elem_bytes != 1.
     pub fn as_bytes(arr: GcRef) -> *const u8 {
-        debug_assert!(elem_bytes(arr) == 1);
+        let eb = elem_bytes(arr);
+        assert!(eb == 1, "as_bytes: expected elem_bytes=1, got {}", eb);
         unsafe { Gc::get_data_ptr(arr).add(DATA_START) as *const u8 }
     }
     
     /// Get mutable raw byte pointer for packed byte arrays.
+    /// Panics if elem_bytes != 1.
     pub fn as_bytes_mut(arr: GcRef) -> *mut u8 {
-        debug_assert!(elem_bytes(arr) == 1);
+        let eb = elem_bytes(arr);
+        assert!(eb == 1, "as_bytes_mut: expected elem_bytes=1, got {}", eb);
         unsafe { Gc::get_data_ptr(arr).add(DATA_START) as *mut u8 }
     }
 }
