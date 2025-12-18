@@ -906,6 +906,8 @@ fn compile_for(
             // Determine iter_type from expression type: 0=slice, 1=map, 2=string
             let iter_type = if is_map_expr(fctx, range_expr) {
                 1u16 // map
+            } else if expr::is_string_expr(ctx, fctx, range_expr) {
+                2u16 // string
             } else {
                 0u16 // slice (default)
             };

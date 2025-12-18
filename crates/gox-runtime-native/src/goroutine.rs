@@ -1056,9 +1056,11 @@ pub unsafe extern "C" fn gox_iter_next(_handle: u64) -> (u64, u64, u64) {
                     (1, 0, 0) // done
                 } else {
                     let pos = *byte_pos;
-                    let byte = *str_ptr.add(pos);
-                    *byte_pos += 1;
-                    (0, pos as u64, byte as u64)
+                    // Decode UTF-8 to get rune and width
+                    let bytes = std::slice::from_raw_parts(str_ptr.add(pos), str_len - pos);
+                    let (rune, width) = gox_common_core::utf8::decode_rune(bytes);
+                    *byte_pos += width;
+                    (0, pos as u64, rune as u64)
                 }
             }
         }
