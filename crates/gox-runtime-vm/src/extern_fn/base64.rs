@@ -4,18 +4,18 @@ use gox_vm::{ExternRegistry, ExternCtx, ExternResult};
 use gox_runtime_core::builtins::base64 as core;
 
 pub fn register(registry: &mut ExternRegistry) {
-    // Standard encoding
-    registry.register("base64.encodeStd", extern_encode_std);
-    registry.register("base64.decodeStd", extern_decode_std);
-    // URL encoding
-    registry.register("base64.encodeURL", extern_encode_url);
-    registry.register("base64.decodeURL", extern_decode_url);
+    // Standard encoding (with padding)
+    registry.register("base64.EncodeToString", extern_encode_std);
+    registry.register("base64.DecodeString", extern_decode_std);
+    // URL encoding (with padding)
+    registry.register("base64.URLEncodeToString", extern_encode_url);
+    registry.register("base64.URLDecodeString", extern_decode_url);
     // Raw standard (no padding)
-    registry.register("base64.encodeRawStd", extern_encode_raw_std);
-    registry.register("base64.decodeRawStd", extern_decode_raw_std);
+    registry.register("base64.RawEncodeToString", extern_encode_raw_std);
+    registry.register("base64.RawDecodeString", extern_decode_raw_std);
     // Raw URL (no padding)
-    registry.register("base64.encodeRawURL", extern_encode_raw_url);
-    registry.register("base64.decodeRawURL", extern_decode_raw_url);
+    registry.register("base64.RawURLEncodeToString", extern_encode_raw_url);
+    registry.register("base64.RawURLDecodeString", extern_decode_raw_url);
 }
 
 fn extern_encode_std(ctx: &mut ExternCtx) -> ExternResult {
