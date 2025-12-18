@@ -50,6 +50,13 @@ pub unsafe extern "C" fn gox_base64_std_decode(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn gox_base64_raw_encode(gc: *mut Gc, src: GcRef, type_id: TypeId) -> GcRef {
+    let src_bytes = slice_to_bytes(src);
+    let result = core::encode_std_no_pad(src_bytes);
+    string::from_rust_str(&mut *gc, type_id, &result)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn gox_base64_url_encode(gc: *mut Gc, src: GcRef, type_id: TypeId) -> GcRef {
     let src_bytes = slice_to_bytes(src);
     let result = core::encode_url(src_bytes);

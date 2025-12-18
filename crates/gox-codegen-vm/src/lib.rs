@@ -102,7 +102,12 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     if func.is_extern() {
                         // Register extern function with qualified name
                         let qualified_name = format!("{}.{}", pkg.name, func_name);
-                        let extern_idx = module.add_extern(&qualified_name, 1, 1);
+                        // Calculate param and return slots from function signature
+                        let param_slots = func.sig.params.iter()
+                            .map(|p| p.names.len() as u16)
+                            .sum::<u16>();
+                        let ret_slots = func.sig.results.len().max(1) as u16;
+                        let extern_idx = module.add_extern(&qualified_name, param_slots, ret_slots);
                         extern_indices.insert(qualified_name, extern_idx);
                         continue; // Don't add to regular functions
                     }
