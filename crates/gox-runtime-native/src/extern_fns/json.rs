@@ -1,4 +1,4 @@
-//! encoding/json package C ABI for AOT.
+//! encoding/json package C ABI for JIT.
 
 use gox_runtime_core::builtins::json as core;
 use gox_runtime_core::gc::GcRef;

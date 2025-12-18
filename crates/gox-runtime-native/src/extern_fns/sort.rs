@@ -1,4 +1,4 @@
-//! sort package C ABI for AOT.
+//! sort package C ABI for JIT.
 
 use gox_runtime_core::gc::{Gc, GcRef};
 use gox_runtime_core::objects::slice;

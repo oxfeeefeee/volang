@@ -1,4 +1,4 @@
-//! Debug and assertion runtime functions for AOT/JIT.
+//! Debug and assertion runtime functions for JIT.
 //!
 //! These functions provide debug printing and assertion support for
 //! compiled code, matching the VM's DebugPrint/Assert* opcodes.

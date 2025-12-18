@@ -1,4 +1,4 @@
-//! Global GC and runtime state for AOT/JIT.
+//! Global GC and runtime state for JIT.
 //!
 //! Provides thread-local GC and global variable storage that runtime
 //! functions can access without explicit pointer parameters.
@@ -60,7 +60,7 @@ pub extern "C" fn gox_func_table_ptr() -> *const *const u8 {
 }
 
 // =============================================================================
-// Global variable access functions for AOT/JIT
+// Global variable access functions for JIT
 // =============================================================================
 
 /// Get a global variable by index.
@@ -84,7 +84,7 @@ where
 }
 
 // =============================================================================
-// GC wrapper functions for AOT/JIT (no GC pointer parameter)
+// GC wrapper functions for JIT (no GC pointer parameter)
 // =============================================================================
 
 /// Allocate an object using the global GC.
@@ -109,7 +109,7 @@ pub extern "C" fn gox_rt_string_concat(type_id: TypeId, a: GcRef, b: GcRef) -> G
 }
 
 // =============================================================================
-// Closure wrapper functions for AOT/JIT
+// Closure wrapper functions for JIT
 // =============================================================================
 
 /// Create a closure using the global GC.
@@ -125,7 +125,7 @@ pub extern "C" fn gox_rt_upval_box_create(type_id: TypeId) -> GcRef {
 }
 
 // =============================================================================
-// Array/Slice wrapper functions for AOT/JIT
+// Array/Slice wrapper functions for JIT
 // =============================================================================
 
 /// Create an array using the global GC.

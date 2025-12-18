@@ -1,4 +1,4 @@
-//! math package C ABI for AOT.
+//! math package C ABI for JIT.
 
 use gox_runtime_core::builtins::math as core;
 

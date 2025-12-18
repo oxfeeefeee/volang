@@ -1,4 +1,4 @@
-//! unicode package C ABI for AOT.
+//! unicode package C ABI for JIT.
 
 use gox_runtime_core::builtins::unicode as core;
 

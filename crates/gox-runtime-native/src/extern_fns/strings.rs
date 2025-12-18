@@ -1,4 +1,4 @@
-//! strings package C ABI for AOT.
+//! strings package C ABI for JIT.
 
 use gox_runtime_core::builtins::strings as core;
 use gox_runtime_core::gc::{Gc, GcRef};

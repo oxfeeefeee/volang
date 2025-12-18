@@ -1,4 +1,4 @@
-//! bytes package C ABI for AOT.
+//! bytes package C ABI for JIT.
 
 use gox_runtime_core::builtins::bytes as core;
 use gox_runtime_core::gc::{Gc, GcRef, TypeId};

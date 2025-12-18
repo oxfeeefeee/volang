@@ -1,4 +1,4 @@
-//! encoding/base64 package C ABI for AOT.
+//! encoding/base64 package C ABI for JIT.
 
 use gox_runtime_core::builtins::base64 as core;
 use gox_runtime_core::gc::{Gc, GcRef, TypeId};

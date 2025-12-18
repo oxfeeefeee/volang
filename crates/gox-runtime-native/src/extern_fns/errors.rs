@@ -1,1 +1,1 @@
-//! errors package C ABI for AOT.
+//! errors package C ABI for JIT.

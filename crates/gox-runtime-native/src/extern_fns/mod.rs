@@ -1,4 +1,4 @@
-//! Extern function C ABI wrappers for AOT/JIT.
+//! Extern function C ABI wrappers for JIT.
 //!
 //! These are `extern "C"` functions that Cranelift-generated code calls directly.
 

@@ -1,4 +1,4 @@
-//! encoding/hex package C ABI for AOT.
+//! encoding/hex package C ABI for JIT.
 
 use gox_runtime_core::builtins::hex as core;
 use gox_runtime_core::gc::{Gc, GcRef, TypeId};

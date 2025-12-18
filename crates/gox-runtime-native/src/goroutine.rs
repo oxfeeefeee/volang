@@ -1,4 +1,4 @@
-//! Goroutine runtime for AOT-compiled code.
+//! Goroutine runtime for JIT-compiled code.
 //!
 //! This module implements Go-style goroutines using stackful coroutines
 //! with M:N scheduling (many goroutines on fewer OS threads).
@@ -453,7 +453,7 @@ pub fn current_scheduler() -> Option<&'static Scheduler> {
 }
 
 // =============================================================================
-// C ABI Functions for AOT
+// C ABI Functions for JIT
 // =============================================================================
 
 /// Yield current goroutine (runtime.Gosched).
@@ -900,9 +900,9 @@ pub unsafe extern "C" fn gox_select_exec() -> u64 {
 // Iterator
 // =============================================================================
 
-/// Iterator state for AOT runtime.
+/// Iterator state for JIT runtime.
 #[derive(Clone)]
-enum IterStateAot {
+enum IterStateJit {
     Slice { ptr: u64, len: usize, elem_size: usize, index: usize },
     Map { map_ref: u64, index: usize },
     String { str_ref: u64, byte_pos: usize },
@@ -910,7 +910,7 @@ enum IterStateAot {
 
 thread_local! {
     /// Iterator stack for current thread.
-    static ITER_STACK: UnsafeCell<Vec<IterStateAot>> = UnsafeCell::new(Vec::new());
+    static ITER_STACK: UnsafeCell<Vec<IterStateJit>> = UnsafeCell::new(Vec::new());
 }
 
 /// Begin iteration over a container.
@@ -923,26 +923,26 @@ pub unsafe extern "C" fn gox_iter_begin(container: u64, iter_type: u64) -> u64 {
         0 => {
             // Slice iteration
             if container == 0 {
-                IterStateAot::Slice { ptr: 0, len: 0, elem_size: 8, index: 0 }
+                IterStateJit::Slice { ptr: 0, len: 0, elem_size: 8, index: 0 }
             } else {
                 // Read slice header: ptr at slot 0, len at slot 1
                 let ptr = Gc::read_slot(container as *mut _, 0);
                 let len = Gc::read_slot(container as *mut _, 1) as usize;
                 let elem_size = Gc::read_slot(container as *mut _, 3) as usize; // elem_size at slot 3
-                IterStateAot::Slice { ptr, len, elem_size: elem_size.max(1), index: 0 }
+                IterStateJit::Slice { ptr, len, elem_size: elem_size.max(1), index: 0 }
             }
         }
         1 => {
             // Map iteration
-            IterStateAot::Map { map_ref: container, index: 0 }
+            IterStateJit::Map { map_ref: container, index: 0 }
         }
         2 => {
             // String iteration
-            IterStateAot::String { str_ref: container, byte_pos: 0 }
+            IterStateJit::String { str_ref: container, byte_pos: 0 }
         }
         _ => {
             // Unknown type - create empty iterator
-            IterStateAot::Slice { ptr: 0, len: 0, elem_size: 8, index: 0 }
+            IterStateJit::Slice { ptr: 0, len: 0, elem_size: 8, index: 0 }
         }
     };
     
@@ -966,7 +966,7 @@ pub unsafe extern "C" fn gox_iter_next(_handle: u64, out: *mut u64) {
         };
         
         match state {
-            IterStateAot::Slice { ptr, len, elem_size, index } => {
+            IterStateJit::Slice { ptr, len, elem_size, index } => {
                 if *index >= *len {
                     (1, 0, 0) // done
                 } else {
@@ -994,7 +994,7 @@ pub unsafe extern "C" fn gox_iter_next(_handle: u64, out: *mut u64) {
                     (0, idx as u64, value)
                 }
             }
-            IterStateAot::Map { map_ref, index } => {
+            IterStateJit::Map { map_ref, index } => {
                 if *map_ref == 0 {
                     return (1, 0, 0);
                 }
@@ -1008,7 +1008,7 @@ pub unsafe extern "C" fn gox_iter_next(_handle: u64, out: *mut u64) {
                 *index += 1;
                 (1, 0, 0) // For now, skip map iteration
             }
-            IterStateAot::String { str_ref, byte_pos } => {
+            IterStateJit::String { str_ref, byte_pos } => {
                 if *str_ref == 0 {
                     return (1, 0, 0);
                 }

@@ -1,4 +1,4 @@
-//! strconv package C ABI for AOT.
+//! strconv package C ABI for JIT.
 
 use gox_runtime_core::builtins::strconv as core;
 use gox_runtime_core::gc::{Gc, GcRef};

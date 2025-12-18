@@ -1,4 +1,4 @@
-//! regexp package C ABI for AOT.
+//! regexp package C ABI for JIT.
 
 use gox_runtime_core::builtins::regexp as core;
 use gox_runtime_core::gc::{Gc, GcRef};

@@ -1,7 +1,7 @@
-//! Native runtime support for GoX AOT and JIT compilation.
+//! Native runtime support for GoX JIT compilation.
 //!
 //! This crate provides the runtime symbol table and utilities needed
-//! by both AOT and JIT backends to link with the GoX runtime.
+//! by JIT backend to link with the GoX runtime.
 //!
 //! # Usage
 //!
@@ -13,7 +13,7 @@
 //! }
 //! ```
 //!
-//! For AOT compilation, the symbols are resolved at link time using
+//! For AOT compilation (subset of JIT), the symbols are resolved at link time using
 //! the same names exported by `gox-runtime-core`.
 
 mod symbols;
