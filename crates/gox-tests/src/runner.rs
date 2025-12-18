@@ -543,13 +543,14 @@ fn run_module_native(module: gox_vm::Module) -> Result<(), String> {
     jit.compile_module(&module)
         .map_err(|e| format!("JIT compile error: {}", e))?;
     
-    // Get the main function and call it
-    let main_fn: fn() = unsafe {
-        jit.get_function("main@main")
-            .ok_or_else(|| "main function not found".to_string())?
+    // Get the entry function and call it
+    // The entry point is "$entry" which calls $init and main
+    let entry_fn: fn() = unsafe {
+        jit.get_function("$entry")
+            .ok_or_else(|| "entry function not found".to_string())?
     };
     
-    main_fn();
+    entry_fn();
     Ok(())
 }
 
