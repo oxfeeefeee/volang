@@ -83,7 +83,7 @@ impl JitCompiler {
             
             // Translate bytecode to Cranelift IR using shared translator
             let mut translator = FunctionTranslator::new(func_def.local_slots as usize, &func_def.code);
-            translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut self.module)?;
+            translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut self.module, &func_def.reg_types)?;
             
             // Define the function
             self.module.define_function(func_id, &mut ctx)?;

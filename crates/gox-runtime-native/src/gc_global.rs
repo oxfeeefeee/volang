@@ -83,6 +83,89 @@ where
     GLOBAL_GC.with(|gc| f(&mut gc.borrow_mut()))
 }
 
+/// Get the number of GC objects.
+pub fn gc_object_count() -> usize {
+    with_gc(|gc| gc.object_count())
+}
+
+/// Get total bytes used by GC.
+pub fn gc_total_bytes() -> usize {
+    with_gc(|gc| gc.total_bytes())
+}
+
+/// Force garbage collection.
+/// 
+/// Note: JIT GC currently only scans globals, not the native stack.
+/// Full stack scanning requires Cranelift stack maps (TODO).
+pub fn collect_garbage() {
+    // Mark roots from globals
+    GLOBALS.with(|g| {
+        let globals = g.borrow();
+        with_gc(|gc| {
+            for &val in globals.iter() {
+                // Conservatively mark all non-zero values as potential refs
+                // TODO: Use type info to know which globals are GC refs
+                if val != 0 && val > 0x1000 {
+                    // Heuristic: valid pointers are > 0x1000
+                    gc.mark_gray(val as GcRef);
+                }
+            }
+        });
+    });
+    
+    // Perform collection
+    with_gc(|gc| {
+        gc.collect(|gc, obj| {
+            scan_object(gc, obj);
+        });
+    });
+}
+
+/// Scan a GC object for nested references.
+fn scan_object(gc: &mut Gc, obj: GcRef) {
+    use gox_common_core::ValueKind;
+    
+    if obj.is_null() {
+        return;
+    }
+    
+    let type_id = unsafe { (*obj).header.type_id };
+    
+    // Skip user-defined types for now (need TypeTable)
+    if type_id >= gox_common_core::FIRST_USER_TYPE_ID {
+        return;
+    }
+    
+    let kind = ValueKind::from_u8(type_id as u8);
+    match kind {
+        ValueKind::String => {
+            // String: [array_ref, start, len]
+            let array_ref = Gc::read_slot(obj, 0);
+            if array_ref != 0 {
+                gc.mark_gray(array_ref as GcRef);
+            }
+        }
+        ValueKind::Slice => {
+            // Slice: [array_ref, start, len, cap]
+            let array_ref = Gc::read_slot(obj, 0);
+            if array_ref != 0 {
+                gc.mark_gray(array_ref as GcRef);
+            }
+        }
+        ValueKind::Closure => {
+            // Closure: [func_id, upvalue_count, upvalues...]
+            let upval_count = (Gc::read_slot(obj, 1) as usize).min(256);
+            for i in 0..upval_count {
+                let upval = Gc::read_slot(obj, 2 + i);
+                if upval != 0 {
+                    gc.mark_gray(upval as GcRef);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 // =============================================================================
 // GC wrapper functions for JIT (no GC pointer parameter)
 // =============================================================================
@@ -161,6 +244,7 @@ pub extern "C" fn gox_rt_slice_append(type_id: TypeId, arr_type_id: TypeId, slic
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gox_common_core::ValueKind;
 
     #[test]
     fn test_global_gc_alloc() {
@@ -173,7 +257,34 @@ mod tests {
     fn test_global_gc_string() {
         init_gc();
         let data = b"hello";
-        let s = gox_rt_string_from_ptr(data.as_ptr(), data.len(), 1);
+        let s = gox_rt_string_from_ptr(data.as_ptr(), data.len(), ValueKind::String as u32);
         assert!(!s.is_null());
+    }
+    
+    #[test]
+    fn test_gc_collect_reclaims_memory() {
+        init_gc();
+        
+        // Create some strings that will become garbage
+        let type_id = ValueKind::String as u32;
+        let _s1 = gox_rt_string_from_ptr(b"temp1".as_ptr(), 5, type_id);
+        let _s2 = gox_rt_string_from_ptr(b"temp2".as_ptr(), 5, type_id);
+        let _s3 = gox_rt_string_from_ptr(b"temp3".as_ptr(), 5, type_id);
+        
+        let objects_before = gc_object_count();
+        let bytes_before = gc_total_bytes();
+        
+        // Force GC - these strings are not reachable from globals
+        collect_garbage();
+        
+        let objects_after = gc_object_count();
+        let bytes_after = gc_total_bytes();
+        
+        println!("Before GC: {} objects, {} bytes", objects_before, bytes_before);
+        println!("After GC:  {} objects, {} bytes", objects_after, bytes_after);
+        
+        // All strings should be collected since they're not rooted
+        assert!(objects_after < objects_before, "GC should reclaim unreachable objects");
+        assert!(bytes_after < bytes_before, "GC should free memory");
     }
 }

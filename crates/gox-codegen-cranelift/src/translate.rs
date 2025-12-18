@@ -6,16 +6,25 @@
 //! - Memory operations (GC allocation, field access)
 //! - Composite types (arrays, slices, maps)
 //!
-//! # GC Stack Map Support (TODO)
+//! # GC Stack Map Support
 //!
-//! Each function in the bytecode now includes `reg_types: Vec<RegType>` which
-//! indicates which registers contain GC references. This information can be used
-//! with Cranelift's stack map APIs to enable precise GC during JIT/AOT execution.
+//! Each function in the bytecode includes `reg_types: Vec<RegType>` which
+//! indicates which registers contain GC references. During translation:
 //!
-//! To implement stack maps:
-//! 1. At safe points (calls, allocations), use `reg_types` to identify GC refs
-//! 2. Use Cranelift's `StackMapSink` to record which stack slots contain refs
-//! 3. The runtime can then precisely scan the native stack during GC
+//! - Variables marked as `GcRef` or `Interface1` in `reg_types` are registered
+//!   with `declare_var_needs_stack_map()`, telling Cranelift to:
+//!   - Spill these values to stack before safepoints (calls, allocations)
+//!   - Include their stack locations in generated stack maps
+//!   - Reload values after safepoints (to support moving GC)
+//!
+//! ## TODO: Runtime Stack Scanning
+//!
+//! To complete native stack GC scanning:
+//! 1. Extract stack maps from CompiledCode after compilation
+//! 2. Store mapping: return_address -> stack_map
+//! 3. During GC, walk the native call stack
+//! 4. For each frame, lookup stack map by return address
+//! 5. Read GC refs from stack slots specified in stack map
 
 use anyhow::{Result, bail};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -83,12 +92,16 @@ impl FunctionTranslator {
     }
 
     /// Translate bytecode to Cranelift IR.
+    /// 
+    /// `reg_types` is used to identify which registers contain GC references
+    /// for stack map generation.
     pub fn translate<M: Module>(
         &mut self,
         func: &mut Function,
         code: &[Instruction],
         ctx: &mut CompileContext,
         module: &mut M,
+        reg_types: &[gox_vm::bytecode::RegType],
     ) -> Result<()> {
         let mut builder_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(func, &mut builder_ctx);
@@ -96,8 +109,8 @@ impl FunctionTranslator {
         // Phase 1: Find all jump targets and create blocks
         self.create_blocks(&mut builder, code);
 
-        // Phase 2: Declare variables
-        self.declare_variables(&mut builder);
+        // Phase 2: Declare variables and mark GC references for stack maps
+        self.declare_variables(&mut builder, reg_types);
 
         // Phase 3: Start with entry block
         // Check if we have a separate entry block (for back-edge to PC 0 case)
@@ -231,12 +244,30 @@ impl FunctionTranslator {
     }
 
     /// Declare variables for all local slots.
-    fn declare_variables(&mut self, builder: &mut FunctionBuilder) {
+    /// 
+    /// Uses `reg_types` to mark GC reference variables for stack map generation.
+    fn declare_variables(&mut self, builder: &mut FunctionBuilder, reg_types: &[gox_vm::bytecode::RegType]) {
+        use gox_vm::bytecode::RegType;
+        
         self.variables.clear();
         for i in 0..self.local_count {
             let var = Variable::from_u32(i as u32);
             builder.declare_var(var, I64);
             self.variables.push(var);
+            
+            // Mark GC reference variables for stack map generation
+            if i < reg_types.len() {
+                match reg_types[i] {
+                    RegType::GcRef | RegType::Interface1 => {
+                        // This variable may contain a GC reference
+                        // Tell Cranelift to include it in stack maps at safepoints
+                        builder.declare_var_needs_stack_map(var);
+                    }
+                    RegType::Value | RegType::Interface0 => {
+                        // Not a GC reference, no stack map needed
+                    }
+                }
+            }
         }
     }
 

@@ -71,6 +71,7 @@ impl AotCompiler {
                 &func_def.code,
                 &mut compile_ctx,
                 &mut self.module,
+                &func_def.reg_types,
             )?;
             
             // Define
@@ -211,7 +212,7 @@ mod tests {
         ctx.func.name = cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32());
         
         let mut translator = FunctionTranslator::new(func_def.local_slots as usize, &func_def.code);
-        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module).unwrap();
+        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module, &func_def.reg_types).unwrap();
         
         module.define_function(func_id, &mut ctx).unwrap();
         module.finalize_definitions().unwrap();
@@ -279,7 +280,7 @@ mod tests {
         ctx.func.name = cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32());
         
         let mut translator = FunctionTranslator::new(func_def.local_slots as usize, &func_def.code);
-        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module).unwrap();
+        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module, &func_def.reg_types).unwrap();
         
         module.define_function(func_id, &mut ctx).unwrap();
         module.finalize_definitions().unwrap();
