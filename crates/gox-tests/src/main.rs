@@ -4,7 +4,7 @@
 //!   gox-tests                           # Run all tests in test_data/ (VM mode)
 //!   gox-tests <path>                    # Run tests at path (file or directory)
 //!   gox-tests --mode=vm <path>          # Run tests using VM interpreter
-//!   gox-tests --mode=native <path>      # Run tests using JIT compiler
+//!   gox-tests --mode=jit <path>         # Run tests using JIT compiler
 //!   gox-tests --codegen <file>          # Output bytecode for a .gox file
 
 use std::env;

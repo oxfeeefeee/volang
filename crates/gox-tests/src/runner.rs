@@ -8,10 +8,10 @@
 //!
 //! Each test file must have at least one tag at the beginning:
 //! - `// +vm` - Run in VM mode
-//! - `// +native` - Run in Native (JIT) mode  
+//! - `// +jit` - Run in JIT mode  
 //! - `// +skip` or `// +skip: reason` - Skip the test
 //!
-//! Multiple tags can be on the same line: `// +vm +native`
+//! Multiple tags can be on the same line: `// +vm +jit`
 //!
 //! ## Test Sections
 //!
@@ -39,15 +39,15 @@ pub enum RunMode {
     /// Run tests using the VM interpreter.
     #[default]
     Vm,
-    /// Run tests using the JIT compiler (native code).
-    Native,
+    /// Run tests using the JIT compiler.
+    Jit,
 }
 
 impl std::fmt::Display for RunMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RunMode::Vm => write!(f, "vm"),
-            RunMode::Native => write!(f, "native"),
+            RunMode::Jit => write!(f, "jit"),
         }
     }
 }
@@ -58,8 +58,8 @@ impl std::str::FromStr for RunMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "vm" => Ok(RunMode::Vm),
-            "native" | "jit" => Ok(RunMode::Native),
-            _ => Err(format!("unknown mode '{}', expected 'vm' or 'native'", s)),
+            "jit" => Ok(RunMode::Jit),
+            _ => Err(format!("unknown mode '{}', expected 'vm' or 'jit'", s)),
         }
     }
 }
@@ -159,7 +159,7 @@ fn parse_test_file(content: &str) -> TestFile {
 #[derive(Debug, Default)]
 struct TestTags {
     vm: bool,
-    native: bool,
+    jit: bool,
     skip: bool,
     skip_reason: Option<String>,
 }
@@ -167,7 +167,7 @@ struct TestTags {
 impl TestTags {
     /// Check if any tag is present.
     fn has_any(&self) -> bool {
-        self.vm || self.native || self.skip
+        self.vm || self.jit || self.skip
     }
     
     /// Check if the test should run in the given mode.
@@ -177,7 +177,7 @@ impl TestTags {
         }
         match mode {
             RunMode::Vm => self.vm,
-            RunMode::Native => self.native,
+            RunMode::Jit => self.jit,
         }
     }
 }
@@ -203,8 +203,8 @@ fn parse_tags(content: &str) -> TestTags {
             for part in comment.split_whitespace() {
                 if part == "+vm" {
                     tags.vm = true;
-                } else if part == "+native" {
-                    tags.native = true;
+                } else if part == "+jit" {
+                    tags.jit = true;
                 } else if part == "+skip" {
                     tags.skip = true;
                 } else if part.starts_with("+skip:") {
@@ -246,7 +246,7 @@ pub fn run_single_file_with_mode(path: &Path, mode: RunMode) -> TestResult {
     let tags = parse_tags(&content);
     
     if !tags.has_any() {
-        return TestResult::fail(&path_str, "test file must have at least one tag: +vm, +native, or +skip");
+        return TestResult::fail(&path_str, "test file must have at least one tag: +vm, +jit, or +skip");
     }
     
     // Check if should skip
@@ -448,7 +448,7 @@ pub fn run_multi_file_with_mode(dir: &Path, mode: RunMode) -> TestResult {
             let tags = parse_tags(&content);
             
             if !tags.has_any() {
-                return TestResult::fail(&path_str, "test file must have at least one tag: +vm, +native, or +skip");
+                return TestResult::fail(&path_str, "test file must have at least one tag: +vm, +jit, or +skip");
             }
             
             if tags.skip {
@@ -515,7 +515,7 @@ fn compile_project_dir(dir: &Path) -> Result<gox_vm::Module, String> {
 fn run_module(module: gox_vm::Module, mode: RunMode) -> Result<(), String> {
     match mode {
         RunMode::Vm => run_module_vm(module),
-        RunMode::Native => run_module_native(module),
+        RunMode::Jit => run_module_jit(module),
     }
 }
 
@@ -536,7 +536,7 @@ fn run_module_vm(module: gox_vm::Module) -> Result<(), String> {
 }
 
 /// Run a compiled module using the JIT compiler.
-fn run_module_native(module: gox_vm::Module) -> Result<(), String> {
+fn run_module_jit(module: gox_vm::Module) -> Result<(), String> {
     let mut jit = gox_jit::JitCompiler::new()
         .map_err(|e| format!("JIT init error: {}", e))?;
     

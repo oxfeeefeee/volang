@@ -26,7 +26,7 @@ mod tests {
             return;
         }
         
-        let modes = [RunMode::Vm, RunMode::Native];
+        let modes = [RunMode::Vm, RunMode::Jit];
         let mut all_failures = Vec::new();
         
         for mode in modes {

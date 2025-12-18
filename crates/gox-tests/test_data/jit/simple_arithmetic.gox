@@ -1,4 +1,4 @@
-// +native
+// +jit
 // Simple arithmetic test for JIT compiler
 package main
 
