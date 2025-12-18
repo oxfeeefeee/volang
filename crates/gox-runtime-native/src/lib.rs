@@ -20,6 +20,7 @@ mod symbols;
 pub mod goroutine;
 pub mod debug;
 pub mod gc_global;
+pub mod native_dispatch;
 
 pub use symbols::{RuntimeSymbols, RuntimeSymbol};
 pub use gc_global::{init_gc, init_globals, init_func_table, set_func_ptr, with_gc};

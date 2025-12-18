@@ -1473,13 +1473,60 @@ impl FunctionTranslator {
             // ==================== Native calls ====================
             Opcode::CallNative => {
                 // a=native_id, b=arg_start, c=pair_count
-                // Native functions use NativeCtx in VM, need C ABI wrappers for JIT
-                // TODO: Implement native function dispatch table
                 let native_id = inst.a as u32;
-                let native_name = ctx.bytecode.get_native(native_id)
-                    .map(|n| n.name.as_str())
-                    .unwrap_or("unknown");
-                bail!("CallNative not yet implemented for: {} (id={})", native_name, native_id);
+                let arg_start = inst.b as usize;
+                let pair_count = inst.c as usize;
+                
+                let native_def = ctx.bytecode.get_native(native_id)
+                    .ok_or_else(|| anyhow::anyhow!("native function {} not found", native_id))?;
+                let native_name = &native_def.name;
+                let ret_count = native_def.ret_slots as usize;
+                
+                // Get the native function name as a string constant (cached)
+                let name_data_id = ctx.get_or_create_native_name_data(module, native_id, native_name)?;
+                let name_gv = module.declare_data_in_func(name_data_id, builder.func);
+                let name_ptr = builder.ins().global_value(I64, name_gv);
+                let name_len = builder.ins().iconst(I64, native_name.len() as i64);
+                
+                // Create stack slots for args and rets
+                let args_slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                    cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                    (pair_count * 8) as u32,
+                    0,
+                ));
+                let rets_slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                    cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                    (ret_count * 8) as u32,
+                    0,
+                ));
+                
+                // Store arguments to stack slot
+                // In VM bytecode, args are stored as [type0, val0, type1, val1, ...]
+                // pair_count is the number of arguments, each taking 2 slots
+                // We only need the value slots (odd indices: 1, 3, 5, ...)
+                for i in 0..pair_count {
+                    let val_slot = arg_start + i * 2 + 1;  // Skip type slot, get value slot
+                    let arg = builder.use_var(self.variables[val_slot]);
+                    builder.ins().stack_store(arg, args_slot, (i * 8) as i32);
+                }
+                
+                // Get pointers to stack slots
+                let args_ptr = builder.ins().stack_addr(I64, args_slot, 0);
+                let rets_ptr = builder.ins().stack_addr(I64, rets_slot, 0);
+                let arg_count = builder.ins().iconst(I64, pair_count as i64);
+                let ret_count_val = builder.ins().iconst(I64, ret_count as i64);
+                
+                // Call gox_native_call
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::NativeCall)?;
+                let call = builder.ins().call(func_ref, &[name_ptr, name_len, args_ptr, arg_count, rets_ptr, ret_count_val]);
+                let _result = builder.inst_results(call)[0]; // error code, TODO: check
+                
+                // Load return values from stack slot
+                // Return values go to arg_start + i (same as regular Call)
+                for i in 0..ret_count {
+                    let ret_val = builder.ins().stack_load(I64, rets_slot, (i * 8) as i32);
+                    builder.def_var(self.variables[arg_start + i], ret_val);
+                }
             }
 
             // ==================== Not yet implemented ====================

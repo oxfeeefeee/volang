@@ -72,6 +72,9 @@ impl RuntimeSymbols {
             // Function table pointer (for indirect closure calls)
             RuntimeSymbol { name: "gox_func_table_ptr", ptr: crate::gc_global::gox_func_table_ptr as *const u8 },
             
+            // Native dispatch (for CallNative opcode)
+            RuntimeSymbol { name: "gox_native_call", ptr: crate::native_dispatch::gox_native_call as *const u8 },
+            
             // Goroutine functions (from gox-runtime-native, not core)
             RuntimeSymbol { name: "gox_go_spawn", ptr: crate::goroutine::gox_go_spawn as *const u8 },
             RuntimeSymbol { name: "gox_yield", ptr: crate::goroutine::gox_yield as *const u8 },
