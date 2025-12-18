@@ -1,14 +1,21 @@
 // +jit
-// Closure indirect call test
+// Closure indirect call test - returning closures
 package main
 
-func main() {
-    // Simple closure test without returning closures
-    x := 10
-    add := func(y int) int {
+func makeAdder(x int) func(int) int {
+    return func(y int) int {
         return x + y
     }
-    result := add(5)
+}
+
+func main() {
+    add5 := makeAdder(5)
+    result := add5(10)
     println(result)
-    assert(result == 15, "closure should capture x=10 and return 15")
+    assert(result == 15, "add5(10) should be 15")
+    
+    add10 := makeAdder(10)
+    result2 := add10(20)
+    println(result2)
+    assert(result2 == 30, "add10(20) should be 30")
 }
