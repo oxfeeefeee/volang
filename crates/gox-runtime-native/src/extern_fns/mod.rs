@@ -405,8 +405,61 @@ pub fn register_all(register: &mut dyn FnMut(&str, ExternDispatchFn)) {
         Ok(())
     });
     
-    // sort package (these modify slices in place, no return)
-    // Note: sort functions need special handling for slice modification
+    // sort package (modify slices in place)
+    register("sort.Ints", |args, _rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        unsafe { sort::gox_sort_ints(s) };
+        Ok(())
+    });
+    register("sort.Float64s", |args, _rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        unsafe { sort::gox_sort_float64s(s) };
+        Ok(())
+    });
+    
+    // bytes package
+    register("bytes.Index", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        let sep = args[1] as gox_runtime_core::gc::GcRef;
+        rets[0] = unsafe { bytes::gox_bytes_index(s, sep) } as u64;
+        Ok(())
+    });
+    register("bytes.LastIndex", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        let sep = args[1] as gox_runtime_core::gc::GcRef;
+        rets[0] = unsafe { bytes::gox_bytes_last_index(s, sep) } as u64;
+        Ok(())
+    });
+    register("bytes.IndexByte", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        let c = args[1] as u8;
+        rets[0] = unsafe { bytes::gox_bytes_index_byte(s, c) } as u64;
+        Ok(())
+    });
+    register("bytes.LastIndexByte", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        let c = args[1] as u8;
+        rets[0] = unsafe { bytes::gox_bytes_last_index_byte(s, c) } as u64;
+        Ok(())
+    });
+    register("bytes.Count", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        let sep = args[1] as gox_runtime_core::gc::GcRef;
+        rets[0] = unsafe { bytes::gox_bytes_count(s, sep) } as u64;
+        Ok(())
+    });
+    register("bytes.Compare", |args, rets| {
+        let a = args[0] as gox_runtime_core::gc::GcRef;
+        let b = args[1] as gox_runtime_core::gc::GcRef;
+        rets[0] = unsafe { bytes::gox_bytes_compare(a, b) } as u64;
+        Ok(())
+    });
+    register("bytes.Equal", |args, rets| {
+        let a = args[0] as gox_runtime_core::gc::GcRef;
+        let b = args[1] as gox_runtime_core::gc::GcRef;
+        rets[0] = if unsafe { bytes::gox_bytes_equal(a, b) } { 1 } else { 0 };
+        Ok(())
+    });
     
     // json package
     register("json.Valid", |args, rets| {

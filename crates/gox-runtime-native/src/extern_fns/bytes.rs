@@ -39,6 +39,16 @@ pub unsafe extern "C" fn gox_bytes_equal(a: GcRef, b: GcRef) -> bool {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn gox_bytes_index_byte(s: GcRef, c: u8) -> i64 {
+    core::index_byte(slice_to_bytes(s), c)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn gox_bytes_last_index_byte(s: GcRef, c: u8) -> i64 {
+    core::last_index_byte(slice_to_bytes(s), c)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn gox_bytes_contains(s: GcRef, subslice: GcRef) -> bool {
     core::contains(slice_to_bytes(s), slice_to_bytes(subslice))
 }
