@@ -902,6 +902,17 @@ impl FunctionTranslator {
                 builder.def_var(self.variables[inst.a as usize], result_i64);
             }
 
+            Opcode::StrIndex => {
+                // a = b[c] (get byte at index)
+                let s = builder.use_var(self.variables[inst.b as usize]);
+                let idx = builder.use_var(self.variables[inst.c as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::StringIndex)?;
+                let call = builder.ins().call(func_ref, &[s, idx]);
+                let result = builder.inst_results(call)[0];
+                let result_i64 = builder.ins().uextend(I64, result);
+                builder.def_var(self.variables[inst.a as usize], result_i64);
+            }
+
             // ==================== Type conversion ====================
             Opcode::I64ToF64 => {
                 let val = builder.use_var(self.variables[inst.b as usize]);
@@ -915,6 +926,22 @@ impl FunctionTranslator {
                 let float_val = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), val);
                 let int_val = builder.ins().fcvt_to_sint(I64, float_val);
                 builder.def_var(self.variables[inst.a as usize], int_val);
+            }
+
+            Opcode::I32ToI64 => {
+                // Sign-extend i32 to i64
+                let val = builder.use_var(self.variables[inst.b as usize]);
+                let i32_val = builder.ins().ireduce(cranelift_codegen::ir::types::I32, val);
+                let result = builder.ins().sextend(I64, i32_val);
+                builder.def_var(self.variables[inst.a as usize], result);
+            }
+
+            Opcode::I64ToI32 => {
+                // Truncate i64 to i32, then sign-extend back to i64 for storage
+                let val = builder.use_var(self.variables[inst.b as usize]);
+                let i32_val = builder.ins().ireduce(cranelift_codegen::ir::types::I32, val);
+                let result = builder.ins().sextend(I64, i32_val);
+                builder.def_var(self.variables[inst.a as usize], result);
             }
 
             // ==================== Channel operations ====================
