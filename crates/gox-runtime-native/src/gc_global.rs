@@ -146,6 +146,12 @@ pub extern "C" fn gox_rt_slice_slice(type_id: TypeId, slice: GcRef, start: usize
     with_gc(|gc| gox_runtime_core::objects::slice::slice_of(gc, type_id, slice, start, end))
 }
 
+/// Slice a string using the global GC.
+#[no_mangle]
+pub extern "C" fn gox_rt_string_slice(type_id: TypeId, str_ref: GcRef, start: usize, end: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::string::slice_of(gc, type_id, str_ref, start, end))
+}
+
 /// Append to a slice using the global GC.
 #[no_mangle]
 pub extern "C" fn gox_rt_slice_append(type_id: TypeId, arr_type_id: TypeId, slice: GcRef, val: u64) -> GcRef {

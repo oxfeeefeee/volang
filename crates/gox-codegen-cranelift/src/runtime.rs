@@ -27,13 +27,18 @@ pub enum RuntimeFunc {
     GetGlobal,     // gox_rt_get_global
     SetGlobal,     // gox_rt_set_global
 
-    // === String (6) ===
+    // === String (11) ===
     StringLen,
     StringIndex,
     StringConcat,
     StringEq,
     StringNe,
+    StringLt,
+    StringLe,
+    StringGt,
+    StringGe,
     StringFromPtr,
+    StringSlice,
 
     // === Array (4) ===
     ArrayCreate,
@@ -147,7 +152,12 @@ impl RuntimeFunc {
             RuntimeFunc::StringConcat => "gox_rt_string_concat",  // Uses global GC
             RuntimeFunc::StringEq => "gox_string_eq",
             RuntimeFunc::StringNe => "gox_string_ne",
+            RuntimeFunc::StringLt => "gox_string_lt",
+            RuntimeFunc::StringLe => "gox_string_le",
+            RuntimeFunc::StringGt => "gox_string_gt",
+            RuntimeFunc::StringGe => "gox_string_ge",
             RuntimeFunc::StringFromPtr => "gox_rt_string_from_ptr",  // Uses global GC
+            RuntimeFunc::StringSlice => "gox_rt_string_slice",
             // Array
             RuntimeFunc::ArrayCreate => "gox_rt_array_create",  // Uses global GC
             RuntimeFunc::ArrayLen => "gox_array_len",
@@ -283,10 +293,20 @@ impl RuntimeFunc {
                 sig.params.push(AbiParam::new(I64));  // b
                 sig.returns.push(AbiParam::new(I64)); // GcRef
             }
-            RuntimeFunc::StringEq | RuntimeFunc::StringNe => {
+            RuntimeFunc::StringEq | RuntimeFunc::StringNe
+            | RuntimeFunc::StringLt | RuntimeFunc::StringLe
+            | RuntimeFunc::StringGt | RuntimeFunc::StringGe => {
                 sig.params.push(AbiParam::new(I64));
                 sig.params.push(AbiParam::new(I64));
                 sig.returns.push(AbiParam::new(I8));
+            }
+            RuntimeFunc::StringSlice => {
+                // gox_rt_string_slice(type_id, str, start, end)
+                sig.params.push(AbiParam::new(I32));  // type_id
+                sig.params.push(AbiParam::new(I64));  // str
+                sig.params.push(AbiParam::new(I64));  // start
+                sig.params.push(AbiParam::new(I64));  // end
+                sig.returns.push(AbiParam::new(I64)); // GcRef
             }
             RuntimeFunc::StringFromPtr => {
                 // gox_rt_string_from_ptr(ptr, len, type_id) uses global GC

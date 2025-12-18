@@ -37,7 +37,12 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_rt_string_concat", ptr: crate::gc_global::gox_rt_string_concat as *const u8 },
             RuntimeSymbol { name: "gox_string_eq", ptr: ffi::gox_string_eq as *const u8 },
             RuntimeSymbol { name: "gox_string_ne", ptr: ffi::gox_string_ne as *const u8 },
+            RuntimeSymbol { name: "gox_string_lt", ptr: ffi::gox_string_lt as *const u8 },
+            RuntimeSymbol { name: "gox_string_le", ptr: ffi::gox_string_le as *const u8 },
+            RuntimeSymbol { name: "gox_string_gt", ptr: ffi::gox_string_gt as *const u8 },
+            RuntimeSymbol { name: "gox_string_ge", ptr: ffi::gox_string_ge as *const u8 },
             RuntimeSymbol { name: "gox_rt_string_from_ptr", ptr: crate::gc_global::gox_rt_string_from_ptr as *const u8 },
+            RuntimeSymbol { name: "gox_rt_string_slice", ptr: crate::gc_global::gox_rt_string_slice as *const u8 },
             
             // Array functions (using global GC wrappers)
             RuntimeSymbol { name: "gox_rt_array_create", ptr: crate::gc_global::gox_rt_array_create as *const u8 },
@@ -154,7 +159,7 @@ mod tests {
     #[test]
     fn test_get_symbol() {
         let symbols = RuntimeSymbols::new();
-        let gc_alloc = symbols.get("gox_gc_alloc");
+        let gc_alloc = symbols.get("gox_rt_alloc");
         assert!(gc_alloc.is_some());
         assert!(!gc_alloc.unwrap().ptr.is_null());
     }

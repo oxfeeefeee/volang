@@ -181,6 +181,11 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::StrIndex => format!("StrIndex r{}, r{}, r{}", a, b, c),
         Opcode::StrEq => format!("StrEq r{}, r{}, r{}", a, b, c),
         Opcode::StrNe => format!("StrNe r{}, r{}, r{}", a, b, c),
+        Opcode::StrLt => format!("StrLt r{}, r{}, r{}", a, b, c),
+        Opcode::StrLe => format!("StrLe r{}, r{}, r{}", a, b, c),
+        Opcode::StrGt => format!("StrGt r{}, r{}, r{}", a, b, c),
+        Opcode::StrGe => format!("StrGe r{}, r{}, r{}", a, b, c),
+        Opcode::StrSlice => format!("StrSlice r{}, r{}, r{}, r{}", a, b, c, flags),
         
         Opcode::MapNew => format!("MapNew r{}, {}, {}", a, b, c),
         Opcode::MapGet => format!("MapGet r{}, r{}, r{}", a, b, c),

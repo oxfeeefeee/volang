@@ -1083,9 +1083,9 @@ mod tests {
 
     #[test]
     fn test_parse_string_literal() {
-        assert_eq!(parse_string_literal("\"hello\""), "hello");
-        assert_eq!(parse_string_literal("\"hello\\nworld\""), "hello\nworld");
-        assert_eq!(parse_string_literal("`raw string`"), "raw string");
+        assert_eq!(parse_string_literal("\"hello\"", false), "hello");
+        assert_eq!(parse_string_literal("\"hello\\nworld\"", false), "hello\nworld");
+        assert_eq!(parse_string_literal("`raw string`", true), "raw string");
     }
 
     fn collect_source(source: &str) -> (CollectResult, DiagnosticSink, SymbolInterner) {

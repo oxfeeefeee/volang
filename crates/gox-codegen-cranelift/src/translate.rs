@@ -1002,6 +1002,58 @@ impl FunctionTranslator {
                 builder.def_var(self.variables[inst.a as usize], result_i64);
             }
 
+            Opcode::StrLt => {
+                let a = builder.use_var(self.variables[inst.b as usize]);
+                let b = builder.use_var(self.variables[inst.c as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::StringLt)?;
+                let call = builder.ins().call(func_ref, &[a, b]);
+                let result = builder.inst_results(call)[0];
+                let result_i64 = builder.ins().uextend(I64, result);
+                builder.def_var(self.variables[inst.a as usize], result_i64);
+            }
+
+            Opcode::StrLe => {
+                let a = builder.use_var(self.variables[inst.b as usize]);
+                let b = builder.use_var(self.variables[inst.c as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::StringLe)?;
+                let call = builder.ins().call(func_ref, &[a, b]);
+                let result = builder.inst_results(call)[0];
+                let result_i64 = builder.ins().uextend(I64, result);
+                builder.def_var(self.variables[inst.a as usize], result_i64);
+            }
+
+            Opcode::StrGt => {
+                let a = builder.use_var(self.variables[inst.b as usize]);
+                let b = builder.use_var(self.variables[inst.c as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::StringGt)?;
+                let call = builder.ins().call(func_ref, &[a, b]);
+                let result = builder.inst_results(call)[0];
+                let result_i64 = builder.ins().uextend(I64, result);
+                builder.def_var(self.variables[inst.a as usize], result_i64);
+            }
+
+            Opcode::StrGe => {
+                let a = builder.use_var(self.variables[inst.b as usize]);
+                let b = builder.use_var(self.variables[inst.c as usize]);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::StringGe)?;
+                let call = builder.ins().call(func_ref, &[a, b]);
+                let result = builder.inst_results(call)[0];
+                let result_i64 = builder.ins().uextend(I64, result);
+                builder.def_var(self.variables[inst.a as usize], result_i64);
+            }
+
+            Opcode::StrSlice => {
+                // a=dest, b=string, c=start_reg, flags=end_reg
+                let str_ref = builder.use_var(self.variables[inst.b as usize]);
+                let start = builder.use_var(self.variables[inst.c as usize]);
+                let end = builder.use_var(self.variables[inst.flags as usize]);
+                let type_id = builder.ins().iconst(cranelift_codegen::ir::types::I32, 1); // STRING type_id
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::StringSlice)?;
+                let call = builder.ins().call(func_ref, &[type_id, str_ref, start, end]);
+                let result = builder.inst_results(call)[0];
+                builder.def_var(self.variables[inst.a as usize], result);
+            }
+
             // ==================== Type conversion ====================
             Opcode::I64ToF64 => {
                 let val = builder.use_var(self.variables[inst.b as usize]);

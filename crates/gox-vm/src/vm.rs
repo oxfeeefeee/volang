@@ -745,6 +745,39 @@ impl Vm {
                 self.write_reg(fiber_id, a, if string::ne(s1, s2) { 1 } else { 0 });
             }
             
+            Opcode::StrLt => {
+                let s1 = self.read_reg(fiber_id, b) as GcRef;
+                let s2 = self.read_reg(fiber_id, c) as GcRef;
+                self.write_reg(fiber_id, a, if string::lt(s1, s2) { 1 } else { 0 });
+            }
+            
+            Opcode::StrLe => {
+                let s1 = self.read_reg(fiber_id, b) as GcRef;
+                let s2 = self.read_reg(fiber_id, c) as GcRef;
+                self.write_reg(fiber_id, a, if string::le(s1, s2) { 1 } else { 0 });
+            }
+            
+            Opcode::StrGt => {
+                let s1 = self.read_reg(fiber_id, b) as GcRef;
+                let s2 = self.read_reg(fiber_id, c) as GcRef;
+                self.write_reg(fiber_id, a, if string::gt(s1, s2) { 1 } else { 0 });
+            }
+            
+            Opcode::StrGe => {
+                let s1 = self.read_reg(fiber_id, b) as GcRef;
+                let s2 = self.read_reg(fiber_id, c) as GcRef;
+                self.write_reg(fiber_id, a, if string::ge(s1, s2) { 1 } else { 0 });
+            }
+            
+            Opcode::StrSlice => {
+                // a=dest, b=string, c=start_reg, flags=end_reg
+                let str_ref = self.read_reg(fiber_id, b) as GcRef;
+                let start = self.read_reg(fiber_id, c) as usize;
+                let end = self.read_reg(fiber_id, flags as u16) as usize;
+                let new_str = string::slice_of(&mut self.gc, ValueKind::String as TypeId, str_ref, start, end);
+                self.write_reg(fiber_id, a, new_str as u64);
+            }
+            
             // ============ Map ============
             Opcode::MapNew => {
                 // a=dest, b=key_type, c=val_type

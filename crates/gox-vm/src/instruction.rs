@@ -54,7 +54,7 @@ pub enum Opcode {
     SetGlobal,      // globals[a] = b
     
     // ============ Arithmetic (i64) ============
-    AddI64 = 20,  // a = b + c
+    AddI64 = 15,  // a = b + c
     SubI64,       // a = b - c
     MulI64,       // a = b * c
     DivI64,       // a = b / c
@@ -62,14 +62,14 @@ pub enum Opcode {
     NegI64,       // a = -b
     
     // ============ Arithmetic (f64) ============
-    AddF64 = 30,
+    AddF64 = 25,
     SubF64,
     MulF64,
     DivF64,
     NegF64,
     
     // ============ Comparison (i64) ============
-    EqI64 = 40,   // a = (b == c)
+    EqI64 = 35,   // a = (b == c)
     NeI64,        // a = (b != c)
     LtI64,        // a = (b < c)
     LeI64,        // a = (b <= c)
@@ -77,7 +77,7 @@ pub enum Opcode {
     GeI64,        // a = (b >= c)
     
     // ============ Comparison (f64) ============
-    EqF64 = 50,
+    EqF64 = 45,
     NeF64,
     LtF64,
     LeF64,
@@ -85,12 +85,12 @@ pub enum Opcode {
     GeF64,
     
     // ============ Reference comparison ============
-    EqRef = 60,   // a = (b == c) for references
+    EqRef = 55,   // a = (b == c) for references
     NeRef,        // a = (b != c) for references
     IsNil,        // a = (b == nil)
     
     // ============ Bitwise ============
-    Band = 70,    // a = b & c
+    Band = 60,    // a = b & c
     Bor,          // a = b | c
     Bxor,         // a = b ^ c
     Bnot,         // a = ^b
@@ -99,19 +99,19 @@ pub enum Opcode {
     Ushr,         // a = b >>> c (logical)
     
     // ============ Logical ============
-    Not = 80,     // a = !b
+    Not = 70,     // a = !b
     
     // ============ Control flow ============
-    Jump = 90,    // pc += imm32(b,c)
+    Jump = 75,    // pc += imm32(b,c)
     JumpIf,       // if a: pc += imm32(b,c)
     JumpIfNot,    // if !a: pc += imm32(b,c)
     
     // ============ Function call ============
-    Call = 100,   // call func at a, args start at b, c=arg_count, flags=ret_count
+    Call = 80,    // call func at a, args start at b, c=arg_count, flags=ret_count
     Return,       // return values starting at a, b=count
     
     // ============ Object operations ============
-    Alloc = 110,  // a = new object of type b, c=extra_slots
+    Alloc = 85,   // a = new object of type b, c=extra_slots
     GetField,     // a = b.field[c]
     SetField,     // a.field[b] = c
     GetFieldN,    // copy c slots from b.field[flags] to a
@@ -119,7 +119,7 @@ pub enum Opcode {
     StructHash,   // a = hash(b) with c fields (for struct map keys)
     
     // ============ Array/Slice ============
-    ArrayNew = 120,   // a = new array, elem_type=b, len=c
+    ArrayNew = 95,    // a = new array, elem_type=b, len=c
     ArrayGet,         // a = b[c]
     ArraySet,         // a[b] = c
     ArrayLen,         // a = len(b)
@@ -132,39 +132,44 @@ pub enum Opcode {
     SliceAppend,      // a = append(b, c...)
     
     // ============ String ============
-    StrNew = 140,     // a = new string from const b
+    StrNew = 110,     // a = new string from const b
     StrConcat,        // a = b + c (string concat)
     StrLen,           // a = len(b)
     StrIndex,         // a = b[c]
     StrEq,            // a = (b == c) for strings (content comparison)
     StrNe,            // a = (b != c) for strings (content comparison)
+    StrLt,            // a = (b < c) for strings (lexicographic)
+    StrLe,            // a = (b <= c) for strings (lexicographic)
+    StrGt,            // a = (b > c) for strings (lexicographic)
+    StrGe,            // a = (b >= c) for strings (lexicographic)
+    StrSlice,         // a = b[c:flags] (string slicing)
     
     // ============ Map ============
-    MapNew = 150,     // a = make(map), key_type=b, val_type=c
+    MapNew = 125,     // a = make(map), key_type=b, val_type=c
     MapGet,           // a = map[b], ok stored at c
     MapSet,           // a[b] = c
     MapDelete,        // delete(a, b)
     MapLen,           // a = len(b)
     
     // ============ Channel ============
-    ChanNew = 160,    // a = make(chan), elem_type=b, cap=c
+    ChanNew = 135,    // a = make(chan), elem_type=b, cap=c
     ChanSend,         // a <- b
     ChanRecv,         // a = <-b, ok at c
     ChanClose,        // close(a)
     
     // ============ Select ============
-    SelectStart = 165,  // a=case_count, b=has_default; start building select
+    SelectStart = 140,  // a=case_count, b=has_default; start building select
     SelectSend,         // a=chan, b=value; add send case
     SelectRecv,         // a=dest, b=chan, c=ok_dest; add recv case
     SelectEnd,          // a=dest (chosen case index); execute select and jump
     
     // ============ Iterator (range) ============
-    IterBegin = 170,  // begin iteration over a, type=b
+    IterBegin = 145,  // begin iteration over a, type=b
     IterNext,         // a,b = next from iter, c=done_offset
     IterEnd,          // end iteration
     
     // ============ Closure ============
-    ClosureNew = 180, // a = closure(func=b), c=upvalue_count
+    ClosureNew = 150, // a = closure(func=b), c=upvalue_count
     ClosureGet,       // a = closure.upvalues[b]
     ClosureSet,       // closure.upvalues[a] = b
     ClosureCall,      // call closure at a, args at b, c=arg_count, flags=ret_count
@@ -173,32 +178,32 @@ pub enum Opcode {
     UpvalSet,         // upval_box[a].value = b
     
     // ============ Goroutine ============
-    Go = 190,         // go call func at a, args at b, c=arg_count
+    Go = 160,         // go call func at a, args at b, c=arg_count
     Yield,            // yield current fiber
     
     // ============ Defer/Panic/Recover ============
-    DeferPush = 200,  // defer func at a, args at b, c=arg_count
+    DeferPush = 165,  // defer func at a, args at b, c=arg_count
     DeferPop,         // pop and execute defers for current frame
     ErrDeferPush,     // errdefer func at a, args at b, c=arg_count (only runs on error)
     Panic,            // panic with value at a
     Recover,          // a = recover()
     
     // ============ Interface ============
-    BoxInterface = 210,   // a = box(type=b, value=c) into interface
+    BoxInterface = 175,   // a = box(type=b, value=c) into interface
     UnboxInterface,       // a = unbox(b), type at c
     TypeAssert,           // a = b.(type c), ok at flags
     
     // ============ Type conversion ============
-    I64ToF64 = 220,
+    I64ToF64 = 180,
     F64ToI64,
     I32ToI64,
     I64ToI32,
     
     // ============ Extern call ============
-    CallExtern = 230, // call extern func a, args at b, c=arg_count, flags=ret_count
+    CallExtern = 185, // call extern func a, args at b, c=arg_count, flags=ret_count
     
     // ============ Debug ============
-    DebugPrint = 250,
+    DebugPrint = 190,
     AssertBegin,      // a=cond, b=arg_count, c=line; if cond==false, begin assert output
     AssertArg,        // a=value, b=type_tag; print arg if in assert failure mode
     AssertEnd,        // end assert; if failed, terminate program
@@ -222,132 +227,137 @@ impl Opcode {
             10 => Self::GetGlobal,
             11 => Self::SetGlobal,
             
-            20 => Self::AddI64,
-            21 => Self::SubI64,
-            22 => Self::MulI64,
-            23 => Self::DivI64,
-            24 => Self::ModI64,
-            25 => Self::NegI64,
+            15 => Self::AddI64,
+            16 => Self::SubI64,
+            17 => Self::MulI64,
+            18 => Self::DivI64,
+            19 => Self::ModI64,
+            20 => Self::NegI64,
             
-            30 => Self::AddF64,
-            31 => Self::SubF64,
-            32 => Self::MulF64,
-            33 => Self::DivF64,
-            34 => Self::NegF64,
+            25 => Self::AddF64,
+            26 => Self::SubF64,
+            27 => Self::MulF64,
+            28 => Self::DivF64,
+            29 => Self::NegF64,
             
-            40 => Self::EqI64,
-            41 => Self::NeI64,
-            42 => Self::LtI64,
-            43 => Self::LeI64,
-            44 => Self::GtI64,
-            45 => Self::GeI64,
+            35 => Self::EqI64,
+            36 => Self::NeI64,
+            37 => Self::LtI64,
+            38 => Self::LeI64,
+            39 => Self::GtI64,
+            40 => Self::GeI64,
             
-            50 => Self::EqF64,
-            51 => Self::NeF64,
-            52 => Self::LtF64,
-            53 => Self::LeF64,
-            54 => Self::GtF64,
-            55 => Self::GeF64,
+            45 => Self::EqF64,
+            46 => Self::NeF64,
+            47 => Self::LtF64,
+            48 => Self::LeF64,
+            49 => Self::GtF64,
+            50 => Self::GeF64,
             
-            60 => Self::EqRef,
-            61 => Self::NeRef,
-            62 => Self::IsNil,
+            55 => Self::EqRef,
+            56 => Self::NeRef,
+            57 => Self::IsNil,
             
-            70 => Self::Band,
-            71 => Self::Bor,
-            72 => Self::Bxor,
-            73 => Self::Bnot,
-            74 => Self::Shl,
-            75 => Self::Shr,
-            76 => Self::Ushr,
+            60 => Self::Band,
+            61 => Self::Bor,
+            62 => Self::Bxor,
+            63 => Self::Bnot,
+            64 => Self::Shl,
+            65 => Self::Shr,
+            66 => Self::Ushr,
             
-            80 => Self::Not,
+            70 => Self::Not,
             
-            90 => Self::Jump,
-            91 => Self::JumpIf,
-            92 => Self::JumpIfNot,
+            75 => Self::Jump,
+            76 => Self::JumpIf,
+            77 => Self::JumpIfNot,
             
-            100 => Self::Call,
-            101 => Self::Return,
+            80 => Self::Call,
+            81 => Self::Return,
             
-            110 => Self::Alloc,
-            111 => Self::GetField,
-            112 => Self::SetField,
-            113 => Self::GetFieldN,
-            114 => Self::SetFieldN,
-            115 => Self::StructHash,
+            85 => Self::Alloc,
+            86 => Self::GetField,
+            87 => Self::SetField,
+            88 => Self::GetFieldN,
+            89 => Self::SetFieldN,
+            90 => Self::StructHash,
             
-            120 => Self::ArrayNew,
-            121 => Self::ArrayGet,
-            122 => Self::ArraySet,
-            123 => Self::ArrayLen,
-            124 => Self::SliceNew,
-            125 => Self::SliceGet,
-            126 => Self::SliceSet,
-            127 => Self::SliceLen,
-            128 => Self::SliceCap,
-            129 => Self::SliceSlice,
-            130 => Self::SliceAppend,
+            95 => Self::ArrayNew,
+            96 => Self::ArrayGet,
+            97 => Self::ArraySet,
+            98 => Self::ArrayLen,
+            99 => Self::SliceNew,
+            100 => Self::SliceGet,
+            101 => Self::SliceSet,
+            102 => Self::SliceLen,
+            103 => Self::SliceCap,
+            104 => Self::SliceSlice,
+            105 => Self::SliceAppend,
             
-            140 => Self::StrNew,
-            141 => Self::StrConcat,
-            142 => Self::StrLen,
-            143 => Self::StrIndex,
-            144 => Self::StrEq,
-            145 => Self::StrNe,
+            110 => Self::StrNew,
+            111 => Self::StrConcat,
+            112 => Self::StrLen,
+            113 => Self::StrIndex,
+            114 => Self::StrEq,
+            115 => Self::StrNe,
+            116 => Self::StrLt,
+            117 => Self::StrLe,
+            118 => Self::StrGt,
+            119 => Self::StrGe,
+            120 => Self::StrSlice,
             
-            150 => Self::MapNew,
-            151 => Self::MapGet,
-            152 => Self::MapSet,
-            153 => Self::MapDelete,
-            154 => Self::MapLen,
+            125 => Self::MapNew,
+            126 => Self::MapGet,
+            127 => Self::MapSet,
+            128 => Self::MapDelete,
+            129 => Self::MapLen,
             
-            160 => Self::ChanNew,
-            161 => Self::ChanSend,
-            162 => Self::ChanRecv,
-            163 => Self::ChanClose,
+            135 => Self::ChanNew,
+            136 => Self::ChanSend,
+            137 => Self::ChanRecv,
+            138 => Self::ChanClose,
             
-            165 => Self::SelectStart,
-            166 => Self::SelectSend,
-            167 => Self::SelectRecv,
-            168 => Self::SelectEnd,
+            140 => Self::SelectStart,
+            141 => Self::SelectSend,
+            142 => Self::SelectRecv,
+            143 => Self::SelectEnd,
             
-            170 => Self::IterBegin,
-            171 => Self::IterNext,
-            172 => Self::IterEnd,
+            145 => Self::IterBegin,
+            146 => Self::IterNext,
+            147 => Self::IterEnd,
             
-            180 => Self::ClosureNew,
-            181 => Self::ClosureGet,
-            182 => Self::ClosureSet,
-            183 => Self::ClosureCall,
-            184 => Self::UpvalNew,
-            185 => Self::UpvalGet,
-            186 => Self::UpvalSet,
+            150 => Self::ClosureNew,
+            151 => Self::ClosureGet,
+            152 => Self::ClosureSet,
+            153 => Self::ClosureCall,
+            154 => Self::UpvalNew,
+            155 => Self::UpvalGet,
+            156 => Self::UpvalSet,
             
-            190 => Self::Go,
-            191 => Self::Yield,
+            160 => Self::Go,
+            161 => Self::Yield,
             
-            200 => Self::DeferPush,
-            201 => Self::DeferPop,
-            202 => Self::ErrDeferPush,
-            203 => Self::Panic,
-            204 => Self::Recover,
+            165 => Self::DeferPush,
+            166 => Self::DeferPop,
+            167 => Self::ErrDeferPush,
+            168 => Self::Panic,
+            169 => Self::Recover,
             
-            210 => Self::BoxInterface,
-            211 => Self::UnboxInterface,
-            212 => Self::TypeAssert,
+            175 => Self::BoxInterface,
+            176 => Self::UnboxInterface,
+            177 => Self::TypeAssert,
             
-            220 => Self::I64ToF64,
-            221 => Self::F64ToI64,
-            222 => Self::I32ToI64,
-            223 => Self::I64ToI32,
+            180 => Self::I64ToF64,
+            181 => Self::F64ToI64,
+            182 => Self::I32ToI64,
+            183 => Self::I64ToI32,
             
-            230 => Self::CallExtern,
+            185 => Self::CallExtern,
             
-            250 => Self::DebugPrint,
-            251 => Self::AssertBegin,
-            252 => Self::AssertArg,
-            253 => Self::AssertEnd,
+            190 => Self::DebugPrint,
+            191 => Self::AssertBegin,
+            192 => Self::AssertArg,
+            193 => Self::AssertEnd,
             
             _ => Self::Invalid,
         }

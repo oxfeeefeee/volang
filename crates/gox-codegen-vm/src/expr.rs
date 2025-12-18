@@ -329,8 +329,24 @@ fn compile_binary(
                 fctx.emit(Opcode::StrNe, dst, left, right);
                 return Ok(dst);
             }
+            BinaryOp::Lt => {
+                fctx.emit(Opcode::StrLt, dst, left, right);
+                return Ok(dst);
+            }
+            BinaryOp::LtEq => {
+                fctx.emit(Opcode::StrLe, dst, left, right);
+                return Ok(dst);
+            }
+            BinaryOp::Gt => {
+                fctx.emit(Opcode::StrGt, dst, left, right);
+                return Ok(dst);
+            }
+            BinaryOp::GtEq => {
+                fctx.emit(Opcode::StrGe, dst, left, right);
+                return Ok(dst);
+            }
             _ => {
-                // Other ops fall through to integer comparison (for < > etc on strings)
+                // Other ops fall through
             }
         }
     }
@@ -1098,6 +1114,9 @@ fn compile_slice_expr(
 ) -> Result<u16, CodegenError> {
     // Compile the slice/array being sliced
     let src = compile_expr(ctx, fctx, &slice.expr)?;
+    
+    // Check if this is a string slice
+    let is_string = is_string_expr(ctx, fctx, &slice.expr);
 
     // Compile low bound (default 0)
     let low_reg = if let Some(ref low) = slice.low {
@@ -1114,13 +1133,22 @@ fn compile_slice_expr(
     } else {
         // high = len(src)
         let r = fctx.regs.alloc(1);
-        fctx.emit(Opcode::SliceLen, r, src, 0);
+        if is_string {
+            fctx.emit(Opcode::StrLen, r, src, 0);
+        } else {
+            fctx.emit(Opcode::SliceLen, r, src, 0);
+        }
         r
     };
 
     let dst = fctx.regs.alloc(1);
-    // SliceSlice: a=dest, b=slice, c=start_reg, flags=end_reg
-    fctx.emit_with_flags(Opcode::SliceSlice, high_reg as u8, dst, src, low_reg);
+    if is_string {
+        // StrSlice: a=dest, b=string, c=start_reg, flags=end_reg
+        fctx.emit_with_flags(Opcode::StrSlice, high_reg as u8, dst, src, low_reg);
+    } else {
+        // SliceSlice: a=dest, b=slice, c=start_reg, flags=end_reg
+        fctx.emit_with_flags(Opcode::SliceSlice, high_reg as u8, dst, src, low_reg);
+    }
 
     Ok(dst)
 }

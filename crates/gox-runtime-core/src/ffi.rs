@@ -35,6 +35,10 @@ pub use crate::objects::{
     gox_string_concat,
     gox_string_eq,
     gox_string_ne,
+    gox_string_lt,
+    gox_string_le,
+    gox_string_gt,
+    gox_string_ge,
 };
 
 /// Create a string from a raw pointer and length.

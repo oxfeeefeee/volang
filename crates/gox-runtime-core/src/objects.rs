@@ -79,6 +79,12 @@ pub mod string {
         Gc::read_slot(str_ref, ARRAY_SLOT) as GcRef
     }
     
+    /// Create a substring (string slice).
+    pub fn slice_of(gc: &mut Gc, type_id: TypeId, str_ref: GcRef, start: usize, end: usize) -> GcRef {
+        let bytes = as_bytes(str_ref);
+        create(gc, type_id, &bytes[start..end])
+    }
+    
     pub fn eq(a: GcRef, b: GcRef) -> bool {
         if a == b {
             return true;
@@ -87,6 +93,22 @@ pub mod string {
             return a.is_null() && b.is_null();
         }
         as_bytes(a) == as_bytes(b)
+    }
+    
+    pub fn lt(a: GcRef, b: GcRef) -> bool {
+        as_bytes(a) < as_bytes(b)
+    }
+    
+    pub fn le(a: GcRef, b: GcRef) -> bool {
+        as_bytes(a) <= as_bytes(b)
+    }
+    
+    pub fn gt(a: GcRef, b: GcRef) -> bool {
+        as_bytes(a) > as_bytes(b)
+    }
+    
+    pub fn ge(a: GcRef, b: GcRef) -> bool {
+        as_bytes(a) >= as_bytes(b)
     }
     
     pub fn ne(a: GcRef, b: GcRef) -> bool {
@@ -419,6 +441,26 @@ pub unsafe extern "C" fn gox_string_eq(a: GcRef, b: GcRef) -> bool {
 #[no_mangle]
 pub unsafe extern "C" fn gox_string_ne(a: GcRef, b: GcRef) -> bool {
     string::ne(a, b)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn gox_string_lt(a: GcRef, b: GcRef) -> bool {
+    string::lt(a, b)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn gox_string_le(a: GcRef, b: GcRef) -> bool {
+    string::le(a, b)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn gox_string_gt(a: GcRef, b: GcRef) -> bool {
+    string::gt(a, b)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn gox_string_ge(a: GcRef, b: GcRef) -> bool {
+    string::ge(a, b)
 }
 
 // --- Array C ABI ---
