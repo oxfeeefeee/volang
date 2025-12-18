@@ -246,4 +246,174 @@ pub fn register_all(register: &mut dyn FnMut(&str, ExternDispatchFn)) {
         });
         Ok(())
     });
+    
+    // strconv package
+    register("strconv.Atoi", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            let result = unsafe { strconv::gox_strconv_atoi(gc, s, STRING_TYPE_ID) };
+            rets[0] = result.0 as u64;  // value
+            rets[1] = result.1 as u64;  // error
+        });
+        Ok(())
+    });
+    register("strconv.Itoa", |args, rets| {
+        let n = args[0] as i64;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { strconv::gox_strconv_itoa(gc, n, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    register("strconv.ParseInt", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        let base = args[1] as i64;
+        crate::gc_global::with_gc(|gc| {
+            let result = unsafe { strconv::gox_strconv_parse_int(gc, s, base, STRING_TYPE_ID) };
+            rets[0] = result.0 as u64;
+            rets[1] = result.1 as u64;
+        });
+        Ok(())
+    });
+    register("strconv.ParseFloat", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            let result = unsafe { strconv::gox_strconv_parse_float(gc, s, STRING_TYPE_ID) };
+            rets[0] = f64::to_bits(result.0);
+            rets[1] = result.1 as u64;
+        });
+        Ok(())
+    });
+    register("strconv.FormatInt", |args, rets| {
+        let n = args[0] as i64;
+        let base = args[1] as i64;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { strconv::gox_strconv_format_int(gc, n, base, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    register("strconv.FormatFloat", |args, rets| {
+        let f = f64::from_bits(args[0]);
+        let fmt = args[1] as u8 as char;
+        let prec = args[2] as i64;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { strconv::gox_strconv_format_float(gc, f, fmt as u8, prec, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    register("strconv.FormatBool", |args, rets| {
+        let b = args[0] != 0;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { strconv::gox_strconv_format_bool(gc, b, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    register("strconv.ParseBool", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            let result = unsafe { strconv::gox_strconv_parse_bool(gc, s, STRING_TYPE_ID) };
+            rets[0] = if result.0 { 1 } else { 0 };
+            rets[1] = result.1 as u64;
+        });
+        Ok(())
+    });
+    register("strconv.Quote", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { strconv::gox_strconv_quote(gc, s, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    
+    // unicode package
+    register("unicode.IsLetter", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = if unsafe { unicode::gox_unicode_is_letter(r) } { 1 } else { 0 };
+        Ok(())
+    });
+    register("unicode.IsDigit", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = if unsafe { unicode::gox_unicode_is_digit(r) } { 1 } else { 0 };
+        Ok(())
+    });
+    register("unicode.IsSpace", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = if unsafe { unicode::gox_unicode_is_space(r) } { 1 } else { 0 };
+        Ok(())
+    });
+    register("unicode.IsUpper", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = if unsafe { unicode::gox_unicode_is_upper(r) } { 1 } else { 0 };
+        Ok(())
+    });
+    register("unicode.IsLower", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = if unsafe { unicode::gox_unicode_is_lower(r) } { 1 } else { 0 };
+        Ok(())
+    });
+    register("unicode.ToLower", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = unsafe { unicode::gox_unicode_to_lower(r) } as u64;
+        Ok(())
+    });
+    register("unicode.ToUpper", |args, rets| {
+        let r = args[0] as i32;
+        rets[0] = unsafe { unicode::gox_unicode_to_upper(r) } as u64;
+        Ok(())
+    });
+    
+    // hex package
+    register("hex.EncodeToString", |args, rets| {
+        let src = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { hex::gox_hex_encode_to_string(gc, src, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    register("hex.DecodeString", |args, rets| {
+        let s = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            let result = unsafe { hex::gox_hex_decode_string(gc, s, STRING_TYPE_ID) };
+            rets[0] = result.0 as u64;  // bytes slice
+            rets[1] = result.1 as u64;  // error string
+        });
+        Ok(())
+    });
+    
+    // base64 package
+    register("base64.EncodeToString", |args, rets| {
+        let src = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { base64::gox_base64_std_encode(gc, src, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    register("base64.URLEncodeToString", |args, rets| {
+        let src = args[0] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            rets[0] = unsafe { base64::gox_base64_url_encode(gc, src, STRING_TYPE_ID) } as u64;
+        });
+        Ok(())
+    });
+    
+    // regexp package
+    register("regexp.MatchString", |args, rets| {
+        let pattern = args[0] as gox_runtime_core::gc::GcRef;
+        let s = args[1] as gox_runtime_core::gc::GcRef;
+        crate::gc_global::with_gc(|gc| {
+            let result = unsafe { regexp::gox_regexp_match_string(gc, pattern, s, STRING_TYPE_ID) };
+            rets[0] = if result.0 { 1 } else { 0 };
+            rets[1] = result.1 as u64;  // error
+        });
+        Ok(())
+    });
+    
+    // sort package (these modify slices in place, no return)
+    // Note: sort functions need special handling for slice modification
+    
+    // json package
+    register("json.Valid", |args, rets| {
+        let data = args[0] as gox_runtime_core::gc::GcRef;
+        rets[0] = if unsafe { json::gox_json_valid(data) } { 1 } else { 0 };
+        Ok(())
+    });
 }
