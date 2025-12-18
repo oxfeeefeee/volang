@@ -109,6 +109,12 @@ pub enum RuntimeFunc {
     IterBegin,
     IterNext,
     IterEnd,
+
+    // === Debug/Assert (4) ===
+    DebugPrint,
+    AssertBegin,
+    AssertArg,
+    AssertEnd,
 }
 
 impl RuntimeFunc {
@@ -194,6 +200,11 @@ impl RuntimeFunc {
             RuntimeFunc::IterBegin => "gox_iter_begin",
             RuntimeFunc::IterNext => "gox_iter_next",
             RuntimeFunc::IterEnd => "gox_iter_end",
+            // Debug/Assert
+            RuntimeFunc::DebugPrint => "gox_debug_print",
+            RuntimeFunc::AssertBegin => "gox_assert_begin",
+            RuntimeFunc::AssertArg => "gox_assert_arg",
+            RuntimeFunc::AssertEnd => "gox_assert_end",
         }
     }
 
@@ -497,6 +508,25 @@ impl RuntimeFunc {
             }
             RuntimeFunc::IterEnd => {
                 sig.params.push(AbiParam::new(I64));  // iterator_handle
+            }
+
+            // === Debug/Assert ===
+            RuntimeFunc::DebugPrint => {
+                sig.params.push(AbiParam::new(I64));  // value
+                sig.params.push(AbiParam::new(I8));   // type_tag
+            }
+            RuntimeFunc::AssertBegin => {
+                sig.params.push(AbiParam::new(I64));  // condition (0=failed)
+                sig.params.push(AbiParam::new(I64));  // arg_count
+                sig.params.push(AbiParam::new(I64));  // line number
+                sig.returns.push(AbiParam::new(I8));  // should_continue (1=passed, skip args)
+            }
+            RuntimeFunc::AssertArg => {
+                sig.params.push(AbiParam::new(I64));  // value
+                sig.params.push(AbiParam::new(I8));   // type_tag
+            }
+            RuntimeFunc::AssertEnd => {
+                // No params - checks if assert failed and terminates if so
             }
         }
         

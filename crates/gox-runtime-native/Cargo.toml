@@ -7,6 +7,7 @@ description = "Native runtime support for GoX AOT and JIT compilation"
 
 [dependencies]
 gox-runtime-core = { path = "../gox-runtime-core" }
+gox-common-core = { path = "../gox-common-core" }
 
 # Goroutine support (stackful coroutines + M:N scheduler)
 corosensei = "0.2"

@@ -84,6 +84,12 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_iter_begin", ptr: crate::goroutine::gox_iter_begin as *const u8 },
             RuntimeSymbol { name: "gox_iter_next", ptr: crate::goroutine::gox_iter_next as *const u8 },
             RuntimeSymbol { name: "gox_iter_end", ptr: crate::goroutine::gox_iter_end as *const u8 },
+            
+            // Debug/Assert functions
+            RuntimeSymbol { name: "gox_debug_print", ptr: crate::debug::gox_debug_print as *const u8 },
+            RuntimeSymbol { name: "gox_assert_begin", ptr: crate::debug::gox_assert_begin as *const u8 },
+            RuntimeSymbol { name: "gox_assert_arg", ptr: crate::debug::gox_assert_arg as *const u8 },
+            RuntimeSymbol { name: "gox_assert_end", ptr: crate::debug::gox_assert_end as *const u8 },
         ];
         
         Self { symbols }

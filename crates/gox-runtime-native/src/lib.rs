@@ -18,6 +18,7 @@
 
 mod symbols;
 pub mod goroutine;
+pub mod debug;
 
 pub use symbols::{RuntimeSymbols, RuntimeSymbol};
 
@@ -42,4 +43,12 @@ pub use goroutine::{
     gox_iter_begin,
     gox_iter_next,
     gox_iter_end,
+};
+
+// Re-export debug/assert C ABI functions
+pub use debug::{
+    gox_debug_print,
+    gox_assert_begin,
+    gox_assert_arg,
+    gox_assert_end,
 };

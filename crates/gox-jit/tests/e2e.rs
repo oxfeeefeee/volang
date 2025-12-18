@@ -208,3 +208,75 @@ func main() {
     assert_eq!(fn_ptr(10), 40);
     println!("✓ test_e2e_nested_calls passed");
 }
+
+#[test]
+fn test_e2e_assert_pass() {
+    let source = r#"
+package main
+
+func test_assert(x int) int {
+    assert(x > 0)
+    assert(x < 100)
+    return x * 2
+}
+
+func main() {
+}
+"#;
+    
+    let bytecode = source_to_bytecode(source);
+    let (fn_ptr, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "test_assert");
+    
+    // These should pass without issues
+    assert_eq!(fn_ptr(5), 10);
+    assert_eq!(fn_ptr(50), 100);
+    println!("✓ test_e2e_assert_pass passed");
+}
+
+#[test]
+fn test_e2e_assert_with_message() {
+    let source = r#"
+package main
+
+func validate(x int, y int) int {
+    assert(x > 0, x)
+    assert(y > 0, y)
+    return x + y
+}
+
+func main() {
+}
+"#;
+    
+    let bytecode = source_to_bytecode(source);
+    let (fn_ptr, _jit): (fn(i64, i64) -> i64, _) = compile_to_jit(&bytecode, "validate");
+    
+    // These should pass without issues
+    assert_eq!(fn_ptr(5, 10), 15);
+    assert_eq!(fn_ptr(1, 1), 2);
+    println!("✓ test_e2e_assert_with_message passed");
+}
+
+#[test]
+fn test_e2e_println() {
+    let source = r#"
+package main
+
+func debug_and_compute(x int) int {
+    println(x)
+    result := x * 2
+    println(result)
+    return result
+}
+
+func main() {
+}
+"#;
+    
+    let bytecode = source_to_bytecode(source);
+    let (fn_ptr, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "debug_and_compute");
+    
+    // Should print values and return correct result
+    assert_eq!(fn_ptr(21), 42);
+    println!("✓ test_e2e_println passed");
+}

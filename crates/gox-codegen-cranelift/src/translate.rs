@@ -1168,6 +1168,43 @@ impl FunctionTranslator {
                 builder.ins().call(func_ref, &[handle]);
             }
 
+            // ==================== Debug/Assert ====================
+            Opcode::DebugPrint => {
+                // a=value_reg, b=type_tag
+                let val = builder.use_var(self.variables[inst.a as usize]);
+                let type_tag = builder.ins().iconst(cranelift_codegen::ir::types::I8, inst.b as i64);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::DebugPrint)?;
+                builder.ins().call(func_ref, &[val, type_tag]);
+            }
+
+            Opcode::AssertBegin => {
+                // a=cond, b=arg_count, c=line
+                // For AOT, we always call the runtime and let it handle the logic
+                let cond = builder.use_var(self.variables[inst.a as usize]);
+                let arg_count = builder.ins().iconst(I64, inst.b as i64);
+                let line = builder.ins().iconst(I64, inst.c as i64);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::AssertBegin)?;
+                let call = builder.ins().call(func_ref, &[cond, arg_count, line]);
+                // Result indicates if we should skip (1) or continue (0)
+                // For simplicity in AOT, we always execute all instructions
+                // The runtime functions handle the "skip" logic internally
+                let _result = builder.inst_results(call)[0];
+            }
+
+            Opcode::AssertArg => {
+                // a=value_reg, b=type_tag
+                let val = builder.use_var(self.variables[inst.a as usize]);
+                let type_tag = builder.ins().iconst(cranelift_codegen::ir::types::I8, inst.b as i64);
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::AssertArg)?;
+                builder.ins().call(func_ref, &[val, type_tag]);
+            }
+
+            Opcode::AssertEnd => {
+                // No args - check if assert failed and terminate if so
+                let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::AssertEnd)?;
+                builder.ins().call(func_ref, &[]);
+            }
+
             // ==================== Not yet implemented ====================
             _ => {
                 bail!("Opcode {:?} not yet implemented in AOT compiler", inst.opcode());
