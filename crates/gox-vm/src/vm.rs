@@ -1655,6 +1655,177 @@ impl Vm {
     fn write_reg(&mut self, fiber_id: FiberId, reg: u16, val: u64) {
         self.scheduler.get_mut(fiber_id).unwrap().write_reg(reg, val);
     }
+    
+    // ============ GC Support ============
+    
+    /// Check if GC should run and perform collection if needed.
+    pub fn maybe_collect(&mut self) {
+        if !self.gc.should_collect() {
+            return;
+        }
+        self.collect_garbage();
+    }
+    
+    /// Force garbage collection.
+    pub fn collect_garbage(&mut self) {
+        use crate::bytecode::RegType;
+        
+        let module = match &self.module {
+            Some(m) => m,
+            None => return,
+        };
+        
+        // Mark roots from all fiber stacks
+        for fiber in self.scheduler.iter_fibers() {
+            // Skip dead fibers or fibers with no frames
+            if fiber.frames.is_empty() {
+                continue;
+            }
+            
+            // Scan each frame's registers
+            for frame in &fiber.frames {
+                // Bounds check for func_id
+                if frame.func_id as usize >= module.functions.len() {
+                    continue;
+                }
+                let func = &module.functions[frame.func_id as usize];
+                let reg_types = &func.reg_types;
+                
+                // Scan registers based on type info
+                for (reg_idx, reg_type) in reg_types.iter().enumerate() {
+                    let slot_idx = frame.bp + reg_idx;
+                    if slot_idx >= fiber.stack.len() {
+                        break;
+                    }
+                    let val = fiber.stack[slot_idx];
+                    
+                    match reg_type {
+                        RegType::Value | RegType::Interface0 => {
+                            // Not a pointer, skip
+                        }
+                        RegType::GcRef => {
+                            // Definitely a pointer
+                            if val != 0 {
+                                self.gc.mark_gray(val as GcRef);
+                            }
+                        }
+                        RegType::Interface1 => {
+                            // May be a pointer depending on type_id in previous slot
+                            if slot_idx > 0 {
+                                let type_id = fiber.stack[slot_idx - 1] as u32;
+                                if self.types.get(type_id).map(|t| t.kind.is_reference()).unwrap_or(false) {
+                                    if val != 0 {
+                                        self.gc.mark_gray(val as GcRef);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Scan iterator stack (container refs)
+                for iter in &fiber.iter_stack {
+                    if let Some(ref_val) = iter.container_ref() {
+                        if !ref_val.is_null() {
+                            self.gc.mark_gray(ref_val);
+                        }
+                    }
+                }
+                
+                // Scan defer stack args
+                for defer in &fiber.defer_stack {
+                    for arg in &defer.args[..defer.arg_count as usize] {
+                        // Conservatively mark all defer args as potential refs
+                        if *arg != 0 {
+                            // TODO: Use type info for defer args when available
+                        }
+                    }
+                }
+            }
+            
+            // Scan block reason (channel refs)
+            match fiber.block_reason {
+                BlockReason::ChanSend(chan) | BlockReason::ChanRecv(chan) => {
+                    if !chan.is_null() {
+                        self.gc.mark_gray(chan);
+                    }
+                }
+                BlockReason::None => {}
+            }
+        }
+        
+        // Mark string constants
+        for str_ref in &self.string_constants {
+            if !str_ref.is_null() {
+                self.gc.mark_gray(*str_ref);
+            }
+        }
+        
+        // TODO: Mark globals when we have type info for them
+        
+        // Perform collection with object scanner
+        let types = &self.types;
+        self.gc.collect(|gc, obj| {
+            scan_object(gc, obj, types);
+        });
+    }
+}
+
+/// Scan a GC object's fields for references.
+/// 
+/// Note: This is a simplified scanner that handles builtin types.
+/// User-defined struct types with ptr_bitmap will be scanned using TypeTable metadata.
+fn scan_object(gc: &mut Gc, obj: GcRef, types: &TypeTable) {
+    if obj.is_null() {
+        return;
+    }
+    
+    let type_id = unsafe { (*obj).header.type_id };
+    
+    // Get type metadata for ptr_bitmap (user-defined struct types)
+    if let Some(meta) = types.get(type_id) {
+        // Scan fields using ptr_bitmap
+        for (i, is_ptr) in meta.ptr_bitmap.iter().enumerate() {
+            if *is_ptr {
+                let child = Gc::read_slot(obj, i);
+                if child != 0 {
+                    gc.mark_gray(child as GcRef);
+                }
+            }
+        }
+        return;
+    }
+    
+    // Fallback: handle builtin types by ValueKind
+    // Note: Most builtin types (String, Array) don't have nested GC refs that need scanning
+    // because their internal data is either:
+    // - Inline byte data (not a GcRef)
+    // - Already tracked separately by the GC
+    let kind = ValueKind::from_u8(type_id as u8);
+    match kind {
+        ValueKind::Slice => {
+            // Slice contains a reference to the underlying array
+            let array_ref = Gc::read_slot(obj, 0);
+            if array_ref != 0 {
+                gc.mark_gray(array_ref as GcRef);
+            }
+        }
+        ValueKind::Closure => {
+            // Closure: [func_id, upvalue_count, upvalues...]
+            // Upvalue count is limited to prevent overflow
+            let upval_count = (Gc::read_slot(obj, 1) as usize).min(256);
+            for i in 0..upval_count {
+                let upval = Gc::read_slot(obj, 2 + i);
+                if upval != 0 {
+                    gc.mark_gray(upval as GcRef);
+                }
+            }
+        }
+        _ => {
+            // String, Array, Map, Channel, etc.: 
+            // These either have no nested GC refs or are handled specially
+        }
+    }
 }
 
 impl Default for Vm {

@@ -20,6 +20,7 @@
 //! ```
 
 use gox_vm::{Module, FunctionDef, Constant, Instruction, Opcode};
+use gox_vm::bytecode::RegType;
 use std::collections::HashMap;
 
 /// Parse bytecode text format into a Module.
@@ -61,6 +62,16 @@ pub fn format_text(module: &Module) -> String {
         if f.ret_slots > 0 {
             out.push_str(&format!("  returns {}\n", f.ret_slots));
         }
+        // Print reg_types for GC (if any non-Value types exist)
+        if !f.reg_types.is_empty() && f.reg_types.iter().any(|t| *t != RegType::Value) {
+            out.push_str("  gc_refs ");
+            let refs: Vec<String> = f.reg_types.iter().enumerate()
+                .filter(|(_, t)| **t != RegType::Value)
+                .map(|(i, t)| format!("r{}:{}", i, format_reg_type(*t)))
+                .collect();
+            out.push_str(&refs.join(" "));
+            out.push('\n');
+        }
         for (i, instr) in f.code.iter().enumerate() {
             out.push_str(&format!("  {}: {}\n", i, format_instruction(instr)));
         }
@@ -82,6 +93,15 @@ fn format_constant(c: &Constant) -> String {
         Constant::Int(v) => format!("int {}", v),
         Constant::Float(v) => format!("float {}", v),
         Constant::String(s) => format!("string {:?}", s),
+    }
+}
+
+fn format_reg_type(t: RegType) -> &'static str {
+    match t {
+        RegType::Value => "val",
+        RegType::GcRef => "ref",
+        RegType::Interface0 => "iface0",
+        RegType::Interface1 => "iface1",
     }
 }
 

@@ -477,4 +477,9 @@ impl Scheduler {
             .map(|f| f.id)
             .collect()
     }
+    
+    /// Iterate over all fibers (for GC root scanning).
+    pub fn iter_fibers(&self) -> impl Iterator<Item = &Fiber> {
+        self.fibers.iter()
+    }
 }

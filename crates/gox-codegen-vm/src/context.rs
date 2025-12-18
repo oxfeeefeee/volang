@@ -6,7 +6,7 @@ use gox_analysis::TypeCheckResult;
 use gox_common::symbol::{builtin_consts, builtin_funcs, builtin_types, Ident, Symbol, BLANK};
 use gox_common::SymbolInterner;
 use gox_syntax::ast::{File, Decl, FuncDecl};
-use gox_vm::bytecode::{Module, FunctionDef, Constant};
+use gox_vm::bytecode::{Module, FunctionDef, Constant, RegType};
 use gox_vm::instruction::{Instruction, Opcode};
 
 use crate::CodegenError;
@@ -203,6 +203,8 @@ pub struct FuncContext {
     pub local_types: HashMap<Symbol, (u16, Vec<Symbol>)>,
     /// Variables that will be captured by closures (need upval_box)
     pub captured_vars: std::collections::HashSet<Symbol>,
+    /// Register types for GC root scanning
+    pub reg_types: Vec<RegType>,
 }
 
 impl FuncContext {
@@ -221,6 +223,7 @@ impl FuncContext {
             parent_upvalues: None,
             local_types: HashMap::new(),
             captured_vars: std::collections::HashSet::new(),
+            reg_types: Vec::new(),
         }
     }
     
@@ -240,6 +243,7 @@ impl FuncContext {
             parent_upvalues: Some(parent_upvalues),
             local_types: HashMap::new(),
             captured_vars: std::collections::HashSet::new(),
+            reg_types: Vec::new(),
         }
     }
     
@@ -352,6 +356,8 @@ impl FuncContext {
     
     pub fn define_local_with_kind(&mut self, ident: Ident, slots: u16, kind: ValueKind) -> u16 {
         let reg = self.regs.alloc(slots);
+        // Record register types for GC
+        self.record_reg_types(reg, slots, kind);
         self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, field_count: 0, type_sym: None, is_captured: false });
         reg
     }
@@ -367,8 +373,39 @@ impl FuncContext {
     
     pub fn define_local_full(&mut self, ident: Ident, slots: u16, kind: ValueKind, field_count: u16, type_sym: Option<Symbol>, is_captured: bool) -> u16 {
         let reg = self.regs.alloc(slots);
+        // Record register types for GC
+        self.record_reg_types(reg, slots, kind);
         self.locals.insert(ident.symbol, LocalVar { reg, slots, kind, field_count, type_sym, is_captured });
         reg
+    }
+    
+    /// Record register types for GC root scanning.
+    fn record_reg_types(&mut self, reg: u16, slots: u16, kind: ValueKind) {
+        // Ensure reg_types is large enough
+        while self.reg_types.len() <= reg as usize + slots as usize {
+            self.reg_types.push(RegType::Value);
+        }
+        
+        // Determine RegType based on ValueKind
+        match kind {
+            ValueKind::Interface => {
+                // Interface uses 2 slots: [type_id, data]
+                self.reg_types[reg as usize] = RegType::Interface0;
+                if slots > 1 {
+                    self.reg_types[reg as usize + 1] = RegType::Interface1;
+                }
+            }
+            ValueKind::String | ValueKind::Slice | ValueKind::Map 
+            | ValueKind::Pointer | ValueKind::Closure | ValueKind::Channel
+            | ValueKind::Struct | ValueKind::Array => {
+                // Reference types - GC needs to scan
+                self.reg_types[reg as usize] = RegType::GcRef;
+            }
+            _ => {
+                // Value types (int, float, bool, etc.) - no GC scan needed
+                self.reg_types[reg as usize] = RegType::Value;
+            }
+        }
     }
     
     pub fn lookup_local(&self, sym: Symbol) -> Option<&LocalVar> {
@@ -388,6 +425,11 @@ impl FuncContext {
     }
     
     pub fn build(self) -> FunctionDef {
+        // Ensure reg_types covers all allocated registers
+        let max_regs = self.regs.max_used() as usize;
+        let mut reg_types = self.reg_types;
+        reg_types.resize(max_regs, RegType::Value);
+        
         FunctionDef {
             name: self.name,
             param_count: self.param_count,
@@ -395,6 +437,7 @@ impl FuncContext {
             local_slots: self.regs.max_used(),
             ret_slots: self.ret_slots,
             code: self.code,
+            reg_types,
         }
     }
     

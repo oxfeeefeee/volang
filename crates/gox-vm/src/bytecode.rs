@@ -12,7 +12,43 @@ use std::io::{Read, Cursor};
 pub const MAGIC: [u8; 4] = *b"GOXB";
 
 /// Bytecode version.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
+
+/// Register slot type for GC root scanning.
+/// 
+/// This tells the GC whether a stack slot contains a pointer that needs to be traced.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum RegType {
+    /// Non-pointer value (int, float, bool).
+    #[default]
+    Value = 0,
+    /// GC-managed pointer (string, slice, map, *T, closure, chan).
+    GcRef = 1,
+    /// First slot of interface (type_id, not a pointer).
+    Interface0 = 2,
+    /// Second slot of interface (data, may be pointer depending on type_id).
+    Interface1 = 3,
+}
+
+impl RegType {
+    /// Check if this slot type needs GC scanning.
+    #[inline]
+    pub fn needs_scan(&self) -> bool {
+        matches!(self, RegType::GcRef | RegType::Interface1)
+    }
+    
+    /// Convert from u8.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => RegType::Value,
+            1 => RegType::GcRef,
+            2 => RegType::Interface0,
+            3 => RegType::Interface1,
+            _ => RegType::Value,
+        }
+    }
+}
 
 /// Constant value.
 #[derive(Clone, Debug)]
@@ -66,6 +102,9 @@ pub struct FunctionDef {
     pub local_slots: u16,
     pub ret_slots: u16,
     pub code: Vec<Instruction>,
+    /// Type of each register slot for GC root scanning.
+    /// Length should equal local_slots.
+    pub reg_types: Vec<RegType>,
 }
 
 impl FunctionDef {
@@ -77,6 +116,7 @@ impl FunctionDef {
             local_slots: 0,
             ret_slots: 0,
             code: Vec::new(),
+            reg_types: Vec::new(),
         }
     }
 }
@@ -408,6 +448,12 @@ fn write_function_def(buf: &mut Vec<u8>, f: &FunctionDef) {
         write_u16(buf, instr.b);
         write_u16(buf, instr.c);
     }
+    
+    // reg_types for GC root scanning
+    write_u16(buf, f.reg_types.len() as u16);
+    for rt in &f.reg_types {
+        buf.push(*rt as u8);
+    }
 }
 
 fn value_kind_to_u8(kind: ValueKind) -> u8 {
@@ -541,6 +587,15 @@ fn read_function_def(cursor: &mut Cursor<&[u8]>) -> Result<FunctionDef, Bytecode
         });
     }
     
+    // reg_types for GC root scanning
+    let reg_types_len = read_u16(cursor)? as usize;
+    let mut reg_types = Vec::with_capacity(reg_types_len);
+    for _ in 0..reg_types_len {
+        let mut rt_buf = [0u8; 1];
+        cursor.read_exact(&mut rt_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+        reg_types.push(RegType::from_u8(rt_buf[0]));
+    }
+    
     Ok(FunctionDef {
         name,
         param_count,
@@ -548,6 +603,7 @@ fn read_function_def(cursor: &mut Cursor<&[u8]>) -> Result<FunctionDef, Bytecode
         local_slots,
         ret_slots,
         code,
+        reg_types,
     })
 }
 

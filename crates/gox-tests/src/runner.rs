@@ -692,12 +692,12 @@ fn ast_matches(actual: &str, expected: &str) -> bool {
 }
 
 /// Check if bytecode output matches expected.
-/// Ignores comments (lines starting with #) and normalizes whitespace.
+/// Ignores comments (lines starting with #), gc_refs lines, and normalizes whitespace.
 fn bytecode_matches(actual: &str, expected: &str) -> bool {
     let norm = |s: &str| -> String {
         s.lines()
             .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"))
+            .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//") && !l.starts_with("gc_refs"))
             .collect::<Vec<_>>()
             .join("\n")
     };

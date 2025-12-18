@@ -157,6 +157,7 @@ mod tests {
                 // return r2
                 Instruction::new(Opcode::Return, 2, 1, 0),
             ],
+            reg_types: Vec::new(),
         });
         
         let mut jit = JitCompiler::new().unwrap();
@@ -189,6 +190,7 @@ mod tests {
                 // return b
                 Instruction::new(Opcode::Return, 1, 1, 0),
             ],
+            reg_types: Vec::new(),
         });
         
         let mut jit = JitCompiler::new().unwrap();

@@ -117,6 +117,7 @@ mod tests {
                 Instruction::new(Opcode::AddI64, 2, 0, 1),
                 Instruction::new(Opcode::Return, 2, 1, 0),
             ],
+            reg_types: Vec::new(),
         });
         
         compiler.compile_module(&bytecode).unwrap();
@@ -155,6 +156,7 @@ mod tests {
                 // return b
                 Instruction::new(Opcode::Return, 1, 1, 0),
             ],
+            reg_types: Vec::new(),
         });
         
         compiler.compile_module(&bytecode).unwrap();
@@ -195,6 +197,7 @@ mod tests {
                 Instruction::new(Opcode::AddI64, 2, 0, 1),
                 Instruction::new(Opcode::Return, 2, 1, 0),
             ],
+            reg_types: Vec::new(),
         });
         
         let mut compile_ctx = CompileContext::new(&bytecode, call_conv);
@@ -262,6 +265,7 @@ mod tests {
                 // return b
                 Instruction::new(Opcode::Return, 1, 1, 0),
             ],
+            reg_types: Vec::new(),
         });
         
         let mut compile_ctx = CompileContext::new(&bytecode, call_conv);

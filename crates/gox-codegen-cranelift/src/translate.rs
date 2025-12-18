@@ -5,6 +5,17 @@
 //! - Function calls (GoX and runtime functions)
 //! - Memory operations (GC allocation, field access)
 //! - Composite types (arrays, slices, maps)
+//!
+//! # GC Stack Map Support (TODO)
+//!
+//! Each function in the bytecode now includes `reg_types: Vec<RegType>` which
+//! indicates which registers contain GC references. This information can be used
+//! with Cranelift's stack map APIs to enable precise GC during JIT/AOT execution.
+//!
+//! To implement stack maps:
+//! 1. At safe points (calls, allocations), use `reg_types` to identify GC refs
+//! 2. Use Cranelift's `StackMapSink` to record which stack slots contain refs
+//! 3. The runtime can then precisely scan the native stack during GC
 
 use anyhow::{Result, bail};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
