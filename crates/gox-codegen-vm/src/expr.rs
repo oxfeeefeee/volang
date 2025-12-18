@@ -567,24 +567,29 @@ fn compile_call(
                 }
             }
 
-            // Then try package.Function calls
-            let pkg = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
-            let full_name = format!("{}.{}", pkg, method);
+            // Check if this is a package-level variable (global) - if so, skip to method call path
+            if ctx.global_indices.contains_key(&pkg_ident.symbol) {
+                // This is a global variable, fall through to method call on expression
+            } else {
+                // Then try package.Function calls
+                let pkg = ctx.interner.resolve(pkg_ident.symbol).unwrap_or("");
+                let full_name = format!("{}.{}", pkg, method);
 
-            // Try cross-package function
-            if let Some(func_idx) = ctx.lookup_cross_pkg_func(&full_name) {
-                return compile_func_call(ctx, fctx, func_idx, call);
-            }
+                // Try cross-package function
+                if let Some(func_idx) = ctx.lookup_cross_pkg_func(&full_name) {
+                    return compile_func_call(ctx, fctx, func_idx, call);
+                }
 
-            // Try extern functions (already registered or register now)
-            if let Some(extern_idx) = ctx.lookup_extern(&full_name) {
-                return compile_extern_call(ctx, fctx, extern_idx, call);
-            }
+                // Try extern functions (already registered or register now)
+                if let Some(extern_idx) = ctx.lookup_extern(&full_name) {
+                    return compile_extern_call(ctx, fctx, extern_idx, call);
+                }
 
-            // Check if this is a extern function from imported package
-            if ctx.is_extern_func(pkg_ident.symbol, sel.sel.symbol) {
-                let extern_idx = ctx.register_extern(&full_name, 1, 1);
-                return compile_extern_call(ctx, fctx, extern_idx, call);
+                // Check if this is a extern function from imported package
+                if ctx.is_extern_func(pkg_ident.symbol, sel.sel.symbol) {
+                    let extern_idx = ctx.register_extern(&full_name, 1, 1);
+                    return compile_extern_call(ctx, fctx, extern_idx, call);
+                }
             }
         }
 
