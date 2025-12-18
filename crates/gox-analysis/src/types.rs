@@ -576,11 +576,27 @@ impl<'a> TypeRegistry<'a> {
             }
             Type::Interface(iface) => self.interface_method_set(iface),
             Type::Pointer(inner) => {
-                // Pointer types - get methods from pointed struct
-                if let Type::Struct(s) = inner.as_ref() {
-                    self.struct_method_set(s)
-                } else {
-                    MethodSet::new()
+                // Pointer types - get methods from pointed type
+                match inner.as_ref() {
+                    Type::Struct(s) => self.struct_method_set(s),
+                    Type::Named(id) => {
+                        // *Named - get methods from the named type
+                        // This includes pointer receiver methods
+                        let idx = id.0 as usize;
+                        if idx < self.named_types.len() {
+                            let info = &self.named_types[idx];
+                            let mut set = MethodSet::from_methods(info.methods.clone());
+                            // Also get embedded methods from underlying struct
+                            if let Type::Struct(s) = &info.underlying {
+                                let struct_set = self.struct_method_set(s);
+                                set.merge(&struct_set);
+                            }
+                            set
+                        } else {
+                            MethodSet::new()
+                        }
+                    }
+                    _ => MethodSet::new(),
                 }
             }
             Type::Struct(s) => self.struct_method_set(s),

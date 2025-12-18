@@ -409,10 +409,11 @@ fn resolve_imports(packages: &mut HashMap<String, ParsedPackage>) -> Result<(), 
                         }
                     }
                 }
-                ImportPath::Stdlib(pkg_name) => {
-                    // Standard library: use package name directly
-                    // The actual implementation is via extern functions
-                    import.package_name = pkg_name;
+                ImportPath::Stdlib(pkg_path) => {
+                    // Standard library: use last segment as package name
+                    // e.g., "encoding/hex" -> "hex"
+                    import.package_name = pkg_path.rsplit('/').next()
+                        .unwrap_or(&pkg_path).to_string();
                 }
                 ImportPath::External { .. } => {
                     // This case won't happen for non-external imports
@@ -431,23 +432,25 @@ fn load_stdlib_packages(
     vfs: &Vfs,
     shared_interner: &mut SymbolInterner,
 ) -> Result<(), ProjectError> {
-    // Collect all stdlib imports
-    let mut stdlib_imports: HashSet<String> = HashSet::new();
+    // Collect all stdlib imports: (full_path, short_name)
+    // e.g., ("encoding/hex", "hex")
+    let mut stdlib_imports: HashMap<String, String> = HashMap::new();
     for pkg in packages.values() {
         for import in &pkg.imports {
             if let ImportPath::Stdlib(_) = ImportPath::parse(&import.path) {
-                stdlib_imports.insert(import.package_name.clone());
+                // path is full path for VFS, package_name is short name
+                stdlib_imports.insert(import.path.clone(), import.package_name.clone());
             }
         }
     }
     
     // Load each stdlib package through VFS
-    for pkg_name in stdlib_imports {
+    for (full_path, pkg_name) in stdlib_imports {
         if packages.contains_key(&pkg_name) {
             continue; // Already loaded
         }
         
-        if let Some(vfs_pkg) = vfs.resolve(&pkg_name) {
+        if let Some(vfs_pkg) = vfs.resolve(&full_path) {
             let mut files = Vec::new();
             let mut stdlib_base = 0u32;
             let mut source_map = SourceMap::new();
