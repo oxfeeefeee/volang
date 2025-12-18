@@ -202,6 +202,31 @@ impl<'a> ExternCtx<'a> {
         }
     }
 
+    /// Return a string slice ([]string).
+    /// Allocates an array of strings and wraps it in a slice.
+    pub fn ret_string_slice(&mut self, idx: usize, strings: &[String]) {
+        use crate::objects::{array, slice};
+        
+        let len = strings.len();
+        if len == 0 {
+            self.ret_nil(idx);
+            return;
+        }
+        
+        // Create array to hold string pointers (elem_size=1 for GcRef)
+        let arr = array::create(self.gc, builtin::ARRAY, builtin::STRING, 1, len);
+        
+        // Allocate each string and store in array
+        for (i, s) in strings.iter().enumerate() {
+            let str_ref = string::from_rust_str(self.gc, builtin::STRING, s);
+            array::set(arr, i, str_ref as u64);
+        }
+        
+        // Create slice wrapping the array
+        let sl = slice::create(self.gc, builtin::SLICE, arr, 0, len, len);
+        self.ret_raw(idx, sl as u64);
+    }
+
     // ==================== High-Level API (On-Demand Conversion) ====================
 
     /// Format a single argument as string.

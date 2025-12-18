@@ -84,10 +84,10 @@ fn extern_trim_right(ctx: &mut ExternCtx) -> ExternResult {
 }
 
 fn extern_split(ctx: &mut ExternCtx) -> ExternResult {
-    let _s = ctx.arg_str(0);
-    let _sep = ctx.arg_str(1);
-    // TODO: Need to return []string slice
-    ctx.ret_nil(0);
+    let s = ctx.arg_str(0).to_string();
+    let sep = ctx.arg_str(1).to_string();
+    let parts = core::split(&s, &sep);
+    ctx.ret_string_slice(0, &parts);
     ExternResult::Ok(1)
 }
 
