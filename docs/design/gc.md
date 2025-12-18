@@ -89,7 +89,7 @@ pub struct Gc {
     stepmul: usize,     // Work multiplier per step (default: 200)
     
     // === Pause control ===
-    pause_count: u32,   // >0 means GC is paused (during native calls)
+    pause_count: u32,   // >0 means GC is paused (during extern calls)
 }
 ```
 
@@ -103,7 +103,7 @@ Simple complete collection:
 impl Gc {
     pub fn collect(&mut self) {
         if self.pause_count > 0 {
-            return;  // Paused during native call
+            return;  // Paused during extern call
         }
         
         // 1. Mark phase
@@ -353,10 +353,10 @@ impl Gc {
     /// Allocate a new object
     pub fn alloc(&mut self, type_id: TypeId, size_slots: usize) -> GcRef;
     
-    /// Pause GC (call before native function)
+    /// Pause GC (call before extern function)
     pub fn pause(&mut self);
     
-    /// Resume GC (call after native function)
+    /// Resume GC (call after extern function)
     pub fn resume(&mut self);
     
     /// Force full collection

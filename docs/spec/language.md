@@ -894,10 +894,10 @@ FuncDecl ::= "func" Receiver? Ident "(" ParamList? ")" ResultType? ( Block | ";"
 Receiver ::= "(" Ident Ident ")" ;
 ```
 
-A function declaration may omit the body (using `;` instead of a block). Such a declaration provides the signature for a function implemented outside GoX, such as a native runtime function.
+A function declaration may omit the body. Such a declaration provides the signature for a function implemented outside GoX (extern function).
 
 ```gox
-func Sqrt(x float64) float64;  // external implementation (native)
+extern func Sqrt(x float64) float64
 ```
 
 The receiver consists of a name and a **named type**. Anonymous types (arrays, slices, maps, func) are not allowed as receivers.

@@ -1,25 +1,131 @@
-# GoX Standard Library Design
+# GoX Standard Library
 
 ## Overview
 
-GoX stdlib consists of **26 packages** organized into three categories based on their dependencies and implementation requirements.
+GoX stdlib contains **26 packages** organized in three layers:
 
-## Package Categories
+| Layer | Characteristics | Count |
+|-------|-----------------|-------|
+| **core** | No OS dependency, usable in embedded/WASM | 11 |
+| **std** | Requires OS support | 13 |
+| **runtime** | Requires runtime internals | 2 |
 
-### Category A: Runtime Packages (2)
+## Function Implementation Types
 
-Packages that require deep runtime integration. They are imported like normal packages (`import "reflect"`) but can only be implemented by the language runtime, not by user code or pure GoX.
+Stdlib functions are declared in GoX source (`stdlib/*/xxx.gox`) with three implementation types:
 
-| Package | Description | Status |
-|---------|-------------|--------|
-| `reflect` | Runtime reflection | Planned |
-| `runtime` | GC, goroutine info | Planned |
+```
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│    Pure GoX     │  │   GoX + extern  │  │   Pure extern   │
+│                 │  │                 │  │   (no body)     │
+│ func F() {      │  │ func F() {      │  │                 │
+│     // GoX code │  │     // GoX code │  │ func F()        │
+│ }               │  │     extern_f()  │  │                 │
+│                 │  │ }               │  │                 │
+│ e.g. HasPrefix  │  │ e.g. Contains   │  │ e.g. Index      │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+```
 
-**Why special?** These packages need direct access to VM internals (type metadata, goroutine scheduler, GC state) that cannot be exposed through the normal native function interface.
+### Syntax
 
-### Category B: Core Packages (10)
+```gox
+// Pure GoX — fully implemented in GoX
+func HasPrefix(s, prefix string) bool {
+    return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
 
-Pure computation packages with no OS dependencies. Can be used in embedded/WASM environments (`#![no_std]` compatible).
+// GoX + extern — GoX logic calling extern functions
+func Contains(s, substr string) bool {
+    return Index(s, substr) >= 0
+}
+
+// Pure extern — no body, implemented by runtime
+extern func Index(s, substr string) int
+extern func ToLower(s string) string
+```
+
+## Design Principles
+
+### 1. GoX-First
+
+Prefer GoX implementation. Use `extern` only when:
+- **Cannot implement in GoX**: syscalls, Unicode tables, runtime internals
+- **Performance critical**: string search, regex, sorting algorithms
+
+### 2. Extern Implementation Architecture
+
+```
+extern func Index(s, substr string) int
+                       │
+     ┌─────────────────┴─────────────────┐
+     ▼                                   ▼
+┌─────────────────────┐       ┌─────────────────────┐
+│  gox-runtime-vm     │       │ gox-runtime-native  │
+│  (VM Binding)       │       │ (AOT C ABI)         │
+└─────────┬───────────┘       └─────────┬───────────┘
+          │                             │
+          └──────────┬──────────────────┘
+                     ▼
+          ┌─────────────────────┐
+          │  gox-runtime-core   │
+          │  (Pure Logic)       │
+          └─────────────────────┘
+```
+
+#### Layer Responsibilities
+
+| Layer | Crate | Responsibility |
+|-------|-------|----------------|
+| **Core** | `gox-runtime-core` | Pure business logic, no GC/VM dependency |
+| **VM Binding** | `gox-runtime-vm` | `ExternCtx` wrapper for VM interpreter |
+| **AOT Binding** | `gox-runtime-native` | `extern "C"` wrapper for Cranelift AOT |
+
+#### Example: `strings.Index`
+
+**Step 1: Core Layer** — Pure logic, works with Rust types
+
+```rust
+// gox-runtime-core/src/stdlib/strings.rs
+pub fn index(s: &str, substr: &str) -> i64 {
+    s.find(substr).map(|i| i as i64).unwrap_or(-1)
+}
+```
+
+**Step 2a: VM Binding** — Unwrap from `ExternCtx`, call Core, return result
+
+```rust
+// gox-runtime-vm/src/stdlib/strings.rs
+pub fn extern_index(ctx: &mut ExternCtx) -> ExternResult {
+    let s = ctx.arg_str(0);
+    let substr = ctx.arg_str(1);
+    let result = gox_runtime_core::stdlib::strings::index(s, substr);
+    ctx.ret_i64(0, result);
+    ExternResult::Ok(1)
+}
+```
+
+**Step 2b: AOT Binding** — C ABI wrapper for Cranelift
+
+```rust
+// gox-runtime-native/src/ffi/strings.rs
+#[no_mangle]
+pub unsafe extern "C" fn gox_strings_index(s: GcRef, substr: GcRef) -> i64 {
+    let s_str = gox_runtime_core::objects::string::as_str(s);
+    let substr_str = gox_runtime_core::objects::string::as_str(substr);
+    gox_runtime_core::stdlib::strings::index(s_str, substr_str)
+}
+```
+
+#### Why This Architecture?
+
+1. **Code Reuse**: Core logic written once, used by both VM and AOT
+2. **Testability**: Core layer can be unit tested without VM/GC
+3. **no_std Support**: Core layer can be `#![no_std]` compatible
+4. **Clear Boundaries**: Each layer has single responsibility
+
+## Package List
+
+### Core Layer (11 packages, no OS dependency)
 
 | Package | Description | Status |
 |---------|-------------|--------|
@@ -30,13 +136,12 @@ Pure computation packages with no OS dependencies. Can be used in embedded/WASM 
 | `unicode` | Character classification | ✅ |
 | `math` | Mathematical functions | ✅ |
 | `sort` | Sorting algorithms | ✅ |
+| `regexp` | Regular expressions | ✅ |
 | `encoding/json` | JSON encoding/decoding | ✅ |
 | `encoding/base64` | Base64 encoding | ✅ |
 | `encoding/hex` | Hexadecimal encoding | ✅ |
 
-### Category C: Standard Packages (14)
-
-Packages that require OS/system support or external dependencies.
+### Std Layer (13 packages, requires OS)
 
 | Package | Description | Status |
 |---------|-------------|--------|
@@ -48,141 +153,124 @@ Packages that require OS/system support or external dependencies.
 | `bufio` | Buffered I/O | Declared |
 | `rand` | Random numbers | ✅ |
 | `time` | Time operations | ✅ |
-| `regexp` | Regular expressions | ✅ |
 | `sync` | Synchronization primitives | Declared |
 | `context` | Context propagation | Planned |
 | `net` | Networking | Declared |
 | `log` | Logging | Planned |
 | `flag` | Command-line flags | Planned |
 
-## Std Modes
+### Runtime Layer (2 packages, requires runtime internals)
 
-GoX supports two stdlib modes, similar to Rust's `no_std`:
+| Package | Description | Status |
+|---------|-------------|--------|
+| `reflect` | Runtime reflection | Planned |
+| `runtime` | GC, goroutine info | Planned |
 
-### Core Mode (`std core`)
+## Std Mode
 
-Only loads Category B packages (11 packages). Suitable for:
-- Embedded systems
-- WebAssembly
-- Minimal runtime environments
+Similar to Rust's `no_std`, GoX supports two modes:
 
-### Full Mode (`std full`)
-
-Loads all packages (Categories B + C, 24 packages). Default mode for most applications.
-
-Note: Category A (runtime packages) are loaded on-demand regardless of mode.
-
-## Configuration
-
-### Project Configuration (gox.mod)
+| Mode | Available Packages | Use Case |
+|------|-------------------|----------|
+| `std core` | core layer only | Embedded, WASM |
+| `std full` | core + std | Default |
 
 ```
+// gox.mod
 module myapp
-
-std full    // Default: load all packages
-// or
-std core    // Minimal: core packages only
+std full    // or: std core
 ```
-
-### Command Line Override
 
 ```bash
 gox build main.gox              # Uses gox.mod setting
 gox build --std=core main.gox   # Force core mode
-gox build --std=full main.gox   # Force full mode
 ```
 
-## Directory Structure
+## Rust Implementation Examples
 
-Import paths remain unchanged from the user's perspective (e.g., `import "strings"`). Layering is an **internal implementation detail**:
-
-```
-stdlib/
-├── errors/          # [core]
-├── strings/         # [core]
-├── strconv/         # [core]
-├── bytes/           # [core]
-├── unicode/         # [core]
-├── math/            # [core]
-├── sort/            # [core]
-├── regexp/          # [core]
-├── encoding/
-│   ├── json/        # [core]
-│   ├── base64/      # [core]
-│   └── hex/         # [core]
-├── fmt/             # [std]
-├── io/              # [std]
-├── os/              # [std]
-├── path/            # [std]
-├── filepath/        # [std]
-├── bufio/           # [std]
-├── rand/            # [std]
-├── time/            # [std]
-├── sync/            # [std]
-├── context/         # [std]
-├── net/             # [std]
-├── log/             # [std]
-├── flag/            # [std]
-├── reflect/         # [runtime]
-└── runtime/         # [runtime]
-```
-
-Layer tags `[core]`/`[std]`/`[runtime]` are managed in package metadata or build configuration, not reflected in directory structure.
-
-## Runtime Implementation
+### Core Layer (pure logic)
 
 ```rust
-// crates/gox-runtime-vm/src/lib.rs
-
-pub enum StdMode {
-    Core,  // Only core packages
-    Full,  // All packages (default)
-}
-
-pub fn create_vm(mode: StdMode) -> Vm {
-    let mut registry = NativeRegistry::new();
-    
-    // Always load core packages
-    natives::core::register_all(&mut registry);
-    
-    // Full mode also loads std packages
-    if mode == StdMode::Full {
-        natives::std::register_all(&mut registry);
-    }
-    
-    Vm::with_natives(registry)
+// gox-runtime-core/src/stdlib/strings.rs
+pub fn index(s: &str, substr: &str) -> i64 {
+    s.find(substr).map(|i| i as i64).unwrap_or(-1)
 }
 ```
 
-## Import Behavior
+### VM Binding
 
-Import paths remain unchanged regardless of mode:
-
-```go
-import "strings"    // Works in both modes
-import "os"         // Only works in full mode
+```rust
+// gox-runtime-vm/src/stdlib/strings.rs
+fn extern_index(ctx: &mut ExternCtx) -> ExternResult {
+    let s = ctx.arg_str(0);
+    let substr = ctx.arg_str(1);
+    ctx.ret_i64(0, gox_runtime_core::stdlib::strings::index(s, substr));
+    ExternResult::Ok(1)
+}
 ```
 
-If a package is imported but not available in the current mode, the compiler will report an error:
+### C ABI (AOT)
+
+```rust
+// gox-runtime-core/src/ffi.rs
+#[no_mangle]
+pub unsafe extern "C" fn gox_strings_index(s: GcRef, substr: GcRef) -> i64 {
+    crate::stdlib::strings::index(string::as_str(s), string::as_str(substr))
+}
+```
+
+## Adding New Functions
 
 ```
-error: package "os" requires std=full mode
-  --> main.gox:3:8
-  |
-3 | import "os"
-  |        ^^^^
+Can it be implemented in GoX?
+  ├─ Yes → Implement in stdlib/pkg/pkg.gox
+  └─ No  → Needs syscalls or GC access?
+            ├─ Yes → Implement in VM layer
+            └─ No  → Implement in Core layer + VM binding
 ```
 
-## Package Implementation Status
+### Step 1: GoX Declaration
 
-| Status | Count | Packages |
-|--------|-------|----------|
-| ✅ Complete | 17 | strings, strconv, bytes, unicode, math, sort, regexp, encoding/*, fmt, io, os, path, rand, time, errors |
-| 📝 Declared | 4 | bufio, sync, net |
-| ❌ Planned | 5 | reflect, runtime, filepath, context, log, flag |
+```gox
+// stdlib/strings/strings.gox
 
-## Future Considerations
+// Pure GoX
+func NewFunc(s string) bool {
+    return len(s) > 0
+}
 
-1. **Runtime packages**: `reflect` and `runtime` require significant VM changes
-2. **Network stack**: `net` package needs async I/O support
-3. **Sync primitives**: `sync` needs goroutine/channel integration
+// Or extern
+extern func NewExternFunc(s string) int
+```
+
+### Step 2: Core Layer (if extern)
+
+```rust
+// gox-runtime-core/src/stdlib/strings.rs
+pub fn new_extern_func(s: &str) -> i64 {
+    // Pure logic, no GC dependency
+}
+```
+
+### Step 3: VM Binding (if extern)
+
+```rust
+// gox-runtime-vm/src/stdlib/strings.rs
+fn extern_new_extern_func(ctx: &mut ExternCtx) -> ExternResult {
+    let s = ctx.arg_str(0);
+    ctx.ret_i64(0, gox_runtime_core::stdlib::strings::new_extern_func(s));
+    ExternResult::Ok(1)
+}
+
+// Register
+registry.register("strings.NewExternFunc", extern_new_extern_func);
+```
+
+### Step 4: C ABI (optional, for AOT)
+
+```rust
+// gox-runtime-core/src/ffi.rs
+#[no_mangle]
+pub unsafe extern "C" fn gox_strings_new_extern_func(s: GcRef) -> i64 {
+    crate::stdlib::strings::new_extern_func(string::as_str(s))
+}

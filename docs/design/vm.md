@@ -252,7 +252,7 @@ JUMP_IF_NOT   s, offset      # if !s then jump
 
 ### 4.8 Function Call
 
-Unified CALL instruction handles both GoX functions and native functions:
+Unified CALL instruction handles both GoX functions and extern functions:
 
 ```asm
 CALL          callable, arg_start, arg_count, ret_start
@@ -265,12 +265,12 @@ Callable types (determined at runtime):
 ```rust
 enum Callable {
     GoxFunc { func_id: FuncId },
-    NativeFunc { native_fn: NativeFn },
+    ExternFunc { extern_fn: ExternFn },
     Closure { func_id: FuncId, upvalues: Vec<GcRef> },
 }
 
-// Native function signature
-type NativeFn = fn(&mut VmContext, args: &[u64], ret: &mut [u64]);
+// Extern function signature
+type ExternFn = fn(&mut VmContext, args: &[u64], ret: &mut [u64]);
 ```
 
 CALL execution:
@@ -281,10 +281,10 @@ fn exec_call(vm: &mut Vm, callable: &Callable, args: &[u64], ret: &mut [u64]) {
         GoxFunc { func_id } => {
             // Push new call frame, execute bytecode
         }
-        NativeFunc { native_fn } => {
-            // Pause GC, call native function directly
+        ExternFunc { extern_fn } => {
+            // Pause GC, call extern function directly
             vm.gc.pause();
-            native_fn(&mut vm.ctx, args, ret);
+            extern_fn(&mut vm.ctx, args, ret);
             vm.gc.resume();
         }
         Closure { func_id, upvalues } => {
