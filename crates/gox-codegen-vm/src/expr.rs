@@ -1195,10 +1195,20 @@ fn compile_selector(
 
     let obj = compile_expr(ctx, fctx, &sel.expr)?;
 
-    // First check local types
+    // First check local types - use compact layout
     if let ExprKind::Ident(ident) = &sel.expr.kind {
         if let Some(local) = fctx.lookup_local(ident.symbol) {
             if let Some(type_sym) = local.type_sym {
+                // Try to get compact offset from named type
+                if let Some(type_info) = ctx.get_named_type_info(type_sym) {
+                    if let Some((byte_offset, size, signed)) = get_field_compact_offset(ctx, &type_info.underlying, sel.sel.symbol) {
+                        let dst = fctx.regs.alloc(1);
+                        let flags = size_to_flags(size, signed);
+                        fctx.emit_with_flags(Opcode::GetField, flags, dst, obj, byte_offset as u16);
+                        return Ok(dst);
+                    }
+                }
+                // Fallback to local type field index (for locally-defined types)
                 if let Some(field_idx) = fctx.get_local_type_field_index(type_sym, sel.sel.symbol) {
                     let dst = fctx.regs.alloc(1);
                     let byte_offset = (field_idx * 8) as u16;
@@ -1618,6 +1628,194 @@ pub fn is_type_signed(ty: &gox_analysis::Type) -> bool {
     matches!(ty, Type::Basic(BasicType::Int | BasicType::Int8 | BasicType::Int16 | BasicType::Int32 | BasicType::Int64))
 }
 
+/// Get the byte size of a basic type for compact layout.
+pub fn get_type_byte_size(ty: &gox_analysis::Type) -> usize {
+    use gox_analysis::{Type, BasicType};
+    match ty {
+        Type::Basic(BasicType::Bool) => 1,
+        Type::Basic(BasicType::Int8) | Type::Basic(BasicType::Uint8) => 1,
+        Type::Basic(BasicType::Int16) | Type::Basic(BasicType::Uint16) => 2,
+        Type::Basic(BasicType::Int32) | Type::Basic(BasicType::Uint32) => 4,
+        Type::Basic(BasicType::Float32) => 4,
+        // 8-byte types: int, int64, uint, uint64, float64, string, pointers, etc.
+        _ => 8,
+    }
+}
+
+/// Get the alignment requirement for a type.
+fn get_type_alignment(ty: &gox_analysis::Type) -> usize {
+    // Alignment = size for basic types
+    get_type_byte_size(ty)
+}
+
+/// Align offset to the given alignment.
+fn align_to(offset: usize, alignment: usize) -> usize {
+    (offset + alignment - 1) & !(alignment - 1)
+}
+
+/// Calculate struct size in bytes using compact layout with proper alignment.
+/// Returns (size_bytes, size_slots) where size_slots = ceil(size_bytes / 8).
+pub fn get_struct_compact_size(ctx: &CodegenContext, ty: &gox_analysis::Type) -> (usize, u16) {
+    use gox_analysis::Type;
+    
+    let struct_ty = match ty {
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                &named.underlying
+            } else {
+                return (8, 1);
+            }
+        }
+        Type::Struct(_) => ty,
+        _ => return (8, 1),
+    };
+    
+    if let Type::Struct(s) = struct_ty {
+        let mut offset = 0usize;
+        for field in &s.fields {
+            if field.embedded {
+                let (embedded_bytes, _) = get_struct_compact_size(ctx, &field.ty);
+                // Embedded structs are 8-byte aligned
+                offset = align_to(offset, 8);
+                offset += embedded_bytes;
+            } else {
+                let field_size = get_type_byte_size(&field.ty);
+                let alignment = get_type_alignment(&field.ty);
+                offset = align_to(offset, alignment);
+                offset += field_size;
+            }
+        }
+        // Struct size is aligned to 8 bytes for slot allocation
+        let size_bytes = align_to(offset, 8);
+        let size_slots = (size_bytes / 8) as u16;
+        (size_bytes, size_slots.max(1))
+    } else {
+        (8, 1)
+    }
+}
+
+/// Get compact byte offset for a field by name in a struct.
+/// Returns (byte_offset, field_size, is_signed) for compact layout with proper alignment.
+/// Handles field shadowing: direct fields shadow promoted fields from embedded structs.
+pub fn get_field_compact_offset(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_name: gox_common::Symbol,
+) -> Option<(u32, u8, bool)> {
+    use gox_analysis::Type;
+    
+    let struct_ty = match ty {
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                &named.underlying
+            } else {
+                return None;
+            }
+        }
+        Type::Struct(_) => ty,
+        _ => return None,
+    };
+    
+    if let Type::Struct(s) = struct_ty {
+        // First pass: check direct (non-embedded) fields - they shadow promoted fields
+        let mut byte_offset = 0usize;
+        for field in &s.fields {
+            let (field_size, alignment) = if field.embedded {
+                let (embedded_bytes, _) = get_struct_compact_size(ctx, &field.ty);
+                (embedded_bytes, 8)
+            } else {
+                let size = get_type_byte_size(&field.ty);
+                (size, get_type_alignment(&field.ty))
+            };
+            
+            byte_offset = align_to(byte_offset, alignment);
+            
+            if !field.embedded && field.name == Some(field_name) {
+                return Some((byte_offset as u32, field_size as u8, is_type_signed(&field.ty)));
+            }
+            
+            byte_offset += field_size;
+        }
+        
+        // Second pass: search in embedded fields (promoted fields)
+        byte_offset = 0;
+        for field in &s.fields {
+            let (field_size, alignment) = if field.embedded {
+                let (embedded_bytes, _) = get_struct_compact_size(ctx, &field.ty);
+                (embedded_bytes, 8)
+            } else {
+                let size = get_type_byte_size(&field.ty);
+                (size, get_type_alignment(&field.ty))
+            };
+            
+            byte_offset = align_to(byte_offset, alignment);
+            
+            if field.embedded {
+                if let Some((inner_offset, size, signed)) = get_field_compact_offset(ctx, &field.ty, field_name) {
+                    return Some((byte_offset as u32 + inner_offset, size, signed));
+                }
+            }
+            
+            byte_offset += field_size;
+        }
+    }
+    None
+}
+
+/// Convert field size and sign to GetField/SetField flags.
+/// flags[1:0] = size_code (0=1, 1=2, 2=4, 3=8), flags[2] = signed
+fn size_to_flags(size: u8, signed: bool) -> u8 {
+    let size_code = match size {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        _ => 3, // 8 bytes
+    };
+    size_code | (if signed { 0b100 } else { 0 })
+}
+
+/// Get compact byte offset for a field by index (positional initialization).
+pub fn get_field_compact_offset_by_index(
+    ctx: &CodegenContext,
+    ty: &gox_analysis::Type,
+    field_idx: usize,
+) -> (u32, u8, bool) {
+    use gox_analysis::Type;
+    
+    let struct_ty = match ty {
+        Type::Named(id) => {
+            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
+                &named.underlying
+            } else {
+                return (field_idx as u32 * 8, 8, false);
+            }
+        }
+        Type::Struct(_) => ty,
+        _ => return (field_idx as u32 * 8, 8, false),
+    };
+    
+    if let Type::Struct(s) = struct_ty {
+        let mut byte_offset = 0usize;
+        for (i, field) in s.fields.iter().enumerate() {
+            let (field_size, alignment) = if field.embedded {
+                let (embedded_bytes, _) = get_struct_compact_size(ctx, &field.ty);
+                (embedded_bytes, 8) // Embedded structs are 8-byte aligned
+            } else {
+                let size = get_type_byte_size(&field.ty);
+                (size, get_type_alignment(&field.ty))
+            };
+            
+            byte_offset = align_to(byte_offset, alignment);
+            
+            if i == field_idx {
+                return (byte_offset as u32, field_size as u8, is_type_signed(&field.ty));
+            }
+            byte_offset += field_size;
+        }
+    }
+    (field_idx as u32 * 8, 8, false)
+}
+
 /// Field access info for compact layout.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldAccessInfo {
@@ -1643,7 +1841,7 @@ impl FieldAccessInfo {
     }
 }
 
-/// Calculate field access info by field name.
+/// Calculate field access info by field name using compact layout with alignment.
 pub fn get_field_access_by_name(
     ctx: &CodegenContext,
     struct_ty: &gox_analysis::Type,
@@ -1678,43 +1876,50 @@ pub fn get_field_access_by_name(
     
     if let Type::Struct(s) = struct_ty {
         // First pass: check direct (non-embedded) fields for shadowing
-        let mut byte_offset = 0u32;
+        let mut byte_offset = 0usize;
         for field in &s.fields {
-            // embedded fields are flattened, non-embedded are 8 bytes
-            let field_size = if field.embedded {
-                (get_type_slot_count(ctx, &field.ty) as usize) * 8
+            let (field_size, alignment) = if field.embedded {
+                let (embedded_bytes, _) = get_struct_compact_size(ctx, &field.ty);
+                (embedded_bytes, 8) // Embedded structs are 8-byte aligned
             } else {
-                8
+                let size = get_type_byte_size(&field.ty);
+                (size, get_type_alignment(&field.ty))
             };
+            
+            byte_offset = align_to(byte_offset, alignment);
             
             if !field.embedded && field.name == Some(field_name) {
                 return Some(FieldAccessInfo {
-                    byte_offset,
-                    size: 8, // All non-embedded fields are 8 bytes
+                    byte_offset: byte_offset as u32,
+                    size: field_size as u8,
                     signed: is_type_signed(&field.ty),
                 });
             }
             
-            byte_offset += field_size as u32;
+            byte_offset += field_size;
         }
         
         // Second pass: search in embedded fields (promoted fields)
         byte_offset = 0;
         for field in &s.fields {
-            let field_size = if field.embedded {
-                (get_type_slot_count(ctx, &field.ty) as usize) * 8
+            let (field_size, alignment) = if field.embedded {
+                let (embedded_bytes, _) = get_struct_compact_size(ctx, &field.ty);
+                (embedded_bytes, 8)
             } else {
-                8
+                let size = get_type_byte_size(&field.ty);
+                (size, get_type_alignment(&field.ty))
             };
+            
+            byte_offset = align_to(byte_offset, alignment);
             
             if field.embedded {
                 if let Some(mut inner_info) = get_field_access_by_name(ctx, &field.ty, field_name) {
-                    inner_info.byte_offset += byte_offset;
+                    inner_info.byte_offset += byte_offset as u32;
                     return Some(inner_info);
                 }
             }
             
-            byte_offset += field_size as u32;
+            byte_offset += field_size;
         }
     }
     
@@ -1904,10 +2109,12 @@ fn compile_composite_lit(
         }
         TypeExprKind::Ident(type_ident) => {
             // Check local types first, then global types
+            // Use compact layout to calculate slot count
             let slot_count = if let Some((count, _)) = fctx.get_local_type(type_ident.symbol) {
                 *count
             } else if let Some(type_info) = ctx.get_named_type_info(type_ident.symbol) {
-                get_type_slot_count(ctx, &type_info.underlying)
+                let (_, slots) = get_struct_compact_size(ctx, &type_info.underlying);
+                slots
             } else {
                 lit.elems.len() as u16
             };
@@ -1965,27 +2172,32 @@ fn compile_composite_lit(
                             fctx.regs.free(1);
                         }
                     } else {
-                        // Get flattened index before compile_expr
-                        let flat_idx = ctx.get_named_type_info(type_ident.symbol).and_then(|ti| {
-                            find_flat_field_index(ctx, &ti.underlying, field_ident.symbol)
+                        // Get compact byte offset for named field
+                        let compact_info = ctx.get_named_type_info(type_ident.symbol).and_then(|ti| {
+                            get_field_compact_offset(ctx, &ti.underlying, field_ident.symbol)
                         });
 
                         let val_reg = compile_expr(ctx, fctx, &elem.value)?;
-                        if let Some(idx) = flat_idx {
-                            let byte_offset = (idx * 8) as u16;
-                            fctx.emit_with_flags(Opcode::SetField, 0b11, dst, byte_offset, val_reg);
+                        if let Some((byte_offset, size, signed)) = compact_info {
+                            let flags = size_to_flags(size, signed);
+                            fctx.emit_with_flags(Opcode::SetField, flags, dst, byte_offset as u16, val_reg);
                         }
                     }
                 } else {
-                    // Positional initialization
-                    let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                    // Positional initialization with compact byte offset
                     let field_idx = lit
                         .elems
                         .iter()
                         .position(|e| std::ptr::eq(e, elem))
                         .unwrap_or(0);
-                    let byte_offset = (field_idx * 8) as u16;
-                    fctx.emit_with_flags(Opcode::SetField, 0b11, dst, byte_offset, val_reg);
+                    
+                    let (byte_offset, size, signed) = ctx.get_named_type_info(type_ident.symbol)
+                        .map(|ti| get_field_compact_offset_by_index(ctx, &ti.underlying, field_idx))
+                        .unwrap_or((field_idx as u32 * 8, 8, false));
+                    
+                    let val_reg = compile_expr(ctx, fctx, &elem.value)?;
+                    let flags = size_to_flags(size, signed);
+                    fctx.emit_with_flags(Opcode::SetField, flags, dst, byte_offset as u16, val_reg);
                 }
             }
         }

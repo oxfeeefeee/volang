@@ -560,6 +560,7 @@ impl Vm {
             Opcode::GetField => {
                 // a=dest, b=obj, c=byte_offset
                 // flags[1:0]=size_code (0=1,1=2,2=4,3=8), flags[2]=signed
+                // Branchless: read u64, mask and sign-extend
                 let obj = self.read_reg(fiber_id, b) as GcRef;
                 let byte_offset = c as usize;
                 let size_code = flags & 0b11;
@@ -568,20 +569,18 @@ impl Vm {
                 let val = unsafe {
                     let data_ptr = Gc::get_data_ptr(obj) as *const u8;
                     let ptr = data_ptr.add(byte_offset);
-                    match size_code {
-                        0 => {
-                            let v = *(ptr as *const u8);
-                            if signed { v as i8 as i64 as u64 } else { v as u64 }
-                        }
-                        1 => {
-                            let v = *(ptr as *const u16);
-                            if signed { v as i16 as i64 as u64 } else { v as u64 }
-                        }
-                        2 => {
-                            let v = *(ptr as *const u32);
-                            if signed { v as i32 as i64 as u64 } else { v as u64 }
-                        }
-                        _ => *(ptr as *const u64),
+                    // Read unaligned u64, then mask to size
+                    let raw = core::ptr::read_unaligned(ptr as *const u64);
+                    // Mask: (1 << (8 << size_code)) - 1, but 64-bit needs special handling
+                    let bits = 8u32 << size_code; // 8, 16, 32, 64
+                    let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+                    let masked = raw & mask;
+                    // Sign extension: shift left then arithmetic shift right
+                    if signed && bits < 64 {
+                        let shift = 64 - bits;
+                        ((masked << shift) as i64 >> shift) as u64
+                    } else {
+                        masked
                     }
                 };
                 self.write_reg(fiber_id, a, val);
@@ -590,6 +589,7 @@ impl Vm {
             Opcode::SetField => {
                 // a=obj, b=byte_offset, c=value
                 // flags[1:0]=size_code (0=1,1=2,2=4,3=8)
+                // Branchless: use copy_nonoverlapping with computed size
                 let obj = self.read_reg(fiber_id, a) as GcRef;
                 let byte_offset = b as usize;
                 let val = self.read_reg(fiber_id, c);
@@ -598,12 +598,9 @@ impl Vm {
                 unsafe {
                     let data_ptr = Gc::get_data_ptr(obj) as *mut u8;
                     let ptr = data_ptr.add(byte_offset);
-                    match size_code {
-                        0 => *(ptr as *mut u8) = val as u8,
-                        1 => *(ptr as *mut u16) = val as u16,
-                        2 => *(ptr as *mut u32) = val as u32,
-                        _ => *(ptr as *mut u64) = val,
-                    }
+                    // Size in bytes: 1 << size_code
+                    let size = 1usize << size_code;
+                    core::ptr::copy_nonoverlapping(&val as *const u64 as *const u8, ptr, size);
                 }
             }
             
