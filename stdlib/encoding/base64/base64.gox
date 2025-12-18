@@ -1,30 +1,17 @@
 package base64
 
-// Standard encoding
-var StdEncoding = &Encoding{std: true, padding: true}
+// Extern functions - Standard encoding (with padding)
+func EncodeToString(src []byte) string
+func DecodeString(s string) ([]byte, error)
 
-// URL encoding
-var URLEncoding = &Encoding{std: false, padding: true}
+// Extern functions - URL encoding (with padding)  
+func URLEncodeToString(src []byte) string
+func URLDecodeString(s string) ([]byte, error)
 
-// Raw standard encoding (no padding)
-var RawStdEncoding = &Encoding{std: true, padding: false}
+// Extern functions - Raw standard (no padding)
+func RawEncodeToString(src []byte) string
+func RawDecodeString(s string) ([]byte, error)
 
-// Raw URL encoding (no padding)
-var RawURLEncoding = &Encoding{std: false, padding: false}
-
-type Encoding struct {
-    std     bool
-    padding bool
-}
-
-// EncodeToString returns the base64 encoding of src.
-func (enc *Encoding) EncodeToString(src []byte) string {
-    // TODO: dispatch to correct function based on encoding type
-    return ""
-}
-
-// DecodeString returns the bytes represented by the base64 string s.
-func (enc *Encoding) DecodeString(s string) ([]byte, error) {
-    // TODO: dispatch to correct function based on encoding type
-    return nil, nil
-}
+// Extern functions - Raw URL (no padding)
+func RawURLEncodeToString(src []byte) string
+func RawURLDecodeString(s string) ([]byte, error)

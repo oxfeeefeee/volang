@@ -464,7 +464,25 @@ impl<'a> TypeCollector<'a> {
                 }
             }
             // Handle unary expressions
-            ExprKind::Unary(un) => self.infer_type_from_expr(&un.operand),
+            ExprKind::Unary(un) => {
+                use ast::UnaryOp;
+                match un.op {
+                    UnaryOp::Addr => {
+                        // Address-of operator: &expr -> *T
+                        let inner_ty = self.infer_type_from_expr(&un.operand);
+                        if inner_ty != Type::Invalid {
+                            Type::Pointer(Box::new(inner_ty))
+                        } else {
+                            Type::Invalid
+                        }
+                    }
+                    _ => self.infer_type_from_expr(&un.operand),
+                }
+            }
+            // Handle composite literals: MyStruct{...}
+            ExprKind::CompositeLit(lit) => {
+                self.infer_type_from_type_expr(&lit.ty)
+            }
             // Handle parenthesized expressions
             ExprKind::Paren(inner) => self.infer_type_from_expr(inner),
             // Handle make/new calls - infer type from first argument

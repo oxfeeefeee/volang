@@ -941,8 +941,17 @@ fn get_type_name(ctx: &CodegenContext, ty: &Type) -> String {
                 String::new()
             }
         }
-        Type::Struct(_) | Type::Pointer(_) => {
-            // Anonymous struct/pointer - no method lookup
+        Type::Pointer(inner) => {
+            // Pointer to named type: *MyStruct -> "MyStruct" for method lookup
+            if let Type::Named(id) = inner.as_ref() {
+                if let Some(info) = ctx.result.named_types.get(id.0 as usize) {
+                    return ctx.interner.resolve(info.name).unwrap_or("").to_string();
+                }
+            }
+            String::new()
+        }
+        Type::Struct(_) => {
+            // Anonymous struct - no method lookup
             String::new()
         }
         _ => String::new(),
@@ -1226,10 +1235,37 @@ pub fn resolve_field_index(
 /// Uses the type checker's expr_types for a single source of truth.
 fn get_expr_type(
     ctx: &CodegenContext,
-    _fctx: &FuncContext,
+    fctx: &FuncContext,
     expr: &gox_syntax::ast::Expr,
 ) -> Option<gox_analysis::Type> {
-    ctx.lookup_expr_type(expr)
+    // First try expr_types from type checker
+    if let Some(ty) = ctx.lookup_expr_type(expr) {
+        return Some(ty);
+    }
+    
+    // For identifiers, look up in local vars or global vars
+    if let gox_syntax::ast::ExprKind::Ident(ident) = &expr.kind {
+        // Check local variable type
+        if let Some(local) = fctx.lookup_local(ident.symbol) {
+            if let Some(type_sym) = local.type_sym {
+                // Look up the named type
+                for (i, info) in ctx.result.named_types.iter().enumerate() {
+                    if info.name == type_sym {
+                        return Some(gox_analysis::Type::Pointer(Box::new(
+                            gox_analysis::Type::Named(gox_analysis::types::NamedTypeId(i as u32))
+                        )));
+                    }
+                }
+            }
+        }
+        
+        // Check global variable type from result.scope
+        if let Some(gox_analysis::scope::Entity::Var(var)) = ctx.result.scope.lookup(ident.symbol) {
+            return Some(var.ty.clone());
+        }
+    }
+    
+    None
 }
 
 /// Look up a named type and return its underlying type
