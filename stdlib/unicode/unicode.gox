@@ -6,5 +6,8 @@ func IsDigit(r rune) bool
 func IsSpace(r rune) bool
 func IsUpper(r rune) bool
 func IsLower(r rune) bool
+func IsControl(r rune) bool
+func IsPrint(r rune) bool
+func IsPunct(r rune) bool
 func ToLower(r rune) rune
 func ToUpper(r rune) rune

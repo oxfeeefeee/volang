@@ -9,6 +9,9 @@ pub fn register(registry: &mut ExternRegistry) {
     registry.register("unicode.IsSpace", extern_is_space);
     registry.register("unicode.IsUpper", extern_is_upper);
     registry.register("unicode.IsLower", extern_is_lower);
+    registry.register("unicode.IsControl", extern_is_control);
+    registry.register("unicode.IsPrint", extern_is_print);
+    registry.register("unicode.IsPunct", extern_is_punct);
     registry.register("unicode.ToLower", extern_to_lower);
     registry.register("unicode.ToUpper", extern_to_upper);
 }
@@ -40,6 +43,24 @@ fn extern_is_upper(ctx: &mut ExternCtx) -> ExternResult {
 fn extern_is_lower(ctx: &mut ExternCtx) -> ExternResult {
     let c = char::from_u32(ctx.arg_i64(0) as u32).unwrap_or('\0');
     ctx.ret_bool(0, core::is_lower(c));
+    ExternResult::Ok(1)
+}
+
+fn extern_is_control(ctx: &mut ExternCtx) -> ExternResult {
+    let c = char::from_u32(ctx.arg_i64(0) as u32).unwrap_or('\0');
+    ctx.ret_bool(0, core::is_control(c));
+    ExternResult::Ok(1)
+}
+
+fn extern_is_print(ctx: &mut ExternCtx) -> ExternResult {
+    let c = char::from_u32(ctx.arg_i64(0) as u32).unwrap_or('\0');
+    ctx.ret_bool(0, core::is_print(c));
+    ExternResult::Ok(1)
+}
+
+fn extern_is_punct(ctx: &mut ExternCtx) -> ExternResult {
+    let c = char::from_u32(ctx.arg_i64(0) as u32).unwrap_or('\0');
+    ctx.ret_bool(0, core::is_punct(c));
     ExternResult::Ok(1)
 }
 

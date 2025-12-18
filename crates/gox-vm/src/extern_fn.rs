@@ -227,6 +227,38 @@ impl<'a> ExternCtx<'a> {
         self.ret_raw(idx, sl as u64);
     }
 
+    // ==================== Slice Operations ====================
+
+    /// Get slice length.
+    pub fn slice_len(&self, slice_ref: GcRef) -> usize {
+        use crate::objects::slice;
+        slice::len(slice_ref)
+    }
+
+    /// Get i64 element from slice.
+    pub fn slice_get_i64(&self, slice_ref: GcRef, idx: usize) -> i64 {
+        use crate::objects::slice;
+        slice::get(slice_ref, idx) as i64
+    }
+
+    /// Set i64 element in slice.
+    pub fn slice_set_i64(&mut self, slice_ref: GcRef, idx: usize, val: i64) {
+        use crate::objects::slice;
+        slice::set(slice_ref, idx, val as u64);
+    }
+
+    /// Get f64 element from slice.
+    pub fn slice_get_f64(&self, slice_ref: GcRef, idx: usize) -> f64 {
+        use crate::objects::slice;
+        f64::from_bits(slice::get(slice_ref, idx))
+    }
+
+    /// Set f64 element in slice.
+    pub fn slice_set_f64(&mut self, slice_ref: GcRef, idx: usize, val: f64) {
+        use crate::objects::slice;
+        slice::set(slice_ref, idx, val.to_bits());
+    }
+
     // ==================== High-Level API (On-Demand Conversion) ====================
 
     /// Format a single argument as string.
