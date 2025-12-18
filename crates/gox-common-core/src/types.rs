@@ -119,5 +119,17 @@ impl ValueKind {
             1
         }
     }
+    
+    /// Byte size for array element storage.
+    /// Returns actual byte size for primitives, 8 for references.
+    pub fn elem_bytes(&self) -> usize {
+        match self {
+            Self::Bool | Self::Int8 | Self::Uint8 => 1,
+            Self::Int16 | Self::Uint16 => 2,
+            Self::Int32 | Self::Uint32 | Self::Float32 => 4,
+            // 64-bit types and all references use 8 bytes
+            _ => 8,
+        }
+    }
 }
 

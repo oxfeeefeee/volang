@@ -600,9 +600,11 @@ impl Vm {
             Opcode::ArrayNew => {
                 // a=dest, b=elem_type, c=len
                 let elem_type = b as TypeId;
-                let elem_size = self.types.get_unchecked(elem_type).size_slots;
+                let type_meta = self.types.get_unchecked(elem_type);
+                // Use elem_bytes for compact storage (1/2/4/8 bytes per element)
+                let elem_bytes = type_meta.kind.elem_bytes();
                 let len = c as usize;
-                let arr = array::create(&mut self.gc, ValueKind::Array as TypeId, elem_type, elem_size, len);
+                let arr = array::create(&mut self.gc, ValueKind::Array as TypeId, elem_type, elem_bytes, len);
                 self.write_reg(fiber_id, a, arr as u64);
             }
             

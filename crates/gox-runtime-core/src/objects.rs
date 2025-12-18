@@ -102,15 +102,27 @@ pub mod array {
     use super::*;
     
     const ELEM_TYPE_SLOT: usize = 0;
-    const ELEM_SIZE_SLOT: usize = 1;
+    const ELEM_BYTES_SLOT: usize = 1;  // bytes per element: 1, 2, 4, 8, or 8*n for structs
     const LEN_SLOT: usize = 2;
     const DATA_START: usize = 3;
     
-    pub fn create(gc: &mut Gc, type_id: TypeId, elem_type: TypeId, elem_size: usize, len: usize) -> GcRef {
-        let total_slots = DATA_START + len * elem_size;
+    /// Calculate slots needed for `len` elements of `elem_bytes` size.
+    #[inline]
+    fn data_slots(len: usize, elem_bytes: usize) -> usize {
+        if elem_bytes <= 8 {
+            // Packed: (total_bytes + 7) / 8
+            (len * elem_bytes + 7) / 8
+        } else {
+            // Multi-slot elements (structs)
+            len * (elem_bytes / 8)
+        }
+    }
+    
+    pub fn create(gc: &mut Gc, type_id: TypeId, elem_type: TypeId, elem_bytes: usize, len: usize) -> GcRef {
+        let total_slots = DATA_START + data_slots(len, elem_bytes);
         let arr = gc.alloc(type_id, total_slots);
         Gc::write_slot(arr, ELEM_TYPE_SLOT, elem_type as u64);
-        Gc::write_slot(arr, ELEM_SIZE_SLOT, elem_size as u64);
+        Gc::write_slot(arr, ELEM_BYTES_SLOT, elem_bytes as u64);
         Gc::write_slot(arr, LEN_SLOT, len as u64);
         arr
     }
@@ -119,48 +131,133 @@ pub mod array {
         Gc::read_slot(arr, LEN_SLOT) as usize
     }
     
+    /// Bytes per element (1, 2, 4, 8, or 8*n for multi-slot structs).
+    pub fn elem_bytes(arr: GcRef) -> usize {
+        Gc::read_slot(arr, ELEM_BYTES_SLOT) as usize
+    }
+    
+    /// Legacy: slots per element. For packed types returns 1.
     pub fn elem_size(arr: GcRef) -> usize {
-        Gc::read_slot(arr, ELEM_SIZE_SLOT) as usize
+        let bytes = elem_bytes(arr);
+        if bytes <= 8 { 1 } else { bytes / 8 }
     }
     
     pub fn elem_type(arr: GcRef) -> TypeId {
         Gc::read_slot(arr, ELEM_TYPE_SLOT) as TypeId
     }
     
+    /// Get element at index. Supports packed access for 1/2/4 byte elements.
     pub fn get(arr: GcRef, idx: usize) -> u64 {
-        let elem_sz = elem_size(arr);
+        let eb = elem_bytes(arr);
         debug_assert!(idx < len(arr));
-        debug_assert!(elem_sz == 1, "multi-slot get not supported, use get_n");
-        Gc::read_slot(arr, DATA_START + idx * elem_sz)
+        
+        match eb {
+            1 => {
+                let slot_idx = DATA_START + idx / 8;
+                let byte_off = idx % 8;
+                let slot = Gc::read_slot(arr, slot_idx);
+                (slot >> (byte_off * 8)) & 0xFF
+            }
+            2 => {
+                let slot_idx = DATA_START + idx / 4;
+                let off = idx % 4;
+                let slot = Gc::read_slot(arr, slot_idx);
+                (slot >> (off * 16)) & 0xFFFF
+            }
+            4 => {
+                let slot_idx = DATA_START + idx / 2;
+                let off = idx % 2;
+                let slot = Gc::read_slot(arr, slot_idx);
+                (slot >> (off * 32)) & 0xFFFFFFFF
+            }
+            8 => Gc::read_slot(arr, DATA_START + idx),
+            _ => {
+                // Multi-slot elements - return first slot only
+                debug_assert!(eb > 8 && eb % 8 == 0, "invalid elem_bytes");
+                Gc::read_slot(arr, DATA_START + idx * (eb / 8))
+            }
+        }
     }
     
+    /// Set element at index. Supports packed access for 1/2/4 byte elements.
     pub fn set(arr: GcRef, idx: usize, val: u64) {
-        let elem_sz = elem_size(arr);
+        let eb = elem_bytes(arr);
         debug_assert!(idx < len(arr));
-        debug_assert!(elem_sz == 1, "multi-slot set not supported, use set_n");
-        Gc::write_slot(arr, DATA_START + idx * elem_sz, val);
+        
+        match eb {
+            1 => {
+                let slot_idx = DATA_START + idx / 8;
+                let byte_off = idx % 8;
+                let shift = byte_off * 8;
+                let mask = 0xFFu64 << shift;
+                let mut slot = Gc::read_slot(arr, slot_idx);
+                slot = (slot & !mask) | ((val & 0xFF) << shift);
+                Gc::write_slot(arr, slot_idx, slot);
+            }
+            2 => {
+                let slot_idx = DATA_START + idx / 4;
+                let off = idx % 4;
+                let shift = off * 16;
+                let mask = 0xFFFFu64 << shift;
+                let mut slot = Gc::read_slot(arr, slot_idx);
+                slot = (slot & !mask) | ((val & 0xFFFF) << shift);
+                Gc::write_slot(arr, slot_idx, slot);
+            }
+            4 => {
+                let slot_idx = DATA_START + idx / 2;
+                let off = idx % 2;
+                let shift = off * 32;
+                let mask = 0xFFFFFFFFu64 << shift;
+                let mut slot = Gc::read_slot(arr, slot_idx);
+                slot = (slot & !mask) | ((val & 0xFFFFFFFF) << shift);
+                Gc::write_slot(arr, slot_idx, slot);
+            }
+            8 => Gc::write_slot(arr, DATA_START + idx, val),
+            _ => {
+                // Multi-slot elements - write first slot only
+                debug_assert!(eb > 8 && eb % 8 == 0, "invalid elem_bytes");
+                Gc::write_slot(arr, DATA_START + idx * (eb / 8), val);
+            }
+        }
     }
     
+    /// Get multi-slot element (for structs).
     pub fn get_n(arr: GcRef, idx: usize, dest: &mut [u64]) {
-        let elem_sz = elem_size(arr);
+        let eb = elem_bytes(arr);
+        let slots = if eb <= 8 { 1 } else { eb / 8 };
         debug_assert!(idx < len(arr));
-        debug_assert!(dest.len() == elem_sz);
-        for i in 0..elem_sz {
-            dest[i] = Gc::read_slot(arr, DATA_START + idx * elem_sz + i);
+        debug_assert!(dest.len() == slots);
+        for i in 0..slots {
+            dest[i] = Gc::read_slot(arr, DATA_START + idx * slots + i);
         }
     }
     
+    /// Set multi-slot element (for structs).
     pub fn set_n(arr: GcRef, idx: usize, src: &[u64]) {
-        let elem_sz = elem_size(arr);
+        let eb = elem_bytes(arr);
+        let slots = if eb <= 8 { 1 } else { eb / 8 };
         debug_assert!(idx < len(arr));
-        debug_assert!(src.len() == elem_sz);
-        for i in 0..elem_sz {
-            Gc::write_slot(arr, DATA_START + idx * elem_sz + i, src[i]);
+        debug_assert!(src.len() == slots);
+        for i in 0..slots {
+            Gc::write_slot(arr, DATA_START + idx * slots + i, src[i]);
         }
     }
     
+    /// Raw data pointer (for direct memory access).
     pub fn data_ptr(arr: GcRef) -> *mut u64 {
         unsafe { Gc::get_data_ptr(arr).add(DATA_START) }
+    }
+    
+    /// Get raw byte pointer for packed byte arrays.
+    pub fn as_bytes(arr: GcRef) -> *const u8 {
+        debug_assert!(elem_bytes(arr) == 1);
+        unsafe { Gc::get_data_ptr(arr).add(DATA_START) as *const u8 }
+    }
+    
+    /// Get mutable raw byte pointer for packed byte arrays.
+    pub fn as_bytes_mut(arr: GcRef) -> *mut u8 {
+        debug_assert!(elem_bytes(arr) == 1);
+        unsafe { Gc::get_data_ptr(arr).add(DATA_START) as *mut u8 }
     }
 }
 

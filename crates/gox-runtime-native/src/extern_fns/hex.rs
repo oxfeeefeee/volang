@@ -5,16 +5,16 @@ use gox_runtime_core::gc::{Gc, GcRef, TypeId};
 use gox_runtime_core::objects::{array, slice, string};
 use gox_common_core::ValueKind;
 
-/// Helper to get bytes from a byte slice GcRef
+/// Helper to get bytes from a byte slice GcRef (packed storage)
 unsafe fn slice_to_bytes(s: GcRef) -> &'static [u8] {
     let len = slice::len(s);
     let arr = slice::array_ref(s);
     let start = slice::start(s);
-    let data_ptr = Gc::get_data_ptr(arr).add(3 + start) as *const u8;
-    std::slice::from_raw_parts(data_ptr, len)
+    let ptr = array::as_bytes(arr).add(start);
+    std::slice::from_raw_parts(ptr, len)
 }
 
-/// Helper to create a byte slice from Rust bytes
+/// Helper to create a byte slice from Rust bytes (packed storage)
 unsafe fn bytes_to_slice(gc: &mut Gc, bytes: &[u8]) -> GcRef {
     let len = bytes.len();
     if len == 0 {
@@ -22,9 +22,8 @@ unsafe fn bytes_to_slice(gc: &mut Gc, bytes: &[u8]) -> GcRef {
     }
     
     let arr = array::create(gc, ValueKind::Array as TypeId, ValueKind::Uint8 as TypeId, 1, len);
-    for (i, &b) in bytes.iter().enumerate() {
-        array::set(arr, i, b as u64);
-    }
+    let dest = array::as_bytes_mut(arr);
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest, len);
     slice::create(gc, ValueKind::Slice as TypeId, arr, 0, len, len)
 }
 

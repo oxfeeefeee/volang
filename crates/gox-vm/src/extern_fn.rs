@@ -214,8 +214,8 @@ impl<'a> ExternCtx<'a> {
             return;
         }
         
-        // Create array to hold string pointers (elem_size=1 for GcRef)
-        let arr = array::create(self.gc, ValueKind::Array as TypeId, ValueKind::String as TypeId, 1, len);
+        // Create array to hold string pointers (8 bytes per pointer)
+        let arr = array::create(self.gc, ValueKind::Array as TypeId, ValueKind::String as TypeId, 8, len);
         
         // Allocate each string and store in array
         for (i, s) in strings.iter().enumerate() {
@@ -291,12 +291,13 @@ impl<'a> ExternCtx<'a> {
             return;
         }
         
-        // Create array with one slot per byte
-        let arr = array::create(self.gc, ValueKind::Array as TypeId, ValueKind::Int64 as TypeId, 1, len);
+        // Create packed byte array (1 byte per element)
+        let arr = array::create(self.gc, ValueKind::Array as TypeId, ValueKind::Uint8 as TypeId, 1, len);
         
-        // Store each byte as a u64 slot
-        for (i, &b) in bytes.iter().enumerate() {
-            array::set(arr, i, b as u64);
+        // Direct memory copy for packed bytes
+        unsafe {
+            let dest = array::as_bytes_mut(arr);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest, len);
         }
         
         let sl = slice::create(self.gc, ValueKind::Slice as TypeId, arr, 0, len, len);
