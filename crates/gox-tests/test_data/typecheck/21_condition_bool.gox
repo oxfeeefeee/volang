@@ -1,3 +1,4 @@
+// +vm
 // Test non-boolean condition errors
 package main
 

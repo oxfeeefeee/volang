@@ -1,3 +1,4 @@
+// +vm
 // Test: FFI / native function calls
 package main
 

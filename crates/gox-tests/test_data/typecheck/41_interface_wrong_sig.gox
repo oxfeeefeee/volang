@@ -1,3 +1,4 @@
+// +vm
 // Test interface implementation with wrong method signature
 package main
 

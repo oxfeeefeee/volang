@@ -1,3 +1,4 @@
+// +vm
 // Test: Variable initialization with dependencies
 // Go spec: variables are initialized in dependency order
 package main

@@ -1,3 +1,4 @@
+// +vm
 // Test: GoX pointer type declaration
 // GoX supports pointers only for struct types
 package main

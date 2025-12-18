@@ -1,3 +1,4 @@
+// +vm
 // Test named return values
 package main
 

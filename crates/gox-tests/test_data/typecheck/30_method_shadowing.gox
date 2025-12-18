@@ -1,3 +1,4 @@
+// +vm
 // Test method shadowing - outer method shadows embedded method
 package main
 

@@ -1,3 +1,4 @@
+// +vm
 // Test interface satisfaction with method sets
 package main
 

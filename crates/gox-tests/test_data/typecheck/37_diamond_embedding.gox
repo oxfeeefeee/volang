@@ -1,3 +1,4 @@
+// +vm
 // Test diamond embedding - same type embedded via two paths
 package main
 

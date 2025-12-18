@@ -1,3 +1,4 @@
+// +vm
 // Test interface NOT satisfied - missing method
 package main
 

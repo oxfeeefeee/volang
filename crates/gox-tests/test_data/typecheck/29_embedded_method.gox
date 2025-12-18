@@ -1,3 +1,4 @@
+// +vm
 // Test embedded struct promotes methods
 package main
 

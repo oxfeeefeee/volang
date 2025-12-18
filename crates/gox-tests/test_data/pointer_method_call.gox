@@ -1,3 +1,4 @@
+// +vm
 package main
 
 // Test for method calls on pointers and values

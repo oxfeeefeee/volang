@@ -1,3 +1,4 @@
+// +vm
 // Test: Various type expressions
 var a []int
 var b [10]int

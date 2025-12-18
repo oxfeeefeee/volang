@@ -1,3 +1,4 @@
+// +vm
 // Duplicate variable name in same := statement
 package main
 

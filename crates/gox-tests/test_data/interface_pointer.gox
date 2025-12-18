@@ -1,3 +1,4 @@
+// +vm
 package main
 
 // Comprehensive test for interface implementation with pointer receivers

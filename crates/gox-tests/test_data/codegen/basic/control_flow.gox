@@ -1,3 +1,4 @@
+// +vm
 // Test: control flow (loops)
 package main
 

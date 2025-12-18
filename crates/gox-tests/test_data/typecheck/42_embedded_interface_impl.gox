@@ -1,3 +1,4 @@
+// +vm
 // Test embedded struct satisfies interface via promoted methods
 package main
 

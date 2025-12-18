@@ -1,3 +1,4 @@
+// +vm
 // Test assignment errors
 package main
 

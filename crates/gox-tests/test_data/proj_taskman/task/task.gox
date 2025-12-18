@@ -1,3 +1,4 @@
+// +vm
 // Package task provides task management
 package task
 

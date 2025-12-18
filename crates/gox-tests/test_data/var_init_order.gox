@@ -1,3 +1,4 @@
+// +vm
 // Test: Variable initialization with init() functions
 // Go spec: $var_init runs before init() functions
 package main

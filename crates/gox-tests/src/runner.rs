@@ -4,12 +4,21 @@
 //! - Single-file tests (*.gox)
 //! - Multi-file tests (directories with main.gox)
 //!
+//! ## Test Tags
+//!
+//! Each test file must have at least one tag at the beginning:
+//! - `// +vm` - Run in VM mode
+//! - `// +native` - Run in Native (JIT) mode  
+//! - `// +skip` or `// +skip: reason` - Skip the test
+//!
+//! Multiple tags can be on the same line: `// +vm +native`
+//!
+//! ## Test Sections
+//!
 //! Test files can have optional sections:
 //! - `=== parser ===` - Expected AST output
 //! - `=== typecheck ===` - Expected type errors or "OK"
 //! - `=== codegen ===` - Expected bytecode text
-//!
-//! To skip a test, add `// skip` or `// skip: reason` at the beginning of the file.
 //!
 //! All tests must run successfully. Use `assert()` to verify correctness.
 
@@ -23,6 +32,37 @@ use gox_analysis::analyze_project;
 use gox_module::VfsConfig;
 
 use crate::printer::AstPrinter;
+
+/// Execution mode for running tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunMode {
+    /// Run tests using the VM interpreter.
+    #[default]
+    Vm,
+    /// Run tests using the JIT compiler (native code).
+    Native,
+}
+
+impl std::fmt::Display for RunMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunMode::Vm => write!(f, "vm"),
+            RunMode::Native => write!(f, "native"),
+        }
+    }
+}
+
+impl std::str::FromStr for RunMode {
+    type Err = String;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "vm" => Ok(RunMode::Vm),
+            "native" | "jit" => Ok(RunMode::Native),
+            _ => Err(format!("unknown mode '{}', expected 'vm' or 'native'", s)),
+        }
+    }
+}
 
 /// Result of a single test.
 #[derive(Debug)]
@@ -115,25 +155,85 @@ fn parse_test_file(content: &str) -> TestFile {
     result
 }
 
-/// Check if file should be skipped based on first line.
-/// Returns Some(reason) if skipped, None otherwise.
-fn check_skip_marker(content: &str) -> Option<Option<String>> {
-    let first_line = content.lines().next().unwrap_or("").trim();
-    if first_line.starts_with("// skip") || first_line.starts_with("//skip") {
-        // Extract reason after "skip:" if present
-        let reason = if let Some(pos) = first_line.find(':') {
-            Some(first_line[pos + 1..].trim().to_string())
-        } else {
-            None
-        };
-        Some(reason)
-    } else {
-        None
+/// Parsed tags from a test file.
+#[derive(Debug, Default)]
+struct TestTags {
+    vm: bool,
+    native: bool,
+    skip: bool,
+    skip_reason: Option<String>,
+}
+
+impl TestTags {
+    /// Check if any tag is present.
+    fn has_any(&self) -> bool {
+        self.vm || self.native || self.skip
+    }
+    
+    /// Check if the test should run in the given mode.
+    fn should_run(&self, mode: RunMode) -> bool {
+        if self.skip {
+            return false;
+        }
+        match mode {
+            RunMode::Vm => self.vm,
+            RunMode::Native => self.native,
+        }
     }
 }
 
-/// Run a single-file test.
+/// Parse tags from the beginning of a test file.
+/// Tags are in the format `// +tag` and must appear before any non-comment, non-empty line.
+fn parse_tags(content: &str) -> TestTags {
+    let mut tags = TestTags::default();
+    
+    for line in content.lines() {
+        let trimmed = line.trim();
+        
+        // Stop at first non-comment, non-empty line
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            break;
+        }
+        
+        // Parse tags from comment lines
+        if let Some(comment) = trimmed.strip_prefix("//") {
+            let comment = comment.trim();
+            
+            // Look for +tag patterns
+            for part in comment.split_whitespace() {
+                if part == "+vm" {
+                    tags.vm = true;
+                } else if part == "+native" {
+                    tags.native = true;
+                } else if part == "+skip" {
+                    tags.skip = true;
+                } else if part.starts_with("+skip:") {
+                    tags.skip = true;
+                    tags.skip_reason = Some(part.trim_start_matches("+skip:").trim().to_string());
+                }
+            }
+            
+            // Also handle "+skip: reason" format (with space after colon)
+            if comment.starts_with("+skip:") {
+                tags.skip = true;
+                let reason = comment.trim_start_matches("+skip:").trim();
+                if !reason.is_empty() {
+                    tags.skip_reason = Some(reason.to_string());
+                }
+            }
+        }
+    }
+    
+    tags
+}
+
+/// Run a single-file test with the default mode (VM).
 pub fn run_single_file(path: &Path) -> TestResult {
+    run_single_file_with_mode(path, RunMode::Vm)
+}
+
+/// Run a single-file test with the specified mode.
+pub fn run_single_file_with_mode(path: &Path, mode: RunMode) -> TestResult {
     let path_str = path.display().to_string();
     
     // Read file
@@ -142,9 +242,21 @@ pub fn run_single_file(path: &Path) -> TestResult {
         Err(e) => return TestResult::fail(&path_str, format!("read error: {}", e)),
     };
     
-    // Check for skip marker
-    if let Some(reason) = check_skip_marker(&content) {
-        return TestResult::skip(&path_str, reason);
+    // Parse and validate tags
+    let tags = parse_tags(&content);
+    
+    if !tags.has_any() {
+        return TestResult::fail(&path_str, "test file must have at least one tag: +vm, +native, or +skip");
+    }
+    
+    // Check if should skip
+    if tags.skip {
+        return TestResult::skip(&path_str, tags.skip_reason);
+    }
+    
+    // Check if should run in this mode
+    if !tags.should_run(mode) {
+        return TestResult::skip(&path_str, Some(format!("not enabled for {} mode", mode)));
     }
     
     let test = parse_test_file(&content);
@@ -293,7 +405,7 @@ pub fn run_single_file(path: &Path) -> TestResult {
     }
     
     // Run
-    let result = run_module(module);
+    let result = run_module(module, mode);
     let _ = fs::remove_dir_all(&temp_dir);
     
     // Check vm section for expected VM errors (by error code)
@@ -320,11 +432,16 @@ pub fn run_single_file(path: &Path) -> TestResult {
     }
 }
 
-/// Run a multi-file test (directory).
+/// Run a multi-file test (directory) with the default mode (VM).
 pub fn run_multi_file(dir: &Path) -> TestResult {
+    run_multi_file_with_mode(dir, RunMode::Vm)
+}
+
+/// Run a multi-file test (directory) with the specified mode.
+pub fn run_multi_file_with_mode(dir: &Path, mode: RunMode) -> TestResult {
     let path_str = dir.display().to_string();
     
-    match compile_and_run(dir) {
+    match compile_and_run(dir, mode) {
         Ok(_) => TestResult::pass(&path_str),
         Err(e) => TestResult::fail(&path_str, e),
     }
@@ -374,8 +491,16 @@ fn compile_project_dir(dir: &Path) -> Result<gox_vm::Module, String> {
         .map_err(|e| format!("codegen error: {:?}", e))
 }
 
-/// Run a compiled module.
-fn run_module(module: gox_vm::Module) -> Result<(), String> {
+/// Run a compiled module with the specified mode.
+fn run_module(module: gox_vm::Module, mode: RunMode) -> Result<(), String> {
+    match mode {
+        RunMode::Vm => run_module_vm(module),
+        RunMode::Native => run_module_native(module),
+    }
+}
+
+/// Run a compiled module using the VM interpreter.
+fn run_module_vm(module: gox_vm::Module) -> Result<(), String> {
     // Create native function registry with stdlib natives
     let mut natives = gox_vm::NativeRegistry::new();
     gox_runtime_vm::stdlib::register_all(&mut natives);
@@ -390,20 +515,43 @@ fn run_module(module: gox_vm::Module) -> Result<(), String> {
     }
 }
 
-/// Compile and run a project directory.
-fn compile_and_run(dir: &Path) -> Result<(), String> {
-    let module = compile_project_dir(dir)?;
-    run_module(module)
+/// Run a compiled module using the JIT compiler.
+fn run_module_native(module: gox_vm::Module) -> Result<(), String> {
+    let mut jit = gox_jit::JitCompiler::new()
+        .map_err(|e| format!("JIT init error: {}", e))?;
+    
+    jit.compile_module(&module)
+        .map_err(|e| format!("JIT compile error: {}", e))?;
+    
+    // Get the main function and call it
+    let main_fn: fn() = unsafe {
+        jit.get_function("main@main")
+            .ok_or_else(|| "main function not found".to_string())?
+    };
+    
+    main_fn();
+    Ok(())
 }
 
-/// Run all tests in a directory (recursively).
+/// Compile and run a project directory with the specified mode.
+fn compile_and_run(dir: &Path, mode: RunMode) -> Result<(), String> {
+    let module = compile_project_dir(dir)?;
+    run_module(module, mode)
+}
+
+/// Run all tests in a directory (recursively) with the default mode (VM).
 pub fn run_all(test_dir: &Path) -> TestSummary {
+    run_all_with_mode(test_dir, RunMode::Vm)
+}
+
+/// Run all tests in a directory (recursively) with the specified mode.
+pub fn run_all_with_mode(test_dir: &Path, mode: RunMode) -> TestSummary {
     let mut summary = TestSummary::default();
-    collect_and_run(test_dir, &mut summary);
+    collect_and_run(test_dir, mode, &mut summary);
     summary
 }
 
-fn collect_and_run(dir: &Path, summary: &mut TestSummary) {
+fn collect_and_run(dir: &Path, mode: RunMode, summary: &mut TestSummary) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -420,7 +568,7 @@ fn collect_and_run(dir: &Path, summary: &mut TestSummary) {
             
             if dir_name.starts_with("proj_") {
                 summary.total += 1;
-                let result = run_multi_file(&path);
+                let result = run_multi_file_with_mode(&path, mode);
                 if result.passed {
                     summary.passed += 1;
                 } else {
@@ -429,11 +577,11 @@ fn collect_and_run(dir: &Path, summary: &mut TestSummary) {
                 }
             } else {
                 // Recurse into subdirectory
-                collect_and_run(&path, summary);
+                collect_and_run(&path, mode, summary);
             }
         } else if path.extension().map_or(false, |e| e == "gox") {
             // Single-file test
-            let result = run_single_file(&path);
+            let result = run_single_file_with_mode(&path, mode);
             if result.skipped {
                 summary.skipped += 1;
             } else {

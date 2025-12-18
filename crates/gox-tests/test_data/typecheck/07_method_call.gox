@@ -1,3 +1,4 @@
+// +vm
 // Test method call type checking
 package main
 

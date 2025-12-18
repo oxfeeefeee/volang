@@ -1,3 +1,4 @@
+// +vm
 // Test basic type checking - valid code
 package main
 

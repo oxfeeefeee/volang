@@ -1,3 +1,4 @@
+// +vm
 // Test return type checking
 package main
 

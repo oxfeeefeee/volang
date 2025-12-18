@@ -1,3 +1,4 @@
+// +vm
 // Test deep embedding chain - method promoted through multiple levels
 package main
 

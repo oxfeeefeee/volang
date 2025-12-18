@@ -1,3 +1,4 @@
+// +vm
 // Test: Function declarations
 func main() {}
 

@@ -1,3 +1,4 @@
+// +vm
 // Test: channel operations (placeholder - parser doesn't support chan type yet)
 // TODO: Enable when parser supports channel type declarations
 package main

@@ -1,3 +1,4 @@
+// +vm
 package main
 
 // Test struct value semantics and pointer semantics

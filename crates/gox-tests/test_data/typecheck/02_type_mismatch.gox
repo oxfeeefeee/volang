@@ -1,3 +1,4 @@
+// +vm
 // Test type mismatch errors
 package main
 

@@ -1,16 +1,18 @@
 //! GoX Test Runner CLI
 //!
 //! Usage:
-//!   gox-tests                    # Run all tests in test_data/
-//!   gox-tests <path>             # Run tests at path (file or directory)
-//!   gox-tests --codegen <file>   # Output bytecode for a .gox file
+//!   gox-tests                           # Run all tests in test_data/ (VM mode)
+//!   gox-tests <path>                    # Run tests at path (file or directory)
+//!   gox-tests --mode=vm <path>          # Run tests using VM interpreter
+//!   gox-tests --mode=native <path>      # Run tests using JIT compiler
+//!   gox-tests --codegen <file>          # Output bytecode for a .gox file
 
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use gox_tests::{run_all, run_single_file};
+use gox_tests::{run_all_with_mode, run_single_file_with_mode, RunMode};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -20,8 +22,27 @@ fn main() -> ExitCode {
         return cmd_codegen(&args[2]);
     }
     
-    let path = if args.len() > 1 {
-        Path::new(&args[1]).to_path_buf()
+    // Parse --mode flag
+    let mut mode = RunMode::Vm;
+    let mut path_arg: Option<&str> = None;
+    
+    for arg in args.iter().skip(1) {
+        if arg.starts_with("--mode=") {
+            let mode_str = arg.trim_start_matches("--mode=");
+            match mode_str.parse() {
+                Ok(m) => mode = m,
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else if !arg.starts_with("--") {
+            path_arg = Some(arg);
+        }
+    }
+    
+    let path = if let Some(p) = path_arg {
+        Path::new(p).to_path_buf()
     } else {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data")
     };
@@ -31,10 +52,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     
-    println!("Running tests from {}...\n", path.display());
+    println!("Running tests from {} [mode: {}]...\n", path.display(), mode);
     
     let summary = if path.is_file() {
-        let result = run_single_file(&path);
+        let result = run_single_file_with_mode(&path, mode);
         let mut s = gox_tests::TestSummary::default();
         if result.skipped {
             s.skipped = 1;
@@ -60,7 +81,7 @@ fn main() -> ExitCode {
         }
         s
     } else {
-        let summary = run_all(&path);
+        let summary = run_all_with_mode(&path, mode);
         
         // Print failures
         for failure in &summary.failures {
@@ -76,9 +97,9 @@ fn main() -> ExitCode {
     };
     
     if summary.skipped > 0 {
-        println!("\nResults: {} passed, {} failed, {} skipped", summary.passed, summary.failed, summary.skipped);
+        println!("\nResults [{}]: {} passed, {} failed, {} skipped", mode, summary.passed, summary.failed, summary.skipped);
     } else {
-        println!("\nResults: {} passed, {} failed", summary.passed, summary.failed);
+        println!("\nResults [{}]: {} passed, {} failed", mode, summary.passed, summary.failed);
     }
     
     if summary.success() {

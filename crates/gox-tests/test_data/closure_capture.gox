@@ -1,3 +1,4 @@
+// +vm
 // Test: Closure reference capture (Go semantics)
 // Variables captured by closures should see mutations
 package main

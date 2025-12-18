@@ -1,3 +1,4 @@
+// +vm
 // Test for-range syntax
 package main
 

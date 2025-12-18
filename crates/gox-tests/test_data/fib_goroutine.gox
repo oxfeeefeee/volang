@@ -1,3 +1,4 @@
+// +vm
 // Test: Fibonacci using goroutines and channels
 package main
 

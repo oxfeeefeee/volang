@@ -1,3 +1,4 @@
+// +vm
 // Test field shadowing at different depths
 // Shallower depth shadows deeper depth (no ambiguity)
 package main

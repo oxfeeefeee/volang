@@ -1,3 +1,4 @@
+// +vm
 // Test method shadows field with same name
 package main
 

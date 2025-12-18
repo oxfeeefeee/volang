@@ -1,3 +1,4 @@
+// +vm
 // Test method with value receiver
 package main
 

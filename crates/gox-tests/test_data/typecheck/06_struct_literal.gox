@@ -1,3 +1,4 @@
+// +vm
 // Test struct literal type checking
 package main
 

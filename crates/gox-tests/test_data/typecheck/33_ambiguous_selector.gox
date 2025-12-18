@@ -1,3 +1,4 @@
+// +vm
 // Test ambiguous selector - same field name at same depth
 package main
 

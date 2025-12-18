@@ -1,3 +1,4 @@
+// +vm
 // Test partial interface implementation - missing one method
 package main
 

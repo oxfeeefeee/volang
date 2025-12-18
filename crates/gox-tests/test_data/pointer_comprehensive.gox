@@ -1,3 +1,4 @@
+// +vm
 package main
 
 // Comprehensive test for pointer semantics in GoX

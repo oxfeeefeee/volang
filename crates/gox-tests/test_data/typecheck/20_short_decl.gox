@@ -1,3 +1,4 @@
+// +vm
 // Test short declaration errors
 package main
 

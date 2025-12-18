@@ -1,3 +1,4 @@
+// +vm
 // Multi-file test: main calls functions from math.gox
 package main
 

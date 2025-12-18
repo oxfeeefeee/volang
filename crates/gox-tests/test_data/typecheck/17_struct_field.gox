@@ -1,3 +1,4 @@
+// +vm
 // Test struct field errors
 package main
 

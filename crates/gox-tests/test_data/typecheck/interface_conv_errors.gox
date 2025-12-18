@@ -1,3 +1,4 @@
+// +vm
 // Test: invalid interface conversions should produce type errors
 package main
 

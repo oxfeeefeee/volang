@@ -1,3 +1,4 @@
+// +vm
 // Test: Various statements
 func main() {
     x := 1

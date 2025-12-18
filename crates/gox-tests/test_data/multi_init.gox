@@ -1,3 +1,4 @@
+// +vm
 // Test: Package initialization features (Go spec compliance)
 package main
 

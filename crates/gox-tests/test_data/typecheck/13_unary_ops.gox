@@ -1,3 +1,4 @@
+// +vm
 // Test unary operator type errors
 package main
 

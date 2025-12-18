@@ -1,3 +1,4 @@
+// +vm
 // Test: Type declarations
 type MyInt int
 type Point struct {

@@ -1,3 +1,4 @@
+// +vm
 // Test illegal type cycles
 package main
 

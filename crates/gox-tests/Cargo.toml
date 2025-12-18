@@ -18,5 +18,6 @@ gox-vm = { path = "../gox-vm" }
 gox-runtime-vm = { path = "../gox-runtime-vm" }
 gox-module = { path = "../gox-module" }
 gox-cli = { path = "../gox-cli" }
+gox-jit = { path = "../gox-jit" }
 
 [dev-dependencies]

@@ -1,3 +1,4 @@
+// +vm
 // Test: struct embedding - field promotion
 package main
 

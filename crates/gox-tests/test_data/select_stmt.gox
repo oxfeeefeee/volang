@@ -1,3 +1,4 @@
+// +vm
 // Test: select statement with channels
 package main
 

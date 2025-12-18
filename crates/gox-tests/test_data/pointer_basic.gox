@@ -1,3 +1,4 @@
+// +vm
 package main
 
 // Test: Pointer type, address-of operator, and pointer receiver

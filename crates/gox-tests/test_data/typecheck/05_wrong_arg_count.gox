@@ -1,3 +1,4 @@
+// +vm
 // Test wrong argument count error
 package main
 

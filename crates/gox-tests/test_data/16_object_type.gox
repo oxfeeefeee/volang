@@ -1,3 +1,4 @@
+// +vm
 // Test: Pointer type declaration
 type Counter struct {
     count int

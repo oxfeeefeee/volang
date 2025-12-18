@@ -1,3 +1,4 @@
+// +vm
 // Test: Constant declarations
 const x = 1
 const (

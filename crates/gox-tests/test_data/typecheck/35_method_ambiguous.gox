@@ -1,3 +1,4 @@
+// +vm
 // Test ambiguous method - same method name from two embedded types
 package main
 

@@ -1,3 +1,4 @@
+// +vm
 package main
 
 // Comprehensive slice, map, and nested type tests

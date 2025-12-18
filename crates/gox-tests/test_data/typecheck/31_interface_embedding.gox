@@ -1,3 +1,4 @@
+// +vm
 // Test embedded interface in interface
 package main
 

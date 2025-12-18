@@ -1,3 +1,4 @@
+// +vm
 // Test undefined variable error
 package main
 

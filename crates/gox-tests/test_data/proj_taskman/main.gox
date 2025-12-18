@@ -1,3 +1,4 @@
+// +vm
 // TaskMan - A Task Management System Demo
 // Demonstrates multi-package project with object and struct usage
 package main

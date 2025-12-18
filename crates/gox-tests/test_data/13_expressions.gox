@@ -1,3 +1,4 @@
+// +vm
 // Test: Various expressions
 var a = 1 + 2 * 3
 var b = foo(1, 2)

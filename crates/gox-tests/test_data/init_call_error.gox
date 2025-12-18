@@ -1,3 +1,4 @@
+// +vm
 // Test: init() function cannot be called explicitly
 // Go spec: init functions may not be referred to from anywhere in a program
 package main

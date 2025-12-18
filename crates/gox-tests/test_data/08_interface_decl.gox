@@ -1,3 +1,4 @@
+// +vm
 // Test: Interface declarations
 interface Reader {
     Read(p []byte) int

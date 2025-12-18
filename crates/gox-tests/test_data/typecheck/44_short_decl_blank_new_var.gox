@@ -1,3 +1,4 @@
+// +vm
 // Blank identifier should not count as a new variable in :=
 package main
 

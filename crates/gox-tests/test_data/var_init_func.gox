@@ -1,3 +1,4 @@
+// +vm
 // Test: Variable initialization with simple expressions
 // Verifies that global variables are initialized correctly
 package main

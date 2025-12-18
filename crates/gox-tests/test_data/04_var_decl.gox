@@ -1,3 +1,4 @@
+// +vm
 // Test: Variable declarations
 var x int
 var y = 42

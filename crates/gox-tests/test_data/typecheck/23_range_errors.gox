@@ -1,3 +1,4 @@
+// +vm
 // Test call non-function errors
 package main
 

@@ -1,3 +1,4 @@
+// +vm
 // Test index and slice errors
 package main
 

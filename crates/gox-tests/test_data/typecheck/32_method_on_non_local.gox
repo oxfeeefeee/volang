@@ -1,3 +1,4 @@
+// +vm
 // Test method call on undefined method
 package main
 

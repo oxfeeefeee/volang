@@ -1,3 +1,4 @@
+// +vm
 // Test: go statement with channels
 package main
 

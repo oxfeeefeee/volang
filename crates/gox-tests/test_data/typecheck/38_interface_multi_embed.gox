@@ -1,3 +1,4 @@
+// +vm
 // Test interface with multiple levels of embedding
 package main
 

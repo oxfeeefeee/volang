@@ -1,3 +1,4 @@
+// +vm
 // Short declaration should type-check redeclared variables as assignments
 package main
 

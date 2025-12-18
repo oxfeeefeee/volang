@@ -1,3 +1,4 @@
+// +vm
 // Test: embedded field shadowing - outer field shadows promoted field
 package main
 
