@@ -143,18 +143,18 @@ impl RuntimeFunc {
             RuntimeFunc::StringNe => "gox_string_ne",
             RuntimeFunc::StringFromPtr => "gox_rt_string_from_ptr",  // Uses global GC
             // Array
-            RuntimeFunc::ArrayCreate => "gox_array_create",
+            RuntimeFunc::ArrayCreate => "gox_rt_array_create",  // Uses global GC
             RuntimeFunc::ArrayLen => "gox_array_len",
             RuntimeFunc::ArrayGet => "gox_array_get",
             RuntimeFunc::ArraySet => "gox_array_set",
             // Slice
-            RuntimeFunc::SliceCreate => "gox_slice_create",
+            RuntimeFunc::SliceCreate => "gox_rt_slice_create",  // Uses global GC
             RuntimeFunc::SliceLen => "gox_slice_len",
             RuntimeFunc::SliceCap => "gox_slice_cap",
             RuntimeFunc::SliceGet => "gox_slice_get",
             RuntimeFunc::SliceSet => "gox_slice_set",
-            RuntimeFunc::SliceAppend => "gox_slice_append",
-            RuntimeFunc::SliceSlice => "gox_slice_slice",
+            RuntimeFunc::SliceAppend => "gox_rt_slice_append",  // Uses global GC
+            RuntimeFunc::SliceSlice => "gox_rt_slice_slice",  // Uses global GC
             // Struct
             RuntimeFunc::StructHash => "gox_struct_hash",
             // Map
@@ -288,9 +288,12 @@ impl RuntimeFunc {
 
             // === Array ===
             RuntimeFunc::ArrayCreate => {
-                sig.params.push(AbiParam::new(I32));
-                sig.params.push(AbiParam::new(I64));
-                sig.returns.push(AbiParam::new(I64));
+                // gox_rt_array_create(type_id, elem_type, elem_size, len)
+                sig.params.push(AbiParam::new(I32));  // type_id
+                sig.params.push(AbiParam::new(I32));  // elem_type
+                sig.params.push(AbiParam::new(I64));  // elem_size
+                sig.params.push(AbiParam::new(I64));  // len
+                sig.returns.push(AbiParam::new(I64)); // GcRef
             }
             RuntimeFunc::ArrayLen => {
                 sig.params.push(AbiParam::new(I64));
@@ -309,10 +312,13 @@ impl RuntimeFunc {
 
             // === Slice ===
             RuntimeFunc::SliceCreate => {
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
-                sig.returns.push(AbiParam::new(I64));
+                // gox_rt_slice_create(type_id, array, start, len, cap)
+                sig.params.push(AbiParam::new(I32));  // type_id
+                sig.params.push(AbiParam::new(I64));  // array
+                sig.params.push(AbiParam::new(I64));  // start
+                sig.params.push(AbiParam::new(I64));  // len
+                sig.params.push(AbiParam::new(I64));  // cap
+                sig.returns.push(AbiParam::new(I64)); // GcRef
             }
             RuntimeFunc::SliceLen | RuntimeFunc::SliceCap => {
                 sig.params.push(AbiParam::new(I64));
@@ -329,15 +335,20 @@ impl RuntimeFunc {
                 sig.params.push(AbiParam::new(I64));
             }
             RuntimeFunc::SliceAppend => {
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
-                sig.returns.push(AbiParam::new(I64));
+                // gox_rt_slice_append(type_id, arr_type_id, slice, val)
+                sig.params.push(AbiParam::new(I32));  // type_id
+                sig.params.push(AbiParam::new(I32));  // arr_type_id
+                sig.params.push(AbiParam::new(I64));  // slice
+                sig.params.push(AbiParam::new(I64));  // val
+                sig.returns.push(AbiParam::new(I64)); // GcRef
             }
             RuntimeFunc::SliceSlice => {
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
-                sig.returns.push(AbiParam::new(I64));
+                // gox_rt_slice_slice(type_id, slice, start, end)
+                sig.params.push(AbiParam::new(I32));  // type_id
+                sig.params.push(AbiParam::new(I64));  // slice
+                sig.params.push(AbiParam::new(I64));  // start
+                sig.params.push(AbiParam::new(I64));  // end
+                sig.returns.push(AbiParam::new(I64)); // GcRef
             }
 
             // === Struct ===

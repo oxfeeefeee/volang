@@ -39,20 +39,20 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_string_ne", ptr: ffi::gox_string_ne as *const u8 },
             RuntimeSymbol { name: "gox_rt_string_from_ptr", ptr: crate::gc_global::gox_rt_string_from_ptr as *const u8 },
             
-            // Array functions
-            RuntimeSymbol { name: "gox_array_create", ptr: ffi::gox_array_create as *const u8 },
+            // Array functions (using global GC wrappers)
+            RuntimeSymbol { name: "gox_rt_array_create", ptr: crate::gc_global::gox_rt_array_create as *const u8 },
             RuntimeSymbol { name: "gox_array_len", ptr: ffi::gox_array_len as *const u8 },
             RuntimeSymbol { name: "gox_array_get", ptr: ffi::gox_array_get as *const u8 },
             RuntimeSymbol { name: "gox_array_set", ptr: ffi::gox_array_set as *const u8 },
             
-            // Slice functions
-            RuntimeSymbol { name: "gox_slice_create", ptr: ffi::gox_slice_create as *const u8 },
+            // Slice functions (using global GC wrappers where needed)
+            RuntimeSymbol { name: "gox_rt_slice_create", ptr: crate::gc_global::gox_rt_slice_create as *const u8 },
             RuntimeSymbol { name: "gox_slice_len", ptr: ffi::gox_slice_len as *const u8 },
             RuntimeSymbol { name: "gox_slice_cap", ptr: ffi::gox_slice_cap as *const u8 },
             RuntimeSymbol { name: "gox_slice_get", ptr: ffi::gox_slice_get as *const u8 },
             RuntimeSymbol { name: "gox_slice_set", ptr: ffi::gox_slice_set as *const u8 },
-            RuntimeSymbol { name: "gox_slice_append", ptr: ffi::gox_slice_append as *const u8 },
-            RuntimeSymbol { name: "gox_slice_slice", ptr: ffi::gox_slice_slice as *const u8 },
+            RuntimeSymbol { name: "gox_rt_slice_append", ptr: crate::gc_global::gox_rt_slice_append as *const u8 },
+            RuntimeSymbol { name: "gox_rt_slice_slice", ptr: crate::gc_global::gox_rt_slice_slice as *const u8 },
             
             // Closure functions (some using global GC wrappers)
             RuntimeSymbol { name: "gox_rt_closure_create", ptr: crate::gc_global::gox_rt_closure_create as *const u8 },

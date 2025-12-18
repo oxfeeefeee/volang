@@ -92,6 +92,34 @@ pub extern "C" fn gox_rt_upval_box_create(type_id: TypeId) -> GcRef {
     with_gc(|gc| gox_runtime_core::objects::closure::create_upval_box(gc, type_id))
 }
 
+// =============================================================================
+// Array/Slice wrapper functions for AOT/JIT
+// =============================================================================
+
+/// Create an array using the global GC.
+#[no_mangle]
+pub extern "C" fn gox_rt_array_create(type_id: TypeId, elem_type: TypeId, elem_size: usize, len: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::array::create(gc, type_id, elem_type, elem_size, len))
+}
+
+/// Create a slice using the global GC.
+#[no_mangle]
+pub extern "C" fn gox_rt_slice_create(type_id: TypeId, array: GcRef, start: usize, len: usize, cap: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::slice::create(gc, type_id, array, start, len, cap))
+}
+
+/// Slice a slice using the global GC.
+#[no_mangle]
+pub extern "C" fn gox_rt_slice_slice(type_id: TypeId, slice: GcRef, start: usize, end: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::slice::slice_of(gc, type_id, slice, start, end))
+}
+
+/// Append to a slice using the global GC.
+#[no_mangle]
+pub extern "C" fn gox_rt_slice_append(type_id: TypeId, arr_type_id: TypeId, slice: GcRef, val: u64) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::slice::append(gc, type_id, arr_type_id, slice, val))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

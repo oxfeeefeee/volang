@@ -944,6 +944,43 @@ impl FunctionTranslator {
                 builder.def_var(self.variables[inst.a as usize], result);
             }
 
+            // ==================== Interface ====================
+            Opcode::BoxInterface => {
+                // a=dest (2 slots), b=type_id, c=value
+                // Interface is stored as 2 i64 slots: [type_id, data]
+                let type_id = builder.ins().iconst(I64, inst.b as i64);
+                let val = builder.use_var(self.variables[inst.c as usize]);
+                builder.def_var(self.variables[inst.a as usize], type_id);
+                builder.def_var(self.variables[(inst.a + 1) as usize], val);
+            }
+
+            Opcode::UnboxInterface => {
+                // a=dest, b=interface (2 slots), c=type_reg
+                // Extract type_id and data from interface slots
+                let type_id = builder.use_var(self.variables[inst.b as usize]);
+                let data = builder.use_var(self.variables[(inst.b + 1) as usize]);
+                builder.def_var(self.variables[inst.a as usize], data);
+                builder.def_var(self.variables[inst.c as usize], type_id);
+            }
+
+            Opcode::TypeAssert => {
+                // a=dest, b=interface (2 slots), c=expected_type, flags=ok_reg
+                let actual_type = builder.use_var(self.variables[inst.b as usize]);
+                let data = builder.use_var(self.variables[(inst.b + 1) as usize]);
+                let expected_type = builder.ins().iconst(I64, inst.c as i64);
+                
+                // Compare types
+                let types_match = builder.ins().icmp(IntCC::Equal, actual_type, expected_type);
+                let ok = builder.ins().uextend(I64, types_match);
+                
+                // Select data or 0 based on match
+                let zero = builder.ins().iconst(I64, 0);
+                let result = builder.ins().select(types_match, data, zero);
+                
+                builder.def_var(self.variables[inst.a as usize], result);
+                builder.def_var(self.variables[inst.flags as usize], ok);
+            }
+
             // ==================== Channel operations ====================
             Opcode::ChanNew => {
                 // a=dest, b=elem_type, c=capacity
