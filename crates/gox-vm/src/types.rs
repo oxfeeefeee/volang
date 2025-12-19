@@ -2,7 +2,7 @@
 
 use alloc::{string::{String, ToString}, vec, vec::Vec};
 use hashbrown::HashMap;
-use gox_common_core::{ValueKind, FIRST_USER_TYPE_ID};
+use gox_common_core::{ValueKind, SlotType, FIRST_USER_TYPE_ID};
 
 /// Type ID (index into type table).
 pub type TypeId = u32;
@@ -51,8 +51,8 @@ pub struct TypeMeta {
     pub size_slots: usize,
     /// Size in bytes (compact layout).
     pub size_bytes: usize,
-    /// Pointer bitmap: one bit per 8-byte word, true if contains pointer.
-    pub ptr_bitmap: Vec<bool>,
+    /// Slot types for GC scanning. Each slot describes how GC should handle it.
+    pub slot_types: Vec<SlotType>,
     pub name: String,
     
     // For struct/object: field layouts (compact)
@@ -74,13 +74,13 @@ impl TypeMeta {
     }
     
     /// Create a builtin type (id = None, uses kind as id).
-    pub fn builtin(kind: ValueKind, name: &str, size_slots: usize, ptr_bitmap: Vec<bool>) -> Self {
+    pub fn builtin(kind: ValueKind, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
         Self {
             id: None,
             kind,
             size_slots,
             size_bytes: size_slots * 8,
-            ptr_bitmap,
+            slot_types,
             name: name.to_string(),
             field_layouts: vec![],
             elem_type: None,
@@ -95,16 +95,16 @@ impl TypeMeta {
     }
     
     pub fn primitive(kind: ValueKind, name: &str) -> Self {
-        Self::builtin(kind, name, 1, vec![false])
+        Self::builtin(kind, name, 1, vec![SlotType::Value])
     }
     
-    pub fn struct_(id: TypeId, name: &str, size_slots: usize, ptr_bitmap: Vec<bool>) -> Self {
+    pub fn struct_(id: TypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
         Self {
             id: Some(id),
             kind: ValueKind::Struct,
             size_slots,
             size_bytes: size_slots * 8,
-            ptr_bitmap,
+            slot_types,
             name: name.to_string(),
             field_layouts: vec![],
             elem_type: None,
@@ -114,13 +114,13 @@ impl TypeMeta {
         }
     }
     
-    pub fn object(id: TypeId, name: &str, size_slots: usize, ptr_bitmap: Vec<bool>) -> Self {
+    pub fn object(id: TypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
         Self {
             id: Some(id),
             kind: ValueKind::Pointer,
             size_slots,
             size_bytes: size_slots * 8,
-            ptr_bitmap,
+            slot_types,
             name: name.to_string(),
             field_layouts: vec![],
             elem_type: None,
@@ -192,7 +192,7 @@ impl TypeTable {
             kind: ValueKind::String,
             size_slots: 1,
             size_bytes: 8,
-            ptr_bitmap: vec![true],
+            slot_types: vec![SlotType::GcRef],
             name: "string".to_string(),
             field_layouts: vec![],
             elem_type: Some(ValueKind::Uint8 as TypeId),
@@ -202,22 +202,22 @@ impl TypeTable {
         });
         
         // Array: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(ValueKind::Array, "array", 1, vec![true]));
+        set_builtin(TypeMeta::builtin(ValueKind::Array, "array", 1, vec![SlotType::GcRef]));
         
         // Slice: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(ValueKind::Slice, "slice", 1, vec![true]));
+        set_builtin(TypeMeta::builtin(ValueKind::Slice, "slice", 1, vec![SlotType::GcRef]));
         
         // Map: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(ValueKind::Map, "map", 1, vec![true]));
+        set_builtin(TypeMeta::builtin(ValueKind::Map, "map", 1, vec![SlotType::GcRef]));
         
         // Channel: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(ValueKind::Channel, "channel", 1, vec![true]));
+        set_builtin(TypeMeta::builtin(ValueKind::Channel, "channel", 1, vec![SlotType::GcRef]));
         
         // Closure: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(ValueKind::Closure, "closure", 1, vec![true]));
+        set_builtin(TypeMeta::builtin(ValueKind::Closure, "closure", 1, vec![SlotType::GcRef]));
         
-        // Interface: 2 slots (type_id, data)
-        set_builtin(TypeMeta::builtin(ValueKind::Interface, "interface{}", 2, vec![false, false]));
+        // Interface: 2 slots (type_id, data) - requires dynamic scanning
+        set_builtin(TypeMeta::builtin(ValueKind::Interface, "interface{}", 2, vec![SlotType::Interface0, SlotType::Interface1]));
     }
     
     fn set(&mut self, id: TypeId, meta: TypeMeta) {

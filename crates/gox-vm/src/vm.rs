@@ -1716,19 +1716,16 @@ impl Vm {
                             // Not a pointer, skip
                         }
                         SlotType::GcRef => {
-                            // Definitely a pointer
                             if val != 0 {
                                 self.gc.mark_gray(val as GcRef);
                             }
                         }
                         SlotType::Interface1 => {
-                            // May be a pointer depending on type_id in previous slot
+                            // Dynamic check: type_id in previous slot determines if this is a ref
                             if slot_idx > 0 {
                                 let type_id = fiber.stack[slot_idx - 1] as u32;
-                                if self.types.get(type_id).map(|t| t.kind.is_reference()).unwrap_or(false) {
-                                    if val != 0 {
-                                        self.gc.mark_gray(val as GcRef);
-                                    }
+                                if gox_common_core::type_needs_gc(type_id) && val != 0 {
+                                    self.gc.mark_gray(val as GcRef);
                                 }
                             }
                         }
@@ -1744,12 +1741,13 @@ impl Vm {
                     }
                 }
                 
-                // Scan defer stack args
+                // Scan defer stack args (conservatively treat as potential refs)
                 for defer in &fiber.defer_stack {
                     for arg in &defer.args[..defer.arg_count as usize] {
-                        // Conservatively mark all defer args as potential refs
                         if *arg != 0 {
-                            // TODO: Use type info for defer args when available
+                            // Conservative: mark any non-zero value as potential GcRef
+                            // This may over-mark but is safe
+                            self.gc.mark_gray(*arg as GcRef);
                         }
                     }
                 }
@@ -1774,6 +1772,9 @@ impl Vm {
         }
         
         // Mark globals that are GC references
+        // TODO: Add slot_types to GlobalDef for precise interface scanning
+        // Currently is_ref=true marks all slots as GcRef, which is safe but
+        // may over-mark for structs with interface fields
         if let Some(ref module) = self.module {
             let mut slot_idx = 0usize;
             for g in &module.globals {
@@ -1805,8 +1806,6 @@ impl Vm {
         self.gc.total_bytes()
     }
 }
-
-// Note: scan_object is now in gox_runtime_core::gc_types::scan_object
 
 impl Default for Vm {
     fn default() -> Self {

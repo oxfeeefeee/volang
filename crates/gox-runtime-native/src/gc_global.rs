@@ -130,6 +130,8 @@ pub fn collect_garbage() {
     let mut gc = GLOBAL_GC.lock();
     
     // Mark roots from globals (only slots marked as GC refs)
+    // TODO: Use slot_types for precise interface scanning in globals
+    // Currently is_ref=true marks all slots as GcRef, safe but may over-mark
     {
         let globals = GLOBALS.lock();
         let is_ref = GLOBALS_IS_REF.lock();

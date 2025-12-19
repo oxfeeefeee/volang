@@ -1,13 +1,13 @@
 //! GC type information and unified object scanning.
 //!
 //! This module provides:
-//! - Static struct ptr_bitmap table (initialized once at module load)
+//! - Static struct slot_types table (initialized once at module load)
 //! - Unified scan_object function shared by VM and JIT
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use once_cell::sync::OnceCell;
-use gox_common_core::{ValueKind, FIRST_USER_TYPE_ID, type_needs_gc};
+use gox_common_core::{ValueKind, SlotType, FIRST_USER_TYPE_ID, type_needs_gc};
 
 use crate::gc::{Gc, GcRef};
 
@@ -15,32 +15,32 @@ use crate::gc::{Gc, GcRef};
 use crate::objects::map;
 
 // =============================================================================
-// Static Struct Bitmap Table
+// Static Struct SlotType Table
 // =============================================================================
 
-/// Struct ptr_bitmaps, indexed by (type_id - FIRST_USER_TYPE_ID).
-/// Each bitmap indicates which slots contain GC references.
-static STRUCT_BITMAPS: OnceCell<Box<[Box<[bool]>]>> = OnceCell::new();
+/// Struct slot_types, indexed by (type_id - FIRST_USER_TYPE_ID).
+/// Each entry describes how GC should scan each slot.
+static STRUCT_SLOT_TYPES: OnceCell<Box<[Box<[SlotType]>]>> = OnceCell::new();
 
-/// Initialize the struct bitmap table.
+/// Initialize the struct slot_types table.
 /// Called once at module load time by VM or JIT.
-pub fn init_struct_bitmaps(bitmaps: Vec<Vec<bool>>) {
-    let boxed: Box<[Box<[bool]>]> = bitmaps
+pub fn init_struct_slot_types(slot_types: Vec<Vec<SlotType>>) {
+    let boxed: Box<[Box<[SlotType]>]> = slot_types
         .into_iter()
         .map(|v| v.into_boxed_slice())
         .collect();
-    let _ = STRUCT_BITMAPS.set(boxed);
+    let _ = STRUCT_SLOT_TYPES.set(boxed);
 }
 
-/// Get ptr_bitmap for a user-defined struct type.
+/// Get slot_types for a user-defined struct type.
 /// Returns None if type_id < FIRST_USER_TYPE_ID or not registered.
 #[inline]
-pub fn get_struct_bitmap(type_id: u32) -> Option<&'static [bool]> {
+pub fn get_struct_slot_types(type_id: u32) -> Option<&'static [SlotType]> {
     if type_id < FIRST_USER_TYPE_ID {
         return None;
     }
     let idx = (type_id - FIRST_USER_TYPE_ID) as usize;
-    STRUCT_BITMAPS.get()?.get(idx).map(|b| b.as_ref())
+    STRUCT_SLOT_TYPES.get()?.get(idx).map(|b| b.as_ref())
 }
 
 // =============================================================================
@@ -56,17 +56,10 @@ pub fn scan_object(gc: &mut Gc, obj: GcRef) {
     
     let type_id = unsafe { (*obj).header.type_id };
     
-    // User-defined struct: use ptr_bitmap
+    // User-defined struct: use slot_types for dynamic scanning
     if type_id >= FIRST_USER_TYPE_ID {
-        if let Some(bitmap) = get_struct_bitmap(type_id) {
-            for (i, &is_ptr) in bitmap.iter().enumerate() {
-                if is_ptr {
-                    let val = Gc::read_slot(obj, i);
-                    if val != 0 {
-                        gc.mark_gray(val as GcRef);
-                    }
-                }
-            }
+        if let Some(slot_types) = get_struct_slot_types(type_id) {
+            scan_with_slot_types(gc, obj, slot_types, 0);
         }
         return;
     }
@@ -102,19 +95,12 @@ fn scan_array(gc: &mut Gc, obj: GcRef) {
     }
     
     if elem_type >= FIRST_USER_TYPE_ID {
-        // Struct elements: use ptr_bitmap for each element
-        if let Some(bitmap) = get_struct_bitmap(elem_type) {
-            let slots_per_elem = bitmap.len().max(1);
+        // Struct elements: use slot_types for each element
+        if let Some(slot_types) = get_struct_slot_types(elem_type) {
+            let slots_per_elem = slot_types.len().max(1);
             for i in 0..len {
                 let base = 3 + i * slots_per_elem;
-                for (j, &is_ptr) in bitmap.iter().enumerate() {
-                    if is_ptr {
-                        let val = Gc::read_slot(obj, base + j);
-                        if val != 0 {
-                            gc.mark_gray(val as GcRef);
-                        }
-                    }
-                }
+                scan_with_slot_types(gc, obj, slot_types, base);
             }
         }
     } else {
@@ -196,27 +182,64 @@ fn scan_closure(gc: &mut Gc, obj: GcRef) {
     }
 }
 
+/// Scan slots using slot_types for dynamic interface handling.
+/// This is the core function that handles Interface1 slots dynamically.
+fn scan_with_slot_types(gc: &mut Gc, obj: GcRef, slot_types: &[SlotType], base_offset: usize) {
+    let mut i = 0;
+    while i < slot_types.len() {
+        match slot_types[i] {
+            SlotType::Value => {
+                // Non-pointer, skip
+            }
+            SlotType::GcRef => {
+                let val = Gc::read_slot(obj, base_offset + i);
+                if val != 0 {
+                    gc.mark_gray(val as GcRef);
+                }
+            }
+            SlotType::Interface0 => {
+                // Interface first slot is type_id, not a pointer
+                // Next slot (Interface1) needs dynamic check
+            }
+            SlotType::Interface1 => {
+                // Dynamic check: look at the type_id in previous slot
+                if i > 0 {
+                    let type_id = Gc::read_slot(obj, base_offset + i - 1) as u32;
+                    // If type_id indicates a reference type, scan the data slot
+                    if type_needs_gc(type_id) {
+                        let val = Gc::read_slot(obj, base_offset + i);
+                        if val != 0 {
+                            gc.mark_gray(val as GcRef);
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     
     #[test]
-    fn test_init_and_get_bitmap() {
+    fn test_init_and_get_slot_types() {
         // Note: OnceCell can only be set once, so this test may conflict with others
-        let bitmaps = vec![
-            vec![true, false, true],  // type_id 32
-            vec![false, true],        // type_id 33
+        let slot_types = vec![
+            vec![SlotType::GcRef, SlotType::Value, SlotType::GcRef],  // type_id 32
+            vec![SlotType::Value, SlotType::GcRef],                   // type_id 33
         ];
-        init_struct_bitmaps(bitmaps);
+        init_struct_slot_types(slot_types);
         
         // Should return None for built-in types
-        assert!(get_struct_bitmap(0).is_none());
-        assert!(get_struct_bitmap(14).is_none());
-        assert!(get_struct_bitmap(31).is_none());
+        assert!(get_struct_slot_types(0).is_none());
+        assert!(get_struct_slot_types(14).is_none());
+        assert!(get_struct_slot_types(31).is_none());
         
-        // Should return bitmap for user types
-        assert_eq!(get_struct_bitmap(32), Some(&[true, false, true][..]));
-        assert_eq!(get_struct_bitmap(33), Some(&[false, true][..]));
-        assert!(get_struct_bitmap(34).is_none());
+        // Should return slot_types for user types
+        assert_eq!(get_struct_slot_types(32), Some(&[SlotType::GcRef, SlotType::Value, SlotType::GcRef][..]));
+        assert_eq!(get_struct_slot_types(33), Some(&[SlotType::Value, SlotType::GcRef][..]));
+        assert!(get_struct_slot_types(34).is_none());
     }
 }

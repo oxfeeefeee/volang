@@ -1069,8 +1069,6 @@ pub mod channel {
         get_state(chan).close();
     }
     
-    // Note: channel GC scanning is now in gc_types::scan_channel
-    
     /// Drop channel inner state.
     pub unsafe fn drop_inner(chan: GcRef) {
         let ptr = Gc::read_slot(chan, CHAN_PTR_SLOT) as *mut ChannelState;

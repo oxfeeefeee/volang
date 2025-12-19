@@ -101,11 +101,11 @@ impl JitCompiler {
         // Initialize global runtime state
         gox_runtime_native::init_gc();
         
-        // Initialize struct bitmaps for GC scanning
-        let bitmaps: Vec<Vec<bool>> = bytecode.types.iter()
-            .map(|t| t.ptr_bitmap.clone())
+        // Initialize struct slot_types for GC scanning
+        let slot_types_data: Vec<Vec<_>> = bytecode.types.iter()
+            .map(|t| t.slot_types.clone())
             .collect();
-        gox_runtime_core::gc_types::init_struct_bitmaps(bitmaps);
+        gox_runtime_core::gc_types::init_struct_slot_types(slot_types_data);
         
         // Build globals metadata: expand each GlobalDef into per-slot is_ref flags
         let mut globals_is_ref = Vec::new();

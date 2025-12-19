@@ -385,18 +385,10 @@ fn write_type_meta(buf: &mut Vec<u8>, ty: &TypeMeta) {
     write_u16(buf, ty.size_slots as u16);
     write_string(buf, &ty.name);
     
-    // ptr_bitmap as bit-packed bytes
-    let bitmap_bytes = (ty.ptr_bitmap.len() + 7) / 8;
-    write_u32(buf, ty.ptr_bitmap.len() as u32);
-    for i in 0..bitmap_bytes {
-        let mut byte = 0u8;
-        for j in 0..8 {
-            let idx = i * 8 + j;
-            if idx < ty.ptr_bitmap.len() && ty.ptr_bitmap[idx] {
-                byte |= 1 << j;
-            }
-        }
-        buf.push(byte);
+    // slot_types: length + raw u8 values
+    write_u16(buf, ty.slot_types.len() as u16);
+    for st in &ty.slot_types {
+        buf.push(*st as u8);
     }
     
     // Optional type references
@@ -506,17 +498,13 @@ fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError>
     let size_slots = read_u16(cursor)? as usize;
     let name = read_string(cursor)?;
     
-    // ptr_bitmap
-    let bitmap_len = read_u32(cursor)? as usize;
-    let bitmap_bytes = (bitmap_len + 7) / 8;
-    let mut bitmap_data = vec![0u8; bitmap_bytes];
-    cursor.read_exact(&mut bitmap_data).map_err(|_| BytecodeError::UnexpectedEof)?;
-    
-    let mut ptr_bitmap = Vec::with_capacity(bitmap_len);
-    for i in 0..bitmap_len {
-        let byte_idx = i / 8;
-        let bit_idx = i % 8;
-        ptr_bitmap.push((bitmap_data[byte_idx] >> bit_idx) & 1 != 0);
+    // slot_types
+    let slot_types_len = read_u16(cursor)? as usize;
+    let mut slot_types = Vec::with_capacity(slot_types_len);
+    for _ in 0..slot_types_len {
+        let mut st_buf = [0u8; 1];
+        cursor.read_exact(&mut st_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+        slot_types.push(SlotType::from_u8(st_buf[0]));
     }
     
     // Optional type references
@@ -532,7 +520,7 @@ fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError>
         kind,
         size_slots,
         size_bytes: size_slots * 8,
-        ptr_bitmap,
+        slot_types,
         name,
         field_layouts: Vec::new(),
         elem_type: if elem_type == 0xFFFFFFFF { None } else { Some(elem_type) },
