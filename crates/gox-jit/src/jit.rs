@@ -101,6 +101,15 @@ impl JitCompiler {
         // Initialize global runtime state
         gox_runtime_native::init_gc();
         
+        // Initialize type table for user-defined types (GC scanning)
+        gox_runtime_native::init_type_table();
+        for type_meta in &bytecode.types {
+            if let Some(type_id) = type_meta.id {
+                // Register user-defined type with its ptr_bitmap
+                gox_runtime_native::register_type(type_id, type_meta.ptr_bitmap.clone());
+            }
+        }
+        
         // Build globals metadata: expand each GlobalDef into per-slot is_ref flags
         let mut globals_is_ref = Vec::new();
         for g in &bytecode.globals {

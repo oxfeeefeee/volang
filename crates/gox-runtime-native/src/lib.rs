@@ -25,7 +25,7 @@ pub mod extern_dispatch;
 pub mod extern_fns;
 
 pub use symbols::{RuntimeSymbols, RuntimeSymbol};
-pub use gc_global::{init_gc, init_globals, init_func_table, set_func_ptr, with_gc};
+pub use gc_global::{init_gc, init_globals, init_func_table, set_func_ptr, with_gc, init_type_table, register_type, TypeInfo};
 
 // Re-export core runtime types that native code might need
 pub use gox_runtime_core::ffi::*;
