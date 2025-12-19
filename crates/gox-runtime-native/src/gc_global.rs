@@ -1,66 +1,88 @@
 //! Global GC and runtime state for JIT.
 //!
-//! Provides thread-local GC and global variable storage that runtime
+//! Provides shared GC and global variable storage that runtime
 //! functions can access without explicit pointer parameters.
+//!
+//! All state is protected by Mutex for thread-safety, enabling
+//! multi-worker goroutine scheduling.
 
-use std::cell::RefCell;
 use gox_runtime_core::gc::{Gc, GcRef, TypeId};
+use once_cell::sync::Lazy;
+use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
-thread_local! {
-    static GLOBAL_GC: RefCell<Gc> = RefCell::new(Gc::new());
-    static GLOBALS: RefCell<Vec<u64>> = RefCell::new(Vec::new());
-    static GLOBALS_IS_REF: RefCell<Vec<bool>> = RefCell::new(Vec::new());
-    static FUNC_TABLE: RefCell<Vec<*const u8>> = RefCell::new(Vec::new());
+/// Global GC instance shared across all workers.
+/// 
+/// SAFETY: Gc contains raw pointers but we ensure thread-safety through the Mutex.
+/// All access to GC objects goes through this lock.
+struct SyncGc(Mutex<Gc>);
+unsafe impl Send for SyncGc {}
+unsafe impl Sync for SyncGc {}
+
+impl SyncGc {
+    fn lock(&self) -> MutexGuard<'_, Gc> {
+        self.0.lock()
+    }
 }
 
+static GLOBAL_GC: Lazy<SyncGc> = Lazy::new(|| SyncGc(Mutex::new(Gc::new())));
+
+/// Global variables storage.
+static GLOBALS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+/// Type info for globals (which are GC refs).
+static GLOBALS_IS_REF: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
+/// Function pointer table wrapper for thread-safety.
+struct SyncFuncTable(RwLock<Vec<*const u8>>);
+unsafe impl Send for SyncFuncTable {}
+unsafe impl Sync for SyncFuncTable {}
+
+impl SyncFuncTable {
+    fn write(&self) -> RwLockWriteGuard<'_, Vec<*const u8>> {
+        self.0.write()
+    }
+}
+
+static FUNC_TABLE: SyncFuncTable = SyncFuncTable(RwLock::new(Vec::new()));
+
 // Global pointer to function table for Cranelift symbol access
-static mut FUNC_TABLE_PTR: *const *const u8 = std::ptr::null();
+// Atomic pointer for lock-free read access
+static FUNC_TABLE_PTR: AtomicPtr<*const u8> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Initialize or reset the global GC.
 pub fn init_gc() {
-    GLOBAL_GC.with(|gc| {
-        *gc.borrow_mut() = Gc::new();
-    });
+    *GLOBAL_GC.lock() = Gc::new();
 }
 
 /// Initialize globals storage with the given size and type metadata.
 pub fn init_globals(size: usize, is_ref: Vec<bool>) {
-    GLOBALS.with(|g| {
-        let mut globals = g.borrow_mut();
-        globals.clear();
-        globals.resize(size, 0);
-    });
-    GLOBALS_IS_REF.with(|r| {
-        *r.borrow_mut() = is_ref;
-    });
+    let mut globals = GLOBALS.lock();
+    globals.clear();
+    globals.resize(size, 0);
+    *GLOBALS_IS_REF.lock() = is_ref;
 }
 
 /// Initialize function pointer table with the given size.
 pub fn init_func_table(size: usize) {
-    FUNC_TABLE.with(|t| {
-        let mut table = t.borrow_mut();
-        table.clear();
-        table.resize(size, std::ptr::null());
-        // Update global pointer for Cranelift access
-        unsafe {
-            FUNC_TABLE_PTR = table.as_ptr();
-        }
-    });
+    let mut table = FUNC_TABLE.write();
+    table.clear();
+    table.resize(size, std::ptr::null());
+    // Update global pointer for Cranelift access
+    FUNC_TABLE_PTR.store(table.as_ptr() as *mut _, Ordering::Release);
 }
 
 /// Set a function pointer in the table.
 pub fn set_func_ptr(func_id: u32, ptr: *const u8) {
-    FUNC_TABLE.with(|t| {
-        let mut table = t.borrow_mut();
-        debug_assert!((func_id as usize) < table.len());
-        table[func_id as usize] = ptr;
-    });
+    let mut table = FUNC_TABLE.write();
+    debug_assert!((func_id as usize) < table.len());
+    table[func_id as usize] = ptr;
 }
 
 /// Get the function table pointer (for JIT symbol registration).
 #[no_mangle]
 pub extern "C" fn gox_func_table_ptr() -> *const *const u8 {
-    unsafe { FUNC_TABLE_PTR }
+    FUNC_TABLE_PTR.load(Ordering::Acquire)
 }
 
 // =============================================================================
@@ -70,13 +92,13 @@ pub extern "C" fn gox_func_table_ptr() -> *const *const u8 {
 /// Get a global variable by index.
 #[no_mangle]
 pub extern "C" fn gox_rt_get_global(idx: usize) -> u64 {
-    GLOBALS.with(|g| g.borrow()[idx])
+    GLOBALS.lock()[idx]
 }
 
 /// Set a global variable by index.
 #[no_mangle]
 pub extern "C" fn gox_rt_set_global(idx: usize, value: u64) {
-    GLOBALS.with(|g| g.borrow_mut()[idx] = value);
+    GLOBALS.lock()[idx] = value;
 }
 
 /// Access the global GC for operations.
@@ -84,7 +106,7 @@ pub fn with_gc<F, R>(f: F) -> R
 where
     F: FnOnce(&mut Gc) -> R,
 {
-    GLOBAL_GC.with(|gc| f(&mut gc.borrow_mut()))
+    f(&mut GLOBAL_GC.lock())
 }
 
 /// Get the number of GC objects.
@@ -102,27 +124,23 @@ pub fn gc_total_bytes() -> usize {
 /// Note: JIT GC currently only scans globals, not the native stack.
 /// Full stack scanning requires Cranelift stack maps (TODO).
 pub fn collect_garbage() {
+    let mut gc = GLOBAL_GC.lock();
+    
     // Mark roots from globals (only slots marked as GC refs)
-    GLOBALS.with(|g| {
-        GLOBALS_IS_REF.with(|r| {
-            let globals = g.borrow();
-            let is_ref = r.borrow();
-            debug_assert_eq!(globals.len(), is_ref.len(), "globals and is_ref length mismatch");
-            with_gc(|gc| {
-                for (&val, &is_gc_ref) in globals.iter().zip(is_ref.iter()) {
-                    if is_gc_ref && val != 0 {
-                        gc.mark_gray(val as GcRef);
-                    }
-                }
-            });
-        });
-    });
+    {
+        let globals = GLOBALS.lock();
+        let is_ref = GLOBALS_IS_REF.lock();
+        debug_assert_eq!(globals.len(), is_ref.len(), "globals and is_ref length mismatch");
+        for (&val, &is_gc_ref) in globals.iter().zip(is_ref.iter()) {
+            if is_gc_ref && val != 0 {
+                gc.mark_gray(val as GcRef);
+            }
+        }
+    }
     
     // Perform collection
-    with_gc(|gc| {
-        gc.collect(|gc, obj| {
-            scan_object(gc, obj);
-        });
+    gc.collect(|gc, obj| {
+        scan_object(gc, obj);
     });
 }
 
@@ -179,6 +197,36 @@ fn scan_object(gc: &mut Gc, obj: GcRef) {
 #[no_mangle]
 pub extern "C" fn gox_rt_alloc(type_id: TypeId, size_slots: usize) -> GcRef {
     with_gc(|gc| gc.alloc(type_id, size_slots))
+}
+
+/// Write barrier for GC (using global GC).
+#[no_mangle]
+pub extern "C" fn gox_rt_write_barrier(parent: GcRef, child: GcRef) {
+    with_gc(|gc| gc.write_barrier(parent, child))
+}
+
+/// Mark object as gray (using global GC).
+#[no_mangle]
+pub extern "C" fn gox_rt_mark_gray(obj: GcRef) {
+    with_gc(|gc| gc.mark_gray(obj))
+}
+
+/// Read a slot from a GC object.
+///
+/// # Safety
+/// `obj` must be a valid GcRef.
+#[no_mangle]
+pub unsafe extern "C" fn gox_gc_read_slot(obj: GcRef, idx: usize) -> u64 {
+    Gc::read_slot(obj, idx)
+}
+
+/// Write a slot to a GC object.
+///
+/// # Safety
+/// `obj` must be a valid GcRef.
+#[no_mangle]
+pub unsafe extern "C" fn gox_gc_write_slot(obj: GcRef, idx: usize, val: u64) {
+    Gc::write_slot(obj, idx, val)
 }
 
 /// Create a string from raw bytes using the global GC.

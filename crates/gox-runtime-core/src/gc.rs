@@ -297,53 +297,10 @@ impl Drop for Gc {
 }
 
 // =============================================================================
-// C ABI Functions - Called by Cranelift-generated code
+// Note: All C ABI functions have been moved to gox-runtime-native/src/gc_global.rs
+// because they are only used by JIT/AOT, not by VM.
+// VM uses the Rust methods directly (Gc::read_slot, Gc::write_slot, etc.)
 // =============================================================================
-
-/// Allocate a GC object. Called by Cranelift-generated code.
-///
-/// # Safety
-/// `gc` must be a valid pointer to a Gc instance.
-#[no_mangle]
-pub unsafe extern "C" fn gox_gc_alloc(gc: *mut Gc, type_id: TypeId, size_slots: usize) -> GcRef {
-    (*gc).alloc(type_id, size_slots)
-}
-
-/// Read a slot from a GC object.
-///
-/// # Safety
-/// `obj` must be a valid GcRef.
-#[no_mangle]
-pub unsafe extern "C" fn gox_gc_read_slot(obj: GcRef, idx: usize) -> u64 {
-    Gc::read_slot(obj, idx)
-}
-
-/// Write a slot to a GC object.
-///
-/// # Safety
-/// `obj` must be a valid GcRef.
-#[no_mangle]
-pub unsafe extern "C" fn gox_gc_write_slot(obj: GcRef, idx: usize, val: u64) {
-    Gc::write_slot(obj, idx, val)
-}
-
-/// Write barrier for GC.
-///
-/// # Safety
-/// Both pointers must be valid.
-#[no_mangle]
-pub unsafe extern "C" fn gox_gc_write_barrier(gc: *mut Gc, parent: GcRef, child: GcRef) {
-    (*gc).write_barrier(parent, child)
-}
-
-/// Mark object as gray (for GC roots).
-///
-/// # Safety
-/// Both pointers must be valid.
-#[no_mangle]
-pub unsafe extern "C" fn gox_gc_mark_gray(gc: *mut Gc, obj: GcRef) {
-    (*gc).mark_gray(obj)
-}
 
 #[cfg(test)]
 mod tests {
@@ -364,14 +321,13 @@ mod tests {
     }
     
     #[test]
-    fn test_c_abi() {
+    fn test_slot_access() {
         let mut gc = Gc::new();
-        unsafe {
-            let obj = gox_gc_alloc(&mut gc, 1, 2);
-            assert!(!obj.is_null());
-            
-            gox_gc_write_slot(obj, 0, 42);
-            assert_eq!(gox_gc_read_slot(obj, 0), 42);
-        }
+        let obj = gc.alloc(1, 2);
+        assert!(!obj.is_null());
+        
+        // Test using Rust methods directly (VM style)
+        Gc::write_slot(obj, 0, 42);
+        assert_eq!(Gc::read_slot(obj, 0), 42);
     }
 }

@@ -142,8 +142,8 @@ impl RuntimeFunc {
             RuntimeFunc::GcAlloc => "gox_rt_alloc",  // Uses global GC
             RuntimeFunc::GcReadSlot => "gox_gc_read_slot",
             RuntimeFunc::GcWriteSlot => "gox_gc_write_slot",
-            RuntimeFunc::GcWriteBarrier => "gox_gc_write_barrier",
-            RuntimeFunc::GcMarkGray => "gox_gc_mark_gray",
+            RuntimeFunc::GcWriteBarrier => "gox_rt_write_barrier",  // Uses global GC
+            RuntimeFunc::GcMarkGray => "gox_rt_mark_gray",  // Uses global GC
             // Globals
             RuntimeFunc::GetGlobal => "gox_rt_get_global",
             RuntimeFunc::SetGlobal => "gox_rt_set_global",
@@ -270,12 +270,13 @@ impl RuntimeFunc {
                 sig.params.push(AbiParam::new(I64));
             }
             RuntimeFunc::GcWriteBarrier => {
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
-                sig.params.push(AbiParam::new(I64));
+                // gox_rt_write_barrier uses global GC, no GC pointer needed
+                sig.params.push(AbiParam::new(I64));  // parent
+                sig.params.push(AbiParam::new(I64));  // child
             }
             RuntimeFunc::GcMarkGray => {
-                sig.params.push(AbiParam::new(I64));
+                // gox_rt_mark_gray uses global GC, no GC pointer needed
+                sig.params.push(AbiParam::new(I64));  // obj
             }
 
             // === String ===

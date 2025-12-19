@@ -664,6 +664,7 @@ dependencies = [
  "gox-common-core",
  "gox-runtime-core",
  "libffi",
+ "once_cell",
  "parking_lot",
 ]
 

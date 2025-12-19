@@ -20,12 +20,12 @@ impl RuntimeSymbols {
     /// Create a new symbol table with all runtime functions.
     pub fn new() -> Self {
         let symbols = vec![
-            // GC functions (using global GC wrappers)
+            // GC functions (all from gc_global)
             RuntimeSymbol { name: "gox_rt_alloc", ptr: crate::gc_global::gox_rt_alloc as *const u8 },
-            RuntimeSymbol { name: "gox_gc_read_slot", ptr: ffi::gox_gc_read_slot as *const u8 },
-            RuntimeSymbol { name: "gox_gc_write_slot", ptr: ffi::gox_gc_write_slot as *const u8 },
-            RuntimeSymbol { name: "gox_gc_write_barrier", ptr: ffi::gox_gc_write_barrier as *const u8 },
-            RuntimeSymbol { name: "gox_gc_mark_gray", ptr: ffi::gox_gc_mark_gray as *const u8 },
+            RuntimeSymbol { name: "gox_gc_read_slot", ptr: crate::gc_global::gox_gc_read_slot as *const u8 },
+            RuntimeSymbol { name: "gox_gc_write_slot", ptr: crate::gc_global::gox_gc_write_slot as *const u8 },
+            RuntimeSymbol { name: "gox_rt_write_barrier", ptr: crate::gc_global::gox_rt_write_barrier as *const u8 },
+            RuntimeSymbol { name: "gox_rt_mark_gray", ptr: crate::gc_global::gox_rt_mark_gray as *const u8 },
             
             // Global variable functions
             RuntimeSymbol { name: "gox_rt_get_global", ptr: crate::gc_global::gox_rt_get_global as *const u8 },

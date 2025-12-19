@@ -16,15 +16,10 @@
 pub use crate::gc::{Gc, GcRef, GcHeader, TypeId, NULL_REF};
 
 // =============================================================================
-// GC C ABI (5 functions)
+// GC C ABI - All moved to gox-runtime-native/src/gc_global.rs
 // =============================================================================
-pub use crate::gc::{
-    gox_gc_alloc,
-    gox_gc_read_slot,
-    gox_gc_write_slot,
-    gox_gc_write_barrier,
-    gox_gc_mark_gray,
-};
+// JIT/AOT uses gox_gc_read_slot, gox_gc_write_slot from gc_global.rs
+// VM uses Gc::read_slot, Gc::write_slot directly
 
 // =============================================================================
 // String C ABI (6 functions)
