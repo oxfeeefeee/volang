@@ -107,20 +107,20 @@ impl JitCompiler {
             .collect();
         gox_runtime_core::gc_types::init_struct_slot_types(slot_types_data);
         
-        // Build globals metadata: expand each GlobalDef's slot_types into is_ref flags
-        use gox_vm::bytecode::SlotType;
+        // Build globals metadata: use type_id to determine is_ref flags
+        use gox_common_core::RuntimeTypeId;
         let mut globals_is_ref = Vec::new();
         for g in &bytecode.globals {
-            if let Some(ref slot_types) = g.slot_types {
-                for st in slot_types.iter() {
-                    // GcRef and Interface1 may contain pointers
-                    globals_is_ref.push(matches!(st, SlotType::GcRef | SlotType::Interface1));
-                }
+            if RuntimeTypeId::is_interface(g.type_id) {
+                // Interface: 2 slots - first is type_id (not ref), second may be ref
+                globals_is_ref.push(false);  // Interface0: type_id
+                globals_is_ref.push(true);   // Interface1: may be GcRef
+            } else if RuntimeTypeId::needs_gc(g.type_id) {
+                // GC type: 1 slot, is ref
+                globals_is_ref.push(true);
             } else {
-                // None = all Value, no GC needed
-                for _ in 0..g.slots {
-                    globals_is_ref.push(false);
-                }
+                // Value type: 1 slot, not ref
+                globals_is_ref.push(false);
             }
         }
         gox_runtime_native::init_globals(globals_is_ref.len(), globals_is_ref);

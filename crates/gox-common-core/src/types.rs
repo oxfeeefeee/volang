@@ -125,7 +125,7 @@ pub enum RuntimeTypeId {
     Slice = ValueKind::Slice as u32,
     Map = ValueKind::Map as u32,
     // 17 = Struct (use FirstStruct instead)
-    Pointer = ValueKind::Pointer as u32,
+    // 18 = Pointer (removed - use struct's type_id directly)
     // 19 = Interface (use FirstInterface instead)
     Array = ValueKind::Array as u32,
     Channel = ValueKind::Channel as u32,

@@ -211,9 +211,6 @@ impl TypeTable {
         // Map: GcRef (1 slot)
         set_builtin(TypeMeta::builtin(RuntimeTypeId::Map, "map", 1, vec![SlotType::GcRef]));
         
-        // Pointer: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(RuntimeTypeId::Pointer, "pointer", 1, vec![SlotType::GcRef]));
-        
         // Channel: GcRef (1 slot)
         set_builtin(TypeMeta::builtin(RuntimeTypeId::Channel, "channel", 1, vec![SlotType::GcRef]));
         

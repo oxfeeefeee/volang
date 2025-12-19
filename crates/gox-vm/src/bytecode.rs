@@ -99,8 +99,8 @@ pub struct ExternDef {
 pub struct GlobalDef {
     pub name: String,
     pub slots: u16,
-    /// Slot types for GC scanning. None = all Value (no GC needed).
-    pub slot_types: Option<Box<[SlotType]>>,
+    /// Runtime type ID for GC scanning.
+    pub type_id: u32,
 }
 
 /// Bytecode module.
@@ -129,20 +129,12 @@ impl Module {
     }
     
     /// Add a global variable and return its index.
-    /// If all slot_types are Value, stores None to save memory.
-    pub fn add_global(&mut self, name: &str, slot_types: Vec<SlotType>) -> u32 {
+    pub fn add_global(&mut self, name: &str, type_id: u32, slots: u16) -> u32 {
         let idx = self.globals.len();
-        let slots = slot_types.len() as u16;
-        // Optimize: None if all slots are Value (no GC needed)
-        let opt_types = if slot_types.iter().all(|s| matches!(s, SlotType::Value)) {
-            None
-        } else {
-            Some(slot_types.into_boxed_slice())
-        };
         self.globals.push(GlobalDef {
             name: name.to_string(),
             slots,
-            slot_types: opt_types,
+            type_id,
         });
         idx as u32
     }
@@ -222,15 +214,7 @@ impl Module {
         for g in &self.globals {
             write_string(&mut buf, &g.name);
             write_u16(&mut buf, g.slots);
-            // Write slot_types: 0 = None (all Value), else count + types
-            if let Some(ref types) = g.slot_types {
-                buf.push(types.len() as u8);
-                for st in types.iter() {
-                    buf.push(*st as u8);
-                }
-            } else {
-                buf.push(0); // None marker
-            }
+            write_u32(&mut buf, g.type_id);
         }
         
         // Externs section
@@ -293,22 +277,8 @@ impl Module {
         for _ in 0..global_count {
             let g_name = read_string(&mut cursor)?;
             let slots = read_u16(&mut cursor)?;
-            // Read slot_types: 0 = None, else count + types
-            let mut type_count_buf = [0u8; 1];
-            cursor.read_exact(&mut type_count_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
-            let type_count = type_count_buf[0];
-            let slot_types = if type_count == 0 {
-                None
-            } else {
-                let mut types = Vec::with_capacity(type_count as usize);
-                for _ in 0..type_count {
-                    let mut st_buf = [0u8; 1];
-                    cursor.read_exact(&mut st_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
-                    types.push(SlotType::from_u8(st_buf[0]));
-                }
-                Some(types.into_boxed_slice())
-            };
-            globals.push(GlobalDef { name: g_name, slots, slot_types });
+            let type_id = read_u32(&mut cursor)?;
+            globals.push(GlobalDef { name: g_name, slots, type_id });
         }
         
         // Externs section

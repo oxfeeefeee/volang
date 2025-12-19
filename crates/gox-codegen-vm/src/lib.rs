@@ -37,35 +37,59 @@ use gox_syntax::ast::{Decl, File};
 use gox_vm::bytecode::{Constant, FunctionDef, Module};
 use gox_vm::instruction::Opcode;
 
-/// Convert analysis Type to SlotType vector for GC scanning.
-fn type_to_slot_types(ty: &Type) -> Vec<SlotType> {
+use gox_common_core::RuntimeTypeId;
+
+/// Convert analysis Type to RuntimeTypeId and slot count for GC scanning.
+fn type_to_type_id_and_slots(ty: &Type, named_types: &[gox_analysis::NamedTypeInfo]) -> (u32, u16) {
     match ty {
         // Value types (1 slot, no GC)
-        Type::Basic(BasicType::Bool) |
-        Type::Basic(BasicType::Int) | Type::Basic(BasicType::Int8) |
-        Type::Basic(BasicType::Int16) | Type::Basic(BasicType::Int32) |
-        Type::Basic(BasicType::Int64) | Type::Basic(BasicType::Uint) |
-        Type::Basic(BasicType::Uint8) | Type::Basic(BasicType::Uint16) |
-        Type::Basic(BasicType::Uint32) | Type::Basic(BasicType::Uint64) |
-        Type::Basic(BasicType::Float32) | Type::Basic(BasicType::Float64) |
-        Type::Untyped(_) => vec![SlotType::Value],
+        Type::Basic(BasicType::Bool) => (RuntimeTypeId::Bool as u32, 1),
+        Type::Basic(BasicType::Int) => (RuntimeTypeId::Int as u32, 1),
+        Type::Basic(BasicType::Int8) => (RuntimeTypeId::Int8 as u32, 1),
+        Type::Basic(BasicType::Int16) => (RuntimeTypeId::Int16 as u32, 1),
+        Type::Basic(BasicType::Int32) => (RuntimeTypeId::Int32 as u32, 1),
+        Type::Basic(BasicType::Int64) => (RuntimeTypeId::Int64 as u32, 1),
+        Type::Basic(BasicType::Uint) => (RuntimeTypeId::Uint as u32, 1),
+        Type::Basic(BasicType::Uint8) => (RuntimeTypeId::Uint8 as u32, 1),
+        Type::Basic(BasicType::Uint16) => (RuntimeTypeId::Uint16 as u32, 1),
+        Type::Basic(BasicType::Uint32) => (RuntimeTypeId::Uint32 as u32, 1),
+        Type::Basic(BasicType::Uint64) => (RuntimeTypeId::Uint64 as u32, 1),
+        Type::Basic(BasicType::Float32) => (RuntimeTypeId::Float32 as u32, 1),
+        Type::Basic(BasicType::Float64) => (RuntimeTypeId::Float64 as u32, 1),
+        Type::Untyped(_) => (RuntimeTypeId::Int as u32, 1),
         
         // Reference types (1 slot, GcRef)
-        Type::Basic(BasicType::String) |
-        Type::Slice(_) | Type::Array(_) | Type::Map(_) |
-        Type::Pointer(_) | Type::Func(_) | Type::Chan(_) => vec![SlotType::GcRef],
+        Type::Basic(BasicType::String) => (RuntimeTypeId::String as u32, 1),
+        Type::Slice(_) => (RuntimeTypeId::Slice as u32, 1),
+        Type::Array(_) => (RuntimeTypeId::Array as u32, 1),
+        Type::Map(_) => (RuntimeTypeId::Map as u32, 1),
+        Type::Pointer(inner) => {
+            // Pointer to struct - use the struct's type_id
+            type_to_type_id_and_slots(inner, named_types)
+        }
+        Type::Func(_) => (RuntimeTypeId::Closure as u32, 1),
+        Type::Chan(_) => (RuntimeTypeId::Channel as u32, 1),
         
         // Tuple - treat as GcRef
-        Type::Tuple(_) => vec![SlotType::GcRef],
+        Type::Tuple(_) => (RuntimeTypeId::Slice as u32, 1),
         
-        // Interface (2 slots)
-        Type::Interface(_) => vec![SlotType::Interface0, SlotType::Interface1],
+        // Interface (2 slots) - use FirstInterface as marker
+        Type::Interface(_) => (RuntimeTypeId::FirstInterface as u32, 2),
         
-        // Struct - for now treat as single GcRef (heap allocated)
-        Type::Struct(_) => vec![SlotType::GcRef],
+        // Struct - use FirstStruct as placeholder (actual ID assigned elsewhere)
+        Type::Struct(_) => (RuntimeTypeId::FirstStruct as u32, 1),
         
-        // Default (includes Named, Nil, Invalid, and any future variants)
-        _ => vec![SlotType::Value],
+        // Named type - resolve to underlying
+        Type::Named(id) => {
+            if let Some(info) = named_types.get(id.0 as usize) {
+                type_to_type_id_and_slots(&info.underlying, named_types)
+            } else {
+                (RuntimeTypeId::Int as u32, 1)
+            }
+        }
+        
+        // Default
+        _ => (RuntimeTypeId::Int as u32, 1),
     }
 }
 
@@ -105,16 +129,16 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     for spec in &var.specs {
                         for name in &spec.names {
                             let var_name = project.interner.resolve(name.symbol).unwrap_or("");
-                            // Determine slot_types based on variable type
-                            let slot_types = pkg.types.scope.lookup(name.symbol)
+                            // Determine type_id and slots based on variable type
+                            let (type_id, slots) = pkg.types.scope.lookup(name.symbol)
                                 .map(|e| match e {
                                     gox_analysis::scope::Entity::Var(v) => {
-                                        type_to_slot_types(&v.ty)
+                                        type_to_type_id_and_slots(&v.ty, &pkg.types.named_types)
                                     }
-                                    _ => vec![gox_common_core::SlotType::Value],
+                                    _ => (RuntimeTypeId::Int as u32, 1),
                                 })
-                                .unwrap_or_else(|| vec![gox_common_core::SlotType::Value]);
-                            let idx = module.add_global(var_name, slot_types);
+                                .unwrap_or_else(|| (RuntimeTypeId::Int as u32, 1));
+                            let idx = module.add_global(var_name, type_id, slots);
                             global_indices.insert((pkg.name.clone(), name.symbol), idx);
                         }
                     }

@@ -1772,35 +1772,25 @@ impl Vm {
             }
         }
         
-        // Mark globals using slot_types for precise interface scanning
+        // Mark globals using type_id for GC scanning
         if let Some(ref module) = self.module {
             let mut slot_idx = 0usize;
             for g in &module.globals {
-                // None = all Value, skip entirely
-                if let Some(ref slot_types) = g.slot_types {
-                    for (i, slot_type) in slot_types.iter().enumerate() {
-                        let val = self.globals.get(slot_idx + i).copied().unwrap_or(0);
-                        match slot_type {
-                            SlotType::Value | SlotType::Interface0 => {
-                                // Not a pointer, skip
-                            }
-                            SlotType::GcRef => {
-                                if val != 0 {
-                                    self.gc.mark_gray(val as GcRef);
-                                }
-                            }
-                            SlotType::Interface1 => {
-                                // Dynamic check: type_id in previous slot
-                                if i > 0 {
-                                    let type_id = self.globals.get(slot_idx + i - 1).copied().unwrap_or(0) as u32;
-                                    if gox_common_core::RuntimeTypeId::needs_gc(type_id) && val != 0 {
-                                        self.gc.mark_gray(val as GcRef);
-                                    }
-                                }
-                            }
-                        }
+                if RuntimeTypeId::is_interface(g.type_id) {
+                    // Interface: 2 slots - first is type_id, second may be GcRef
+                    let inner_type_id = self.globals.get(slot_idx).copied().unwrap_or(0) as u32;
+                    let data = self.globals.get(slot_idx + 1).copied().unwrap_or(0);
+                    if RuntimeTypeId::needs_gc(inner_type_id) && data != 0 {
+                        self.gc.mark_gray(data as GcRef);
+                    }
+                } else if RuntimeTypeId::needs_gc(g.type_id) {
+                    // GC type: 1 slot
+                    let val = self.globals.get(slot_idx).copied().unwrap_or(0);
+                    if val != 0 {
+                        self.gc.mark_gray(val as GcRef);
                     }
                 }
+                // else: Value type, skip
                 slot_idx += g.slots as usize;
             }
         }
