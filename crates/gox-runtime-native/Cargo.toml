@@ -17,5 +17,8 @@ crossbeam-deque = "0.8"
 # Lazy statics for shared GC
 once_cell = "1.19"
 
+# Native stack walking for GC
+backtrace = "0.3"
+
 # Dynamic function calls (unlimited arguments for go keyword)
 libffi = "3.2"

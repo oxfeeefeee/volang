@@ -19,7 +19,7 @@
 //! - At load time, read section and call `register_stack_maps_batch()`
 //! - Same runtime scanning
 
-use gox_runtime_core::gc::Gc;
+use gox_runtime_core::gc::{Gc, GcRef};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -111,59 +111,59 @@ pub fn stack_map_count() -> usize {
 /// This function walks up the call stack, looks up stack maps for each
 /// return address, and marks any GC references found on the stack.
 ///
-/// # Safety
-/// This function reads raw memory from the stack based on stack map offsets.
-/// It assumes the stack maps are correct and the stack is in a consistent state.
+/// # How it works
+///
+/// 1. Uses `backtrace::trace` to walk the call stack
+/// 2. For each frame, checks if we have a stack map registered for that IP
+/// 3. If found, uses the frame's stack pointer to read GC refs at known offsets
+/// 4. Marks each non-null GC reference as gray for the tri-color GC
+///
+/// # Limitations
+///
+/// - The `backtrace` crate provides IP but SP access is platform-specific
+/// - Currently uses frame pointer chain on supported platforms
+/// - Frames without stack maps (runtime functions) are skipped
 pub fn scan_native_stack(gc: &mut Gc) {
-    // TODO: Implement native stack walking
-    //
-    // Implementation plan:
-    // 1. Use `backtrace` crate to get return addresses
-    // 2. For each return address, lookup stack map
-    // 3. For each offset in the stack map, read the GC ref from stack
-    // 4. Call gc.mark_gray() on each non-null ref
-    //
-    // Challenges:
-    // - Need frame pointer or DWARF info to get SP at each frame
-    // - Architecture-specific (x86_64, aarch64)
-    // - Must handle frames without stack maps (runtime functions)
+    // Track how many GC refs we found (for debugging)
+    let mut refs_found = 0;
     
-    let _ = gc; // Suppress unused warning for now
-    
-    // Placeholder: will be implemented with backtrace crate
-    #[cfg(feature = "stack_scan")]
-    {
-        scan_native_stack_impl(gc);
-    }
-}
-
-/// Internal implementation of stack scanning (when feature enabled).
-#[cfg(feature = "stack_scan")]
-fn scan_native_stack_impl(gc: &mut Gc) {
-    use backtrace::Backtrace;
-    
-    let bt = Backtrace::new();
-    
-    for frame in bt.frames() {
+    // Walk the call stack
+    backtrace::trace(|frame| {
         let ip = frame.ip() as usize;
         
         // Look up stack map for this return address
         if let Some(entry) = lookup_stack_map(ip) {
-            // Get the stack pointer for this frame
-            // TODO: This is the tricky part - need frame.sp() which backtrace
-            // doesn't directly provide. May need platform-specific code.
+            // Get stack pointer for this frame
+            // On x86_64/aarch64, frame.sp() gives us the stack pointer
             let sp = frame.sp() as usize;
             
-            // Scan each GC ref slot
-            for &offset in &entry.sp_offsets {
-                let slot_addr = (sp as isize + offset as isize) as usize;
-                let gc_ref = unsafe { *(slot_addr as *const u64) };
-                
-                if gc_ref != 0 {
-                    gc.mark_gray(gc_ref as GcRef);
+            if sp != 0 {
+                // Scan each GC ref slot
+                for &offset in &entry.sp_offsets {
+                    let slot_addr = if offset >= 0 {
+                        sp.wrapping_add(offset as usize)
+                    } else {
+                        sp.wrapping_sub((-offset) as usize)
+                    };
+                    
+                    // Safety: We trust the stack map offsets from Cranelift
+                    let gc_ref = unsafe { *(slot_addr as *const u64) };
+                    
+                    if gc_ref != 0 {
+                        gc.mark_gray(gc_ref as GcRef);
+                        refs_found += 1;
+                    }
                 }
             }
         }
+        
+        true // Continue walking
+    });
+    
+    // Debug: log if we found any refs
+    if refs_found > 0 {
+        // Could add logging here if needed
+        let _ = refs_found;
     }
 }
 
