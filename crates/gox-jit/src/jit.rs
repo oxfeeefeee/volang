@@ -135,7 +135,7 @@ impl JitCompiler {
             
             // Translate bytecode to Cranelift IR using shared translator
             let mut translator = FunctionTranslator::new(func_def.local_slots as usize, &func_def.code);
-            translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut self.module, &func_def.reg_types)?;
+            translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut self.module, &func_def.slot_types)?;
             
             // Compile and extract stack maps
             self.compile_and_define_function(func_id, &mut ctx)?;
@@ -254,7 +254,7 @@ mod tests {
                 // return r2
                 Instruction::new(Opcode::Return, 2, 1, 0),
             ],
-            reg_types: Vec::new(),
+            slot_types: Vec::new(),
         });
         
         let mut jit = JitCompiler::new().unwrap();
@@ -287,7 +287,7 @@ mod tests {
                 // return b
                 Instruction::new(Opcode::Return, 1, 1, 0),
             ],
-            reg_types: Vec::new(),
+            slot_types: Vec::new(),
         });
         
         let mut jit = JitCompiler::new().unwrap();

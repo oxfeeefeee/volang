@@ -8,10 +8,10 @@
 //!
 //! # GC Stack Map Support
 //!
-//! Each function in the bytecode includes `reg_types: Vec<RegType>` which
+//! Each function in the bytecode includes `slot_types: Vec<SlotType>` which
 //! indicates which registers contain GC references. During translation:
 //!
-//! - Variables marked as `GcRef` or `Interface1` in `reg_types` are registered
+//! - Variables marked as `GcRef` or `Interface1` in `slot_types` are registered
 //!   with `declare_var_needs_stack_map()`, telling Cranelift to:
 //!   - Spill these values to stack before safepoints (calls, allocations)
 //!   - Include their stack locations in generated stack maps
@@ -93,7 +93,7 @@ impl FunctionTranslator {
 
     /// Translate bytecode to Cranelift IR.
     /// 
-    /// `reg_types` is used to identify which registers contain GC references
+    /// `slot_types` is used to identify which registers contain GC references
     /// for stack map generation.
     pub fn translate<M: Module>(
         &mut self,
@@ -101,7 +101,7 @@ impl FunctionTranslator {
         code: &[Instruction],
         ctx: &mut CompileContext,
         module: &mut M,
-        reg_types: &[gox_vm::bytecode::RegType],
+        slot_types: &[gox_vm::bytecode::SlotType],
     ) -> Result<()> {
         let mut builder_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(func, &mut builder_ctx);
@@ -110,7 +110,7 @@ impl FunctionTranslator {
         self.create_blocks(&mut builder, code);
 
         // Phase 2: Declare variables and mark GC references for stack maps
-        self.declare_variables(&mut builder, reg_types);
+        self.declare_variables(&mut builder, slot_types);
 
         // Phase 3: Start with entry block
         // Check if we have a separate entry block (for back-edge to PC 0 case)
@@ -245,9 +245,9 @@ impl FunctionTranslator {
 
     /// Declare variables for all local slots.
     /// 
-    /// Uses `reg_types` to mark GC reference variables for stack map generation.
-    fn declare_variables(&mut self, builder: &mut FunctionBuilder, reg_types: &[gox_vm::bytecode::RegType]) {
-        use gox_vm::bytecode::RegType;
+    /// Uses `slot_types` to mark GC reference variables for stack map generation.
+    fn declare_variables(&mut self, builder: &mut FunctionBuilder, slot_types: &[gox_vm::bytecode::SlotType]) {
+        use gox_vm::bytecode::SlotType;
         
         self.variables.clear();
         for i in 0..self.local_count {
@@ -256,14 +256,14 @@ impl FunctionTranslator {
             self.variables.push(var);
             
             // Mark GC reference variables for stack map generation
-            if i < reg_types.len() {
-                match reg_types[i] {
-                    RegType::GcRef | RegType::Interface1 => {
+            if i < slot_types.len() {
+                match slot_types[i] {
+                    SlotType::GcRef | SlotType::Interface1 => {
                         // This variable may contain a GC reference
                         // Tell Cranelift to include it in stack maps at safepoints
                         builder.declare_var_needs_stack_map(var);
                     }
-                    RegType::Value | RegType::Interface0 => {
+                    SlotType::Value | SlotType::Interface0 => {
                         // Not a GC reference, no stack map needed
                     }
                 }

@@ -71,7 +71,7 @@ impl AotCompiler {
                 &func_def.code,
                 &mut compile_ctx,
                 &mut self.module,
-                &func_def.reg_types,
+                &func_def.slot_types,
             )?;
             
             // Define
@@ -118,7 +118,7 @@ mod tests {
                 Instruction::new(Opcode::AddI64, 2, 0, 1),
                 Instruction::new(Opcode::Return, 2, 1, 0),
             ],
-            reg_types: Vec::new(),
+            slot_types: Vec::new(),
         });
         
         compiler.compile_module(&bytecode).unwrap();
@@ -157,7 +157,7 @@ mod tests {
                 // return b
                 Instruction::new(Opcode::Return, 1, 1, 0),
             ],
-            reg_types: Vec::new(),
+            slot_types: Vec::new(),
         });
         
         compiler.compile_module(&bytecode).unwrap();
@@ -198,7 +198,7 @@ mod tests {
                 Instruction::new(Opcode::AddI64, 2, 0, 1),
                 Instruction::new(Opcode::Return, 2, 1, 0),
             ],
-            reg_types: Vec::new(),
+            slot_types: Vec::new(),
         });
         
         let mut compile_ctx = CompileContext::new(&bytecode, call_conv);
@@ -212,7 +212,7 @@ mod tests {
         ctx.func.name = cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32());
         
         let mut translator = FunctionTranslator::new(func_def.local_slots as usize, &func_def.code);
-        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module, &func_def.reg_types).unwrap();
+        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module, &func_def.slot_types).unwrap();
         
         module.define_function(func_id, &mut ctx).unwrap();
         module.finalize_definitions().unwrap();
@@ -266,7 +266,7 @@ mod tests {
                 // return b
                 Instruction::new(Opcode::Return, 1, 1, 0),
             ],
-            reg_types: Vec::new(),
+            slot_types: Vec::new(),
         });
         
         let mut compile_ctx = CompileContext::new(&bytecode, call_conv);
@@ -280,7 +280,7 @@ mod tests {
         ctx.func.name = cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32());
         
         let mut translator = FunctionTranslator::new(func_def.local_slots as usize, &func_def.code);
-        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module, &func_def.reg_types).unwrap();
+        translator.translate(&mut ctx.func, &func_def.code, &mut compile_ctx, &mut module, &func_def.slot_types).unwrap();
         
         module.define_function(func_id, &mut ctx).unwrap();
         module.finalize_definitions().unwrap();

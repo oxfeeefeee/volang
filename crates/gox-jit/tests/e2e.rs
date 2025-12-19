@@ -1,4 +1,7 @@
 //! End-to-end tests: GoX source -> bytecode -> JIT execution.
+//!
+//! Tests must run serially because they share global runtime state
+//! (function table, GC, globals).
 
 use gox_jit::JitCompiler;
 use gox_common::DiagnosticSink;
@@ -6,6 +9,10 @@ use gox_syntax::parse;
 use gox_analysis::typecheck_file;
 use gox_codegen_vm::compile;
 use gox_vm::bytecode::Module as BytecodeModule;
+use std::sync::Mutex;
+
+/// Global lock to ensure tests run serially (shared global runtime state).
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Compile GoX source to bytecode.
 fn source_to_bytecode(source: &str) -> BytecodeModule {
@@ -21,11 +28,13 @@ fn source_to_bytecode(source: &str) -> BytecodeModule {
 }
 
 /// Compile bytecode to JIT and get function pointer.
-fn compile_to_jit<F: Copy>(bytecode: &BytecodeModule, func_name: &str) -> (F, JitCompiler) {
+/// Returns the lock guard to keep the test serialized until completion.
+fn compile_to_jit<F: Copy>(bytecode: &BytecodeModule, func_name: &str) -> (F, JitCompiler, std::sync::MutexGuard<'static, ()>) {
+    let guard = TEST_LOCK.lock().unwrap();
     let mut jit = JitCompiler::new().unwrap();
     jit.compile_module(bytecode).unwrap();
     let func: F = unsafe { jit.get_function(func_name).unwrap() };
-    (func, jit)
+    (func, jit, guard)
 }
 
 #[test]
@@ -42,7 +51,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (add_fn, _jit): (fn(i64, i64) -> i64, _) = compile_to_jit(&bytecode, "add");
+    let (add_fn, _jit, _guard): (fn(i64, i64) -> i64, _, _) = compile_to_jit(&bytecode, "add");
     
     assert_eq!(add_fn(3, 5), 8);
     assert_eq!(add_fn(100, 200), 300);
@@ -67,7 +76,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (max_fn, _jit): (fn(i64, i64) -> i64, _) = compile_to_jit(&bytecode, "max");
+    let (max_fn, _jit, _guard): (fn(i64, i64) -> i64, _, _) = compile_to_jit(&bytecode, "max");
     
     assert_eq!(max_fn(10, 5), 10);
     assert_eq!(max_fn(3, 7), 7);
@@ -93,7 +102,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (factorial_fn, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "factorial");
+    let (factorial_fn, _jit, _guard): (fn(i64) -> i64, _, _) = compile_to_jit(&bytecode, "factorial");
     
     assert_eq!(factorial_fn(0), 1);
     assert_eq!(factorial_fn(1), 1);
@@ -119,7 +128,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fib_fn, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "fib");
+    let (fib_fn, _jit, _guard): (fn(i64) -> i64, _, _) = compile_to_jit(&bytecode, "fib");
     
     assert_eq!(fib_fn(0), 0);
     assert_eq!(fib_fn(1), 1);
@@ -147,7 +156,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (sum_fn, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "sum");
+    let (sum_fn, _jit, _guard): (fn(i64) -> i64, _, _) = compile_to_jit(&bytecode, "sum");
     
     assert_eq!(sum_fn(5), 10);
     assert_eq!(sum_fn(10), 45);
@@ -175,7 +184,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (gcd_fn, _jit): (fn(i64, i64) -> i64, _) = compile_to_jit(&bytecode, "gcd");
+    let (gcd_fn, _jit, _guard): (fn(i64, i64) -> i64, _, _) = compile_to_jit(&bytecode, "gcd");
     
     assert_eq!(gcd_fn(48, 18), 6);
     assert_eq!(gcd_fn(100, 25), 25);
@@ -202,7 +211,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fn_ptr, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "quadruple");
+    let (fn_ptr, _jit, _guard): (fn(i64) -> i64, _, _) = compile_to_jit(&bytecode, "quadruple");
     
     assert_eq!(fn_ptr(5), 20);
     assert_eq!(fn_ptr(10), 40);
@@ -225,7 +234,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fn_ptr, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "test_assert");
+    let (fn_ptr, _jit, _guard): (fn(i64) -> i64, _, _) = compile_to_jit(&bytecode, "test_assert");
     
     // These should pass without issues
     assert_eq!(fn_ptr(5), 10);
@@ -249,7 +258,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fn_ptr, _jit): (fn(i64, i64) -> i64, _) = compile_to_jit(&bytecode, "validate");
+    let (fn_ptr, _jit, _guard): (fn(i64, i64) -> i64, _, _) = compile_to_jit(&bytecode, "validate");
     
     // These should pass without issues
     assert_eq!(fn_ptr(5, 10), 15);
@@ -274,7 +283,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fn_ptr, _jit): (fn(i64) -> i64, _) = compile_to_jit(&bytecode, "debug_and_compute");
+    let (fn_ptr, _jit, _guard): (fn(i64) -> i64, _, _) = compile_to_jit(&bytecode, "debug_and_compute");
     
     // Should print values and return correct result
     assert_eq!(fn_ptr(21), 42);
@@ -296,7 +305,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fn_ptr, _jit): (fn() -> i64, _) = compile_to_jit(&bytecode, "get_len");
+    let (fn_ptr, _jit, _guard): (fn() -> i64, _, _) = compile_to_jit(&bytecode, "get_len");
     
     assert_eq!(fn_ptr(), 5);
     println!("✓ test_e2e_string_len passed");
@@ -324,7 +333,7 @@ func main() {
 "#;
     
     let bytecode = source_to_bytecode(source);
-    let (fn_ptr, _jit): (fn() -> i64, _) = compile_to_jit(&bytecode, "compare_strings");
+    let (fn_ptr, _jit, _guard): (fn() -> i64, _, _) = compile_to_jit(&bytecode, "compare_strings");
     
     assert_eq!(fn_ptr(), 1);
     println!("✓ test_e2e_string_eq passed");

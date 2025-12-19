@@ -1680,7 +1680,7 @@ impl Vm {
     
     /// Force garbage collection.
     pub fn collect_garbage(&mut self) {
-        use crate::bytecode::RegType;
+        use crate::bytecode::SlotType;
         
         let module = match &self.module {
             Some(m) => m,
@@ -1701,27 +1701,27 @@ impl Vm {
                     continue;
                 }
                 let func = &module.functions[frame.func_id as usize];
-                let reg_types = &func.reg_types;
+                let slot_types = &func.slot_types;
                 
                 // Scan registers based on type info
-                for (reg_idx, reg_type) in reg_types.iter().enumerate() {
+                for (reg_idx, slot_type) in slot_types.iter().enumerate() {
                     let slot_idx = frame.bp + reg_idx;
                     if slot_idx >= fiber.stack.len() {
                         break;
                     }
                     let val = fiber.stack[slot_idx];
                     
-                    match reg_type {
-                        RegType::Value | RegType::Interface0 => {
+                    match slot_type {
+                        SlotType::Value | SlotType::Interface0 => {
                             // Not a pointer, skip
                         }
-                        RegType::GcRef => {
+                        SlotType::GcRef => {
                             // Definitely a pointer
                             if val != 0 {
                                 self.gc.mark_gray(val as GcRef);
                             }
                         }
-                        RegType::Interface1 => {
+                        SlotType::Interface1 => {
                             // May be a pointer depending on type_id in previous slot
                             if slot_idx > 0 {
                                 let type_id = fiber.stack[slot_idx - 1] as u32;

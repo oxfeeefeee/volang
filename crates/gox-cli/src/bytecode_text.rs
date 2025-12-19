@@ -20,7 +20,7 @@
 //! ```
 
 use gox_vm::{Module, FunctionDef, Constant, Instruction, Opcode};
-use gox_vm::bytecode::RegType;
+use gox_vm::bytecode::SlotType;
 use std::collections::HashMap;
 
 /// Parse bytecode text format into a Module.
@@ -62,12 +62,12 @@ pub fn format_text(module: &Module) -> String {
         if f.ret_slots > 0 {
             out.push_str(&format!("  returns {}\n", f.ret_slots));
         }
-        // Print reg_types for GC (if any non-Value types exist)
-        if !f.reg_types.is_empty() && f.reg_types.iter().any(|t| *t != RegType::Value) {
+        // Print slot_types for GC (if any non-Value types exist)
+        if !f.slot_types.is_empty() && f.slot_types.iter().any(|t| *t != SlotType::Value) {
             out.push_str("  gc_refs ");
-            let refs: Vec<String> = f.reg_types.iter().enumerate()
-                .filter(|(_, t)| **t != RegType::Value)
-                .map(|(i, t)| format!("r{}:{}", i, format_reg_type(*t)))
+            let refs: Vec<String> = f.slot_types.iter().enumerate()
+                .filter(|(_, t)| **t != SlotType::Value)
+                .map(|(i, t)| format!("r{}:{}", i, format_slot_type(*t)))
                 .collect();
             out.push_str(&refs.join(" "));
             out.push('\n');
@@ -96,12 +96,12 @@ fn format_constant(c: &Constant) -> String {
     }
 }
 
-fn format_reg_type(t: RegType) -> &'static str {
+fn format_slot_type(t: SlotType) -> &'static str {
     match t {
-        RegType::Value => "val",
-        RegType::GcRef => "ref",
-        RegType::Interface0 => "iface0",
-        RegType::Interface1 => "iface1",
+        SlotType::Value => "val",
+        SlotType::GcRef => "ref",
+        SlotType::Interface0 => "iface0",
+        SlotType::Interface1 => "iface1",
     }
 }
 

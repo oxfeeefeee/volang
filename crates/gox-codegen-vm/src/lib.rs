@@ -865,10 +865,10 @@ func main() {
         assert!(matches!(result, VmResult::Done | VmResult::Ok));
     }
     
-    /// Test that reg_types are correctly generated for GC root scanning.
+    /// Test that slot_types are correctly generated for GC root scanning.
     #[test]
-    fn test_reg_types_generation() {
-        use gox_vm::bytecode::RegType;
+    fn test_slot_types_generation() {
+        use gox_vm::bytecode::SlotType;
         
         let (file, _, interner) = parse(r#"
 package main
@@ -889,17 +889,17 @@ func main() {
         // Find main function
         let main_func = module.functions.iter().find(|f| f.name == "main").unwrap();
         
-        // Verify reg_types exist
-        assert!(!main_func.reg_types.is_empty(), "reg_types should not be empty");
+        // Verify slot_types exist
+        assert!(!main_func.slot_types.is_empty(), "slot_types should not be empty");
         
         // Check that we have some GcRef types (for string and slice)
-        let gc_ref_count = main_func.reg_types.iter()
-            .filter(|t| **t == RegType::GcRef)
+        let gc_ref_count = main_func.slot_types.iter()
+            .filter(|t| **t == SlotType::GcRef)
             .count();
         assert!(gc_ref_count >= 2, "Should have at least 2 GcRef types for string and slice, got {}", gc_ref_count);
         
-        // Print reg_types for debugging
-        println!("main func reg_types: {:?}", main_func.reg_types);
+        // Print slot_types for debugging
+        println!("main func slot_types: {:?}", main_func.slot_types);
     }
     
     /// Test GC collection with reference types on stack.

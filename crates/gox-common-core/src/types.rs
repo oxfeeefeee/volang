@@ -133,3 +133,36 @@ pub fn type_needs_gc(type_id: u32) -> bool {
     type_id >= ValueKind::String as u32
 }
 
+/// Register/slot type for GC scanning.
+/// 
+/// Used for both stack scanning (function slot_types) and heap object scanning
+/// (struct slot_types). Tells the GC whether a slot contains a pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, TryFromPrimitive)]
+#[repr(u8)]
+pub enum SlotType {
+    /// Non-pointer value (int, float, bool). No scanning needed.
+    #[default]
+    Value = 0,
+    /// GC-managed pointer (string, slice, map, *T, closure, chan). Must be scanned.
+    GcRef = 1,
+    /// First slot of interface (packed type_ids). Not a pointer, skip.
+    Interface0 = 2,
+    /// Second slot of interface (data). May be pointer depending on value_type.
+    /// Requires dynamic check: if type_needs_gc(slot[i-1] as u32) then scan.
+    Interface1 = 3,
+}
+
+impl SlotType {
+    /// Check if this slot type needs GC scanning.
+    /// Note: Interface1 may or may not need scanning (requires runtime check).
+    #[inline]
+    pub fn needs_scan(&self) -> bool {
+        matches!(self, SlotType::GcRef | SlotType::Interface1)
+    }
+    
+    /// Convert from u8.
+    #[inline]
+    pub fn from_u8(v: u8) -> Self {
+        Self::try_from(v).unwrap_or(SlotType::Value)
+    }
+}
