@@ -20,6 +20,7 @@ mod symbols;
 pub mod goroutine;
 pub mod debug;
 pub mod gc_global;
+pub mod stack_map;
 pub mod extern_dispatch;
 pub mod extern_fns;
 

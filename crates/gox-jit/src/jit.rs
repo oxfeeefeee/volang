@@ -1,4 +1,30 @@
 //! JIT Compiler implementation using Cranelift.
+//!
+//! ## Stack Map Support
+//!
+//! The JIT compiler integrates with the GC through stack maps:
+//!
+//! 1. During translation, `FunctionTranslator` marks GC ref variables with
+//!    `declare_var_needs_stack_map()` (in gox-codegen-cranelift)
+//!
+//! 2. Cranelift's frontend auto-inserts spills/reloads around safepoints (calls)
+//!
+//! 3. After compilation, we extract `user_stack_maps()` from `CompiledCode`
+//!
+//! 4. Stack maps are registered with `gox_runtime_native::stack_map::register_stack_map()`
+//!
+//! 5. During GC, `scan_native_stack()` uses these maps to find live GC refs
+//!
+//! ### TODO: Stack Map Extraction
+//!
+//! Currently, `module.define_function()` compiles internally and doesn't expose
+//! stack maps. To extract them, we need to:
+//!
+//! 1. Use `ctx.compile(isa)` directly to get `CompiledCode`
+//! 2. Extract `user_stack_maps()` before calling `define_function_bytes()`
+//! 3. Register each (code_ptr + offset, entry) with the stack map registry
+//!
+//! This requires refactoring to use the lower-level compilation API.
 
 use anyhow::Result;
 use cranelift_codegen::isa::CallConv;

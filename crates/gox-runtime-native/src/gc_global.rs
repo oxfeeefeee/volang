@@ -121,8 +121,9 @@ pub fn gc_total_bytes() -> usize {
 
 /// Force garbage collection.
 /// 
-/// Note: JIT GC currently only scans globals, not the native stack.
-/// Full stack scanning requires Cranelift stack maps (TODO).
+/// Scans roots from:
+/// - Global variables (based on is_ref metadata)
+/// - Native stack (using Cranelift stack maps, when registered)
 pub fn collect_garbage() {
     let mut gc = GLOBAL_GC.lock();
     
@@ -137,6 +138,9 @@ pub fn collect_garbage() {
             }
         }
     }
+    
+    // Mark roots from native stack using stack maps
+    crate::stack_map::scan_native_stack(&mut gc);
     
     // Perform collection
     gc.collect(|gc, obj| {
