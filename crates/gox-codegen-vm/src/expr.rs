@@ -1325,76 +1325,6 @@ fn is_embedded_type_access(
     }
 }
 
-/// Find the flattened field index for embedded struct field access
-/// For value type structs, fields are stored inline, so we need to calculate the actual offset
-fn find_flat_field_index(
-    ctx: &CodegenContext,
-    ty: &gox_analysis::Type,
-    field_name: gox_common::Symbol,
-) -> Option<u16> {
-    find_flat_field_index_with_offset(ctx, ty, field_name, 0)
-}
-
-fn find_flat_field_index_with_offset(
-    ctx: &CodegenContext,
-    ty: &gox_analysis::Type,
-    field_name: gox_common::Symbol,
-    base_offset: u16,
-) -> Option<u16> {
-    use gox_analysis::Type;
-
-    // Auto-deref pointer types
-    let deref_ty = ty.deref_if_pointer();
-
-    match deref_ty {
-        Type::Struct(s) => {
-            // First pass: check all direct (non-embedded) fields for shadowing
-            let mut current_offset = base_offset;
-            for field in &s.fields {
-                if !field.embedded && field.name == Some(field_name) {
-                    return Some(current_offset);
-                }
-                if field.embedded {
-                    current_offset += get_type_slot_count(ctx, &field.ty);
-                } else {
-                    current_offset += 1;
-                }
-            }
-
-            // Second pass: search in embedded fields (promoted fields)
-            current_offset = base_offset;
-            for field in &s.fields {
-                if field.embedded {
-                    if let Some(idx) = find_flat_field_index_with_offset(
-                        ctx,
-                        &field.ty,
-                        field_name,
-                        current_offset,
-                    ) {
-                        return Some(idx);
-                    }
-                    current_offset += get_type_slot_count(ctx, &field.ty);
-                } else {
-                    current_offset += 1;
-                }
-            }
-            None
-        }
-        Type::Named(id) => {
-            if let Some(named) = ctx.result.named_types.get(id.0 as usize) {
-                return find_flat_field_index_with_offset(
-                    ctx,
-                    &named.underlying,
-                    field_name,
-                    base_offset,
-                );
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
 /// Get the slot count for a specific embedded field
 fn get_embedded_field_slot_count(
     ctx: &CodegenContext,
@@ -2742,57 +2672,7 @@ fn compile_try_unwrap(
 }
 
 /// Convert a type expression to element type ID for array creation.
-/// Returns the ValueKind as u16 for builtin types.
+/// Uses TypeExprId to look up the resolved type from TypeChecker.
 fn type_expr_to_elem_type(ctx: &CodegenContext, type_expr: &gox_syntax::ast::TypeExpr) -> u16 {
-    use gox_syntax::ast::TypeExprKind;
-    use gox_common_core::ValueKind;
-
-    match &type_expr.kind {
-        TypeExprKind::Ident(ident) => {
-            let sym = ident.symbol;
-            let syms = &ctx.symbols;
-
-            if syms.is(sym, syms.sym_bool) {
-                ValueKind::Bool as u16
-            } else if syms.is(sym, syms.sym_int) {
-                ValueKind::Int as u16
-            } else if syms.is(sym, syms.sym_int8) {
-                ValueKind::Int8 as u16
-            } else if syms.is(sym, syms.sym_int16) {
-                ValueKind::Int16 as u16
-            } else if syms.is(sym, syms.sym_int32) || syms.is(sym, syms.sym_rune) {
-                ValueKind::Int32 as u16
-            } else if syms.is(sym, syms.sym_int64) {
-                ValueKind::Int64 as u16
-            } else if syms.is(sym, syms.sym_uint) {
-                ValueKind::Uint as u16
-            } else if syms.is(sym, syms.sym_uint8) || syms.is(sym, syms.sym_byte) {
-                ValueKind::Uint8 as u16
-            } else if syms.is(sym, syms.sym_uint16) {
-                ValueKind::Uint16 as u16
-            } else if syms.is(sym, syms.sym_uint32) {
-                ValueKind::Uint32 as u16
-            } else if syms.is(sym, syms.sym_uint64) {
-                ValueKind::Uint64 as u16
-            } else if syms.is(sym, syms.sym_float32) {
-                ValueKind::Float32 as u16
-            } else if syms.is(sym, syms.sym_float64) {
-                ValueKind::Float64 as u16
-            } else if syms.is(sym, syms.sym_string) {
-                ValueKind::String as u16
-            } else {
-                // User-defined types (structs) - return Struct kind
-                ValueKind::Struct as u16
-            }
-        }
-        TypeExprKind::Pointer(_) => ValueKind::Pointer as u16,
-        TypeExprKind::Slice(_) => ValueKind::Slice as u16,
-        TypeExprKind::Array(_) => ValueKind::Array as u16,
-        TypeExprKind::Map(_) => ValueKind::Map as u16,
-        TypeExprKind::Struct(_) => ValueKind::Struct as u16,
-        TypeExprKind::Interface(_) => ValueKind::Interface as u16,
-        TypeExprKind::Func(_) => ValueKind::Closure as u16,
-        TypeExprKind::Chan(_) => ValueKind::Channel as u16,
-        TypeExprKind::Selector(_) => ValueKind::Int as u16, // Qualified type name
-    }
+    ctx.lookup_type_expr_info(type_expr).kind as u16
 }

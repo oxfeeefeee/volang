@@ -703,6 +703,36 @@ impl<'a> CodegenContext<'a> {
             .cloned()
     }
     
+    /// Look up the type of a type expression using the TypeInterner.
+    pub fn lookup_type_expr(&self, type_expr: &gox_syntax::ast::TypeExpr) -> Option<gox_analysis::Type> {
+        self.result.types.get_type_expr_type(type_expr.id)
+            .and_then(|type_id| self.result.types.try_resolve(type_id))
+            .cloned()
+    }
+    
+    /// Look up a type expression and convert to TypeInfo.
+    pub fn lookup_type_expr_info(&self, type_expr: &gox_syntax::ast::TypeExpr) -> TypeInfo {
+        self.lookup_type_expr(type_expr)
+            .map(|ty| self.type_to_type_info(&ty))
+            .unwrap_or_else(|| TypeInfo::new(ValueKind::Int64))
+    }
+    
+    /// Convert a Type to TypeInfo for codegen.
+    pub fn type_to_type_info(&self, ty: &gox_analysis::Type) -> TypeInfo {
+        use gox_analysis::Type;
+        let kind = self.type_to_value_kind(ty);
+        match ty {
+            Type::Struct(s) => TypeInfo::with_fields(kind, s.fields.len() as u16),
+            Type::Named(id) => {
+                let named = &self.result.named_types[id.0 as usize];
+                let mut info = self.type_to_type_info(&named.underlying);
+                info.type_sym = Some(named.name);
+                info
+            }
+            _ => TypeInfo::new(kind),
+        }
+    }
+    
     /// Convert a Type to ValueKind for codegen purposes.
     pub fn type_to_value_kind(&self, ty: &gox_analysis::Type) -> ValueKind {
         use gox_analysis::Type;
@@ -1016,10 +1046,6 @@ impl<'a> CodegenContext<'a> {
         None
     }
     
-    /// Convert a Type to TypeInfo for codegen.
-    pub fn type_to_type_info(&self, ty: &gox_analysis::Type) -> TypeInfo {
-        type_to_type_info(ty, &self.result.named_types)
-    }
 }
 
 /// Type inference result for a type expression.
@@ -1048,73 +1074,58 @@ impl TypeInfo {
     }
 }
 
-/// Infer type info from a TypeExpr.
+/// Infer type info from a TypeExpr using TypeExprId lookup.
 pub fn infer_type_from_type_expr(result: &TypeCheckResult, ty: &gox_syntax::ast::TypeExpr) -> TypeInfo {
-    use gox_syntax::ast::TypeExprKind;
-    use gox_analysis::Type;
-    
-    match &ty.kind {
-        TypeExprKind::Map(_) => TypeInfo::new(ValueKind::Map),
-        TypeExprKind::Slice(_) => TypeInfo::new(ValueKind::Slice),
-        TypeExprKind::Array(_) => TypeInfo::new(ValueKind::Array),
-        TypeExprKind::Chan(_) => TypeInfo::new(ValueKind::Channel),
-        TypeExprKind::Pointer(_) => TypeInfo::new(ValueKind::Pointer),
-        TypeExprKind::Func(_) => TypeInfo::new(ValueKind::Closure),
-        TypeExprKind::Interface(_) => TypeInfo::new(ValueKind::Interface),
-        TypeExprKind::Struct(s) => TypeInfo::with_fields(ValueKind::Struct, s.fields.len() as u16),
-        TypeExprKind::Ident(ident) => {
-            // Look up named type
-            for named in &result.named_types {
-                if named.name == ident.symbol {
-                    return match &named.underlying {
-                        Type::Interface(_) => TypeInfo::with_sym(ValueKind::Interface, ident.symbol),
-                        Type::Struct(s) => TypeInfo::struct_type(s.fields.len() as u16, Some(ident.symbol)),
-                        Type::Pointer(_) => TypeInfo::with_sym(ValueKind::Pointer, ident.symbol),
-                        _ => type_to_type_info(&named.underlying, &result.named_types),
-                    };
-                }
-            }
-            // Basic type - default to Int64
-            TypeInfo::new(ValueKind::Int64)
-        }
-        _ => TypeInfo::new(ValueKind::Int64),
-    }
+    result.types.get_type_expr_type(ty.id)
+        .and_then(|type_id| result.types.try_resolve(type_id))
+        .map(|resolved_ty| type_to_type_info(resolved_ty, &result.named_types))
+        .unwrap_or_else(|| TypeInfo::new(ValueKind::Int64))
 }
 
 /// Convert a Type to TypeInfo for codegen (standalone function).
 pub fn type_to_type_info(ty: &gox_analysis::Type, named_types: &[gox_analysis::NamedTypeInfo]) -> TypeInfo {
     use gox_analysis::types::{Type, BasicType};
+    use gox_analysis::UntypedKind;
+    
+    let kind = match ty {
+        Type::Basic(BasicType::Bool) => ValueKind::Bool,
+        Type::Basic(BasicType::String) => ValueKind::String,
+        Type::Basic(BasicType::Float64) => ValueKind::Float64,
+        Type::Basic(BasicType::Float32) => ValueKind::Float32,
+        Type::Basic(BasicType::Int) => ValueKind::Int,
+        Type::Basic(BasicType::Int64) => ValueKind::Int64,
+        Type::Basic(BasicType::Int32) => ValueKind::Int32,
+        Type::Basic(BasicType::Int16) => ValueKind::Int16,
+        Type::Basic(BasicType::Int8) => ValueKind::Int8,
+        Type::Basic(BasicType::Uint) => ValueKind::Uint,
+        Type::Basic(BasicType::Uint64) => ValueKind::Uint64,
+        Type::Basic(BasicType::Uint32) => ValueKind::Uint32,
+        Type::Basic(BasicType::Uint16) => ValueKind::Uint16,
+        Type::Basic(BasicType::Uint8) => ValueKind::Uint8,
+        Type::Untyped(UntypedKind::String) => ValueKind::String,
+        Type::Untyped(UntypedKind::Float) => ValueKind::Float64,
+        Type::Untyped(UntypedKind::Int) | Type::Untyped(UntypedKind::Rune) => ValueKind::Int64,
+        Type::Map(_) => ValueKind::Map,
+        Type::Slice(_) => ValueKind::Slice,
+        Type::Array(_) => ValueKind::Array,
+        Type::Chan(_) => ValueKind::Channel,
+        Type::Pointer(_) => ValueKind::Pointer,
+        Type::Func(_) => ValueKind::Closure,
+        Type::Interface(_) => ValueKind::Interface,
+        Type::Struct(_) => ValueKind::Struct,
+        Type::Named(_) => ValueKind::Struct, // Will be overridden below
+        _ => ValueKind::Int64,
+    };
     
     match ty {
-        Type::Basic(BasicType::Bool) => TypeInfo::new(ValueKind::Bool),
-        Type::Basic(BasicType::String) => TypeInfo::new(ValueKind::String),
-        Type::Basic(BasicType::Float64) => TypeInfo::new(ValueKind::Float64),
-        Type::Basic(BasicType::Float32) => TypeInfo::new(ValueKind::Float32),
-        Type::Basic(BasicType::Int) => TypeInfo::new(ValueKind::Int),
-        Type::Basic(BasicType::Int64) => TypeInfo::new(ValueKind::Int64),
-        Type::Basic(BasicType::Int32) => TypeInfo::new(ValueKind::Int32),
-        Type::Basic(BasicType::Int16) => TypeInfo::new(ValueKind::Int16),
-        Type::Basic(BasicType::Int8) => TypeInfo::new(ValueKind::Int8),
-        Type::Basic(BasicType::Uint) => TypeInfo::new(ValueKind::Uint),
-        Type::Basic(BasicType::Uint64) => TypeInfo::new(ValueKind::Uint64),
-        Type::Basic(BasicType::Uint32) => TypeInfo::new(ValueKind::Uint32),
-        Type::Basic(BasicType::Uint16) => TypeInfo::new(ValueKind::Uint16),
-        Type::Basic(BasicType::Uint8) => TypeInfo::new(ValueKind::Uint8),
-        Type::Map(_) => TypeInfo::new(ValueKind::Map),
-        Type::Slice(_) => TypeInfo::new(ValueKind::Slice),
-        Type::Array(_) => TypeInfo::new(ValueKind::Array),
-        Type::Chan(_) => TypeInfo::new(ValueKind::Channel),
-        Type::Pointer(_) => TypeInfo::new(ValueKind::Pointer),
-        Type::Func(_) => TypeInfo::new(ValueKind::Closure),
-        Type::Interface(_) => TypeInfo::new(ValueKind::Interface),
-        Type::Struct(s) => TypeInfo::with_fields(ValueKind::Struct, s.fields.len() as u16),
+        Type::Struct(s) => TypeInfo::with_fields(kind, s.fields.len() as u16),
         Type::Named(id) => {
             let named = &named_types[id.0 as usize];
             let mut info = type_to_type_info(&named.underlying, named_types);
             info.type_sym = Some(named.name);
             info
         }
-        _ => unreachable!("unexpected type in type_to_type_info"),
+        _ => TypeInfo::new(kind),
     }
 }
 
