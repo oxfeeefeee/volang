@@ -40,10 +40,6 @@ pub enum ValueKind {
     Closure = 22,
 }
 
-/// First type_id reserved for user-defined types.
-/// Type IDs below this are builtin types (ValueKind enum values).
-pub const FIRST_USER_TYPE_ID: u32 = 32;
-
 impl ValueKind {
     /// Create a ValueKind from its u8 representation.
     #[inline]
@@ -78,20 +74,6 @@ impl ValueKind {
         self.is_integer() || self.is_float()
     }
 
-    /// Is this a reference type (GC-managed)?
-    pub fn is_reference(&self) -> bool {
-        matches!(
-            self,
-            Self::String
-                | Self::Slice
-                | Self::Map
-                | Self::Array
-                | Self::Channel
-                | Self::Closure
-                | Self::Pointer
-        )
-    }
-
     /// Number of register slots needed for this type.
     /// Interface needs 2 slots (type_id + data), others need 1.
     pub fn slot_count(&self) -> u16 {
@@ -115,23 +97,65 @@ impl ValueKind {
     }
 }
 
-/// Check if a type_id needs GC scanning.
-/// 
-/// - type_id >= 14 (String): needs scanning
-/// - type_id < 14 (primitives): no scanning needed
-/// 
+/// Runtime type ID used for GC and type checks.
+///
 /// Layout:
-/// - 0-13: primitives (nil, bool, int*, uint*, float*)
-/// - 14-22: reference types (String, Slice, Map, Struct, Pointer, Interface, Array, Channel, Closure)
-/// - 32+: user-defined structs
-/// 
-/// Note: type_id 17 (Struct) and 19 (Interface) should never be passed here.
-/// - Struct (17): user-defined structs have type_id >= 32
-/// - Interface (19): not a standalone GC object, stored as two slots [type_id, data]
-#[inline]
-pub fn type_needs_gc(type_id: u32) -> bool {
-    type_id >= ValueKind::String as u32
+/// - 0-13: primitives (no GC needed)
+/// - 14+: reference types (GC needed)
+/// - 100+: user-defined structs
+/// - 2^31+: user-defined interfaces
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum RuntimeTypeId {
+    Nil = ValueKind::Nil as u32,
+    Bool = ValueKind::Bool as u32,
+    Int = ValueKind::Int as u32,
+    Int8 = ValueKind::Int8 as u32,
+    Int16 = ValueKind::Int16 as u32,
+    Int32 = ValueKind::Int32 as u32,
+    Int64 = ValueKind::Int64 as u32,
+    Uint = ValueKind::Uint as u32,
+    Uint8 = ValueKind::Uint8 as u32,
+    Uint16 = ValueKind::Uint16 as u32,
+    Uint32 = ValueKind::Uint32 as u32,
+    Uint64 = ValueKind::Uint64 as u32,
+    Float32 = ValueKind::Float32 as u32,
+    Float64 = ValueKind::Float64 as u32,
+    String = ValueKind::String as u32,
+    Slice = ValueKind::Slice as u32,
+    Map = ValueKind::Map as u32,
+    // 17 = Struct (use FirstStruct instead)
+    Pointer = ValueKind::Pointer as u32,
+    // 19 = Interface (use FirstInterface instead)
+    Array = ValueKind::Array as u32,
+    Channel = ValueKind::Channel as u32,
+    Closure = ValueKind::Closure as u32,
+    // User-defined structs: 100..(2^31-1)
+    FirstStruct = 100,
+    // User-defined interfaces: 2^31+
+    FirstInterface = 0x8000_0000,
 }
+
+impl RuntimeTypeId {
+    /// Check if this type needs GC scanning.
+    #[inline]
+    pub fn needs_gc(type_id: u32) -> bool {
+        type_id >= Self::String as u32
+    }
+    
+    /// Check if this is a user-defined struct type.
+    #[inline]
+    pub fn is_struct(type_id: u32) -> bool {
+        type_id >= Self::FirstStruct as u32 && type_id < Self::FirstInterface as u32
+    }
+    
+    /// Check if this is a user-defined interface type.
+    #[inline]
+    pub fn is_interface(type_id: u32) -> bool {
+        type_id >= Self::FirstInterface as u32
+    }
+}
+
 
 /// Register/slot type for GC scanning.
 /// 
@@ -148,7 +172,7 @@ pub enum SlotType {
     /// First slot of interface (packed type_ids). Not a pointer, skip.
     Interface0 = 2,
     /// Second slot of interface (data). May be pointer depending on value_type.
-    /// Requires dynamic check: if type_needs_gc(slot[i-1] as u32) then scan.
+    /// Requires dynamic check: if RuntimeTypeId::needs_gc(slot[i-1] as u32) then scan.
     Interface1 = 3,
 }
 

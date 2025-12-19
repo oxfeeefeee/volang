@@ -3,7 +3,6 @@
 use alloc::{string::{String, ToString}, vec, vec::Vec};
 use crate::instruction::Instruction;
 use crate::types::TypeMeta;
-use gox_common_core::ValueKind;
 
 #[cfg(feature = "std")]
 use std::io::{Read, Cursor};
@@ -100,8 +99,8 @@ pub struct ExternDef {
 pub struct GlobalDef {
     pub name: String,
     pub slots: u16,
-    /// Whether this global contains a GC reference.
-    pub is_ref: bool,
+    /// Slot types for GC scanning. None = all Value (no GC needed).
+    pub slot_types: Option<Box<[SlotType]>>,
 }
 
 /// Bytecode module.
@@ -130,12 +129,20 @@ impl Module {
     }
     
     /// Add a global variable and return its index.
-    pub fn add_global(&mut self, name: &str, slots: u16, is_ref: bool) -> u32 {
+    /// If all slot_types are Value, stores None to save memory.
+    pub fn add_global(&mut self, name: &str, slot_types: Vec<SlotType>) -> u32 {
         let idx = self.globals.len();
+        let slots = slot_types.len() as u16;
+        // Optimize: None if all slots are Value (no GC needed)
+        let opt_types = if slot_types.iter().all(|s| matches!(s, SlotType::Value)) {
+            None
+        } else {
+            Some(slot_types.into_boxed_slice())
+        };
         self.globals.push(GlobalDef {
             name: name.to_string(),
             slots,
-            is_ref,
+            slot_types: opt_types,
         });
         idx as u32
     }
@@ -215,7 +222,15 @@ impl Module {
         for g in &self.globals {
             write_string(&mut buf, &g.name);
             write_u16(&mut buf, g.slots);
-            buf.push(g.is_ref as u8);
+            // Write slot_types: 0 = None (all Value), else count + types
+            if let Some(ref types) = g.slot_types {
+                buf.push(types.len() as u8);
+                for st in types.iter() {
+                    buf.push(*st as u8);
+                }
+            } else {
+                buf.push(0); // None marker
+            }
         }
         
         // Externs section
@@ -278,8 +293,22 @@ impl Module {
         for _ in 0..global_count {
             let g_name = read_string(&mut cursor)?;
             let slots = read_u16(&mut cursor)?;
-            let is_ref = read_u8(&mut cursor)? != 0;
-            globals.push(GlobalDef { name: g_name, slots, is_ref });
+            // Read slot_types: 0 = None, else count + types
+            let mut type_count_buf = [0u8; 1];
+            cursor.read_exact(&mut type_count_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+            let type_count = type_count_buf[0];
+            let slot_types = if type_count == 0 {
+                None
+            } else {
+                let mut types = Vec::with_capacity(type_count as usize);
+                for _ in 0..type_count {
+                    let mut st_buf = [0u8; 1];
+                    cursor.read_exact(&mut st_buf).map_err(|_| BytecodeError::UnexpectedEof)?;
+                    types.push(SlotType::from_u8(st_buf[0]));
+                }
+                Some(types.into_boxed_slice())
+            };
+            globals.push(GlobalDef { name: g_name, slots, slot_types });
         }
         
         // Externs section
@@ -380,8 +409,7 @@ fn write_constant(buf: &mut Vec<u8>, c: &Constant) {
 }
 
 fn write_type_meta(buf: &mut Vec<u8>, ty: &TypeMeta) {
-    write_u32(buf, ty.type_id());
-    buf.push(value_kind_to_u8(ty.kind));
+    write_u32(buf, ty.type_id);
     write_u16(buf, ty.size_slots as u16);
     write_string(buf, &ty.name);
     
@@ -419,9 +447,6 @@ fn write_function_def(buf: &mut Vec<u8>, f: &FunctionDef) {
     }
 }
 
-fn value_kind_to_u8(kind: ValueKind) -> u8 {
-    kind as u8
-}
 
 // === Reader helpers (std feature only) ===
 
@@ -492,9 +517,6 @@ fn read_constant(cursor: &mut Cursor<&[u8]>) -> Result<Constant, BytecodeError> 
 #[cfg(feature = "std")]
 fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError> {
     let id = read_u32(cursor)?;
-    let mut kind_byte = [0u8; 1];
-    cursor.read_exact(&mut kind_byte).map_err(|_| BytecodeError::UnexpectedEof)?;
-    let kind = u8_to_value_kind(kind_byte[0])?;
     let size_slots = read_u16(cursor)? as usize;
     let name = read_string(cursor)?;
     
@@ -512,12 +534,8 @@ fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError>
     let key_type = read_u32(cursor)?;
     let value_type = read_u32(cursor)?;
     
-    // id is None for builtin types (id == kind), Some for user-defined types
-    let id_opt = if id < gox_common_core::FIRST_USER_TYPE_ID { None } else { Some(id) };
-    
     Ok(TypeMeta {
-        id: id_opt,
-        kind,
+        type_id: id,
         size_slots,
         size_bytes: size_slots * 8,
         slot_types,
@@ -572,14 +590,6 @@ fn read_function_def(cursor: &mut Cursor<&[u8]>) -> Result<FunctionDef, Bytecode
     })
 }
 
-fn u8_to_value_kind(v: u8) -> Result<ValueKind, BytecodeError> {
-    // ValueKind has values 0-22, so we can validate the range
-    if v <= 22 {
-        Ok(ValueKind::from_u8(v))
-    } else {
-        Err(BytecodeError::InvalidTypeKind(v))
-    }
-}
 
 #[cfg(test)]
 mod tests {

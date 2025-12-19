@@ -30,10 +30,44 @@ mod stmt;
 
 use std::collections::HashMap;
 use gox_analysis::{Project, TypeCheckResult};
+use gox_analysis::types::{Type, BasicType};
 use gox_common::{Symbol, SymbolInterner};
+use gox_common_core::SlotType;
 use gox_syntax::ast::{Decl, File};
 use gox_vm::bytecode::{Constant, FunctionDef, Module};
 use gox_vm::instruction::Opcode;
+
+/// Convert analysis Type to SlotType vector for GC scanning.
+fn type_to_slot_types(ty: &Type) -> Vec<SlotType> {
+    match ty {
+        // Value types (1 slot, no GC)
+        Type::Basic(BasicType::Bool) |
+        Type::Basic(BasicType::Int) | Type::Basic(BasicType::Int8) |
+        Type::Basic(BasicType::Int16) | Type::Basic(BasicType::Int32) |
+        Type::Basic(BasicType::Int64) | Type::Basic(BasicType::Uint) |
+        Type::Basic(BasicType::Uint8) | Type::Basic(BasicType::Uint16) |
+        Type::Basic(BasicType::Uint32) | Type::Basic(BasicType::Uint64) |
+        Type::Basic(BasicType::Float32) | Type::Basic(BasicType::Float64) |
+        Type::Untyped(_) => vec![SlotType::Value],
+        
+        // Reference types (1 slot, GcRef)
+        Type::Basic(BasicType::String) |
+        Type::Slice(_) | Type::Array(_) | Type::Map(_) |
+        Type::Pointer(_) | Type::Func(_) | Type::Chan(_) => vec![SlotType::GcRef],
+        
+        // Tuple - treat as GcRef
+        Type::Tuple(_) => vec![SlotType::GcRef],
+        
+        // Interface (2 slots)
+        Type::Interface(_) => vec![SlotType::Interface0, SlotType::Interface1],
+        
+        // Struct - for now treat as single GcRef (heap allocated)
+        Type::Struct(_) => vec![SlotType::GcRef],
+        
+        // Default (includes Named, Nil, Invalid, and any future variants)
+        _ => vec![SlotType::Value],
+    }
+}
 
 pub use context::CodegenContext;
 
@@ -71,17 +105,16 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
                     for spec in &var.specs {
                         for name in &spec.names {
                             let var_name = project.interner.resolve(name.symbol).unwrap_or("");
-                            // GC ref = anything except non-string basic types
-                            let is_ref = pkg.types.scope.lookup(name.symbol)
+                            // Determine slot_types based on variable type
+                            let slot_types = pkg.types.scope.lookup(name.symbol)
                                 .map(|e| match e {
                                     gox_analysis::scope::Entity::Var(v) => {
-                                        !matches!(v.ty, gox_analysis::types::Type::Basic(b) 
-                                            if b != gox_analysis::types::BasicType::String)
+                                        type_to_slot_types(&v.ty)
                                     }
-                                    _ => false,
+                                    _ => vec![gox_common_core::SlotType::Value],
                                 })
-                                .unwrap_or(false);
-                            let idx = module.add_global(var_name, 1, is_ref);
+                                .unwrap_or_else(|| vec![gox_common_core::SlotType::Value]);
+                            let idx = module.add_global(var_name, slot_types);
                             global_indices.insert((pkg.name.clone(), name.symbol), idx);
                         }
                     }

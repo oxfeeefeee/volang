@@ -11,4 +11,4 @@
 mod types;
 pub mod utf8;
 
-pub use types::{ValueKind, SlotType, FIRST_USER_TYPE_ID, type_needs_gc};
+pub use types::{ValueKind, SlotType, RuntimeTypeId};

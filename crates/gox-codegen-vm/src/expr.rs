@@ -920,7 +920,7 @@ fn compile_interface_method_call(
 /// Skips interface types in the count since they don't have runtime type_ids.
 fn get_type_id_for_name(ctx: &CodegenContext, type_name: &str) -> Option<u32> {
     use gox_analysis::Type;
-    use gox_common_core::FIRST_USER_TYPE_ID;
+    use gox_common_core::RuntimeTypeId;
 
     // Check named types in analysis result, skipping interface types
     let mut concrete_idx = 0u32;
@@ -932,7 +932,7 @@ fn get_type_id_for_name(ctx: &CodegenContext, type_name: &str) -> Option<u32> {
 
         let name = ctx.interner.resolve(info.name).unwrap_or("");
         if name == type_name {
-            return Some(FIRST_USER_TYPE_ID + concrete_idx);
+            return Some(RuntimeTypeId::FirstStruct as u32 + concrete_idx);
         }
         concrete_idx += 1;
     }
