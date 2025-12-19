@@ -137,3 +137,21 @@ impl ValueKind {
     }
 }
 
+/// Check if a type_id needs GC scanning.
+/// 
+/// - type_id >= 14 (String): needs scanning
+/// - type_id < 14 (primitives): no scanning needed
+/// 
+/// Layout:
+/// - 0-13: primitives (nil, bool, int*, uint*, float*)
+/// - 14-22: reference types (String, Slice, Map, Struct, Pointer, Interface, Array, Channel, Closure)
+/// - 32+: user-defined structs
+/// 
+/// Note: type_id 17 (Struct) and 19 (Interface) should never be passed here.
+/// - Struct (17): user-defined structs have type_id >= 32
+/// - Interface (19): not a standalone GC object, stored as two slots [type_id, data]
+#[inline]
+pub fn type_needs_gc(type_id: u32) -> bool {
+    type_id >= ValueKind::String as u32
+}
+

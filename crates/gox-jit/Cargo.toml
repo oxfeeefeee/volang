@@ -8,6 +8,7 @@ description = "JIT compilation backend for GoX using Cranelift"
 [dependencies]
 gox-common = { path = "../gox-common" }
 gox-vm = { path = "../gox-vm" }
+gox-runtime-core = { path = "../gox-runtime-core" }
 gox-runtime-native = { path = "../gox-runtime-native" }
 gox-codegen-cranelift = { path = "../gox-codegen-cranelift" }
 

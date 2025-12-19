@@ -1045,28 +1045,7 @@ pub mod channel {
         get_state(chan).close();
     }
     
-    /// Scan channel for GC references.
-    /// `elem_is_ref` indicates whether elem_type is a reference type.
-    pub fn scan_refs<F>(chan: GcRef, elem_is_ref: bool, mut mark: F)
-    where
-        F: FnMut(GcRef),
-    {
-        if elem_is_ref {
-            let state = get_state(chan);
-            // Scan buffer
-            for &val in &state.buffer {
-                if val != 0 {
-                    mark(val as GcRef);
-                }
-            }
-            // Scan waiting_senders values
-            for &(_, val) in &state.waiting_senders {
-                if val != 0 {
-                    mark(val as GcRef);
-                }
-            }
-        }
-    }
+    // Note: channel GC scanning is now in gc_types::scan_channel
     
     /// Drop channel inner state.
     pub unsafe fn drop_inner(chan: GcRef) {

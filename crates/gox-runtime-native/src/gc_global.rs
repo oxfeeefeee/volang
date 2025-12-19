@@ -46,32 +46,6 @@ impl SyncFuncTable {
 
 static FUNC_TABLE: SyncFuncTable = SyncFuncTable(RwLock::new(Vec::new()));
 
-// =============================================================================
-// Type Table for User-Defined Types
-// =============================================================================
-
-/// Type metadata for GC scanning.
-/// 
-/// For user-defined struct types, we need to know which slots contain GC references.
-#[derive(Clone, Debug, Default)]
-pub struct TypeInfo {
-    /// Pointer bitmap: one bit per slot, true if slot contains a GC reference.
-    pub ptr_bitmap: Vec<bool>,
-}
-
-impl TypeInfo {
-    /// Create a new TypeInfo with the given pointer bitmap.
-    pub fn new(ptr_bitmap: Vec<bool>) -> Self {
-        Self { ptr_bitmap }
-    }
-}
-
-/// Global type table: type_id -> TypeInfo
-/// 
-/// Stores metadata for user-defined types to enable precise GC scanning.
-static TYPE_TABLE: Lazy<RwLock<Vec<Option<TypeInfo>>>> = 
-    Lazy::new(|| RwLock::new(Vec::new()));
-
 // Global pointer to function table for Cranelift symbol access
 // Atomic pointer for lock-free read access
 static FUNC_TABLE_PTR: AtomicPtr<*const u8> = AtomicPtr::new(std::ptr::null_mut());
@@ -111,45 +85,7 @@ pub extern "C" fn gox_func_table_ptr() -> *const *const u8 {
     FUNC_TABLE_PTR.load(Ordering::Acquire)
 }
 
-// =============================================================================
-// Type Table for User-Defined Types
-// =============================================================================
-
-/// Initialize the type table with space for user types.
-/// 
-/// Called at the start of JIT compilation to prepare for type registration.
-pub fn init_type_table() {
-    let mut table = TYPE_TABLE.write();
-    table.clear();
-}
-
-/// Register a user-defined type with its pointer bitmap.
-/// 
-/// # Arguments
-/// * `type_id` - The type ID (must be >= FIRST_USER_TYPE_ID)
-/// * `ptr_bitmap` - Which slots contain GC references
-pub fn register_type(type_id: TypeId, ptr_bitmap: Vec<bool>) {
-    let mut table = TYPE_TABLE.write();
-    
-    // Ensure table is large enough
-    let idx = type_id as usize;
-    if table.len() <= idx {
-        table.resize(idx + 1, None);
-    }
-    
-    table[idx] = Some(TypeInfo::new(ptr_bitmap));
-}
-
-/// Get type info for a type ID.
-fn get_type_info(type_id: TypeId) -> Option<TypeInfo> {
-    let table = TYPE_TABLE.read();
-    let idx = type_id as usize;
-    if idx < table.len() {
-        table[idx].clone()
-    } else {
-        None
-    }
-}
+// Note: Type table for user-defined structs is now in gox_runtime_core::gc_types
 
 // =============================================================================
 // Global variable access functions for JIT
@@ -208,66 +144,10 @@ pub fn collect_garbage() {
     // Mark roots from native stack using stack maps
     crate::stack_map::scan_native_stack(&mut gc);
     
-    // Perform collection
+    // Perform collection using unified scan_object
     gc.collect(|gc, obj| {
-        scan_object(gc, obj);
+        gox_runtime_core::gc_types::scan_object(gc, obj);
     });
-}
-
-/// Scan a GC object for nested references.
-fn scan_object(gc: &mut Gc, obj: GcRef) {
-    use gox_common_core::ValueKind;
-    
-    if obj.is_null() {
-        return;
-    }
-    
-    let type_id = unsafe { (*obj).header.type_id };
-    
-    // Handle user-defined types using TypeTable
-    if type_id >= gox_common_core::FIRST_USER_TYPE_ID {
-        if let Some(type_info) = get_type_info(type_id) {
-            // Scan fields using ptr_bitmap
-            for (i, &is_ptr) in type_info.ptr_bitmap.iter().enumerate() {
-                if is_ptr {
-                    let child = Gc::read_slot(obj, i);
-                    if child != 0 {
-                        gc.mark_gray(child as GcRef);
-                    }
-                }
-            }
-        }
-        return;
-    }
-    
-    let kind = ValueKind::from_u8(type_id as u8);
-    match kind {
-        ValueKind::String => {
-            // String: [array_ref, start, len]
-            let array_ref = Gc::read_slot(obj, 0);
-            if array_ref != 0 {
-                gc.mark_gray(array_ref as GcRef);
-            }
-        }
-        ValueKind::Slice => {
-            // Slice: [array_ref, start, len, cap]
-            let array_ref = Gc::read_slot(obj, 0);
-            if array_ref != 0 {
-                gc.mark_gray(array_ref as GcRef);
-            }
-        }
-        ValueKind::Closure => {
-            // Closure: [func_id, upvalue_count, upvalues...]
-            let upval_count = (Gc::read_slot(obj, 1) as usize).min(256);
-            for i in 0..upval_count {
-                let upval = Gc::read_slot(obj, 2 + i);
-                if upval != 0 {
-                    gc.mark_gray(upval as GcRef);
-                }
-            }
-        }
-        _ => {}
-    }
 }
 
 // =============================================================================

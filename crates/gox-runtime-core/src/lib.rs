@@ -16,6 +16,7 @@ extern crate alloc;
 pub mod ffi;
 pub mod api;
 pub mod gc;
+pub mod gc_types;
 pub mod objects;
 
 #[cfg(feature = "std")]

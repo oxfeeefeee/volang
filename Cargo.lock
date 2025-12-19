@@ -664,6 +664,7 @@ dependencies = [
  "gox-codegen-cranelift",
  "gox-codegen-vm",
  "gox-common",
+ "gox-runtime-core",
  "gox-runtime-native",
  "gox-syntax",
  "gox-vm",
@@ -687,6 +688,7 @@ dependencies = [
  "gox-common-core",
  "indexmap",
  "libm",
+ "once_cell",
  "regex",
  "serde_json",
 ]

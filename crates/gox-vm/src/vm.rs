@@ -1777,10 +1777,9 @@ impl Vm {
             }
         }
         
-        // Perform collection with object scanner
-        let types = &self.types;
+        // Perform collection with unified object scanner
         self.gc.collect(|gc, obj| {
-            scan_object(gc, obj, types);
+            gox_runtime_core::gc_types::scan_object(gc, obj);
         });
     }
     
@@ -1795,67 +1794,7 @@ impl Vm {
     }
 }
 
-/// Scan a GC object's fields for references.
-/// 
-/// Note: This is a simplified scanner that handles builtin types.
-/// User-defined struct types with ptr_bitmap will be scanned using TypeTable metadata.
-fn scan_object(gc: &mut Gc, obj: GcRef, types: &TypeTable) {
-    if obj.is_null() {
-        return;
-    }
-    
-    let type_id = unsafe { (*obj).header.type_id };
-    
-    // Get type metadata for ptr_bitmap (user-defined struct types)
-    // Skip builtin types - they are handled in fallback by ValueKind
-    if type_id >= gox_common_core::FIRST_USER_TYPE_ID {
-        if let Some(meta) = types.get(type_id) {
-            // Scan fields using ptr_bitmap
-            for (i, is_ptr) in meta.ptr_bitmap.iter().enumerate() {
-                if *is_ptr {
-                    let child = Gc::read_slot(obj, i);
-                    if child != 0 {
-                        gc.mark_gray(child as GcRef);
-                    }
-                }
-            }
-            return;
-        }
-    }
-    
-    // Fallback: handle builtin types by ValueKind
-    let kind = ValueKind::from_u8(type_id as u8);
-    match kind {
-        ValueKind::String => {
-            // String: [array_ref, start, len] - scan the underlying byte array
-            let array_ref = Gc::read_slot(obj, 0);
-            if array_ref != 0 {
-                gc.mark_gray(array_ref as GcRef);
-            }
-        }
-        ValueKind::Slice => {
-            // Slice: [array_ref, start, len, cap] - scan the underlying array
-            let array_ref = Gc::read_slot(obj, 0);
-            if array_ref != 0 {
-                gc.mark_gray(array_ref as GcRef);
-            }
-        }
-        ValueKind::Closure => {
-            // Closure: [func_id, upvalue_count, upvalues...]
-            let upval_count = (Gc::read_slot(obj, 1) as usize).min(256);
-            for i in 0..upval_count {
-                let upval = Gc::read_slot(obj, 2 + i);
-                if upval != 0 {
-                    gc.mark_gray(upval as GcRef);
-                }
-            }
-        }
-        _ => {
-            // Array, Map, Channel: no nested GC refs to scan
-            // (Array elements are values, not tracked here)
-        }
-    }
-}
+// Note: scan_object is now in gox_runtime_core::gc_types::scan_object
 
 impl Default for Vm {
     fn default() -> Self {
