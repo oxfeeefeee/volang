@@ -791,3 +791,100 @@ mod tests {
         assert!(provided.implements(&required).is_err());
     }
 }
+
+// =============================================================================
+// Runtime Type Registry (for GC)
+// =============================================================================
+
+/// Entry for a struct type in the runtime type registry.
+/// Each struct definition (named or anonymous) gets a unique runtime type ID.
+#[derive(Debug, Clone)]
+pub struct StructTypeEntry {
+    /// The struct type definition.
+    pub ty: StructType,
+    /// Runtime type ID (FirstStruct + index).
+    pub runtime_type_id: u32,
+}
+
+/// Entry for an interface type in the runtime type registry.
+/// Interfaces are deduplicated by method set - identical method sets share the same ID.
+#[derive(Debug, Clone)]
+pub struct InterfaceTypeEntry {
+    /// The interface type definition.
+    pub ty: InterfaceType,
+    /// Runtime type ID (FirstInterface + index).
+    pub runtime_type_id: u32,
+}
+
+/// Registry of all struct and interface types for runtime use.
+/// Built during type checking, used by codegen for type ID allocation.
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeTypeRegistry {
+    /// All struct types (each gets unique ID, no deduplication).
+    pub structs: Vec<StructTypeEntry>,
+    /// Interface types (deduplicated by method set).
+    pub interfaces: Vec<InterfaceTypeEntry>,
+}
+
+impl RuntimeTypeRegistry {
+    /// First runtime type ID for user-defined structs.
+    pub const FIRST_STRUCT: u32 = 100;
+    /// First runtime type ID for user-defined interfaces.
+    pub const FIRST_INTERFACE: u32 = 0x8000_0000;
+    
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
+    /// Register a struct type and return its runtime type ID.
+    /// Each struct definition gets a new unique ID (no deduplication).
+    pub fn register_struct(&mut self, ty: StructType) -> u32 {
+        let runtime_type_id = Self::FIRST_STRUCT + self.structs.len() as u32;
+        self.structs.push(StructTypeEntry { ty, runtime_type_id });
+        runtime_type_id
+    }
+    
+    /// Register an interface type and return its runtime type ID.
+    /// Interfaces with identical method sets share the same ID.
+    pub fn register_interface(&mut self, ty: InterfaceType) -> u32 {
+        // Check if we already have an interface with the same method set
+        for entry in &self.interfaces {
+            if Self::same_method_set(&entry.ty, &ty) {
+                return entry.runtime_type_id;
+            }
+        }
+        // New unique interface
+        let runtime_type_id = Self::FIRST_INTERFACE + self.interfaces.len() as u32;
+        self.interfaces.push(InterfaceTypeEntry { ty, runtime_type_id });
+        runtime_type_id
+    }
+    
+    /// Check if two interfaces have the same method set.
+    fn same_method_set(a: &InterfaceType, b: &InterfaceType) -> bool {
+        if a.methods.len() != b.methods.len() {
+            return false;
+        }
+        // Sort methods by name for comparison
+        let mut a_methods: Vec<_> = a.methods.iter().collect();
+        let mut b_methods: Vec<_> = b.methods.iter().collect();
+        a_methods.sort_by_key(|m| m.name.as_u32());
+        b_methods.sort_by_key(|m| m.name.as_u32());
+        
+        for (ma, mb) in a_methods.iter().zip(b_methods.iter()) {
+            if ma.name != mb.name || ma.sig != mb.sig {
+                return false;
+            }
+        }
+        true
+    }
+    
+    /// Get struct count.
+    pub fn struct_count(&self) -> usize {
+        self.structs.len()
+    }
+    
+    /// Get interface count.
+    pub fn interface_count(&self) -> usize {
+        self.interfaces.len()
+    }
+}
