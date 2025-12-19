@@ -650,6 +650,9 @@ dependencies = [
 [[package]]
 name = "gox-common-core"
 version = "0.1.0"
+dependencies = [
+ "num_enum",
+]
 
 [[package]]
 name = "gox-jit"
@@ -756,6 +759,7 @@ dependencies = [
  "gox-runtime-core",
  "hashbrown 0.14.5",
  "indexmap",
+ "num_enum",
  "parking_lot",
 ]
 
@@ -1021,6 +1025,27 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "num_enum"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1207a7e20ad57b847bbddc6776b968420d38292bbfe2089accff5e19e82454c"
+dependencies = [
+ "num_enum_derive",
+ "rustversion",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff32365de1b6743cb203b710788263c44a03de03802daf96092f2da4fe6ba4d7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

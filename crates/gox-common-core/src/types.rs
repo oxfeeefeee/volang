@@ -1,5 +1,7 @@
 //! Common type definitions shared across the GoX compiler.
 
+use num_enum::TryFromPrimitive;
+
 /// Value kind - the runtime classification of GoX values.
 ///
 /// This is a simplified type tag used for:
@@ -10,7 +12,7 @@
 /// Unlike `gox_analysis::Type` which carries full type information
 /// (generics, fields, methods), `ValueKind` is a flat enum suitable
 /// for runtime operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
 #[repr(u8)]
 pub enum ValueKind {
     Nil = 0,
@@ -44,33 +46,9 @@ pub const FIRST_USER_TYPE_ID: u32 = 32;
 
 impl ValueKind {
     /// Create a ValueKind from its u8 representation.
+    #[inline]
     pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => ValueKind::Nil,
-            1 => ValueKind::Bool,
-            2 => ValueKind::Int,
-            3 => ValueKind::Int8,
-            4 => ValueKind::Int16,
-            5 => ValueKind::Int32,
-            6 => ValueKind::Int64,
-            7 => ValueKind::Uint,
-            8 => ValueKind::Uint8,
-            9 => ValueKind::Uint16,
-            10 => ValueKind::Uint32,
-            11 => ValueKind::Uint64,
-            12 => ValueKind::Float32,
-            13 => ValueKind::Float64,
-            14 => ValueKind::String,
-            15 => ValueKind::Slice,
-            16 => ValueKind::Map,
-            17 => ValueKind::Struct,
-            18 => ValueKind::Pointer,
-            19 => ValueKind::Interface,
-            20 => ValueKind::Array,
-            21 => ValueKind::Channel,
-            22 => ValueKind::Closure,
-            _ => ValueKind::Nil,
-        }
+        Self::try_from(v).unwrap_or(ValueKind::Nil)
     }
 
     /// Is this an integer type?

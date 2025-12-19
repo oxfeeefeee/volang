@@ -12,6 +12,7 @@ multithread = ["parking_lot", "crossbeam-deque"]
 
 [dependencies]
 gox-common-core = { path = "../gox-common-core" }
+num_enum = { version = "0.7", default-features = false }
 gox-runtime-core = { path = "../gox-runtime-core" }
 hashbrown = "0.14"
 indexmap = "2"
