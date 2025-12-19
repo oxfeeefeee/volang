@@ -79,7 +79,7 @@ pub mod project;
 use gox_common::{DiagnosticSink, SymbolInterner};
 use gox_syntax::ast::{Decl, File};
 
-pub use types::{Type, BasicType, UntypedKind, NamedTypeId, NamedTypeInfo, MethodSet, TypeRegistry, RuntimeTypeRegistry};
+pub use types::{Type, BasicType, UntypedKind, NamedTypeId, NamedTypeInfo, MethodSet, TypeRegistry};
 pub use scope::{Scope, ScopeKind, Entity, BuiltinKind};
 pub use constant::Constant;
 pub use collect::{collect_types, collect_types_multi, parse_rune_literal, parse_string_literal, CollectResult};
@@ -97,8 +97,6 @@ pub struct TypeCheckResult {
     /// Expression types: (span_start, span_end) -> Type
     /// Uses full span as key to distinguish nested expressions with same start position.
     pub expr_types: std::collections::HashMap<(u32, u32), Type>,
-    /// Runtime type registry: all struct/interface types with pre-computed type IDs.
-    pub runtime_types: RuntimeTypeRegistry,
 }
 
 /// Type-checks a GoX source file.
@@ -149,14 +147,10 @@ pub fn typecheck_files(
     let expr_types = std::mem::take(&mut checker.expr_types);
     drop(checker);
 
-    // Build runtime type registry from named_types
-    let runtime_types = build_runtime_type_registry(&resolve_result.named_types);
-    
     TypeCheckResult {
         scope: resolve_result.scope,
         named_types: resolve_result.named_types,
         expr_types,
-        runtime_types,
     }
 }
 
@@ -239,35 +233,11 @@ pub fn typecheck_files_with_imports(
     let expr_types = std::mem::take(&mut checker.expr_types);
     drop(checker);
 
-    // Build runtime type registry from named_types
-    let runtime_types = build_runtime_type_registry(&resolve_result.named_types);
-    
     TypeCheckResult {
         scope: resolve_result.scope,
         named_types: resolve_result.named_types,
         expr_types,
-        runtime_types,
     }
-}
-
-/// Build runtime type registry from named types.
-/// Collects all struct and interface types, assigns runtime type IDs.
-fn build_runtime_type_registry(named_types: &[NamedTypeInfo]) -> RuntimeTypeRegistry {
-    let mut registry = RuntimeTypeRegistry::new();
-    
-    for info in named_types {
-        match &info.underlying {
-            Type::Struct(st) => {
-                registry.register_struct(st.clone());
-            }
-            Type::Interface(iface) => {
-                registry.register_interface(iface.clone());
-            }
-            _ => {}
-        }
-    }
-    
-    registry
 }
 
 #[cfg(test)]
@@ -1534,150 +1504,5 @@ func foo() (x int, y int) {
 }
 "#);
         assert!(!diag.has_errors());
-    }
-
-    // ========== RuntimeTypeRegistry tests ==========
-
-    #[test]
-    fn test_runtime_type_registry_structs() {
-        let (result, diag) = typecheck_source(r#"
-package main
-
-type Point struct {
-    x, y int
-}
-
-type Rect struct {
-    min, max Point
-}
-
-func main() {}
-"#);
-        assert!(!diag.has_errors());
-        
-        // Should have 2 struct types
-        assert_eq!(result.runtime_types.struct_count(), 2);
-        
-        // Check type IDs are sequential starting from FIRST_STRUCT
-        let first_id = RuntimeTypeRegistry::FIRST_STRUCT;
-        assert_eq!(result.runtime_types.structs[0].runtime_type_id, first_id);
-        assert_eq!(result.runtime_types.structs[1].runtime_type_id, first_id + 1);
-    }
-
-    #[test]
-    fn test_runtime_type_registry_interfaces() {
-        let (result, diag) = typecheck_source(r#"
-package main
-
-type Reader interface {
-    Read() int
-}
-
-type Writer interface {
-    Write(x int)
-}
-
-func main() {}
-"#);
-        assert!(!diag.has_errors());
-        
-        // Should have 2 interface types
-        assert_eq!(result.runtime_types.interface_count(), 2);
-        
-        // Check type IDs are sequential starting from FIRST_INTERFACE
-        let first_id = RuntimeTypeRegistry::FIRST_INTERFACE;
-        assert_eq!(result.runtime_types.interfaces[0].runtime_type_id, first_id);
-        assert_eq!(result.runtime_types.interfaces[1].runtime_type_id, first_id + 1);
-    }
-
-    #[test]
-    fn test_runtime_type_registry_interface_dedup() {
-        let (result, diag) = typecheck_source(r#"
-package main
-
-type Reader1 interface {
-    Read() int
-}
-
-type Reader2 interface {
-    Read() int
-}
-
-func main() {}
-"#);
-        assert!(!diag.has_errors());
-        
-        // Both interfaces have the same method set, should be deduplicated
-        // But they are named types, so each gets registered
-        // The deduplication happens when registering - same method set = same ID
-        assert_eq!(result.runtime_types.interface_count(), 1);
-    }
-
-    #[test]
-    fn test_runtime_type_registry_mixed() {
-        let (result, diag) = typecheck_source(r#"
-package main
-
-type Point struct {
-    x, y int
-}
-
-type Stringer interface {
-    String() string
-}
-
-type MyInt int
-
-func main() {}
-"#);
-        assert!(!diag.has_errors());
-        
-        // 1 struct, 1 interface (MyInt is not struct/interface)
-        assert_eq!(result.runtime_types.struct_count(), 1);
-        assert_eq!(result.runtime_types.interface_count(), 1);
-    }
-
-    #[test]
-    fn test_runtime_type_registry_empty_interface() {
-        let (result, diag) = typecheck_source(r#"
-package main
-
-type Any interface {}
-
-type Reader interface {
-    Read() int
-}
-
-func main() {}
-"#);
-        assert!(!diag.has_errors());
-        
-        // Empty interface should also get an ID
-        assert_eq!(result.runtime_types.interface_count(), 2);
-        
-        // Both should have unique IDs
-        let first_id = RuntimeTypeRegistry::FIRST_INTERFACE;
-        assert_eq!(result.runtime_types.interfaces[0].runtime_type_id, first_id);
-        assert_eq!(result.runtime_types.interfaces[1].runtime_type_id, first_id + 1);
-        
-        // First one (Any) should have 0 methods
-        assert_eq!(result.runtime_types.interfaces[0].ty.methods.len(), 0);
-    }
-
-    #[test]
-    fn test_runtime_type_registry_multiple_empty_interfaces_dedup() {
-        let (result, diag) = typecheck_source(r#"
-package main
-
-type Any1 interface {}
-type Any2 interface {}
-type Any3 interface {}
-
-func main() {}
-"#);
-        assert!(!diag.has_errors());
-        
-        // All empty interfaces have the same method set (empty), should be deduplicated to 1
-        assert_eq!(result.runtime_types.interface_count(), 1);
     }
 }
