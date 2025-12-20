@@ -483,7 +483,7 @@ pub fn missing_method<F: FileSystem>(
     intf: TypeKey,
     static_: bool,
     checker: &mut Checker<F>,
-    _fctx: &mut FilesContext<F>,
+    fctx: &mut FilesContext<F>,
 ) -> Option<(ObjKey, bool)> {
     // First, check if interface is empty
     {
@@ -544,7 +544,8 @@ pub fn missing_method<F: FileSystem>(
                 if !checker.tc_objs.lobjs[okey].entity_type().is_func() {
                     return Some((fkey, false)); // not a method
                 }
-                // Method signature should already be set up during type checking
+                // methods may not have a fully set up signature yet
+                checker.obj_decl(okey, None, fctx);
                 let y_type = checker.tc_objs.lobjs[okey].typ();
                 if !typ::identical_o(x_type, y_type, &checker.tc_objs) {
                     return Some((fkey, true)); // wrong type
