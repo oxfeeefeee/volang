@@ -7,7 +7,6 @@
 
 use crate::obj::{fmt_obj, Pos};
 use crate::objects::{ObjKey, ScopeKey, TCObjects, TypeKey};
-use crate::operand::Operand;
 use crate::scope::fmt_scope_full;
 use crate::selection::Selection;
 use crate::typ::fmt_type;
@@ -82,17 +81,3 @@ impl Display for Selection {
     }
 }
 
-impl Display for Operand {
-    fn format(&self, f: &mut fmt::Formatter<'_>, objs: &TCObjects) -> fmt::Result {
-        self.fmt(f, objs)
-    }
-
-    fn position(&self, _objs: &TCObjects) -> Pos {
-        self.pos()
-    }
-}
-
-/// Formats an operand as a string.
-pub fn operand_string(o: &Operand, objs: &TCObjects) -> String {
-    format!("{}", Displayer::new(o, objs))
-}

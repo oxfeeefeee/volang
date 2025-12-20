@@ -9,8 +9,10 @@ use crate::obj::{Builtin, ConstValue, Pos};
 use crate::objects::{TCObjects, TypeKey};
 use crate::typ::{self, BasicType};
 use crate::universe::Universe;
+use gox_common::symbol::SymbolInterner;
 use gox_common::vfs::FileSystem;
 use gox_common_core::ExprId;
+use gox_syntax::ast::Expr;
 use std::fmt::{self, Display, Write};
 
 /// An OperandMode specifies the (addressing) mode of an operand.
@@ -144,13 +146,18 @@ impl Operand {
     }
 
     /// Formats the operand for display.
-    pub fn fmt(&self, f: &mut fmt::Formatter<'_>, objs: &TCObjects) -> fmt::Result {
+    pub fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        objs: &TCObjects,
+        expr: &Expr,
+        interner: &SymbolInterner,
+    ) -> fmt::Result {
         let mut has_expr = true;
 
         // <expr> (
-        if self.expr_id.is_some() {
-            write!(f, "expr#{:?}", self.expr_id.unwrap())?;
-        } else {
+        gox_syntax::display::fmt_expr(expr, f, interner)?;
+        if false {
             match &self.mode {
                 OperandMode::Builtin(bi) => {
                     f.write_str(bi.name())?;
