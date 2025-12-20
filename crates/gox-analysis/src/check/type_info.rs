@@ -7,6 +7,7 @@ use crate::operand::OperandMode;
 use crate::selection::Selection;
 use gox_common::symbol::Ident;
 use gox_common_core::ExprId;
+use gox_common::Span;
 use std::collections::HashMap;
 
 /// TypeAndValue reports the type and value (for constants) of an expression.
@@ -48,14 +49,14 @@ pub struct TypeInfo {
     /// Maps identifiers to the objects they denote (use).
     pub uses: HashMap<Ident, ObjKey>,
 
-    /// Maps expression IDs to their implicitly declared objects.
-    pub implicits: HashMap<ExprId, ObjKey>,
+    /// Maps AST node spans to their implicitly declared objects.
+    pub implicits: HashMap<Span, ObjKey>,
 
     /// Maps selector expression IDs to their selections.
     pub selections: HashMap<ExprId, Selection>,
 
-    /// Maps expression IDs to the scopes they define.
-    pub scopes: HashMap<ExprId, ScopeKey>,
+    /// Maps AST node spans to the scopes they define.
+    pub scopes: HashMap<Span, ScopeKey>,
 
     /// Maps statement positions to the scopes they define.
     /// Used for block, if, for, switch, etc. statements.
@@ -91,8 +92,8 @@ impl TypeInfo {
     }
 
     /// Records an implicit object.
-    pub fn record_implicit(&mut self, expr_id: ExprId, obj: ObjKey) {
-        self.implicits.insert(expr_id, obj);
+    pub fn record_implicit(&mut self, span: Span, obj: ObjKey) {
+        self.implicits.insert(span, obj);
     }
 
     /// Records a selection.
@@ -100,9 +101,9 @@ impl TypeInfo {
         self.selections.insert(expr_id, sel);
     }
 
-    /// Records a scope for an expression.
-    pub fn record_scope(&mut self, expr_id: ExprId, scope: ScopeKey) {
-        self.scopes.insert(expr_id, scope);
+    /// Records a scope for an AST node.
+    pub fn record_scope(&mut self, span: Span, scope: ScopeKey) {
+        self.scopes.insert(span, scope);
     }
 
     /// Records a scope for a statement (by position).

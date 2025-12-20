@@ -197,7 +197,7 @@ impl<F: FileSystem> Checker<F> {
                 &format!("file{}", file_num),
                 false,
             );
-            // TODO: record_scope needs ExprId, skipping for now
+            self.result.record_scope(file.span, file_scope);
 
             // Process imports
             for import in &file.imports {
@@ -303,8 +303,7 @@ impl<F: FileSystem> Checker<F> {
         if let Some(alias) = &import.alias {
             self.result.record_def(alias.clone(), Some(pkg_name_obj));
         } else {
-            // TODO: record_implicit needs ExprId, skipping for now
-            let _ = pkg_name_obj;
+            self.result.record_implicit(import.span, pkg_name_obj);
         }
 
         // Add import to file scope
