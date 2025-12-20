@@ -602,10 +602,11 @@ fn compile_composite_lit(
     match underlying {
         Some(Type::Struct(s)) => {
             // Struct literal: S{a, b, c} or S{x: a, y: b}
-            // Use type_id=0 for anonymous struct allocation, field_count as slots
             let field_count = s.fields().len() as u16;
+            let type_key = info.expr_type_key(expr);
+            let type_id = ctx.runtime_type_id(lit_type.unwrap(), type_key) as u16;
             let dst = func.alloc_temp(1);
-            func.emit_op(Opcode::Alloc, dst, 0, field_count);
+            func.emit_op(Opcode::Alloc, dst, type_id, field_count);
             
             // Set each field (byte_offset = i * 8, size_code = 3 for 8-byte slots)
             for (i, elem) in elems.iter().enumerate() {

@@ -590,6 +590,7 @@ dependencies = [
  "gox-codegen-cranelift",
  "gox-codegen-vm",
  "gox-common",
+ "gox-common-core",
  "gox-runtime-native",
  "gox-syntax",
  "gox-vm",

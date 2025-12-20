@@ -25,3 +25,4 @@ cranelift-jit = "0.113"
 gox-syntax = { path = "../gox-syntax" }
 gox-analysis = { path = "../gox-analysis" }
 gox-codegen-vm = { path = "../gox-codegen-vm" }
+gox-common-core = { path = "../gox-common-core" }

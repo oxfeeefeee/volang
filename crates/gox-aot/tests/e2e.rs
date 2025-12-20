@@ -10,7 +10,9 @@ use gox_syntax::parse;
 use gox_analysis::analyze_single_file;
 use gox_codegen_vm::compile_project;
 use gox_vm::bytecode::Module as BytecodeModule;
+use gox_vm::instruction::Opcode;
 use gox_runtime_native::RuntimeSymbols;
+use gox_common_core::RuntimeTypeId;
 
 /// Compile GoX source to bytecode.
 fn source_to_bytecode(source: &str) -> BytecodeModule {
@@ -411,3 +413,76 @@ func main() {
 // Note: Full iterator test requires slice/map creation which needs more runtime support.
 // The iterator opcodes (IterBegin, IterNext, IterEnd) are implemented but need
 // container creation to be fully testable in e2e.
+
+#[test]
+fn test_struct_type_id_initialized() {
+    let source = r#"
+package main
+
+type Point struct {
+    x int
+    y int
+}
+
+type Person struct {
+    name string
+    age int
+}
+
+func createPoint() {
+    p := Point{x: 10, y: 20}
+    _ = p
+}
+
+func createPerson() {
+    p := Person{name: "test", age: 30}
+    _ = p
+}
+
+func main() {
+    createPoint()
+    createPerson()
+}
+"#;
+    
+    let bytecode = source_to_bytecode(source);
+    
+    // Find Alloc instructions and verify type_id >= FirstStruct (100)
+    let mut alloc_type_ids: Vec<u16> = Vec::new();
+    
+    for func in &bytecode.functions {
+        for instr in &func.code {
+            if instr.opcode() == Opcode::Alloc {
+                // Alloc instruction: a=dest, b=type_id, c=extra_slots
+                let type_id = instr.b;
+                alloc_type_ids.push(type_id);
+            }
+        }
+    }
+    
+    println!("Found {} Alloc instructions with type_ids: {:?}", alloc_type_ids.len(), alloc_type_ids);
+    
+    // Should have at least 2 Alloc instructions (for Point and Person)
+    assert!(alloc_type_ids.len() >= 2, "Expected at least 2 struct allocations, found {}", alloc_type_ids.len());
+    
+    // All struct type_ids should be >= FirstStruct (100)
+    let first_struct = RuntimeTypeId::FirstStruct as u16;
+    for &type_id in &alloc_type_ids {
+        assert!(
+            type_id >= first_struct,
+            "Struct type_id {} should be >= FirstStruct ({})",
+            type_id,
+            first_struct
+        );
+    }
+    
+    // Type IDs should be unique for different struct types
+    let unique_ids: std::collections::HashSet<_> = alloc_type_ids.iter().collect();
+    assert!(
+        unique_ids.len() >= 2,
+        "Expected at least 2 unique struct type_ids, found {}",
+        unique_ids.len()
+    );
+    
+    println!("✓ test_struct_type_id_initialized passed: type_ids {:?} all >= {}", alloc_type_ids, first_struct);
+}
