@@ -170,8 +170,6 @@ impl ImportKey {
 pub struct Checker {
     /// Type checking objects container.
     pub tc_objs: TCObjects,
-    /// Universe (predefined types and functions).
-    universe: Universe,
     /// Symbol interner for resolving identifiers.
     pub interner: SymbolInterner,
     /// Error messages.
@@ -193,11 +191,9 @@ pub struct Checker {
 impl Checker {
     /// Creates a new type checker for the given package.
     pub fn new(pkg: PackageKey, interner: SymbolInterner) -> Checker {
-        let mut tc_objs = TCObjects::new();
-        let universe = Universe::new(&mut tc_objs);
+        let tc_objs = TCObjects::new();
         Checker {
             tc_objs,
-            universe,
             interner,
             errors: Vec::new(),
             pkg,
@@ -221,7 +217,7 @@ impl Checker {
 
     /// Returns the universe.
     pub fn universe(&self) -> &Universe {
-        &self.universe
+        self.tc_objs.universe()
     }
 
     /// Returns a reference to the TCObjects.
