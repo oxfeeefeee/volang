@@ -240,8 +240,7 @@ impl<F: FileSystem> Checker<F> {
                 Some(t[1]),
             )),
         ];
-        // TODO: Implement new_t_tuple in TCObjects
-        tc_objs.types.insert(typ::Type::Tuple(typ::TupleDetail::new(vars)))
+        tc_objs.new_t_tuple(vars)
     }
 
     /// Unpack the RHS of an assignment.
