@@ -204,16 +204,22 @@ impl<F: FileSystem> Checker<F> {
         if let Some((i, _)) = path.iter().enumerate().find(|(_, &x)| x == okey) {
             if report {
                 let obj_val = self.lobj(okey);
+                let pos = obj_val.pos();
+                let span = Span::new(gox_common::BytePos(pos as u32), gox_common::BytePos(pos as u32));
                 self.error(
-                    Span::dummy(), // TODO: get span from obj
+                    span,
                     format!("illegal cycle in declaration of {}", obj_val.name()),
                 );
                 // Print cycle
                 for o in path[i..].iter() {
                     let oval = self.lobj(*o);
-                    self.error(Span::dummy(), format!("\t{} refers to", oval.name()));
+                    let pos = oval.pos();
+                    let span = Span::new(gox_common::BytePos(pos as u32), gox_common::BytePos(pos as u32));
+                    self.error(span, format!("\t{} refers to", oval.name()));
                 }
-                self.error(Span::dummy(), format!("\t{}", obj_val.name()));
+                let pos = obj_val.pos();
+                let span = Span::new(gox_common::BytePos(pos as u32), gox_common::BytePos(pos as u32));
+                self.error(span, format!("\t{}", obj_val.name()));
             }
             return true;
         }
