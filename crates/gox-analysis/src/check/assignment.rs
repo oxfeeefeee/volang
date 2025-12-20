@@ -18,14 +18,14 @@ use crate::typ::{self, BasicType};
 /// Default span for error reporting when no span is available.
 const DEFAULT_SPAN: Span = Span { start: BytePos(0), end: BytePos(0) };
 
-use super::checker::Checker;
+use super::checker::{Checker, FilesContext};
 
 impl<F: FileSystem> Checker<F> {
     /// Reports whether x can be assigned to a variable of type t.
     /// If necessary, converts untyped values to the appropriate type.
     /// Use t == None to indicate assignment to an untyped blank identifier.
     /// x.mode is set to invalid if the assignment failed.
-    pub fn assignment(&mut self, x: &mut Operand, t: Option<TypeKey>, note: &str) {
+    pub fn assignment(&mut self, x: &mut Operand, t: Option<TypeKey>, note: &str, fctx: &mut FilesContext<F>) {
         self.single_value(x);
         if x.invalid() {
             return;
@@ -85,7 +85,7 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Initializes a constant with value x.
-    pub fn init_const(&mut self, lhs: ObjKey, x: &mut Operand) {
+    pub fn init_const(&mut self, lhs: ObjKey, x: &mut Operand, fctx: &mut FilesContext<F>) {
         let invalid_type = self.invalid_type();
         
         if x.invalid() || x.typ == Some(invalid_type) {
@@ -105,7 +105,7 @@ impl<F: FileSystem> Checker<F> {
         // rhs must be a constant
         if let OperandMode::Constant(ref val) = x.mode {
             let t = self.tc_objs.lobjs[lhs].typ();
-            self.assignment(x, t, "constant declaration");
+            self.assignment(x, t, "constant declaration", fctx);
             if x.mode != OperandMode::Invalid {
                 if let OperandMode::Constant(ref v) = x.mode {
                     self.tc_objs.lobjs[lhs].set_const_val(v.clone());
@@ -117,7 +117,7 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Initializes a variable with value x.
-    pub fn init_var(&mut self, lhs: ObjKey, x: &mut Operand, msg: &str) -> Option<TypeKey> {
+    pub fn init_var(&mut self, lhs: ObjKey, x: &mut Operand, msg: &str, fctx: &mut FilesContext<F>) -> Option<TypeKey> {
         let invalid_type = self.invalid_type();
         
         if x.invalid() || x.typ == Some(invalid_type) {
@@ -153,7 +153,7 @@ impl<F: FileSystem> Checker<F> {
         }
 
         let t = self.tc_objs.lobjs[lhs].typ();
-        self.assignment(x, t, msg);
+        self.assignment(x, t, msg, fctx);
         if x.mode != OperandMode::Invalid {
             x.typ
         } else {
@@ -162,7 +162,7 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Assigns x to the variable denoted by lhs expression.
-    pub fn assign_var(&mut self, lhs: &Expr, x: &mut Operand) -> Option<TypeKey> {
+    pub fn assign_var(&mut self, lhs: &Expr, x: &mut Operand, fctx: &mut FilesContext<F>) -> Option<TypeKey> {
         let invalid_type = self.invalid_type();
         if x.invalid() || x.typ == Some(invalid_type) {
             return None;
@@ -173,7 +173,7 @@ impl<F: FileSystem> Checker<F> {
             let name = self.resolve_ident(&ident);
             if name == "_" {
                 self.result.record_def(ident, None);
-                self.assignment(x, None, "assignment to _ identifier");
+                self.assignment(x, None, "assignment to _ identifier", fctx);
                 return if x.mode != OperandMode::Invalid {
                     x.typ
                 } else {
@@ -184,7 +184,7 @@ impl<F: FileSystem> Checker<F> {
 
         // Evaluate lhs
         let mut z = Operand::new();
-        self.expr(&mut z, lhs);
+        self.expr(&mut z, lhs, fctx);
 
         if z.mode == OperandMode::Invalid || z.typ == Some(invalid_type) {
             return None;
@@ -200,7 +200,7 @@ impl<F: FileSystem> Checker<F> {
             }
         }
 
-        self.assignment(x, z.typ, "assignment");
+        self.assignment(x, z.typ, "assignment", fctx);
         if x.mode != OperandMode::Invalid {
             x.typ
         } else {
@@ -209,15 +209,15 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Initializes multiple variables from multiple values.
-    pub fn init_vars(&mut self, lhs: &[ObjKey], rhs: &[Expr]) {
+    pub fn init_vars(&mut self, lhs: &[ObjKey], rhs: &[Expr], fctx: &mut FilesContext<F>) {
         let invalid_type = self.invalid_type();
         
         // Simple case: same number of lhs and rhs
         if lhs.len() == rhs.len() {
             for (i, &l) in lhs.iter().enumerate() {
                 let mut x = Operand::new();
-                self.expr(&mut x, &rhs[i]);
-                self.init_var(l, &mut x, "assignment");
+                self.expr(&mut x, &rhs[i], fctx);
+                self.init_var(l, &mut x, "assignment", fctx);
             }
             return;
         }
@@ -225,7 +225,7 @@ impl<F: FileSystem> Checker<F> {
         // Handle tuple assignment (single rhs with multiple values)
         if rhs.len() == 1 {
             let mut x = Operand::new();
-            self.expr(&mut x, &rhs[0]);
+            self.expr(&mut x, &rhs[0], fctx);
             
             // Check if x is a tuple
             if let Some(typ) = x.typ {
@@ -238,7 +238,7 @@ impl<F: FileSystem> Checker<F> {
                             elem.mode = OperandMode::Value;
                             elem.typ = var_type;
                             elem.expr_id = x.expr_id;
-                            self.init_var(l, &mut elem, "assignment");
+                            self.init_var(l, &mut elem, "assignment", fctx);
                         }
                         return;
                     }
@@ -261,13 +261,13 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Assigns multiple values to multiple variables.
-    pub fn assign_vars(&mut self, lhs: &[Expr], rhs: &[Expr]) {
+    pub fn assign_vars(&mut self, lhs: &[Expr], rhs: &[Expr], fctx: &mut FilesContext<F>) {
         // Simple case: same number of lhs and rhs
         if lhs.len() == rhs.len() {
             for (i, l) in lhs.iter().enumerate() {
                 let mut x = Operand::new();
-                self.expr(&mut x, &rhs[i]);
-                self.assign_var(l, &mut x);
+                self.expr(&mut x, &rhs[i], fctx);
+                self.assign_var(l, &mut x, fctx);
             }
             return;
         }
@@ -275,7 +275,7 @@ impl<F: FileSystem> Checker<F> {
         // Handle tuple assignment
         if rhs.len() == 1 {
             let mut x = Operand::new();
-            self.expr(&mut x, &rhs[0]);
+            self.expr(&mut x, &rhs[0], fctx);
             
             if let Some(typ) = x.typ {
                 if let crate::typ::Type::Tuple(tuple) = &self.tc_objs.types[typ] {
@@ -287,7 +287,7 @@ impl<F: FileSystem> Checker<F> {
                             elem.mode = OperandMode::Value;
                             elem.typ = var_type;
                             elem.expr_id = x.expr_id;
-                            self.assign_var(l, &mut elem);
+                            self.assign_var(l, &mut elem, fctx);
                         }
                         return;
                     }
@@ -303,7 +303,7 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Handles short variable declarations (:=).
-    pub fn short_var_decl(&mut self, lhs: &[Expr], rhs: &[Expr], pos: Span) {
+    pub fn short_var_decl(&mut self, lhs: &[Expr], rhs: &[Expr], pos: Span, fctx: &mut FilesContext<F>) {
         let scope_key = match self.octx.scope {
             Some(s) => s,
             None => return,
@@ -342,7 +342,7 @@ impl<F: FileSystem> Checker<F> {
             }
         }
 
-        self.init_vars(&lhs_vars, rhs);
+        self.init_vars(&lhs_vars, rhs, fctx);
 
         // Declare new variables in scope
         if !new_vars.is_empty() {

@@ -317,13 +317,8 @@ impl<F: FileSystem> Checker<F> {
 
     /// Type-checks an expression and returns its type.
     /// This is the main entry point for expression type checking.
-    pub fn expr(&mut self, x: &mut crate::operand::Operand, e: &Expr) {
-        self.raw_expr(x, e, None);
-    }
-
-    /// Type-checks an expression with fctx.
-    pub fn expr_with_fctx(&mut self, x: &mut crate::operand::Operand, e: &Expr, _fctx: &mut super::checker::FilesContext<F>) {
-        self.raw_expr(x, e, None);
+    pub fn expr(&mut self, x: &mut crate::operand::Operand, e: &Expr, fctx: &mut super::checker::FilesContext<F>) {
+        self.raw_expr(x, e, None, fctx);
     }
 
     /// Type-checks a selector expression (e.g., x.f).

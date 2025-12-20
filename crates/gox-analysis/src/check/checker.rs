@@ -329,8 +329,8 @@ impl<F: FileSystem> Checker<F> {
     // =========================================================================
 
     /// Type-check an expression that may have multiple values (tuple).
-    pub fn multi_expr(&mut self, x: &mut crate::operand::Operand, expr: &Expr) {
-        self.raw_expr(x, expr, None);
+    pub fn multi_expr(&mut self, x: &mut crate::operand::Operand, expr: &Expr, fctx: &mut FilesContext<F>) {
+        self.raw_expr(x, expr, None, fctx);
     }
 
     /// Raw expression type-checking.
@@ -339,6 +339,7 @@ impl<F: FileSystem> Checker<F> {
         x: &mut crate::operand::Operand,
         expr: &Expr,
         hint: Option<TypeKey>,
+        fctx: &mut FilesContext<F>,
     ) {
         // TODO: Implement in expr.rs
         x.mode = crate::operand::OperandMode::Invalid;

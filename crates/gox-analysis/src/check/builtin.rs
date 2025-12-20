@@ -41,7 +41,7 @@ impl<F: FileSystem> Checker<F> {
                 call_span,
                 &format!("invalid use of ... with built-in {}", binfo.name),
             );
-            self.use_exprs(&call.args);
+            self.use_exprs(&call.args, fctx);
             return false;
         }
 
@@ -73,7 +73,7 @@ impl<F: FileSystem> Checker<F> {
             _ => {
                 // For other builtins, unpack evaluates first argument
                 if nargs > 0 {
-                    self.multi_expr(x, &call.args[0]);
+                    self.multi_expr(x, &call.args[0], fctx);
                     if x.invalid() {
                         return false;
                     }
@@ -160,7 +160,7 @@ impl<F: FileSystem> Checker<F> {
             let mut reason = String::new();
             if self.assignable_to(x, slice_of_bytes, &mut reason) {
                 let mut y = Operand::new();
-                self.multi_expr(&mut y, &call.args[1]);
+                self.multi_expr(&mut y, &call.args[1], fctx);
                 if y.invalid() {
                     return false;
                 }
@@ -177,7 +177,7 @@ impl<F: FileSystem> Checker<F> {
         // General case: check remaining arguments
         for i in 1..nargs {
             let mut arg = Operand::new();
-            self.multi_expr(&mut arg, &call.args[i]);
+            self.multi_expr(&mut arg, &call.args[i], fctx);
             if arg.invalid() {
                 return false;
             }
@@ -302,7 +302,7 @@ impl<F: FileSystem> Checker<F> {
 
         // Evaluate src
         let mut y = Operand::new();
-        self.multi_expr(&mut y, &call.args[1]);
+        self.multi_expr(&mut y, &call.args[1], fctx);
         if y.invalid() {
             return false;
         }
@@ -346,7 +346,7 @@ impl<F: FileSystem> Checker<F> {
                 
                 // Evaluate key argument
                 let mut k = Operand::new();
-                self.multi_expr(&mut k, &call.args[1]);
+                self.multi_expr(&mut k, &call.args[1], fctx);
                 if k.invalid() {
                     return false;
                 }
@@ -456,7 +456,7 @@ impl<F: FileSystem> Checker<F> {
 
         // Argument must be assignable to interface{}
         let iempty = self.tc_objs.new_t_empty_interface();
-        self.assignment(x, Some(iempty), "argument to panic");
+        self.assignment(x, Some(iempty), "argument to panic", fctx);
         if x.invalid() {
             return false;
         }
@@ -479,10 +479,10 @@ impl<F: FileSystem> Checker<F> {
 
         for i in 0..nargs {
             if i > 0 {
-                self.multi_expr(x, &call.args[i]);
+                self.multi_expr(x, &call.args[i], fctx);
             }
             let msg = format!("argument to {}", name);
-            self.assignment(x, None, &msg);
+            self.assignment(x, None, &msg, fctx);
             if x.invalid() {
                 return false;
             }
@@ -531,7 +531,7 @@ impl<F: FileSystem> Checker<F> {
     /// or Err(()) for invalid index.
     pub fn index(&mut self, e: &Expr, max: Option<u64>, fctx: &mut FilesContext<F>) -> Result<Option<u64>, ()> {
         let mut x = Operand::new();
-        self.expr(&mut x, e);
+        self.expr(&mut x, e, fctx);
         if x.invalid() {
             return Err(());
         }
@@ -568,7 +568,7 @@ impl<F: FileSystem> Checker<F> {
         // For now, delegate to a simplified type checking
         // Full implementation would parse the TypeExpr from Expr
         let mut x = Operand::new();
-        self.expr(&mut x, e);
+        self.expr(&mut x, e, fctx);
         if let OperandMode::TypeExpr = x.mode {
             x.typ.unwrap_or(self.invalid_type())
         } else {

@@ -254,9 +254,9 @@ impl<F: FileSystem> Checker<F> {
 
         let mut x = Operand::new();
         if let Some(expr) = init {
-            self.expr(&mut x, expr);
+            self.expr(&mut x, expr, fctx);
         }
-        self.init_const(okey, &mut x);
+        self.init_const(okey, &mut x, fctx);
 
         // Clear iota
         self.octx.iota = None;
@@ -290,8 +290,8 @@ impl<F: FileSystem> Checker<F> {
 
         if lhs.is_none() || lhs.as_ref().unwrap().len() == 1 {
             let mut x = Operand::new();
-            self.expr(&mut x, init.as_ref().unwrap());
-            self.init_var(okey, &mut x, "variable declaration");
+            self.expr(&mut x, init.as_ref().unwrap(), fctx);
+            self.init_var(okey, &mut x, "variable declaration", fctx);
             return;
         }
 
@@ -303,7 +303,7 @@ impl<F: FileSystem> Checker<F> {
             }
         }
 
-        self.init_vars(lhs.as_ref().unwrap(), &[init.clone().unwrap()]);
+        self.init_vars(lhs.as_ref().unwrap(), &[init.clone().unwrap()], fctx);
     }
 
     /// Type-checks a type declaration.

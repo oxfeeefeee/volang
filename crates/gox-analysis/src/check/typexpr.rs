@@ -288,7 +288,7 @@ impl<F: FileSystem> Checker<F> {
     /// Evaluates an array length expression and returns the length.
     fn array_len(&mut self, e: &Expr, fctx: &mut FilesContext<F>) -> Option<u64> {
         let mut x = Operand::new();
-        self.expr_with_fctx(&mut x, e, fctx);
+        self.expr(&mut x, e, fctx);
         if let OperandMode::Constant(v) = &x.mode {
             if let Some(t) = x.typ {
                 if typ::is_untyped(t, &self.tc_objs) || typ::is_integer(t, &self.tc_objs) {
@@ -446,9 +446,9 @@ impl<F: FileSystem> Checker<F> {
 
     /// Type-checks the type expression (or nil value) and returns the type, or None for nil.
     /// If e is neither a type nor nil, returns Invalid type.
-    pub fn type_or_nil(&mut self, e: &Expr) -> Option<TypeKey> {
+    pub fn type_or_nil(&mut self, e: &Expr, fctx: &mut FilesContext<F>) -> Option<TypeKey> {
         let mut x = Operand::new();
-        self.raw_expr(&mut x, e, None);
+        self.raw_expr(&mut x, e, None, fctx);
         let invalid_type = self.invalid_type();
         match x.mode {
             OperandMode::Invalid => Some(invalid_type),

@@ -29,11 +29,11 @@ impl<F: FileSystem> Checker<F> {
         fctx: &mut FilesContext<F>,
     ) -> ExprKind {
         // Evaluate the function expression
-        self.raw_expr(x, &call.func, None);
+        self.raw_expr(x, &call.func, None, fctx);
 
         match &x.mode {
             OperandMode::Invalid => {
-                self.use_exprs(&call.args);
+                self.use_exprs(&call.args, fctx);
                 ExprKind::Statement
             }
 
@@ -47,13 +47,13 @@ impl<F: FileSystem> Checker<F> {
                         self.error(call_span, "missing argument in conversion".to_string());
                     }
                     1 => {
-                        self.expr(x, &call.args[0]);
+                        self.expr(x, &call.args[0], fctx);
                         if !x.invalid() {
                             self.conversion(x, t, fctx);
                         }
                     }
                     _ => {
-                        self.use_exprs(&call.args);
+                        self.use_exprs(&call.args, fctx);
                         self.error(call.args.last().unwrap().span, "too many arguments in conversion".to_string());
                     }
                 }
@@ -84,13 +84,13 @@ impl<F: FileSystem> Checker<F> {
                     let pcount = sig.params_count(&self.tc_objs);
 
                     // Unpack arguments (handles multi-value returns)
-                    let result = self.unpack(&call.args, pcount, false, variadic);
+                    let result = self.unpack(&call.args, pcount, false, variadic, fctx);
                     match result {
                         UnpackResult::Error => x.mode = OperandMode::Invalid,
                         _ => {
                             let (count, _) = result.rhs_count();
                             let re = UnpackedResultLeftovers::new(&result, None);
-                            self.arguments(x, call, call_span, sig_key, &re, count);
+                            self.arguments(x, call, call_span, sig_key, &re, count, fctx);
                         }
                     }
 
@@ -126,6 +126,7 @@ impl<F: FileSystem> Checker<F> {
         sig: TypeKey,
         re: &UnpackedResultLeftovers,
         n: usize,
+        fctx: &mut FilesContext<F>,
     ) {
         let sig_val = self.otype(sig).try_as_signature().unwrap();
         let variadic = sig_val.variadic();
@@ -136,22 +137,22 @@ impl<F: FileSystem> Checker<F> {
         if call.spread {
             if !variadic {
                 self.error(call_span, "cannot use ... in call to non-variadic function".to_string());
-                re.use_all(self);
+                re.use_all(self, fctx);
                 return;
             }
             if call.args.len() == 1 && n > 1 {
                 self.error(call_span, format!("cannot use ... with {}-valued expression", n));
-                re.use_all(self);
+                re.use_all(self, fctx);
                 return;
             }
         }
 
         // Evaluate arguments
         for i in 0..n {
-            re.get(self, x, i);
+            re.get(self, x, i, fctx);
             if !x.invalid() {
                 let ellipsis = if i == n - 1 { call.spread } else { false };
-                self.argument(sig, i, x, ellipsis, "argument");
+                self.argument(sig, i, x, ellipsis, "argument", fctx);
             }
         }
 
@@ -172,6 +173,7 @@ impl<F: FileSystem> Checker<F> {
         x: &mut Operand,
         ellipsis: bool,
         note: &str,
+        fctx: &mut FilesContext<F>,
     ) {
         self.single_value(x);
         if x.invalid() {
@@ -212,6 +214,6 @@ impl<F: FileSystem> Checker<F> {
             }
         }
 
-        self.assignment(x, Some(ty), note);
+        self.assignment(x, Some(ty), note, fctx);
     }
 }
