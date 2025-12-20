@@ -2,7 +2,7 @@
 
 use gox_analysis::Type;
 use gox_common_core::SlotType;
-use gox_syntax::ast::{AssignOp, Expr, ExprKind, ForClause, Stmt, StmtKind};
+use gox_syntax::ast::{AssignOp, CaseClause, Expr, ExprKind, ForClause, Stmt, StmtKind};
 use gox_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
@@ -41,6 +41,12 @@ pub fn compile_stmt(
         StmtKind::Go(go) => compile_go(&go.call, ctx, func, info),
         StmtKind::Defer(defer) => compile_defer(&defer.call, ctx, func, info),
         StmtKind::Select(select) => compile_select(&select.cases, ctx, func, info),
+        StmtKind::Switch(switch) => compile_switch(
+            switch.init.as_deref(),
+            switch.tag.as_ref(),
+            &switch.cases,
+            ctx, func, info,
+        ),
         StmtKind::Empty => Ok(()),
         _ => todo!("statement {:?}", std::mem::discriminant(&stmt.kind)),
     }
@@ -430,5 +436,74 @@ fn compile_select(
         }
     }
     // TODO: implement full select with channel operations
+    Ok(())
+}
+
+fn compile_switch(
+    init: Option<&Stmt>,
+    tag: Option<&Expr>,
+    cases: &[CaseClause],
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfo,
+) -> Result<()> {
+    func.push_scope();
+
+    if let Some(init) = init {
+        compile_stmt(init, ctx, func, info)?;
+    }
+
+    let tag_reg = if let Some(tag) = tag {
+        compile_expr(tag, ctx, func, info)?
+    } else {
+        let reg = func.alloc_temp(1);
+        func.emit_op(Opcode::LoadInt, reg, 1, 0);
+        reg
+    };
+
+    let mut end_jumps = Vec::new();
+    let mut default_case: Option<&CaseClause> = None;
+
+    for case in cases {
+        if case.exprs.is_empty() {
+            default_case = Some(case);
+            continue;
+        }
+
+        let mut case_jumps = Vec::new();
+        for expr in &case.exprs {
+            let expr_reg = compile_expr(expr, ctx, func, info)?;
+            let cmp_reg = func.alloc_temp(1);
+            func.emit_op(Opcode::EqI64, cmp_reg, tag_reg, expr_reg);
+            let jump = func.emit_op(Opcode::JumpIf, cmp_reg, 0, 0);
+            case_jumps.push(jump);
+        }
+
+        let skip_body = func.emit_op(Opcode::Jump, 0, 0, 0);
+
+        for jump in case_jumps {
+            func.patch_jump(jump);
+        }
+
+        for stmt in &case.body {
+            compile_stmt(stmt, ctx, func, info)?;
+        }
+        let end_jump = func.emit_op(Opcode::Jump, 0, 0, 0);
+        end_jumps.push(end_jump);
+
+        func.patch_jump(skip_body);
+    }
+
+    if let Some(default) = default_case {
+        for stmt in &default.body {
+            compile_stmt(stmt, ctx, func, info)?;
+        }
+    }
+
+    for jump in end_jumps {
+        func.patch_jump(jump);
+    }
+
+    func.pop_scope();
     Ok(())
 }
