@@ -347,9 +347,7 @@ impl<F: FileSystem> Checker<F> {
         if !self.obj_map.contains_key(&to) {
             return;
         }
-        // TODO: Implement dependency tracking in DeclInfo
-        let _ = decl_key;
-        let _ = to;
+        self.tc_objs.decls[decl_key].add_dep(to);
     }
 
     // =========================================================================
