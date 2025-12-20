@@ -348,6 +348,17 @@ impl Checker {
         self.record_untyped(fctx);
         Ok(self.pkg)
     }
+    
+    /// Type check files with an importer for handling imports.
+    pub fn check_with_importer(
+        &mut self,
+        files: &[File],
+        _importer: &mut dyn crate::importer::Importer,
+    ) -> Result<PackageKey, ()> {
+        // For now, delegate to check() - importer integration will be added
+        // when import_package() is updated to use the importer
+        self.check(files)
+    }
 
     /// Check that all files have the same package name.
     fn check_files_pkg_name(&mut self, files: &[File]) -> Result<(), ()> {
