@@ -20,25 +20,46 @@
 
 ## 3. Interface Type ID Allocation
 
-- **Deduplicated by method set**
-- Interfaces with identical method sets share the same ID
-- Named interface → `FirstInterface + idx`
-- Anonymous interface → lookup existing method set or allocate new ID
+- **Each interface definition** gets a unique ID (no deduplication)
+- Named interface (`type MyInterface interface{...}`) → `FirstInterface + idx`
+- Anonymous interface → `FirstInterface + idx`
 
 ## 4. Codegen Flow
 
 ```
-Pass 1: Collect Types
-├── Traverse all Type::Struct in AST → allocate FirstStruct + struct_idx
-├── Traverse all Type::Interface in AST → dedupe by method set, allocate FirstInterface + iface_idx
-└── Register to module.types
+Pass 1: Register Types (in CodegenContext)
+├── Traverse all types via query.iter_types()
+├── Type::Struct → ctx.register_struct_type(type_key)
+├── Type::Interface → ctx.register_interface_type(type_key)
+├── Type::Named wrapping struct/interface → register with named type's key
+└── Store in struct_type_ids / interface_type_ids HashMaps
 
 Pass 2: Generate Code
+├── ctx.runtime_type_id(ty, type_key) returns registered ID
 ├── Opcode::Alloc uses the allocated type_id
 └── Interface variable slot[0] stores the actual value's type ID
 ```
 
-## 5. Data Structures
+## 5. Implementation Location
+
+**CodegenContext** (`gox-codegen-vm/src/context.rs`):
+```rust
+pub struct CodegenContext {
+    // ...
+    struct_type_ids: HashMap<TypeKey, u32>,
+    interface_type_ids: HashMap<TypeKey, u32>,
+    next_struct_id: u32,      // starts at FirstStruct (100)
+    next_interface_id: u32,   // starts at FirstInterface (2^31)
+}
+
+impl CodegenContext {
+    pub fn register_struct_type(&mut self, type_key: TypeKey) -> u32;
+    pub fn register_interface_type(&mut self, type_key: TypeKey) -> u32;
+    pub fn runtime_type_id(&self, ty: &Type, type_key: Option<TypeKey>) -> u32;
+}
+```
+
+## 6. Data Structures
 
 **GlobalDef**:
 ```rust
@@ -59,7 +80,7 @@ pub struct TypeMeta {
 }
 ```
 
-## 6. GC Scanning
+## 7. GC Scanning
 
 **Global Variables**:
 - Interface → 2 slots, dynamically check slot[1]
