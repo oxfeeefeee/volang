@@ -1142,9 +1142,16 @@ impl<F: FileSystem> Checker<F> {
                 x.typ = Some(ty);
             }
             ExprKind::FuncLit(func) => {
-                // TODO: Full function literal handling
-                x.mode = OperandMode::Value;
-                x.typ = Some(self.invalid_type());
+                // Get function type from signature
+                let t = self.func_type_from_sig(&func.sig, fctx);
+                if self.otype(t).try_as_signature().is_some() {
+                    x.mode = OperandMode::Value;
+                    x.typ = Some(t);
+                    // Note: func_body checking is deferred via delayed action
+                } else {
+                    x.mode = OperandMode::Invalid;
+                    x.typ = Some(self.invalid_type());
+                }
             }
             ExprKind::Conversion(conv) => {
                 let ty = self.type_expr(&conv.ty, fctx);
