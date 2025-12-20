@@ -35,6 +35,9 @@ pub fn compile_project(project: &Project) -> Result<Module> {
     // Use expr_types from Project
     let info = TypeInfo::new(query, project.expr_types());
 
+    // Register all struct and interface types (Pass 1)
+    register_types(project, &mut ctx);
+
     // Collect declarations from all files
     for file in &project.files {
         collect_declarations(file, &info, &mut ctx)?;
@@ -49,6 +52,41 @@ pub fn compile_project(project: &Project) -> Result<Module> {
     compile_init_and_entry_files(&project.files, &info, &mut ctx)?;
 
     Ok(ctx.finish())
+}
+
+/// Register all struct and interface types to allocate unique type IDs.
+fn register_types(project: &Project, ctx: &mut CodegenContext) {
+    use gox_analysis::Type;
+    
+    let query = project.query();
+    
+    // Iterate through all types in the project
+    for (type_key, ty) in query.iter_types() {
+        match ty {
+            Type::Struct(_) => {
+                ctx.register_struct_type(type_key);
+            }
+            Type::Interface(_) => {
+                ctx.register_interface_type(type_key);
+            }
+            Type::Named(n) => {
+                // Also register named types that wrap structs/interfaces
+                if let Some(underlying_key) = n.try_underlying() {
+                    let underlying = query.get_type(underlying_key);
+                    match underlying {
+                        Type::Struct(_) => {
+                            ctx.register_struct_type(type_key);
+                        }
+                        Type::Interface(_) => {
+                            ctx.register_interface_type(type_key);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn compile_init_and_entry_files(

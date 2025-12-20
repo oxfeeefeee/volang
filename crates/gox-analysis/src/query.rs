@@ -76,6 +76,11 @@ impl<'a> TypeQuery<'a> {
         &self.objs.types[key]
     }
 
+    /// Iterates over all types.
+    pub fn iter_types(&self) -> impl Iterator<Item = (TypeKey, &'a Type)> {
+        self.objs.types.iter()
+    }
+
     /// Gets the underlying type for a named type.
     pub fn underlying(&self, key: TypeKey) -> &'a Type {
         self.objs.types[key].underlying_val(self.objs)
