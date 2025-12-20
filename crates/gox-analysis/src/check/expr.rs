@@ -27,7 +27,7 @@
 use gox_common::span::Span;
 use gox_common::vfs::FileSystem;
 use gox_common_core::ExprId;
-use gox_syntax::ast::{BinaryOp, Expr, ExprKind, UnaryOp};
+use gox_syntax::ast::{BinaryOp, CompositeLitKey, Expr, ExprKind, UnaryOp};
 
 use crate::constant::Value;
 use crate::obj::LangObj;
@@ -1136,8 +1136,102 @@ impl<F: FileSystem> Checker<F> {
                 x.typ = Some(target);
             }
             ExprKind::CompositeLit(lit) => {
-                // TODO: Full composite literal handling
                 let ty = self.type_expr(&lit.ty, fctx);
+                if ty == self.invalid_type() {
+                    x.mode = OperandMode::Invalid;
+                    return;
+                }
+                
+                let utype = typ::underlying_type(ty, &self.tc_objs);
+                let utype_val = self.otype(utype).clone();
+                
+                match &utype_val {
+                    Type::Struct(detail) => {
+                        let fields = detail.fields().clone();
+                        // Check elements
+                        for (i, elem) in lit.elems.iter().enumerate() {
+                            let mut val = Operand::new();
+                            self.expr(&mut val, &elem.value, fctx);
+                            if val.invalid() {
+                                continue;
+                            }
+                            
+                            // Get field type
+                            let field_type = if let Some(ref key) = elem.key {
+                                // Keyed element: field:value
+                                match key {
+                                    CompositeLitKey::Ident(ident) => {
+                                        let name = self.resolve_ident(ident);
+                                        fields.iter().find_map(|&f| {
+                                            let fld = self.lobj(f);
+                                            if fld.name() == name {
+                                                fld.typ()
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    }
+                                    _ => None,
+                                }
+                            } else {
+                                // Positional element
+                                fields.get(i).and_then(|&f| self.lobj(f).typ())
+                            };
+                            
+                            if let Some(ft) = field_type {
+                                self.assignment(&mut val, Some(ft), "struct literal", fctx);
+                            }
+                        }
+                    }
+                    Type::Array(arr) => {
+                        let elem_type = arr.elem();
+                        for elem in &lit.elems {
+                            let mut val = Operand::new();
+                            self.expr(&mut val, &elem.value, fctx);
+                            if !val.invalid() {
+                                self.assignment(&mut val, Some(elem_type), "array literal", fctx);
+                            }
+                        }
+                    }
+                    Type::Slice(sl) => {
+                        let elem_type = sl.elem();
+                        for elem in &lit.elems {
+                            let mut val = Operand::new();
+                            self.expr(&mut val, &elem.value, fctx);
+                            if !val.invalid() {
+                                self.assignment(&mut val, Some(elem_type), "slice literal", fctx);
+                            }
+                        }
+                    }
+                    Type::Map(m) => {
+                        let key_type = m.key();
+                        let elem_type = m.elem();
+                        for elem in &lit.elems {
+                            // Check key
+                            if let Some(ref key) = elem.key {
+                                if let CompositeLitKey::Expr(key_expr) = key {
+                                    let mut key_op = Operand::new();
+                                    self.expr(&mut key_op, key_expr, fctx);
+                                    if !key_op.invalid() {
+                                        self.assignment(&mut key_op, Some(key_type), "map literal key", fctx);
+                                    }
+                                }
+                            }
+                            // Check value
+                            let mut val = Operand::new();
+                            self.expr(&mut val, &elem.value, fctx);
+                            if !val.invalid() {
+                                self.assignment(&mut val, Some(elem_type), "map literal value", fctx);
+                            }
+                        }
+                    }
+                    _ => {
+                        self.invalid_op(Span::default(), "invalid composite literal type");
+                        x.mode = OperandMode::Invalid;
+                        return;
+                    }
+                }
+                
                 x.mode = OperandMode::Value;
                 x.typ = Some(ty);
             }
