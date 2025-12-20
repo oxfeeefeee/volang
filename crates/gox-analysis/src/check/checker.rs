@@ -32,6 +32,7 @@ pub struct ExprInfo {
     pub is_lhs: bool,
     pub mode: OperandMode,
     pub typ: Option<TypeKey>,
+    pub expr: Expr,
 }
 
 // =============================================================================

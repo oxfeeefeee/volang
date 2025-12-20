@@ -85,10 +85,8 @@ impl<F: FileSystem> Checker<F> {
             } else {
                 t
             };
-            if let Some(_expr_id) = x.expr_id {
-                // TODO: Need to pass the actual Expr to update_expr_type
-                // self.update_expr_type(expr, final_t, true, fctx);
-                let _ = final_t;
+            if let Some(expr_id) = x.expr_id {
+                self.update_expr_type(expr_id, final_t, true, fctx);
             }
         }
 

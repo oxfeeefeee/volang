@@ -242,19 +242,18 @@ impl<F: FileSystem> Checker<F> {
     /// the type and value are recorded.
     pub fn update_expr_type(
         &mut self,
-        e: &Expr,
+        expr_id: ExprId,
         t: TypeKey,
         final_: bool,
         fctx: &mut FilesContext<F>,
     ) {
-        let old_opt = fctx.untyped.get(&e.id);
-        if old_opt.is_none() {
-            return; // nothing to do
-        }
-        let old = old_opt.unwrap().clone();
+        let info = match fctx.untyped.get(&expr_id) {
+            Some(i) => i.clone(),
+            None => return, // nothing to do
+        };
 
         // Update operands of e if necessary
-        match &e.kind {
+        match &info.expr.kind {
             ExprKind::FuncLit(_)
             | ExprKind::CompositeLit(_)
             | ExprKind::Index(_)
@@ -278,25 +277,25 @@ impl<F: FileSystem> Checker<F> {
                 // or a qualified identifier. No operands to take care of.
             }
             ExprKind::Paren(inner) => {
-                self.update_expr_type(inner, t, final_, fctx);
+                self.update_expr_type(inner.id, t, final_, fctx);
             }
             ExprKind::Unary(u) => {
                 // If x is a constant, the operands were constants.
-                if old.mode.constant_val().is_none() {
-                    self.update_expr_type(&u.operand, t, final_, fctx);
+                if info.mode.constant_val().is_none() {
+                    self.update_expr_type(u.operand.id, t, final_, fctx);
                 }
             }
             ExprKind::Binary(b) => {
-                if old.mode.constant_val().is_none() {
+                if info.mode.constant_val().is_none() {
                     if Self::is_comparison(b.op) {
                         // The result type is independent of operand types
                     } else if Self::is_shift(b.op) {
                         // The result type depends only on lhs operand.
-                        self.update_expr_type(&b.left, t, final_, fctx);
+                        self.update_expr_type(b.left.id, t, final_, fctx);
                     } else {
                         // The operand types match the result type.
-                        self.update_expr_type(&b.left, t, final_, fctx);
-                        self.update_expr_type(&b.right, t, final_, fctx);
+                        self.update_expr_type(b.left.id, t, final_, fctx);
+                        self.update_expr_type(b.right.id, t, final_, fctx);
                     }
                 }
             }
@@ -305,33 +304,30 @@ impl<F: FileSystem> Checker<F> {
 
         // If the new type is not final and still untyped, just update the recorded type.
         if !final_ && typ::is_untyped(t, &self.tc_objs) {
-            if let Some(old) = fctx.untyped.get_mut(&e.id) {
-                old.typ = Some(typ::underlying_type(t, &self.tc_objs));
+            if let Some(info) = fctx.untyped.get_mut(&expr_id) {
+                info.typ = Some(typ::underlying_type(t, &self.tc_objs));
             }
             return;
         }
 
         // Otherwise we have the final (typed or untyped type).
         // Remove it from the map of yet untyped expressions.
-        let removed = fctx.untyped.remove(&e.id);
-        let old = match removed {
+        let removed = fctx.untyped.remove(&expr_id);
+        let info = match removed {
             Some(o) => o,
             None => return,
         };
 
-        if old.is_lhs {
+        if info.is_lhs {
             // If x is the lhs of a shift, its final type must be integer.
             if !typ::is_integer(t, &self.tc_objs) {
-                self.invalid_op(
-                    Span::default(),
-                    "shifted operand must be integer",
-                );
+                self.invalid_op(Span::default(), "shifted operand must be integer");
                 return;
             }
         }
-        if old.mode.constant_val().is_some() {
+        if info.mode.constant_val().is_some() {
             // If x is a constant, it must be representable as a value of typ.
-            let mut c = Operand::with_expr(old.mode.clone(), e.id, old.typ);
+            let mut c = Operand::with_expr(info.mode.clone(), expr_id, info.typ);
             self.convert_untyped(&mut c, t);
             if c.invalid() {
                 return;
@@ -339,12 +335,8 @@ impl<F: FileSystem> Checker<F> {
         }
 
         // Everything's fine, record final type and value for x.
-        self.result.record_type_and_value(e.id, old.mode.clone(), t);
+        self.result.record_type_and_value(expr_id, info.mode.clone(), t);
     }
-
-    // =========================================================================
-    // Part 4: update_expr_val and convert_untyped
-    // =========================================================================
 
     /// Updates the value of x to val in the untyped map.
     fn update_expr_val(expr_id: ExprId, val: Value, fctx: &mut FilesContext<F>) {
@@ -386,7 +378,9 @@ impl<F: FileSystem> Checker<F> {
                     if xtval.is_numeric(&self.tc_objs) && ttval.is_numeric(&self.tc_objs) {
                         if order(xbt) < order(tbt) {
                             x.typ = Some(target);
-                            // TODO: update expr type when we have Expr reference
+                            if let Some(expr_id) = x.expr_id {
+                                self.update_expr_type(expr_id, target, false, fctx);
+                            }
                         }
                     } else {
                         self.error(Span::default(), "cannot convert untyped value".to_string());
@@ -451,7 +445,9 @@ impl<F: FileSystem> Checker<F> {
 
         if let Some(t) = final_target {
             x.typ = final_target;
-            // TODO: update expr type when we have Expr reference
+            if let Some(expr_id) = x.expr_id {
+                self.update_expr_type(expr_id, t, true, fctx);
+            }
         } else {
             self.error(Span::default(), "cannot convert untyped value".to_string());
             x.mode = OperandMode::Invalid;
@@ -511,7 +507,15 @@ impl<F: FileSystem> Checker<F> {
             }
             _ => {
                 x.mode = OperandMode::Value;
-                // TODO: update expr types when we have Expr references
+                // Update operand types to their default types
+                if let Some(expr_id) = x.expr_id {
+                    let default_t = typ::untyped_default_type(xtype, &self.tc_objs);
+                    self.update_expr_type(expr_id, default_t, true, fctx);
+                }
+                if let Some(expr_id) = y.expr_id {
+                    let default_t = typ::untyped_default_type(ytype, &self.tc_objs);
+                    self.update_expr_type(expr_id, default_t, true, fctx);
+                }
             }
         }
         // spec: "Comparison operators compare two operands and yield
@@ -873,6 +877,7 @@ impl<F: FileSystem> Checker<F> {
                     is_lhs: false,
                     mode: x.mode.clone(),
                     typ: Some(ty),
+                    expr: e.clone(),
                 },
             );
         } else {
