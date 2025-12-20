@@ -1131,7 +1131,7 @@ impl<F: FileSystem> Checker<F> {
                 }
                 
                 // Check type assertion validity
-                self.type_assertion(x, xtype, target, fctx);
+                self.type_assertion(x, xtype, target, e.span, fctx);
                 x.mode = OperandMode::CommaOk;
                 x.typ = Some(target);
             }
@@ -1347,15 +1347,32 @@ impl<F: FileSystem> Checker<F> {
         x: &mut Operand,
         xtype: TypeKey,
         t: TypeKey,
+        span: Span,
         _fctx: &mut FilesContext<F>,
     ) {
         // Check that xtype is an interface type
         if self.otype(xtype).try_as_interface().is_none() {
-            self.error(Span::default(), "type assertion requires interface type".to_string());
+            self.error(span, "type assertion requires interface type".to_string());
             x.mode = OperandMode::Invalid;
             return;
         }
-        // TODO: Full type assertion check using lookup::assertable_to
+        
+        // Check that t can satisfy the interface
+        if let Some((missing, wrong_type)) = crate::lookup::assertable_to(xtype, t, self) {
+            let method_name = self.lobj(missing).name();
+            if wrong_type {
+                self.error(
+                    span,
+                    format!("impossible type assertion: method {} has wrong type", method_name),
+                );
+            } else {
+                self.error(
+                    span,
+                    format!("impossible type assertion: missing method {}", method_name),
+                );
+            }
+        }
+        
         x.typ = Some(t);
         x.mode = OperandMode::CommaOk;
     }
