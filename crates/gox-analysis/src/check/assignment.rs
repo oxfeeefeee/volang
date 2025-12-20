@@ -354,8 +354,8 @@ impl<F: FileSystem> Checker<F> {
         }
     }
 
-    /// Ensures x is a single value (not comma-ok).
-    pub fn single_value(&mut self, x: &mut Operand) {
+    /// Converts comma-ok mode to single value mode.
+    fn use_single_value(&mut self, x: &mut Operand) {
         if let OperandMode::CommaOk = x.mode {
             x.mode = OperandMode::Value;
         }
@@ -379,7 +379,7 @@ impl<F: FileSystem> Checker<F> {
         // Check if conversion is valid
         if let OperandMode::Constant(ref val) = x.mode {
             // For constants, check representability
-            if !self.representable(val, target) {
+            if !self.is_representable(val, target) {
                 self.error(DEFAULT_SPAN, "constant not representable".to_string());
                 x.mode = OperandMode::Invalid;
                 return;
@@ -434,7 +434,7 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Checks if a constant value is representable as the target type.
-    pub fn representable(&self, val: &crate::constant::Value, target: TypeKey) -> bool {
+    fn is_representable(&self, val: &crate::constant::Value, target: TypeKey) -> bool {
         if let crate::typ::Type::Basic(basic) = &self.tc_objs.types[target] {
             return val.representable(basic, None);
         }

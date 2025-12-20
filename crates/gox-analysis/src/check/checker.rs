@@ -325,15 +325,10 @@ impl<F: FileSystem> Checker<F> {
     // Note: report_alt_decl and add_method_decls are in decl.rs
 
     // =========================================================================
-    // Expression checking stubs (to be implemented in expr.rs)
+    // Expression checking - delegated to expr.rs
     // =========================================================================
 
-    /// Type-check an expression that may have multiple values (tuple).
-    pub fn multi_expr(&mut self, x: &mut crate::operand::Operand, expr: &Expr, fctx: &mut FilesContext<F>) {
-        self.raw_expr(x, expr, None, fctx);
-    }
-
-    /// Raw expression type-checking.
+    /// Raw expression type-checking - delegates to raw_expr_impl in expr.rs.
     pub fn raw_expr(
         &mut self,
         x: &mut crate::operand::Operand,
@@ -341,23 +336,6 @@ impl<F: FileSystem> Checker<F> {
         hint: Option<TypeKey>,
         fctx: &mut FilesContext<F>,
     ) {
-        // TODO: Implement in expr.rs
-        x.mode = crate::operand::OperandMode::Invalid;
-        x.expr_id = Some(expr.id);
-        x.typ = None;
-        let _ = hint;
-    }
-
-    /// Updates the type of a previously type-checked expression.
-    /// Used to update the type of untyped expressions once the context provides
-    /// enough information to determine their final type.
-    pub fn update_expr_type(
-        &mut self,
-        _expr_id: ExprId,
-        _typ: TypeKey,
-        _final_: bool,
-        _fctx: &mut FilesContext<F>,
-    ) {
-        // TODO: Implement - update untyped expression to final type
+        self.raw_expr_impl(x, expr, hint, fctx);
     }
 }

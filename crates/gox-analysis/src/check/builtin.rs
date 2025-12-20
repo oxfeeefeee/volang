@@ -526,42 +526,7 @@ impl<F: FileSystem> Checker<F> {
         self.error(call_span, format!("{} arguments for {} (expected {}, found {})", msg, name, expected, got));
     }
 
-    /// Type-checks index for make/slice operations.
-    /// Returns Ok(Some(n)) for constant index n, Ok(None) for non-constant valid index,
-    /// or Err(()) for invalid index.
-    pub fn index(&mut self, e: &Expr, max: Option<u64>, fctx: &mut FilesContext<F>) -> Result<Option<u64>, ()> {
-        let mut x = Operand::new();
-        self.expr(&mut x, e, fctx);
-        if x.invalid() {
-            return Err(());
-        }
-
-        // index must be of integer type
-        if !typ::is_integer(x.typ.unwrap_or(self.invalid_type()), &self.tc_objs) {
-            self.error(e.span, "index must be integer".to_string());
-            return Err(());
-        }
-
-        // if constant, must be non-negative
-        if let OperandMode::Constant(v) = &x.mode {
-            if let Some(n) = v.int_val() {
-                if n < 0 {
-                    self.error(e.span, "index must be non-negative".to_string());
-                    return Err(());
-                }
-                let n = n as u64;
-                if let Some(m) = max {
-                    if n > m {
-                        self.error(e.span, "index out of bounds".to_string());
-                        return Err(());
-                    }
-                }
-                return Ok(Some(n));
-            }
-        }
-
-        Ok(None)
-    }
+    // index function moved to expr.rs
 
     /// Type-checks a type expression from an Expr AST node.
     fn type_expr_from_expr(&mut self, e: &Expr, fctx: &mut FilesContext<F>) -> TypeKey {
