@@ -1108,12 +1108,32 @@ impl<F: FileSystem> Checker<F> {
                 if x.invalid() {
                     return;
                 }
-                // TODO: Full type assertion handling
-                if let Some(ref ty) = ta.ty {
-                    let target = self.type_expr(ty, fctx);
-                    x.typ = Some(target);
-                    x.mode = OperandMode::CommaOk;
+                
+                // Check that x is an interface type
+                let xtype = typ::underlying_type(x.typ.unwrap(), &self.tc_objs);
+                if self.otype(xtype).try_as_interface().is_none() {
+                    self.invalid_op(Span::default(), "type assertion requires interface type");
+                    x.mode = OperandMode::Invalid;
+                    return;
                 }
+                
+                // x.(type) expressions are handled in type switches
+                if ta.ty.is_none() {
+                    self.invalid_op(Span::default(), "use of .(type) outside type switch");
+                    x.mode = OperandMode::Invalid;
+                    return;
+                }
+                
+                let target = self.type_expr(ta.ty.as_ref().unwrap(), fctx);
+                if target == self.invalid_type() {
+                    x.mode = OperandMode::Invalid;
+                    return;
+                }
+                
+                // Check type assertion validity
+                self.type_assertion(x, xtype, target, fctx);
+                x.mode = OperandMode::CommaOk;
+                x.typ = Some(target);
             }
             ExprKind::CompositeLit(lit) => {
                 // TODO: Full composite literal handling
