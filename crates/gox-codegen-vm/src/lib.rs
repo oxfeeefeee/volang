@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use crate::expr::compile_expr;
 use crate::stmt::compile_stmt;
 
+
 /// Compile a project to a Module.
 pub fn compile_project(project: &Project) -> Result<Module> {
     let pkg_name = project.main_pkg().name().as_deref().unwrap_or("main");
@@ -211,13 +212,23 @@ fn compile_func_decl(
     let name = info.symbol_str(func.name.symbol);
     let mut builder = FuncBuilder::new(name);
 
-    // Define parameters - for now use default slot types
-    // TODO: Get actual type from type annotations when expr_types is populated
+    // Define parameters with proper type handling
     for param in &func.sig.params {
-        let slot_types = vec![SlotType::Value];
-        let slots = slot_types.len() as u16;
+        let param_type = info.resolve_type_expr(&param.ty).expect("param type must resolve");
+        let is_interface = info.is_interface(param_type);
+        
         for pname in &param.names {
-            builder.define_param(pname.symbol, slots, &slot_types);
+            if is_interface {
+                // Interface parameter: 2 slots + InitInterface
+                let type_key = info.type_expr_key(&param.ty).expect("interface type must have TypeKey");
+                let iface_type_id = ctx.runtime_type_id(param_type, Some(type_key));
+                builder.define_param_interface(pname.symbol, iface_type_id);
+            } else {
+                // Regular parameter
+                let slot_types = info.type_slot_types(param_type);
+                let slots = slot_types.len() as u16;
+                builder.define_param(pname.symbol, slots, &slot_types);
+            }
         }
     }
 

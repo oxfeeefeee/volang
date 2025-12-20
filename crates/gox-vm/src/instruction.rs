@@ -113,7 +113,7 @@ pub enum Opcode {
     Return,       // return values starting at a, b=count
     
     // ============ Object operations ============
-    Alloc = 85,   // a = new object of type b, c=extra_slots
+    Alloc = 85,   // a = new object, type_id=b|(c<<16), flags=field_count
     GetField,     // a = b.field[c]
     SetField,     // a.field[b] = c
     GetFieldN,    // copy c slots from b.field[flags] to a
@@ -191,7 +191,7 @@ pub enum Opcode {
     Recover,          // a = recover()
     
     // ============ Interface ============
-    InitInterface = 175,  // init interface at a with iface_type=b (slot0 high 32 bits)
+    InitInterface = 175,  // init interface at a, iface_type=b|(c<<16)
     BoxInterface,         // a[slot0] = (a[slot0] & 0xFFFF_FFFF_0000_0000) | b, a[slot1] = c
     UnboxInterface,       // a = unbox(b), type at c
     TypeAssert,           // a = b.(type c), ok at flags

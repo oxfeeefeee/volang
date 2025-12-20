@@ -544,14 +544,15 @@ impl Vm {
             
             // ============ Object operations ============
             Opcode::Alloc => {
-                // a=dest, b=type_id, c=extra_slots
-                let type_id = b as TypeId;
+                // a=dest, b=type_id_lo, c=type_id_hi, flags=field_count
+                let type_id = (b as u32) | ((c as u32) << 16);
+                let field_count = flags as usize;
                 let size = if type_id == 0 {
-                    // Anonymous struct - use extra_slots directly as size
-                    c as usize
+                    // Anonymous struct - use field_count directly as size
+                    field_count
                 } else {
                     let type_meta = self.types.get_unchecked(type_id);
-                    type_meta.size_slots + c as usize
+                    type_meta.size_slots
                 };
                 let obj = self.gc.alloc(type_id, size);
                 self.write_reg(fiber_id, a, obj as u64);
@@ -1361,9 +1362,10 @@ impl Vm {
             
             // ============ Interface ============
             Opcode::InitInterface => {
-                // a=dest (2 slots), b=iface_type
+                // a=dest (2 slots), b=iface_type_lo, c=iface_type_hi
                 // Initialize interface with iface_type in high 32 bits, value_type=0, data=0
-                let slot0 = interface::pack_types(b as u32, 0);
+                let iface_type = (b as u32) | ((c as u32) << 16);
+                let slot0 = interface::pack_types(iface_type, 0);
                 self.write_reg(fiber_id, a, slot0);
                 self.write_reg(fiber_id, a + 1, 0);
             }

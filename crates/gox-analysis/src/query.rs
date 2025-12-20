@@ -54,6 +54,32 @@ impl<'a> TypeQuery<'a> {
         self.lookup(name)
     }
 
+    /// Looks up a type name Symbol and returns its TypeKey.
+    /// Searches package scope first, then universe scope (for basic types).
+    pub fn lookup_type_key(&self, sym: Symbol) -> Option<TypeKey> {
+        let name = self.symbol_str(sym);
+        
+        // Try package scope first
+        if let Some(scope_key) = self.pkg_scope {
+            if let Some(obj_key) = self.objs.scopes[scope_key].lookup(name) {
+                let obj = &self.objs.lobjs[obj_key];
+                if obj.entity_type().is_type_name() {
+                    return obj.typ();
+                }
+            }
+        }
+        
+        // Try universe scope for basic types
+        let universe = self.objs.universe();
+        let obj_key = self.objs.scopes[universe.scope()].lookup(name)?;
+        let obj = &self.objs.lobjs[obj_key];
+        if obj.entity_type().is_type_name() {
+            obj.typ()
+        } else {
+            None
+        }
+    }
+
     /// Checks if a symbol refers to a builtin function.
     pub fn is_builtin(&self, sym: Symbol) -> Option<Builtin> {
         let name = self.symbol_str(sym);

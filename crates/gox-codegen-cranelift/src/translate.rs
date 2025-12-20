@@ -772,12 +772,13 @@ impl FunctionTranslator {
 
             // ==================== Object operations ====================
             Opcode::Alloc => {
-                let type_id = inst.b as i64;
-                let extra_slots = inst.c as i64;
+                // a=dest, b=type_id_lo, c=type_id_hi, flags=field_count
+                let type_id = ((inst.b as u32) | ((inst.c as u32) << 16)) as i64;
+                let field_count = inst.flags as i64;
                 
                 let func_ref = self.get_runtime_func_ref(builder, module, ctx, RuntimeFunc::GcAlloc)?;
                 let type_id_val = builder.ins().iconst(cranelift_codegen::ir::types::I32, type_id);
-                let slots_val = builder.ins().iconst(I64, extra_slots);
+                let slots_val = builder.ins().iconst(I64, field_count);
                 
                 let call = builder.ins().call(func_ref, &[type_id_val, slots_val]);
                 let result = builder.inst_results(call)[0];
@@ -1185,10 +1186,11 @@ impl FunctionTranslator {
 
             // ==================== Interface ====================
             Opcode::InitInterface => {
-                // a=dest (2 slots), b=iface_type
+                // a=dest (2 slots), b=iface_type_lo, c=iface_type_hi
                 // Initialize interface with iface_type in high 32 bits, value_type=0, data=0
                 // slot0 = (iface_type << 32) | 0
-                let iface_type = builder.ins().iconst(I64, inst.b as i64);
+                let iface_type_id = (inst.b as u32) | ((inst.c as u32) << 16);
+                let iface_type = builder.ins().iconst(I64, iface_type_id as i64);
                 let slot0 = builder.ins().ishl_imm(iface_type, 32);
                 let zero = builder.ins().iconst(I64, 0);
                 builder.def_var(self.variables[inst.a as usize], slot0);

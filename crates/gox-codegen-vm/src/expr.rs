@@ -547,9 +547,12 @@ fn compile_composite_lit(
             // Struct literal: S{a, b, c} or S{x: a, y: b}
             let field_count = s.fields().len() as u16;
             let type_key = info.expr_type_key(expr);
-            let type_id = ctx.runtime_type_id(lit_type.unwrap(), type_key) as u16;
+            let type_id = ctx.runtime_type_id(lit_type.unwrap(), type_key);
+            let type_id_lo = (type_id & 0xFFFF) as u16;
+            let type_id_hi = ((type_id >> 16) & 0xFFFF) as u16;
             let dst = func.alloc_temp(1);
-            func.emit_op(Opcode::Alloc, dst, type_id, field_count);
+            // Alloc: a=dest, b=type_id_lo, c=type_id_hi, flags=field_count
+            func.emit_with_flags(Opcode::Alloc, field_count as u8, dst, type_id_lo, type_id_hi);
             
             // Set each field (byte_offset = i * 8, size_code = 3 for 8-byte slots)
             for (i, elem) in elems.iter().enumerate() {

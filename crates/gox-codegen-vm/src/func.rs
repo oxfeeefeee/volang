@@ -91,10 +91,33 @@ impl FuncBuilder {
         slot
     }
 
+    /// Define a local variable and emit InitInterface if it's an interface type.
+    /// iface_type_id is encoded as: b=low 16 bits, c=high 16 bits
+    pub fn define_local_interface(&mut self, symbol: Symbol, iface_type_id: u32) -> u16 {
+        let slot_types = &[SlotType::Interface0, SlotType::Interface1];
+        let slot = self.define_local(symbol, 2, slot_types);
+        // Emit InitInterface: a=dest, b=type_id_lo, c=type_id_hi
+        let type_id_lo = (iface_type_id & 0xFFFF) as u16;
+        let type_id_hi = ((iface_type_id >> 16) & 0xFFFF) as u16;
+        self.emit_op(Opcode::InitInterface, slot, type_id_lo, type_id_hi);
+        slot
+    }
+
     pub fn define_param(&mut self, symbol: Symbol, slots: u16, slot_types: &[SlotType]) -> u16 {
         let slot = self.define_local(symbol, slots, slot_types);
         self.param_count += 1;
         self.param_slots += slots;
+        slot
+    }
+
+    /// Define a parameter that is an interface type.
+    /// iface_type_id is encoded as: b=low 16 bits, c=high 16 bits
+    pub fn define_param_interface(&mut self, symbol: Symbol, iface_type_id: u32) -> u16 {
+        let slot = self.define_param(symbol, 2, &[SlotType::Interface0, SlotType::Interface1]);
+        // Emit InitInterface: a=dest, b=type_id_lo, c=type_id_hi
+        let type_id_lo = (iface_type_id & 0xFFFF) as u16;
+        let type_id_hi = ((iface_type_id >> 16) & 0xFFFF) as u16;
+        self.emit_op(Opcode::InitInterface, slot, type_id_lo, type_id_hi);
         slot
     }
 

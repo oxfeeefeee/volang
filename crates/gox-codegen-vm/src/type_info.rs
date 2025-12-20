@@ -6,7 +6,7 @@ use gox_analysis::{Builtin, ConstValue, Type, TypeAndValue, TypeKey, TypeQuery};
 use gox_analysis::operand::OperandMode;
 use gox_common::Symbol;
 use gox_common_core::SlotType;
-use gox_syntax::ast::Expr;
+use gox_syntax::ast::{Expr, TypeExpr, TypeExprKind};
 use std::collections::HashMap;
 
 use gox_common_core::ExprId;
@@ -78,5 +78,39 @@ impl<'a> TypeInfo<'a> {
 
     pub fn is_interface(&self, ty: &Type) -> bool {
         self.query.is_interface(ty)
+    }
+
+    /// Lookup a symbol and get its type.
+    pub fn lookup_symbol_type(&self, sym: Symbol) -> Option<&'a Type> {
+        use gox_analysis::query::EntityRef;
+        match self.query.lookup_symbol(sym)? {
+            EntityRef::Var { typ, .. } => typ,
+            _ => None,
+        }
+    }
+
+    /// Lookup a type name symbol and return its TypeKey.
+    pub fn lookup_type_key(&self, sym: Symbol) -> Option<TypeKey> {
+        self.query.lookup_type_key(sym)
+    }
+
+    /// Resolve a TypeExpr to its Type.
+    pub fn resolve_type_expr(&self, ty: &TypeExpr) -> Option<&'a Type> {
+        match &ty.kind {
+            TypeExprKind::Ident(ident) => {
+                let type_key = self.query.lookup_type_key(ident.symbol)?;
+                Some(self.query.get_type(type_key))
+            }
+            TypeExprKind::Interface(_) => None, // Anonymous interface
+            _ => None,
+        }
+    }
+
+    /// Get TypeKey from a TypeExpr (for named types).
+    pub fn type_expr_key(&self, ty: &TypeExpr) -> Option<TypeKey> {
+        match &ty.kind {
+            TypeExprKind::Ident(ident) => self.query.lookup_type_key(ident.symbol),
+            _ => None,
+        }
     }
 }

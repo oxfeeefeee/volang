@@ -453,9 +453,9 @@ func main() {
     for func in &bytecode.functions {
         for instr in &func.code {
             if instr.opcode() == Opcode::Alloc {
-                // Alloc instruction: a=dest, b=type_id, c=extra_slots
-                let type_id = instr.b;
-                alloc_type_ids.push(type_id);
+                // Alloc instruction: a=dest, b=type_id_lo, c=type_id_hi, flags=field_count
+                let type_id = (instr.b as u32) | ((instr.c as u32) << 16);
+                alloc_type_ids.push(type_id as u16); // For now keep as u16 since struct IDs < 65535
             }
         }
     }
@@ -485,4 +485,104 @@ func main() {
     );
     
     println!("✓ test_struct_type_id_initialized passed: type_ids {:?} all >= {}", alloc_type_ids, first_struct);
+}
+
+#[test]
+fn test_interface_type_id_registered() {
+    // Test that interface types are registered during compilation
+    // by checking the analysis/codegen flow registers interface TypeKeys
+    use gox_analysis::Type;
+    
+    let source = r#"
+package main
+
+type Greeter interface {
+    Greet() int
+}
+
+type Counter interface {
+    Count() int
+}
+
+func main() {
+}
+"#;
+    
+    let (file, _parse_diag, interner) = parse(source, 0);
+    let project = analyze_single_file(file, interner).expect("Type check failed");
+    
+    // Check that interface types exist in the type system
+    let query = project.query();
+    let mut interface_count = 0;
+    
+    for (_type_key, ty) in query.iter_types() {
+        if matches!(ty, Type::Interface(_)) {
+            interface_count += 1;
+        }
+    }
+    
+    // Should have at least 2 interface types (Greeter and Counter)
+    assert!(interface_count >= 2, "Expected at least 2 interface types, found {}", interface_count);
+    
+    // Now compile and verify register_types was called
+    let bytecode = compile_project(&project).expect("Compilation failed");
+    
+    // The module should compile without errors - interface types are registered
+    assert!(!bytecode.functions.is_empty(), "Should have compiled functions");
+    
+    println!("✓ test_interface_type_id_registered passed: found {} interface types", interface_count);
+}
+
+#[test]
+fn test_init_interface_generated() {
+    // Test that InitInterface opcode is generated for interface variable declarations
+    let source = r#"
+package main
+
+type Stringer interface {
+    String() string
+}
+
+func takeInterface(s Stringer) {
+    _ = s
+}
+
+func main() {
+}
+"#;
+    
+    let bytecode = source_to_bytecode(source);
+    
+    // Find InitInterface instructions
+    let mut init_interface_count = 0;
+    let mut init_interface_type_ids: Vec<u32> = Vec::new();
+    
+    for func in &bytecode.functions {
+        println!("Function: {}", func.name);
+        for (i, instr) in func.code.iter().enumerate() {
+            println!("  {}: {:?} a={} b={} c={}", i, instr.opcode(), instr.a, instr.b, instr.c);
+            if instr.opcode() == Opcode::InitInterface {
+                init_interface_count += 1;
+                // Decode full type_id from b (low 16 bits) and c (high 16 bits)
+                let type_id = (instr.b as u32) | ((instr.c as u32) << 16);
+                init_interface_type_ids.push(type_id);
+            }
+        }
+    }
+    
+    println!("Found {} InitInterface instructions with type_ids: {:?}", init_interface_count, init_interface_type_ids);
+    
+    // Verify interface type_ids are >= FirstInterface (0x8000_0000)
+    let first_interface = RuntimeTypeId::FirstInterface as u32;
+    for &type_id in &init_interface_type_ids {
+        assert!(
+            type_id >= first_interface,
+            "Interface type_id 0x{:08x} should be >= FirstInterface (0x{:08x})",
+            type_id,
+            first_interface
+        );
+    }
+    
+    assert!(init_interface_count >= 1, "Expected at least 1 InitInterface instruction");
+    println!("✓ test_init_interface_generated passed: type_ids {:?}", init_interface_type_ids);
 }

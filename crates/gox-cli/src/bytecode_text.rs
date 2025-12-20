@@ -175,7 +175,10 @@ fn format_instruction(instr: &Instruction) -> String {
         
         Opcode::CallExtern => format!("CallExtern {}, r{}, {}, {}", a, b, c, flags),
         
-        Opcode::Alloc => format!("Alloc r{}, {}, {}", a, b, c),
+        Opcode::Alloc => {
+            let type_id = (b as u32) | ((c as u32) << 16);
+            format!("Alloc r{}, type=0x{:x}, fields={}", a, type_id, flags)
+        }
         Opcode::GetField => format!("GetField r{}, r{}, {}", a, b, c),
         Opcode::SetField => format!("SetField r{}, {}, r{}", a, b, c),
         Opcode::GetFieldN => format!("GetFieldN r{}, r{}, {}, {}", a, b, c, flags),
@@ -239,7 +242,10 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::Panic => format!("Panic r{}", a),
         Opcode::Recover => format!("Recover r{}", a),
         
-        Opcode::InitInterface => format!("InitInterface r{}, {}", a, b),
+        Opcode::InitInterface => {
+            let iface_type = (b as u32) | ((c as u32) << 16);
+            format!("InitInterface r{}, 0x{:08x}", a, iface_type)
+        }
         Opcode::BoxInterface => format!("BoxInterface r{}, {}, r{}", a, b, c),
         Opcode::UnboxInterface => format!("UnboxInterface r{}, r{}, r{}", a, b, c),
         Opcode::TypeAssert => format!("TypeAssert r{}, r{}, {}, {}", a, b, c, flags),
