@@ -6,24 +6,17 @@ use cranelift_module::Module;
 
 use gox_aot::context::CompileContext;
 use gox_aot::translate::FunctionTranslator;
-use gox_common::DiagnosticSink;
 use gox_syntax::parse;
-use gox_analysis::typecheck_file;
-use gox_codegen_vm::compile;
+use gox_analysis::analyze_single_file;
+use gox_codegen_vm::compile_project;
 use gox_vm::bytecode::Module as BytecodeModule;
 use gox_runtime_native::RuntimeSymbols;
 
 /// Compile GoX source to bytecode.
 fn source_to_bytecode(source: &str) -> BytecodeModule {
     let (file, _parse_diag, interner) = parse(source, 0);
-    let mut diag = DiagnosticSink::new();
-    let result = typecheck_file(&file, &interner, &mut diag);
-    
-    if diag.has_errors() {
-        panic!("Type check errors");
-    }
-    
-    compile(&file, &result, &interner).expect("Compilation failed")
+    let project = analyze_single_file(file, interner).expect("Type check failed");
+    compile_project(&project).expect("Compilation failed")
 }
 
 /// Setup JIT module for testing.

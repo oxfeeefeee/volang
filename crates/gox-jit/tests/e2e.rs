@@ -4,10 +4,9 @@
 //! (function table, GC, globals).
 
 use gox_jit::JitCompiler;
-use gox_common::DiagnosticSink;
 use gox_syntax::parse;
-use gox_analysis::typecheck_file;
-use gox_codegen_vm::compile;
+use gox_analysis::analyze_single_file;
+use gox_codegen_vm::compile_project;
 use gox_vm::bytecode::Module as BytecodeModule;
 use std::sync::Mutex;
 
@@ -17,14 +16,8 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 /// Compile GoX source to bytecode.
 fn source_to_bytecode(source: &str) -> BytecodeModule {
     let (file, _parse_diag, interner) = parse(source, 0);
-    let mut diag = DiagnosticSink::new();
-    let result = typecheck_file(&file, &interner, &mut diag);
-    
-    if diag.has_errors() {
-        panic!("Type check errors");
-    }
-    
-    compile(&file, &result, &interner).expect("Compilation failed")
+    let project = analyze_single_file(file, interner).expect("Type check failed");
+    compile_project(&project).expect("Compilation failed")
 }
 
 /// Compile bytecode to JIT and get function pointer.

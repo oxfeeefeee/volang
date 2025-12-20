@@ -62,7 +62,7 @@ impl Universe {
         let (universe_scope, unsafe_pkg) = Self::create_universe_scope(objs);
 
         // Create all basic types
-        let types = Self::create_basic_types(objs);
+        let mut types = Self::create_basic_types(objs);
 
         // Define basic type names in universe scope
         Self::define_basic_types(&types, universe_scope, objs);
@@ -74,6 +74,9 @@ impl Universe {
         // Get byte and rune type keys
         let byte = alias_types[&BasicType::Byte];
         let rune = alias_types[&BasicType::Rune];
+        
+        // Merge alias types into types map
+        types.extend(alias_types);
 
         // Create error type
         let error_type = Self::create_error_type(&types, universe_scope, objs);
@@ -401,7 +404,7 @@ impl Universe {
             (Builtin::Print, "print", 0, true, ExprKind::Statement),
             (Builtin::Println, "println", 0, true, ExprKind::Statement),
             (Builtin::Recover, "recover", 0, false, ExprKind::Statement),
-            (Builtin::Assert, "assert", 1, false, ExprKind::Statement),
+            (Builtin::Assert, "assert", 1, true, ExprKind::Statement),
         ]
         .into_iter()
         .map(|(builtin, name, arg_count, variadic, kind)| {

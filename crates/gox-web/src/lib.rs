@@ -38,13 +38,11 @@ use wasm_bindgen::prelude::*;
 use gox_vm::bytecode::Module as BytecodeModule;
 
 #[cfg(feature = "compiler")]
-use gox_common::DiagnosticSink;
-#[cfg(feature = "compiler")]
 use gox_syntax::parse;
 #[cfg(feature = "compiler")]
-use gox_analysis::typecheck_file;
+use gox_analysis::analyze_single_file;
 #[cfg(feature = "compiler")]
-use gox_codegen_vm::compile;
+use gox_codegen_vm::compile_project;
 
 // ============================================================================
 // Initialization (std only)
@@ -212,14 +210,10 @@ mod compiler_api {
             return Err(format!("Parse error: {:?}", parse_diag));
         }
         
-        let mut diag = DiagnosticSink::new();
-        let result = typecheck_file(&file, &interner, &mut diag);
+        let project = analyze_single_file(file, interner)
+            .map_err(|e| format!("Type check error: {}", e))?;
         
-        if diag.has_errors() {
-            return Err("Type check errors".to_string());
-        }
-        
-        compile(&file, &result, &interner)
+        compile_project(&project)
             .map_err(|e| format!("Compilation error: {}", e))
     }
 

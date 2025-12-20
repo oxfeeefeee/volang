@@ -317,9 +317,12 @@ mod tests {
     #[test]
     fn test_tcobjects_creation() {
         let tc = TCObjects::new();
-        assert!(tc.lobjs.is_empty());
-        assert!(tc.types.is_empty());
-        assert!(tc.scopes.is_empty());
+        // TCObjects::new() creates a Universe which populates the arenas
+        assert!(tc.universe.is_some());
+        // Arenas should have universe objects (not empty)
+        assert!(!tc.lobjs.is_empty());
+        assert!(!tc.types.is_empty());
+        assert!(!tc.scopes.is_empty());
     }
 
     #[test]

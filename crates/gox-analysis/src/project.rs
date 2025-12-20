@@ -14,9 +14,10 @@ use gox_module::vfs::Vfs;
 use gox_syntax::ast::File;
 use gox_syntax::parser;
 
+use crate::arena::ArenaKey;
 use crate::check::Checker;
 use crate::importer::{ImportKey, ImportResult, Importer};
-use crate::objects::{PackageKey, TCObjects};
+use crate::objects::{PackageKey, TCObjects, TypeKey};
 
 /// Analysis error.
 #[derive(Debug)]
@@ -54,12 +55,38 @@ pub struct Project {
     pub packages: Vec<PackageKey>,
     /// Main package key.
     pub main_package: PackageKey,
+    /// Expression types from type checking (ExprId -> TypeKey).
+    pub expr_types: HashMap<gox_common_core::ExprId, crate::objects::TypeKey>,
+    /// Parsed files from the main package.
+    pub files: Vec<File>,
 }
 
 impl Project {
     /// Get the main package.
     pub fn main_pkg(&self) -> &crate::package::Package {
         &self.tc_objs.pkgs[self.main_package]
+    }
+
+    /// Creates a TypeQuery for the main package.
+    pub fn query(&self) -> crate::query::TypeQuery<'_> {
+        let pkg = &self.tc_objs.pkgs[self.main_package];
+        crate::query::TypeQuery::new(&self.tc_objs, &self.interner, Some(*pkg.scope()))
+    }
+
+    /// Creates a TypeQuery for a specific package.
+    pub fn query_package(&self, pkg_key: PackageKey) -> crate::query::TypeQuery<'_> {
+        let pkg = &self.tc_objs.pkgs[pkg_key];
+        crate::query::TypeQuery::new(&self.tc_objs, &self.interner, Some(*pkg.scope()))
+    }
+
+    /// Gets the type of an expression by ExprId.
+    pub fn expr_type(&self, expr_id: gox_common_core::ExprId) -> Option<&crate::typ::Type> {
+        self.expr_types.get(&expr_id).map(|&key| &self.tc_objs.types[key])
+    }
+
+    /// Gets the expression types map.
+    pub fn expr_types(&self) -> &HashMap<gox_common_core::ExprId, crate::objects::TypeKey> {
+        &self.expr_types
     }
 }
 
@@ -75,6 +102,8 @@ struct ProjectState {
     checked_packages: Vec<PackageKey>,
     /// Current source file base offset for parsing.
     parse_base: u32,
+    /// Expression types collected from type checking.
+    expr_types: HashMap<gox_common_core::ExprId, crate::objects::TypeKey>,
 }
 
 /// Analyze a project starting from the given source files.
@@ -92,6 +121,7 @@ pub fn analyze_project(
         in_progress: HashSet::new(),
         checked_packages: Vec::new(),
         parse_base: 0,
+        expr_types: HashMap::new(),
     }));
     
     // Create the main package
@@ -114,15 +144,29 @@ pub fn analyze_project(
         
         let result = checker.check_with_importer(&parsed_files, &mut importer);
         
-        // Swap back
+        // Swap back and collect expr_types
         let mut state_ref = state.borrow_mut();
         std::mem::swap(&mut checker.tc_objs, &mut state_ref.tc_objs);
         
+        // Collect expression types from checker result
+        for (expr_id, tv) in &checker.result.types {
+            state_ref.expr_types.insert(*expr_id, tv.typ);
+        }
+        
         match result {
             Ok(_) => {}
-            Err(_) => return Err(AnalysisError::Check("type check failed".to_string())),
+            Err(_) => {
+                let msg = checker.errors.iter()
+                    .map(|(span, msg)| format!("error at {:?}: {}", span, msg))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Err(AnalysisError::Check(msg));
+            }
         }
     }
+    
+    // Drop importer to release Rc reference
+    drop(importer);
     
     // Extract final state
     let final_state = Rc::try_unwrap(state)
@@ -138,7 +182,70 @@ pub fn analyze_project(
         interner: final_state.interner,
         packages,
         main_package: main_pkg_key,
+        expr_types: final_state.expr_types,
+        files: parsed_files,
     })
+}
+
+/// Analyze a single file (for simple use cases like web playground).
+///
+/// This is a simplified API that doesn't handle imports.
+pub fn analyze_single_file(
+    file: File,
+    interner: SymbolInterner,
+) -> Result<Project, AnalysisError> {
+    // Create checker first (it creates its own TCObjects with Universe)
+    // Then create the package in checker's TCObjects
+    let mut checker = Checker::new(PackageKey::null(), interner.clone());
+    let main_pkg_key = checker.tc_objs.new_package("main".to_string());
+    checker.pkg = main_pkg_key;
+    
+    // Use a null importer (no imports supported)
+    let mut null_importer = NullImporter;
+    let result = checker.check_with_importer(&[file.clone()], &mut null_importer);
+    
+    // Collect expression types
+    let mut expr_types = HashMap::new();
+    for (expr_id, tv) in &checker.result.types {
+        expr_types.insert(*expr_id, tv.typ);
+    }
+    
+    match result {
+        Ok(_) => {}
+        Err(_) => {
+            let msg = checker.errors.iter()
+                .map(|(span, msg)| format!("error at {:?}: {}", span, msg))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(AnalysisError::Check(msg));
+        }
+    }
+    
+    Ok(Project {
+        tc_objs: checker.tc_objs,
+        interner,
+        packages: vec![main_pkg_key],
+        main_package: main_pkg_key,
+        expr_types,
+        files: vec![file],
+    })
+}
+
+/// Null importer for single-file analysis (doesn't support imports).
+struct NullImporter;
+
+impl Importer for NullImporter {
+    fn import(&mut self, key: &ImportKey) -> ImportResult {
+        ImportResult::Err(format!("imports not supported in single-file mode: {}", key.path))
+    }
+    
+    fn working_dir(&self) -> &std::path::Path {
+        std::path::Path::new(".")
+    }
+    
+    fn base_dir(&self) -> Option<&std::path::Path> {
+        None
+    }
 }
 
 /// Parse source files from a FileSet.

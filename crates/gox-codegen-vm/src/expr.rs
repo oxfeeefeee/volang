@@ -1,6 +1,6 @@
 //! Expression compilation.
 
-use gox_analysis::types::{BasicType, Type};
+use gox_analysis::{Builtin, Type, BasicType};
 use gox_common::Span;
 use gox_common_core::SlotType;
 use gox_syntax::ast::{BinaryOp, Expr, ExprKind, UnaryOp};
@@ -157,8 +157,8 @@ fn compile_binary(
     let rhs = compile_expr(right, ctx, func, info)?;
     let dst = func.alloc_temp(1);
 
-    let is_float = matches!(left_ty, Some(Type::Basic(BasicType::Float32 | BasicType::Float64)));
-    let is_string = matches!(left_ty, Some(Type::Basic(BasicType::String)));
+    let is_float = is_float_type(left_ty);
+    let is_string = is_string_type(left_ty);
 
     let opcode = match op {
         BinaryOp::Add if is_string => Opcode::StrConcat,
@@ -238,7 +238,7 @@ fn compile_unary(
     let dst = func.alloc_temp(1);
 
     let operand_ty = info.expr_type(operand);
-    let is_float = matches!(operand_ty, Some(Type::Basic(BasicType::Float32 | BasicType::Float64)));
+    let is_float = is_float_type(operand_ty);
 
     match op {
         UnaryOp::Neg if is_float => func.emit_op(Opcode::NegF64, dst, src, 0),
@@ -348,21 +348,19 @@ fn compile_extern_call(
 }
 
 fn compile_builtin_call(
-    builtin: gox_analysis::scope::BuiltinKind,
+    builtin: Builtin,
     args: &[Expr],
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfo,
 ) -> Result<u16> {
-    use gox_analysis::scope::BuiltinKind;
-
     match builtin {
-        BuiltinKind::Len => {
+        Builtin::Len => {
             let src = compile_expr(&args[0], ctx, func, info)?;
             let dst = func.alloc_temp(1);
             let ty = info.expr_type(&args[0]);
             let opcode = match ty {
-                Some(Type::Basic(BasicType::String)) => Opcode::StrLen,
+                Some(t) if is_string_type(Some(t)) => Opcode::StrLen,
                 Some(Type::Slice(_)) => Opcode::SliceLen,
                 Some(Type::Array(_)) => Opcode::ArrayLen,
                 Some(Type::Map(_)) => Opcode::MapLen,
@@ -371,13 +369,13 @@ fn compile_builtin_call(
             func.emit_op(opcode, dst, src, 0);
             Ok(dst)
         }
-        BuiltinKind::Cap => {
+        Builtin::Cap => {
             let src = compile_expr(&args[0], ctx, func, info)?;
             let dst = func.alloc_temp(1);
             func.emit_op(Opcode::SliceCap, dst, src, 0);
             Ok(dst)
         }
-        BuiltinKind::Println | BuiltinKind::Print => {
+        Builtin::Println | Builtin::Print => {
             for arg in args {
                 let src = compile_expr(arg, ctx, func, info)?;
                 let ty = info.expr_type(arg);
@@ -388,14 +386,14 @@ fn compile_builtin_call(
             func.emit_op(Opcode::LoadNil, dst, 0, 0);
             Ok(dst)
         }
-        BuiltinKind::Panic => {
+        Builtin::Panic => {
             let src = compile_expr(&args[0], ctx, func, info)?;
             func.emit_op(Opcode::Panic, src, 0, 0);
             let dst = func.alloc_temp(1);
             func.emit_op(Opcode::LoadNil, dst, 0, 0);
             Ok(dst)
         }
-        BuiltinKind::Assert => {
+        Builtin::Assert => {
             // assert(cond) -> if !cond { panic }
             let cond = compile_expr(&args[0], ctx, func, info)?;
             let skip = func.emit_op(Opcode::JumpIf, cond, 0, 0);
@@ -408,7 +406,7 @@ fn compile_builtin_call(
             func.emit_op(Opcode::LoadNil, dst, 0, 0);
             Ok(dst)
         }
-        BuiltinKind::Make => {
+        Builtin::Make => {
             // make(type, len) or make(type, len, cap)
             // Note: args[0] is a type expression, size args start at args[1]
             let dst = func.alloc_temp(1);
@@ -429,14 +427,16 @@ fn compile_builtin_call(
             let result_ty = info.expr_type(&args[0]);
             match result_ty {
                 Some(Type::Slice(s)) => {
-                    let elem_type_id = info.runtime_type_id(&s.elem);
+                    let elem = info.query.slice_elem(s);
+                    let elem_type_id = info.runtime_type_id(elem);
                     func.emit_with_flags(Opcode::SliceNew, elem_type_id as u8, dst, size_reg, cap_reg);
                 }
                 Some(Type::Map(_)) => {
                     func.emit_op(Opcode::MapNew, dst, 0, 0);
                 }
                 Some(Type::Chan(c)) => {
-                    let elem_type_id = info.runtime_type_id(&c.elem);
+                    let elem = info.query.chan_elem(c);
+                    let elem_type_id = info.runtime_type_id(elem);
                     func.emit_op(Opcode::ChanNew, dst, elem_type_id as u16, size_reg);
                 }
                 _ => {
@@ -445,19 +445,22 @@ fn compile_builtin_call(
             };
             Ok(dst)
         }
-        BuiltinKind::Append => {
+        Builtin::Append => {
             let slice = compile_expr(&args[0], ctx, func, info)?;
-            let elem = compile_expr(&args[1], ctx, func, info)?;
+            let elem_val = compile_expr(&args[1], ctx, func, info)?;
             let dst = func.alloc_temp(1);
             let ty = info.expr_type(&args[0]);
             let elem_type_id = match ty {
-                Some(Type::Slice(s)) => info.runtime_type_id(&s.elem),
+                Some(Type::Slice(s)) => {
+                    let elem = info.query.slice_elem(s);
+                    info.runtime_type_id(elem)
+                }
                 _ => 0,
             };
-            func.emit_with_flags(Opcode::SliceAppend, elem_type_id as u8, dst, slice, elem);
+            func.emit_with_flags(Opcode::SliceAppend, elem_type_id as u8, dst, slice, elem_val);
             Ok(dst)
         }
-        BuiltinKind::Close => {
+        Builtin::Close => {
             let ch = compile_expr(&args[0], ctx, func, info)?;
             func.emit_op(Opcode::ChanClose, ch, 0, 0);
             let dst = func.alloc_temp(1);
@@ -481,7 +484,7 @@ fn compile_index(
 
     let ty = info.expr_type(expr);
     let opcode = match ty {
-        Some(Type::Basic(BasicType::String)) => Opcode::StrIndex,
+        Some(t) if is_string_type(Some(t)) => Opcode::StrIndex,
         Some(Type::Slice(_)) => Opcode::SliceGet,
         Some(Type::Array(_)) => Opcode::ArrayGet,
         Some(Type::Map(_)) => Opcode::MapGet,
@@ -502,21 +505,26 @@ fn compile_selector(
     let base = compile_expr(expr, ctx, func, info)?;
     let dst = func.alloc_temp(1);
 
+    // Try to find field index from type info
     let ty = info.expr_type(expr);
-    if let Some(Type::Named(id)) = ty {
-        if let Some(type_info) = info.named_type_info(*id) {
-            if let Type::Struct(s) = &type_info.underlying {
-                for (i, f) in s.fields.iter().enumerate() {
-                    if f.name == Some(field) {
-                        func.emit_op(Opcode::GetField, dst, base, i as u16);
-                        return Ok(dst);
-                    }
+    let field_idx = match ty {
+        Some(Type::Named(named)) => {
+            // Get underlying type through TypeQuery
+            if let Some(underlying) = info.query.named_underlying(named) {
+                if let Type::Struct(s) = underlying {
+                    info.query.struct_field_index(s, field)
+                } else {
+                    None
                 }
+            } else {
+                None
             }
         }
-    }
+        Some(Type::Struct(s)) => info.query.struct_field_index(s, field),
+        _ => None,
+    };
 
-    func.emit_op(Opcode::GetField, dst, base, 0);
+    func.emit_op(Opcode::GetField, dst, base, field_idx.unwrap_or(0) as u16);
     Ok(dst)
 }
 
@@ -555,4 +563,19 @@ fn unescape_string(s: &str) -> String {
         }
     }
     result
+}
+
+// Helper functions for type checking
+fn is_float_type(ty: Option<&Type>) -> bool {
+    match ty {
+        Some(Type::Basic(b)) => matches!(b.typ(), BasicType::Float32 | BasicType::Float64),
+        _ => false,
+    }
+}
+
+fn is_string_type(ty: Option<&Type>) -> bool {
+    match ty {
+        Some(Type::Basic(b)) => b.typ() == BasicType::Str,
+        _ => false,
+    }
 }

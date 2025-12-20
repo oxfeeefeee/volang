@@ -1,5 +1,6 @@
 //! Statement compilation.
 
+use gox_analysis::Type;
 use gox_common_core::SlotType;
 use gox_syntax::ast::{AssignOp, Expr, ExprKind, ForClause, Stmt, StmtKind};
 use gox_vm::instruction::Opcode;
@@ -83,9 +84,9 @@ fn compile_assign(
                 let index = compile_expr(&idx_expr.index, ctx, func, info)?;
                 let ty = info.expr_type(&idx_expr.expr);
                 let opcode = match ty {
-                    Some(gox_analysis::types::Type::Slice(_)) => Opcode::SliceSet,
-                    Some(gox_analysis::types::Type::Array(_)) => Opcode::ArraySet,
-                    Some(gox_analysis::types::Type::Map(_)) => Opcode::MapSet,
+                    Some(Type::Slice(_)) => Opcode::SliceSet,
+                    Some(Type::Array(_)) => Opcode::ArraySet,
+                    Some(Type::Map(_)) => Opcode::MapSet,
                     _ => Opcode::SliceSet,
                 };
                 func.emit_op(opcode, base, index, src);

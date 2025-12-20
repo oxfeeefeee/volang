@@ -173,7 +173,7 @@ pub struct Checker {
     /// Symbol interner for resolving identifiers.
     pub interner: SymbolInterner,
     /// Error messages.
-    errors: Vec<(Span, String)>,
+    pub errors: Vec<(Span, String)>,
     /// Current package being checked.
     pub pkg: PackageKey,
     /// Maps package-level objects and methods to declaration info.

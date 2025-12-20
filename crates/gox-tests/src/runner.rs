@@ -308,21 +308,25 @@ pub fn run_single_file_with_mode(path: &Path, mode: RunMode) -> TestResult {
     
     // 2. Type check (only if not parser-only test and no imports)
     if !has_imports {
-        let mut typecheck_diag = DiagnosticSink::new();
-        let _typecheck_result = gox_analysis::typecheck_file(&file, &interner, &mut typecheck_diag);
+        let typecheck_result = gox_analysis::analyze_single_file(file.clone(), interner.clone());
+        let typecheck_has_errors = typecheck_result.is_err();
+        let typecheck_errors_str = match &typecheck_result {
+            Err(e) => format!("{}", e),
+            Ok(_) => String::new(),
+        };
+        
         // Combine parse errors and typecheck errors for checking
         let mut all_errors = format_diagnostics(&parse_diag);
-        let typecheck_errors = format_diagnostics(&typecheck_diag);
-        if !all_errors.is_empty() && !typecheck_errors.is_empty() {
+        if !all_errors.is_empty() && !typecheck_errors_str.is_empty() {
             all_errors.push('\n');
         }
-        all_errors.push_str(&typecheck_errors);
+        all_errors.push_str(&typecheck_errors_str);
         
         // Check typecheck section if present
         if let Some(expected) = &test.typecheck {
             let actual = all_errors;
             if expected.trim() == "OK" {
-                if parse_diag.has_errors() || typecheck_diag.has_errors() {
+                if parse_diag.has_errors() || typecheck_has_errors {
                     return TestResult::fail(&path_str, format!(
                         "unexpected error: {}", actual
                     ));
@@ -338,7 +342,7 @@ pub fn run_single_file_with_mode(path: &Path, mode: RunMode) -> TestResult {
             }
             // Typecheck-only test done
             return TestResult::pass(&path_str);
-        } else if parse_diag.has_errors() || typecheck_diag.has_errors() {
+        } else if parse_diag.has_errors() || typecheck_has_errors {
             return TestResult::fail(&path_str, format!(
                 "error: {}", all_errors
             ));
