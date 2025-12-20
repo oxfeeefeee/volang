@@ -101,6 +101,53 @@ impl TypeInfo {
         self.scopes.insert(expr_id, scope);
     }
 
+    /// Records init order.
+    pub fn record_init_order(&mut self, init_order: Vec<Initializer>) {
+        self.init_order = init_order;
+    }
+
+    /// Records builtin type signature for a builtin function expression.
+    /// The expression must be a (possibly parenthesized) identifier denoting a built-in.
+    pub fn record_builtin_type(
+        &mut self,
+        mode: &OperandMode,
+        expr: &gox_syntax::ast::Expr,
+        sig: TypeKey,
+    ) {
+        use gox_syntax::ast::ExprKind;
+        
+        let mut e = expr;
+        loop {
+            self.record_type_and_value(e.id, mode.clone(), sig);
+            match &e.kind {
+                ExprKind::Ident(_) => break,
+                ExprKind::Paren(inner) => e = inner,
+                _ => break, // Should not happen for builtin calls
+            }
+        }
+    }
+
+    /// Records comma-ok types for expressions like map index, type assertion, channel receive.
+    pub fn record_comma_ok_types(
+        &mut self,
+        expr: &gox_syntax::ast::Expr,
+        types: [TypeKey; 2],
+        tuple_type: TypeKey,
+    ) {
+        use gox_syntax::ast::ExprKind;
+        
+        let mut e = expr;
+        loop {
+            if let Some(tv) = self.types.get_mut(&e.id) {
+                tv.typ = tuple_type;
+            }
+            match &e.kind {
+                ExprKind::Paren(inner) => e = inner,
+                _ => break,
+            }
+        }
+    }
+
     /// Looks up the type of an expression.
     pub fn expr_type(&self, expr_id: ExprId) -> Option<TypeKey> {
         self.types.get(&expr_id).map(|tv| tv.typ)

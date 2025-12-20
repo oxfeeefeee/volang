@@ -459,4 +459,195 @@ impl<F: FileSystem> Checker<F> {
             named.methods_mut().append(&mut valids);
         }
     }
+
+    /// Type-checks a declaration statement (const, var, or type) inside a function.
+    pub fn decl_stmt(&mut self, decl: &gox_syntax::ast::Decl, fctx: &mut FilesContext<F>) {
+        use gox_syntax::ast::Decl;
+
+        match decl {
+            Decl::Const(cdecl) => {
+                let mut last_full_spec: Option<&gox_syntax::ast::ConstSpec> = None;
+
+                for (iota, spec) in cdecl.specs.iter().enumerate() {
+                    let top = fctx.delayed_count();
+
+                    // Determine which spec to use for type/values
+                    let current_spec = if spec.ty.is_some() || !spec.values.is_empty() {
+                        last_full_spec = Some(spec);
+                        Some(spec)
+                    } else {
+                        last_full_spec
+                    };
+
+                    // Create and type-check each constant
+                    let lhs: Vec<ObjKey> = spec
+                        .names
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| {
+                            let okey = self.tc_objs.new_const(
+                                0,
+                                Some(self.pkg),
+                                self.resolve_ident(name).to_string(),
+                                None,
+                                ConstValue::with_i64(iota as i64),
+                            );
+
+                            let init = current_spec
+                                .and_then(|s| s.values.get(i).cloned());
+                            let typ = current_spec
+                                .and_then(|s| s.ty.clone());
+
+                            self.const_decl(okey, &typ, &init, fctx);
+                            self.result.record_def(name.clone(), Some(okey));
+                            okey
+                        })
+                        .collect();
+
+                    self.arity_match_const(spec, current_spec);
+
+                    // Process function literals before scope changes
+                    fctx.process_delayed(top, self);
+
+                    // Declare constants in current scope
+                    if let Some(scope) = self.octx.scope {
+                        for okey in lhs {
+                            self.declare(scope, okey);
+                        }
+                    }
+                }
+            }
+
+            Decl::Var(vdecl) => {
+                for spec in &vdecl.specs {
+                    let top = fctx.delayed_count();
+
+                    // Create variables
+                    let vars: Vec<ObjKey> = spec
+                        .names
+                        .iter()
+                        .map(|name| {
+                            let okey = self.tc_objs.new_var(
+                                0,
+                                Some(self.pkg),
+                                self.resolve_ident(name).to_string(),
+                                None,
+                            );
+                            self.result.record_def(name.clone(), Some(okey));
+                            okey
+                        })
+                        .collect();
+
+                    // Type-check based on init pattern
+                    let n_to_1 = spec.values.len() == 1 && spec.names.len() > 1;
+                    if n_to_1 {
+                        // Multiple vars, single init expression
+                        self.var_decl(
+                            vars[0],
+                            Some(&vars),
+                            &spec.ty,
+                            &Some(spec.values[0].clone()),
+                            fctx,
+                        );
+                    } else {
+                        // 1-to-1 or no init
+                        for (i, &okey) in vars.iter().enumerate() {
+                            self.var_decl(
+                                okey,
+                                None,
+                                &spec.ty,
+                                &spec.values.get(i).cloned(),
+                                fctx,
+                            );
+                        }
+                    }
+
+                    self.arity_match_var(spec);
+
+                    // Process function literals before scope changes
+                    fctx.process_delayed(top, self);
+
+                    // Declare variables in current scope
+                    if let Some(scope) = self.octx.scope {
+                        for okey in vars {
+                            self.declare(scope, okey);
+                        }
+                    }
+                }
+            }
+
+            Decl::Type(tdecl) => {
+                let okey = self.tc_objs.new_type_name(
+                    0,
+                    Some(self.pkg),
+                    self.resolve_ident(&tdecl.name).to_string(),
+                    None,
+                );
+                self.result.record_def(tdecl.name.clone(), Some(okey));
+
+                // Declare in scope first (type scope starts at identifier)
+                if let Some(scope) = self.octx.scope {
+                    self.declare(scope, okey);
+                }
+
+                // Mark gray and type-check
+                self.lobj_mut(okey).set_color(ObjColor::Gray(fctx.push(okey)));
+                // GoX doesn't have type aliases in the same way as Go
+                self.type_decl(okey, &tdecl.ty, None, false, fctx);
+                self.lobj_mut(fctx.pop()).set_color(ObjColor::Black);
+            }
+
+            Decl::Func(_) => {
+                self.error(Span::default(), "unexpected function declaration in statement".to_string());
+            }
+
+            Decl::Interface(_) => {
+                self.error(Span::default(), "unexpected interface declaration in statement".to_string());
+            }
+        }
+    }
+
+    /// Checks arity for constant declarations.
+    fn arity_match_const(
+        &self,
+        spec: &gox_syntax::ast::ConstSpec,
+        init_spec: Option<&gox_syntax::ast::ConstSpec>,
+    ) {
+        let l = spec.names.len();
+        let r = init_spec.map_or(0, |s| s.values.len());
+
+        if r == 0 {
+            // No init expressions at all - error for const
+            self.error(spec.span, "missing value in const declaration".to_string());
+        } else if l < r {
+            // More values than names
+            if l < spec.values.len() {
+                self.error(spec.values[l].span, "extra init expr".to_string());
+            } else if let Some(is) = init_spec {
+                self.error(spec.span, "extra init expr from previous spec".to_string());
+            }
+        } else if l > r {
+            // More names than values
+            self.error(spec.span, format!("missing init expr for {}", self.resolve_ident(&spec.names[r])));
+        }
+    }
+
+    /// Checks arity for variable declarations.
+    fn arity_match_var(&self, spec: &gox_syntax::ast::VarSpec) {
+        let l = spec.names.len();
+        let r = spec.values.len();
+
+        if r == 0 {
+            // No init expressions - must have type
+            if spec.ty.is_none() {
+                self.error(spec.span, "missing type or init expr".to_string());
+            }
+        } else if l < r {
+            // More values than names
+            self.error(spec.values[l].span, "extra init expr".to_string());
+        } else if l > r && r != 1 {
+            // More names than values (unless it's N-to-1 assignment)
+            self.error(spec.span, format!("assignment mismatch: {} variables but {} values", l, r));
+        }
+    }
 }
