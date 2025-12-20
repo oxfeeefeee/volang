@@ -55,8 +55,8 @@ pub struct Project {
     pub packages: Vec<PackageKey>,
     /// Main package key.
     pub main_package: PackageKey,
-    /// Expression types from type checking (ExprId -> TypeKey).
-    pub expr_types: HashMap<gox_common_core::ExprId, crate::objects::TypeKey>,
+    /// Expression types and values from type checking.
+    pub expr_types: HashMap<gox_common_core::ExprId, crate::check::TypeAndValue>,
     /// Parsed files from the main package.
     pub files: Vec<File>,
 }
@@ -81,11 +81,11 @@ impl Project {
 
     /// Gets the type of an expression by ExprId.
     pub fn expr_type(&self, expr_id: gox_common_core::ExprId) -> Option<&crate::typ::Type> {
-        self.expr_types.get(&expr_id).map(|&key| &self.tc_objs.types[key])
+        self.expr_types.get(&expr_id).map(|tv| &self.tc_objs.types[tv.typ])
     }
 
     /// Gets the expression types map.
-    pub fn expr_types(&self) -> &HashMap<gox_common_core::ExprId, crate::objects::TypeKey> {
+    pub fn expr_types(&self) -> &HashMap<gox_common_core::ExprId, crate::check::TypeAndValue> {
         &self.expr_types
     }
 }
@@ -103,7 +103,7 @@ struct ProjectState {
     /// Current source file base offset for parsing.
     parse_base: u32,
     /// Expression types collected from type checking.
-    expr_types: HashMap<gox_common_core::ExprId, crate::objects::TypeKey>,
+    expr_types: HashMap<gox_common_core::ExprId, crate::check::TypeAndValue>,
 }
 
 /// Analyze a project starting from the given source files.
@@ -150,7 +150,7 @@ pub fn analyze_project(
         
         // Collect expression types from checker result
         for (expr_id, tv) in &checker.result.types {
-            state_ref.expr_types.insert(*expr_id, tv.typ);
+            state_ref.expr_types.insert(*expr_id, tv.clone());
         }
         
         match result {
@@ -207,7 +207,7 @@ pub fn analyze_single_file(
     // Collect expression types
     let mut expr_types = HashMap::new();
     for (expr_id, tv) in &checker.result.types {
-        expr_types.insert(*expr_id, tv.typ);
+        expr_types.insert(*expr_id, tv.clone());
     }
     
     match result {

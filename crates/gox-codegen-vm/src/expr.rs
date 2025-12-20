@@ -1,6 +1,7 @@
 //! Expression compilation.
 
-use gox_analysis::{Builtin, Type, BasicType};
+use gox_analysis::{Builtin, ConstValue, Type, BasicType};
+use num_traits::ToPrimitive;
 use gox_common::Span;
 use gox_common_core::SlotType;
 use gox_syntax::ast::{BinaryOp, CompositeLitElem, Expr, ExprKind, TypeExpr, TypeExprKind, UnaryOp};
@@ -17,27 +18,12 @@ pub fn compile_expr(
     func: &mut FuncBuilder,
     info: &TypeInfo,
 ) -> Result<u16> {
+    // Try to use constant value from type checking first
+    if let Some(const_val) = info.expr_const_value(expr) {
+        return compile_const_value(const_val, ctx, func);
+    }
+    
     match &expr.kind {
-        ExprKind::IntLit(lit) => {
-            let s = info.symbol_str(lit.raw);
-            let value = parse_int(s);
-            compile_int_lit(value, func)
-        }
-        ExprKind::FloatLit(lit) => {
-            let s = info.symbol_str(lit.raw);
-            let value = s.parse::<f64>().unwrap_or(0.0);
-            compile_float_lit(value, ctx, func)
-        }
-        ExprKind::StringLit(lit) => {
-            let s = info.symbol_str(lit.raw);
-            let s = unescape_string(s);
-            compile_string_lit(&s, ctx, func)
-        }
-        ExprKind::RuneLit(lit) => {
-            let s = info.symbol_str(lit.raw);
-            let value = parse_rune(s);
-            compile_int_lit(value as i64, func)
-        }
         ExprKind::Ident(ident) => compile_ident(ident.symbol, expr.span, ctx, func, info),
         ExprKind::Binary(bin) => compile_binary(&bin.left, bin.op, &bin.right, ctx, func, info),
         ExprKind::Unary(un) => compile_unary(un.op, &un.operand, ctx, func, info),
@@ -51,32 +37,14 @@ pub fn compile_expr(
     }
 }
 
-fn parse_int(s: &str) -> i64 {
-    if s.starts_with("0x") || s.starts_with("0X") {
-        i64::from_str_radix(&s[2..], 16).unwrap_or(0)
-    } else if s.starts_with("0o") || s.starts_with("0O") {
-        i64::from_str_radix(&s[2..], 8).unwrap_or(0)
-    } else if s.starts_with("0b") || s.starts_with("0B") {
-        i64::from_str_radix(&s[2..], 2).unwrap_or(0)
-    } else {
-        s.replace("_", "").parse::<i64>().unwrap_or(0)
-    }
-}
-
-fn parse_rune(s: &str) -> i32 {
-    let s = s.trim_matches('\'');
-    if s.starts_with('\\') {
-        match s.chars().nth(1) {
-            Some('n') => '\n' as i32,
-            Some('t') => '\t' as i32,
-            Some('r') => '\r' as i32,
-            Some('\\') => '\\' as i32,
-            Some('\'') => '\'' as i32,
-            Some('0') => 0,
-            _ => s.chars().nth(1).unwrap_or('\0') as i32,
-        }
-    } else {
-        s.chars().next().unwrap_or('\0') as i32
+fn compile_const_value(val: &ConstValue, ctx: &mut CodegenContext, func: &mut FuncBuilder) -> Result<u16> {
+    match val {
+        ConstValue::Bool(b) => compile_int_lit(if *b { 1 } else { 0 }, func),
+        ConstValue::Int(i) => compile_int_lit(i.try_into().unwrap_or(0), func),
+        ConstValue::Rat(r) => compile_float_lit(r.to_f64().unwrap_or(0.0), ctx, func),
+        ConstValue::Float(f) => compile_float_lit(*f, ctx, func),
+        ConstValue::Str(s) => compile_string_lit(s, ctx, func),
+        ConstValue::Unknown => compile_int_lit(0, func),
     }
 }
 
@@ -540,31 +508,6 @@ fn compile_receive(
     let dst = func.alloc_temp(1);
     func.emit_op(Opcode::ChanRecv, dst, chan_reg, 0);
     Ok(dst)
-}
-
-fn unescape_string(s: &str) -> String {
-    let s = s.trim_matches('"');
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('r') => result.push('\r'),
-                Some('\\') => result.push('\\'),
-                Some('"') => result.push('"'),
-                Some(c) => {
-                    result.push('\\');
-                    result.push(c);
-                }
-                None => result.push('\\'),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }
 
 // Helper functions for type checking

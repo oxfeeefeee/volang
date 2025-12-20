@@ -11,6 +11,7 @@ gox-common-core = { path = "../gox-common-core" }
 gox-syntax = { path = "../gox-syntax" }
 gox-analysis = { path = "../gox-analysis" }
 gox-vm = { path = "../gox-vm" }
+num-traits = "0.2"
 
 [dev-dependencies]
 gox-runtime-vm = { path = "../gox-runtime-vm" }

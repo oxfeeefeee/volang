@@ -139,7 +139,7 @@ fn compile_init_and_entry_files(
 pub fn compile_file(
     file: &File,
     query: TypeQuery<'_>,
-    expr_types: &HashMap<gox_common_core::ExprId, gox_analysis::TypeKey>,
+    expr_types: &HashMap<gox_common_core::ExprId, gox_analysis::TypeAndValue>,
 ) -> Result<Module> {
     let mut ctx = CodegenContext::new("main");
     let info = TypeInfo::new(query, expr_types);

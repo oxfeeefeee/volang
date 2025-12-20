@@ -2,7 +2,8 @@
 //!
 //! This module wraps gox_analysis::TypeQuery and adds expression type tracking.
 
-use gox_analysis::{Builtin, Type, TypeKey, TypeQuery};
+use gox_analysis::{Builtin, ConstValue, Type, TypeAndValue, TypeKey, TypeQuery};
+use gox_analysis::operand::OperandMode;
 use gox_common::Symbol;
 use gox_common_core::SlotType;
 use gox_syntax::ast::Expr;
@@ -16,12 +17,12 @@ use gox_common_core::ExprId;
 pub struct TypeInfo<'a> {
     /// Type query interface from analysis.
     pub query: TypeQuery<'a>,
-    /// Expression types recorded during type checking.
-    pub expr_types: &'a HashMap<ExprId, TypeKey>,
+    /// Expression types and values recorded during type checking.
+    pub expr_types: &'a HashMap<ExprId, TypeAndValue>,
 }
 
 impl<'a> TypeInfo<'a> {
-    pub fn new(query: TypeQuery<'a>, expr_types: &'a HashMap<ExprId, TypeKey>) -> Self {
+    pub fn new(query: TypeQuery<'a>, expr_types: &'a HashMap<ExprId, TypeAndValue>) -> Self {
         Self { query, expr_types }
     }
 
@@ -30,11 +31,21 @@ impl<'a> TypeInfo<'a> {
     pub fn expr_type(&self, expr: &Expr) -> Option<&'a Type> {
         self.expr_types
             .get(&expr.id)
-            .map(|&key| self.query.get_type(key))
+            .map(|tv| self.query.get_type(tv.typ))
     }
 
     pub fn expr_type_key(&self, expr: &Expr) -> Option<TypeKey> {
-        self.expr_types.get(&expr.id).copied()
+        self.expr_types.get(&expr.id).map(|tv| tv.typ)
+    }
+
+    /// Get constant value for an expression (if it's a constant).
+    pub fn expr_const_value(&self, expr: &Expr) -> Option<&ConstValue> {
+        self.expr_types.get(&expr.id).and_then(|tv| {
+            match &tv.mode {
+                OperandMode::Constant(v) => Some(v),
+                _ => None,
+            }
+        })
     }
 
     // === Symbol queries (delegate to TypeQuery) ===

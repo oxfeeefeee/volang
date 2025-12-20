@@ -635,6 +635,7 @@ dependencies = [
  "gox-runtime-vm",
  "gox-syntax",
  "gox-vm",
+ "num-traits",
 ]
 
 [[package]]
