@@ -1126,30 +1126,205 @@ impl<F: FileSystem> Checker<F> {
         sel: &gox_syntax::ast::SelectorExpr,
         fctx: &mut FilesContext<F>,
     ) {
-        self.expr(x, &sel.expr, fctx);
-        if x.invalid() {
-            return;
-        }
-        // Look up field/method in base type
-        let base_type = x.typ.unwrap();
-        let utype = typ::underlying_type(base_type, &self.tc_objs);
-        
-        // For struct types, look up field
-        if let Type::Struct(detail) = self.otype(utype) {
-            for field in detail.fields().iter() {
-                let fobj = &self.tc_objs.lobjs[*field];
-                // Compare by object key for now (simplified)
-                // Full implementation would use proper name lookup
-                if fobj.typ().is_some() {
-                    x.mode = OperandMode::Variable;
-                    x.typ = fobj.typ();
+        // If the identifier refers to a package, handle everything here
+        // so we don't need a "package" mode for operands: package names
+        // can only appear in qualified identifiers which are mapped to
+        // selector expressions.
+        if let ExprKind::Ident(ident) = &sel.expr.kind {
+            let name = self.resolve_ident(ident);
+            if let Some(okey) = self.lookup(name) {
+                let lobj = self.lobj(okey);
+                let lobj_pkg = lobj.pkg();
+                if let crate::obj::EntityType::PkgName { imported, .. } = lobj.entity_type() {
+                    let imported = *imported;
+                    debug_assert_eq!(self.pkg, lobj_pkg.unwrap());
+                    self.result.record_use(ident.clone(), okey);
+                    // Mark package as used
+                    if let crate::obj::EntityType::PkgName { used, .. } = self.lobj_mut(okey).entity_type_mut() {
+                        *used = true;
+                    }
+
+                    let pkg = self.package(imported);
+                    let pkg_scope = *pkg.scope();
+                    let pkg_name = pkg.name().clone();
+                    let pkg_fake = pkg.fake();
+
+                    let sel_name = self.resolve_ident(&sel.sel);
+                    let exp_op = self.scope(pkg_scope).lookup(sel_name);
+
+                    if exp_op.is_none() {
+                        if !pkg_fake {
+                            let msg = format!(
+                                "{} not declared by package {}",
+                                sel_name,
+                                pkg_name.as_ref().unwrap_or(&"<unknown>".to_string())
+                            );
+                            self.error(sel.sel.span, msg);
+                        }
+                        x.mode = OperandMode::Invalid;
+                        x.expr_id = Some(sel.expr.id);
+                        return;
+                    }
+
+                    let exp_key = exp_op.unwrap();
+                    let exp = self.lobj(exp_key);
+                    if !exp.exported() {
+                        let msg = format!(
+                            "{} not exported by package {}",
+                            sel_name,
+                            pkg_name.as_ref().unwrap_or(&"<unknown>".to_string())
+                        );
+                        self.error(sel.sel.span, msg);
+                    }
+                    self.result.record_use(sel.sel.clone(), exp_key);
+
+                    // Simplified version of the code for Idents:
+                    // - imported objects are always fully initialized
+                    let exp = self.lobj(exp_key);
+                    x.mode = match exp.entity_type() {
+                        crate::obj::EntityType::Const { val } => OperandMode::Constant(val.clone()),
+                        crate::obj::EntityType::TypeName => OperandMode::TypeExpr,
+                        crate::obj::EntityType::Var(_) => OperandMode::Variable,
+                        crate::obj::EntityType::Func { .. } => OperandMode::Value,
+                        crate::obj::EntityType::Builtin(id) => OperandMode::Builtin(*id),
+                        _ => unreachable!(),
+                    };
+                    x.typ = exp.typ();
+                    x.expr_id = Some(sel.expr.id);
                     return;
                 }
             }
         }
-        
-        // Field/method not found
-        self.error(Span::default(), format!("undefined field or method"));
-        x.mode = OperandMode::Invalid;
+
+        self.expr_or_type(x, &sel.expr, fctx);
+        if x.invalid() {
+            x.expr_id = Some(sel.expr.id);
+            return;
+        }
+
+        let sel_name = self.resolve_ident(&sel.sel).to_string();
+        let result = crate::lookup::lookup_field_or_method(
+            x.typ.unwrap(),
+            x.mode == OperandMode::Variable,
+            Some(self.pkg),
+            &sel_name,
+            &self.tc_objs,
+        );
+
+        let (okey, indices, indirect) = match result {
+            crate::lookup::LookupResult::Entry(okey, indices, indirect) => (okey, indices, indirect),
+            _ => {
+                let msg = match &result {
+                    crate::lookup::LookupResult::Ambiguous(_) => format!("ambiguous selector {}", sel_name),
+                    crate::lookup::LookupResult::NotFound => {
+                        format!(
+                            "{} undefined (type has no field or method {})",
+                            sel_name, sel_name
+                        )
+                    }
+                    crate::lookup::LookupResult::BadMethodReceiver => {
+                        format!("{} is not in method set of type", sel_name)
+                    }
+                    crate::lookup::LookupResult::Entry(_, _, _) => unreachable!(),
+                };
+                self.error(sel.sel.span, msg);
+                x.mode = OperandMode::Invalid;
+                x.expr_id = Some(sel.expr.id);
+                return;
+            }
+        };
+
+        // methods may not have a fully set up signature yet
+        if self.lobj(okey).entity_type().is_func() {
+            self.obj_decl(okey, None, fctx);
+        }
+
+        if x.mode == OperandMode::TypeExpr {
+            // method expression
+            if self.lobj(okey).entity_type().is_func() {
+                let selection = crate::selection::Selection::new(
+                    crate::selection::SelectionKind::MethodExpr,
+                    x.typ,
+                    okey,
+                    indices,
+                    indirect,
+                    &self.tc_objs,
+                );
+                self.result.record_selection(sel.expr.id, selection);
+
+                // the receiver type becomes the type of the first function
+                // argument of the method expression's function type
+                let var = self
+                    .tc_objs
+                    .new_var(0, Some(self.pkg), "".to_string(), x.typ);
+                let lobj = self.lobj(okey);
+                let sig = self.otype(lobj.typ().unwrap()).try_as_signature().unwrap();
+                let (p, r, v) = (sig.params(), sig.results(), sig.variadic());
+                let params_val = self.otype(p).try_as_tuple().unwrap();
+                let mut vars = vec![var];
+                vars.append(&mut params_val.vars().clone());
+                let params = self.tc_objs.new_t_tuple(vars);
+                let new_sig = self.tc_objs.new_t_signature(None, None, params, r, v);
+                x.mode = OperandMode::Value;
+                x.typ = Some(new_sig);
+
+                self.add_decl_dep(okey);
+            } else {
+                let msg = format!(
+                    "{} undefined (type has no method {})",
+                    sel_name, sel_name
+                );
+                self.error(sel.sel.span, msg);
+                x.mode = OperandMode::Invalid;
+                x.expr_id = Some(sel.expr.id);
+                return;
+            }
+        } else {
+            // regular selector
+            let is_var = self.lobj(okey).entity_type().is_var();
+            let is_func = self.lobj(okey).entity_type().is_func();
+            let field_typ = self.lobj(okey).typ();
+            if is_var {
+                let selection = crate::selection::Selection::new(
+                    crate::selection::SelectionKind::FieldVal,
+                    x.typ,
+                    okey,
+                    indices.clone(),
+                    indirect,
+                    &self.tc_objs,
+                );
+                self.result.record_selection(sel.expr.id, selection);
+                x.mode = if x.mode == OperandMode::Variable || indirect {
+                    OperandMode::Variable
+                } else {
+                    OperandMode::Value
+                };
+                x.typ = field_typ;
+            } else if is_func {
+                let selection = crate::selection::Selection::new(
+                    crate::selection::SelectionKind::MethodVal,
+                    x.typ,
+                    okey,
+                    indices.clone(),
+                    indirect,
+                    &self.tc_objs,
+                );
+                self.result.record_selection(sel.expr.id, selection);
+
+                x.mode = OperandMode::Value;
+
+                // remove receiver
+                let lobj = self.lobj(okey);
+                let sig = self.otype(lobj.typ().unwrap()).try_as_signature().unwrap();
+                let (p, r, v) = (sig.params(), sig.results(), sig.variadic());
+                let new_sig = self.tc_objs.new_t_signature(None, None, p, r, v);
+                x.typ = Some(new_sig);
+
+                self.add_decl_dep(okey);
+            } else {
+                unreachable!();
+            }
+        }
+        x.expr_id = Some(sel.expr.id);
     }
 }
