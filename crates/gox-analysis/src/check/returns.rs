@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use gox_common::vfs::FileSystem;
-use gox_syntax::ast::{CaseClause, SelectCase, Stmt, StmtKind, TypeCaseClause};
+use gox_syntax::ast::{CaseClause, ExprKind, SelectCase, Stmt, StmtKind, TypeCaseClause};
 
 use super::checker::Checker;
 
@@ -31,8 +31,8 @@ impl<F: FileSystem> Checker<F> {
 
             // Labeled statement - use the label for break checking
             StmtKind::Labeled(ls) => {
-                // TODO: Get label name from identifier
-                self.is_terminating_impl(&ls.stmt, label)
+                let l = self.resolve_ident(&ls.label);
+                self.is_terminating_impl(&ls.stmt, Some(l))
             }
 
             // If terminates if both branches terminate
@@ -64,9 +64,15 @@ impl<F: FileSystem> Checker<F> {
 
             // Expression statement terminates if it's a panic call
             StmtKind::Expr(expr) => {
-                // TODO: Check if expression is a panic call
-                let _ = expr;
-                false
+                if let ExprKind::Call(call) = &expr.kind {
+                    if let Some(ref panics) = self.octx.panics {
+                        panics.contains(&expr.id)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
 
             // Fail statement terminates (GoX extension)
