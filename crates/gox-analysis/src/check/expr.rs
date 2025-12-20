@@ -1014,8 +1014,7 @@ impl<F: FileSystem> Checker<F> {
                 if x.invalid() {
                     return;
                 }
-                // TODO: conversion needs fctx but current signature doesn't take it
-                self.convert_untyped(x, ty);
+                self.convert_untyped_fctx(x, ty, fctx);
             }
             ExprKind::Receive(recv) => {
                 self.expr(x, recv, fctx);
