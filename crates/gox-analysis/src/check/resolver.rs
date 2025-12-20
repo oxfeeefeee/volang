@@ -110,31 +110,31 @@ impl DeclInfo {
         })
     }
 
-    pub fn as_const(&self) -> Option<&DeclInfoConst> {
+    pub fn as_const(&self) -> &DeclInfoConst {
         match self {
-            DeclInfo::Const(c) => Some(c),
-            _ => None,
+            DeclInfo::Const(c) => c,
+            _ => unreachable!(),
         }
     }
 
-    pub fn as_var(&self) -> Option<&DeclInfoVar> {
+    pub fn as_var(&self) -> &DeclInfoVar {
         match self {
-            DeclInfo::Var(v) => Some(v),
-            _ => None,
+            DeclInfo::Var(v) => v,
+            _ => unreachable!(),
         }
     }
 
-    pub fn as_type(&self) -> Option<&DeclInfoType> {
+    pub fn as_type(&self) -> &DeclInfoType {
         match self {
-            DeclInfo::Type(t) => Some(t),
-            _ => None,
+            DeclInfo::Type(t) => t,
+            _ => unreachable!(),
         }
     }
 
-    pub fn as_func(&self) -> Option<&DeclInfoFunc> {
+    pub fn as_func(&self) -> &DeclInfoFunc {
         match self {
-            DeclInfo::Func(f) => Some(f),
-            _ => None,
+            DeclInfo::Func(f) => f,
+            _ => unreachable!(),
         }
     }
 
@@ -147,34 +147,27 @@ impl DeclInfo {
         }
     }
 
-    pub fn deps(&self) -> Option<&HashSet<ObjKey>> {
+    pub fn deps(&self) -> &HashSet<ObjKey> {
         match self {
-            DeclInfo::Const(c) => Some(&c.deps),
-            DeclInfo::Var(v) => Some(&v.deps),
-            DeclInfo::Func(f) => Some(&f.deps),
-            DeclInfo::Type(_) => None,
+            DeclInfo::Const(c) => &c.deps,
+            DeclInfo::Var(v) => &v.deps,
+            DeclInfo::Func(f) => &f.deps,
+            _ => unreachable!(),
         }
     }
 
-    pub fn deps_mut(&mut self) -> Option<&mut HashSet<ObjKey>> {
+    pub fn deps_mut(&mut self) -> &mut HashSet<ObjKey> {
         match self {
-            DeclInfo::Const(c) => Some(&mut c.deps),
-            DeclInfo::Var(v) => Some(&mut v.deps),
-            DeclInfo::Func(f) => Some(&mut f.deps),
-            DeclInfo::Type(_) => None,
+            DeclInfo::Const(c) => &mut c.deps,
+            DeclInfo::Var(v) => &mut v.deps,
+            DeclInfo::Func(f) => &mut f.deps,
+            _ => unreachable!(),
         }
     }
 
     /// Add a dependency to this declaration.
     pub fn add_dep(&mut self, okey: ObjKey) {
-        if let Some(deps) = self.deps_mut() {
-            deps.insert(okey);
-        }
-    }
-
-    /// Check if this declaration has dependencies.
-    pub fn has_deps(&self) -> bool {
-        self.deps().map_or(false, |d| !d.is_empty())
+        self.deps_mut().insert(okey);
     }
 }
 
@@ -194,8 +187,8 @@ impl<F: FileSystem> Checker<F> {
             .copied()
             .collect();
 
-        // List of methods with non-blank names
-        let mut methods: Vec<ObjKey> = Vec::new();
+        // List of methods with non-blank names: (method_key, receiver_type_name, is_pointer)
+        let mut methods: Vec<(ObjKey, String, bool)> = Vec::new();
 
         for (file_num, file) in fctx.files.iter().enumerate() {
             // Create file scope
@@ -220,9 +213,53 @@ impl<F: FileSystem> Checker<F> {
             }
         }
 
+        // Verify that objects in package and file scopes have different names
+        let pkg_scope_key = *self.package(self.pkg).scope();
+        let pkg_scope = self.scope(pkg_scope_key);
+        let children: Vec<ScopeKey> = pkg_scope.children().to_vec();
+        for s in children {
+            let elems: Vec<(String, ObjKey)> = self
+                .scope(s)
+                .elems()
+                .iter()
+                .map(|(name, &okey)| (name.clone(), okey))
+                .collect();
+            for (_, okey) in elems {
+                let obj_val = self.lobj(okey);
+                let pkg_scope = self.scope(pkg_scope_key);
+                if let Some(alt) = pkg_scope.lookup(obj_val.name()) {
+                    let alt_val = self.lobj(alt);
+                    if let crate::obj::EntityType::PkgName { imported, .. } = obj_val.entity_type() {
+                        let pkg_val = self.package(*imported);
+                        self.error(
+                            Span::default(),
+                            format!(
+                                "{} already declared through import of {}",
+                                alt_val.name(),
+                                pkg_val.path()
+                            ),
+                        );
+                    } else {
+                        if let Some(pkg_key) = obj_val.pkg() {
+                            let pkg_val = self.package(pkg_key);
+                            self.error(
+                                Span::default(),
+                                format!(
+                                    "{} already declared through dot-import of {}",
+                                    alt_val.name(),
+                                    pkg_val.path()
+                                ),
+                            );
+                        }
+                    }
+                    self.report_alt_decl(okey);
+                }
+            }
+        }
+
         // Associate methods with receiver base types
-        for method_key in methods {
-            self.associate_method(method_key, fctx);
+        for (method_key, recv_type_name, is_pointer) in methods {
+            self.associate_method_with_receiver(method_key, &recv_type_name, is_pointer, fctx);
         }
     }
 
@@ -304,7 +341,7 @@ impl<F: FileSystem> Checker<F> {
         &mut self,
         decl: &Decl,
         file_scope: ScopeKey,
-        methods: &mut Vec<ObjKey>,
+        methods: &mut Vec<(ObjKey, String, bool)>,
     ) {
         match decl {
             Decl::Const(const_decl) => {
@@ -424,9 +461,13 @@ impl<F: FileSystem> Checker<F> {
                         self.result.record_def(func_decl.name.clone(), Some(okey));
                     }
                 } else {
-                    // Method
+                    // Method - get receiver info from AST
+                    let recv = func_decl.receiver.as_ref().unwrap();
+                    let recv_type_name = self.resolve_ident(&recv.ty).to_string();
+                    let is_pointer = recv.is_pointer;
+                    
                     if name_str != "_" {
-                        methods.push(okey);
+                        methods.push((okey, recv_type_name, is_pointer));
                     }
                     self.result.record_def(func_decl.name.clone(), Some(okey));
                 }
@@ -489,16 +530,191 @@ impl<F: FileSystem> Checker<F> {
     }
 
     /// Associates a method with its receiver base type.
-    fn associate_method(&mut self, _method_key: ObjKey, _fctx: &mut FilesContext<F>) {
-        // TODO: Implement method association with receiver type
+    /// In GoX, Receiver has `ty: Ident` and `is_pointer: bool` directly.
+    fn associate_method_with_receiver(
+        &mut self,
+        method_key: ObjKey,
+        receiver_type_name: &str,
+        is_pointer: bool,
+        fctx: &mut FilesContext<F>,
+    ) {
+        // Look up the receiver base type in package scope
+        let pkg_scope = *self.package(self.pkg).scope();
+        let scope = self.scope(pkg_scope);
+
+        if let Some(base_obj) = scope.lookup(receiver_type_name) {
+            let base_val = self.lobj(base_obj);
+            // The object must be a type name
+            if !base_val.entity_type().is_type_name() {
+                return;
+            }
+
+            // Check for alias and resolve to non-alias type
+            if let Some(&decl_key) = self.obj_map.get(&base_obj) {
+                let decl = self.decl_info(decl_key);
+                if let DeclInfo::Type(t) = decl {
+                    if t.alias {
+                        // For aliases, we'd need to resolve further
+                        // For now, just use the alias target
+                        return;
+                    }
+                }
+            }
+
+            // Set pointer receiver flag on method
+            self.lobj_mut(method_key)
+                .entity_type_mut()
+                .func_set_has_ptr_recv(is_pointer);
+
+            // Associate method with base type
+            fctx.methods.entry(base_obj).or_default().push(method_key);
+        }
+    }
+
+    /// Resolves the base type name for a method receiver.
+    /// Returns (has_pointer, base_type_obj) or None if not found.
+    fn resolve_base_type_name(&self, type_name: &str, is_pointer: bool) -> Option<(bool, ObjKey)> {
+        let pkg_scope = *self.package(self.pkg).scope();
+        let scope = self.scope(pkg_scope);
+
+        // Look up in package scope
+        let okey = scope.lookup(type_name)?;
+        let lobj = self.lobj(okey);
+
+        // Must be a type name
+        if !lobj.entity_type().is_type_name() {
+            return None;
+        }
+
+        // Check for cycles and resolve aliases
+        let mut path: Vec<ObjKey> = Vec::new();
+        let mut current = okey;
+
+        loop {
+            // Check for cycle
+            if path.contains(&current) {
+                return None;
+            }
+            path.push(current);
+
+            // Check if it's an alias
+            if let Some(&decl_key) = self.obj_map.get(&current) {
+                let decl = self.decl_info(decl_key);
+                if let DeclInfo::Type(t) = decl {
+                    if !t.alias {
+                        // Found non-alias type
+                        return Some((is_pointer, current));
+                    }
+                    // For alias, would need to resolve the underlying type
+                    // This requires AST access to get the alias target type name
+                    // For now, just return the alias itself
+                    return Some((is_pointer, current));
+                }
+            }
+
+            // Not in obj_map means it's predeclared or imported
+            // Just return it
+            return Some((is_pointer, current));
+        }
+    }
+
+    /// Validates an import path.
+    fn valid_import_path<'a>(&self, path: &'a str) -> Result<&'a str, String> {
+        if path.is_empty() {
+            return Err("empty string".to_owned());
+        }
+        let illegal_chars: &[char] = &[
+            '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', ',', ':', ';', '<', '=', '>', '?',
+            '[', '\\', ']', '^', '{', '|', '}', '`', '\u{FFFD}',
+        ];
+        if let Some(c) = path
+            .chars()
+            .find(|&x| !x.is_ascii_graphic() || x.is_whitespace() || illegal_chars.contains(&x))
+        {
+            return Err(format!("invalid character: {}", c));
+        }
+        Ok(path)
+    }
+
+    /// Returns the package path and name (last element).
+    fn pkg_path_and_name<'a>(&'a self, pkey: PackageKey) -> (&'a str, &'a str) {
+        let pkg_val = self.package(pkey);
+        let path = pkg_val.path();
+        if let Some(i) = path.rfind('/') {
+            if i > 0 && i < path.len() - 1 {
+                return (path, &path[i + 1..]);
+            }
+        }
+        (path, path)
+    }
+
+    /// Returns the directory portion of a file path.
+    fn file_dir(&self, file_num: usize, fctx: &FilesContext<F>) -> String {
+        // Try to get the file path from the file
+        if file_num < fctx.files.len() {
+            // In a real implementation, we'd get the actual file path
+            // For now, return current directory
+            return ".".to_owned();
+        }
+        ".".to_owned()
     }
 
     /// Imports a package.
-    fn import_package(&mut self, _path: &str, _span: Span) -> PackageKey {
-        // TODO: Implement actual import
-        // For now, create a fake package
-        let pkg = self.tc_objs.new_package(_path.to_string());
+    fn import_package(&mut self, path: &str, span: Span) -> PackageKey {
+        // Validate import path
+        if let Err(e) = self.valid_import_path(path) {
+            self.error(span, format!("invalid import path ({})", e));
+        }
+
+        let dir = ".".to_string(); // TODO: Get actual file directory
+        let key = super::checker::ImportKey::new(path, &dir);
+
+        // Check if already imported
+        if let Some(&imp) = self.imp_map.get(&key) {
+            return imp;
+        }
+
+        // Create a new package (in real implementation, would call importer)
+        let pkg = self.tc_objs.new_package(path.to_string());
+
+        // Extract package name from path
+        let name = if let Some(i) = path.rfind('/') {
+            &path[i + 1..]
+        } else {
+            path
+        };
+        self.package_mut(pkg).set_name(name.to_string());
+
+        self.imp_map.insert(key, pkg);
         pkg
+    }
+
+    /// Checks arity (number of names vs values) for const/var declarations.
+    fn arity_match(
+        &self,
+        names_count: usize,
+        values_count: usize,
+        has_type: bool,
+        is_const: bool,
+        span: Span,
+    ) {
+        let l = names_count;
+        let r = values_count;
+
+        if l < r {
+            self.error(span, "extra init expr".to_string());
+        } else if l > r {
+            if is_const {
+                if r == 0 && !has_type {
+                    self.error(span, "missing type or init expr".to_string());
+                }
+            } else {
+                // var declaration
+                if r != 1 {
+                    self.error(span, "missing init expr".to_string());
+                }
+            }
+        }
     }
 
     /// Type-checks all package objects (but not function bodies).
@@ -521,7 +737,7 @@ impl<F: FileSystem> Checker<F> {
             .filter(|&o| {
                 if self.lobj(o).entity_type().is_type_name() {
                     if let Some(di) = self.obj_map.get(&o) {
-                        if let Some(t) = self.decl_info(*di).as_type() {
+                        if let DeclInfo::Type(t) = self.decl_info(*di) {
                             if t.alias {
                                 return true; // Keep for phase 2
                             }

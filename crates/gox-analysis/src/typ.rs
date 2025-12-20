@@ -874,6 +874,15 @@ pub fn identical_ignore_tags(x: TypeKey, y: TypeKey, objs: &TCObjects) -> bool {
     identical_impl(x, y, false, &mut HashSet::new(), objs)
 }
 
+/// Reports whether x and y are identical types, ignoring struct tags (for Option<TypeKey>).
+pub fn identical_ignore_tags_o(x: Option<TypeKey>, y: Option<TypeKey>, objs: &TCObjects) -> bool {
+    match (x, y) {
+        (Some(a), Some(b)) => identical_ignore_tags(a, b, objs),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn identical_impl(
     x: TypeKey,
     y: TypeKey,

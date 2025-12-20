@@ -82,7 +82,7 @@ pub struct FilesContext<'a, F: FileSystem> {
     /// Maps package scope type names to associated non-blank, non-interface methods.
     pub methods: HashMap<ObjKey, Vec<ObjKey>>,
     /// Maps interface type names to corresponding interface infos.
-    pub ifaces: HashMap<ObjKey, Option<Rc<()>>>, // TODO: Replace () with IfaceInfo
+    pub ifaces: HashMap<ObjKey, Option<super::interface::RcIfaceInfo>>,
     /// Map of expressions without final type.
     pub untyped: HashMap<ExprId, ExprInfo>,
     /// Stack of delayed actions.
@@ -154,6 +154,22 @@ impl<'a, F: FileSystem> FilesContext<'a, F> {
 // Checker - the main type checker
 // =============================================================================
 
+/// Import key for caching imported packages.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ImportKey {
+    pub path: String,
+    pub dir: String,
+}
+
+impl ImportKey {
+    pub fn new(path: &str, dir: &str) -> ImportKey {
+        ImportKey {
+            path: path.to_string(),
+            dir: dir.to_string(),
+        }
+    }
+}
+
 /// The main type checker.
 pub struct Checker<F: FileSystem> {
     /// Type checking objects container.
@@ -168,6 +184,8 @@ pub struct Checker<F: FileSystem> {
     pub pkg: PackageKey,
     /// Maps package-level objects and methods to declaration info.
     pub obj_map: HashMap<ObjKey, DeclInfoKey>,
+    /// Import cache: maps (path, dir) to imported package.
+    pub imp_map: HashMap<ImportKey, PackageKey>,
     /// Object context.
     pub octx: ObjContext,
     /// Type checking results.
@@ -190,6 +208,7 @@ impl<F: FileSystem> Checker<F> {
             errors: Vec::new(),
             pkg,
             obj_map: HashMap::new(),
+            imp_map: HashMap::new(),
             octx: ObjContext::new(),
             result: TypeInfo::new(),
             indent: Rc::new(RefCell::new(0)),
@@ -238,9 +257,34 @@ impl<F: FileSystem> Checker<F> {
         eprintln!("error at {:?}: {}", span, msg);
     }
 
+    /// Report an error with a string message (convenience method).
+    pub fn error_str(&self, pos: usize, msg: &str) {
+        eprintln!("error at pos {}: {}", pos, msg);
+    }
+
     /// Report a soft error (warning-like).
     pub fn soft_error(&self, span: Span, msg: String) {
         eprintln!("warning at {:?}: {}", span, msg);
+    }
+
+    /// Format a position for error messages.
+    pub fn position(&self, pos: usize) -> String {
+        format!("pos:{}", pos)
+    }
+
+    /// Returns whether tracing is enabled.
+    pub fn trace(&self) -> bool {
+        false
+    }
+
+    /// Begin a trace block.
+    pub fn trace_begin(&self, _pos: usize, _msg: &str) {
+        // TODO: Implement tracing
+    }
+
+    /// End a trace block.
+    pub fn trace_end(&self, _pos: usize, _msg: &str) {
+        // TODO: Implement tracing
     }
 
     // =========================================================================
@@ -316,5 +360,19 @@ impl<F: FileSystem> Checker<F> {
         x.mode = crate::operand::OperandMode::Invalid;
         x.expr_id = Some(expr.id);
         x.typ = None;
+        let _ = hint;
+    }
+
+    /// Updates the type of a previously type-checked expression.
+    /// Used to update the type of untyped expressions once the context provides
+    /// enough information to determine their final type.
+    pub fn update_expr_type(
+        &mut self,
+        _expr_id: ExprId,
+        _typ: TypeKey,
+        _final_: bool,
+        _fctx: &mut FilesContext<F>,
+    ) {
+        // TODO: Implement - update untyped expression to final type
     }
 }
