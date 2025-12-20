@@ -170,11 +170,11 @@ impl<F: FileSystem> Checker<F> {
             StmtKind::Break(brk) => {
                 // Break with no label breaks implicitly
                 // Break with label breaks the labeled statement
-                if brk.label.is_none() {
-                    implicit
+                if let Some(brk_label) = &brk.label {
+                    let brk_name = self.resolve_ident(brk_label);
+                    label.map_or(false, |l| l == brk_name)
                 } else {
-                    // TODO: Check if label matches
-                    label.is_some()
+                    implicit
                 }
             }
             StmtKind::Block(block) => self.has_break_list(&block.stmts, label, implicit),
