@@ -12,6 +12,7 @@ pub mod lexer;
 pub mod ast;
 pub mod parser;
 pub mod errors;
+pub mod display;
 
 pub use token::{Token, TokenKind};
 pub use lexer::Lexer;
