@@ -10,7 +10,6 @@ use gox_common::symbol::Ident;
 use gox_common::vfs::FileSystem;
 use gox_syntax::ast::Expr;
 
-use crate::obj::EntityType;
 use crate::objects::{ObjKey, TypeKey};
 use crate::operand::{Operand, OperandMode};
 use crate::typ::{self, BasicType};
@@ -25,7 +24,7 @@ impl<F: FileSystem> Checker<F> {
     /// If necessary, converts untyped values to the appropriate type.
     /// Use t == None to indicate assignment to an untyped blank identifier.
     /// x.mode is set to invalid if the assignment failed.
-    pub fn assignment(&mut self, x: &mut Operand, t: Option<TypeKey>, note: &str, fctx: &mut FilesContext<F>) {
+    pub fn assignment(&mut self, x: &mut Operand, t: Option<TypeKey>, note: &str, _fctx: &mut FilesContext<F>) {
         self.single_value(x);
         if x.invalid() {
             return;
@@ -103,7 +102,7 @@ impl<F: FileSystem> Checker<F> {
         }
 
         // rhs must be a constant
-        if let OperandMode::Constant(ref val) = x.mode {
+        if let OperandMode::Constant(ref _val) = x.mode {
             let t = self.tc_objs.lobjs[lhs].typ();
             self.assignment(x, t, "constant declaration", fctx);
             if x.mode != OperandMode::Invalid {

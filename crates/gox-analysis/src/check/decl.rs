@@ -619,7 +619,7 @@ impl<F: FileSystem> Checker<F> {
             // More values than names
             if l < spec.values.len() {
                 self.error(spec.values[l].span, "extra init expr".to_string());
-            } else if let Some(is) = init_spec {
+            } else if let Some(_is) = init_spec {
                 self.error(spec.span, "extra init expr from previous spec".to_string());
             }
         } else if l > r {

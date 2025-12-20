@@ -13,21 +13,13 @@ use gox_common_core::ExprId;
 use gox_syntax::ast::{Expr, ExprKind};
 
 use crate::obj::{self, Builtin, LangObj};
-use crate::objects::{ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
+use crate::objects::{ObjKey, PackageKey, TCObjects, TypeKey};
 use crate::operand::{Operand, OperandMode};
-use crate::package::Package;
-use crate::scope::{self, Scope};
+use crate::scope;
 use crate::typ::{self, BasicType, Type};
 use crate::universe::BuiltinInfo;
 
 use super::checker::{Checker, FilesContext};
-
-// Re-export type utility functions from typ module
-pub use crate::typ::{
-    comparable, deep_underlying_type, has_nil, identical, identical_o, is_boolean, is_const_type,
-    is_float, is_integer, is_interface, is_named, is_numeric, is_ordered, is_string, is_typed,
-    is_unsigned, is_untyped, underlying_type,
-};
 
 // =============================================================================
 // UnpackResult - for unpacking assignment RHS

@@ -9,11 +9,9 @@ use std::collections::HashSet;
 
 use gox_common::span::Span;
 use gox_common::vfs::FileSystem;
-use gox_common_core::ExprId;
-use gox_syntax::ast::{Decl, Expr, File, FuncDecl, TypeExpr};
+use gox_syntax::ast::{Decl, Expr, FuncDecl, TypeExpr};
 
 use crate::constant::Value;
-use crate::obj::LangObj;
 use crate::objects::{ObjKey, PackageKey, ScopeKey};
 
 use super::checker::{Checker, FilesContext};
@@ -567,7 +565,7 @@ impl<F: FileSystem> Checker<F> {
 
         // Check for cycles and resolve aliases
         let mut path: Vec<ObjKey> = Vec::new();
-        let mut current = okey;
+        let current = okey;
 
         loop {
             // Check for cycle

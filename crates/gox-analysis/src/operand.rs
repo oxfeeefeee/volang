@@ -5,7 +5,6 @@
 #![allow(dead_code)]
 
 use crate::check::Checker;
-use crate::constant;
 use crate::obj::{Builtin, ConstValue, Pos};
 use crate::objects::{TCObjects, TypeKey};
 use crate::typ::{self, BasicType};

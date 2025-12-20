@@ -186,7 +186,7 @@ impl<F: FileSystem> Checker<F> {
             // (or if spread, the arg must be a slice of element type)
             if call.spread && i == nargs - 1 {
                 // Last arg with spread must be a slice
-                let arg_type = arg.typ.unwrap_or(self.invalid_type());
+                let _arg_type = arg.typ.unwrap_or(self.invalid_type());
                 let tslice = self.tc_objs.new_t_slice(telem);
                 let mut reason = String::new();
                 if !self.assignable_to(&arg, tslice, &mut reason) {
@@ -430,7 +430,7 @@ impl<F: FileSystem> Checker<F> {
         &mut self,
         x: &mut Operand,
         call: &CallExpr,
-        call_span: Span,
+        _call_span: Span,
         fctx: &mut FilesContext<F>,
     ) -> bool {
         let arg0t = self.type_expr_from_expr(&call.args[0], fctx);
@@ -448,8 +448,8 @@ impl<F: FileSystem> Checker<F> {
     fn builtin_panic(
         &mut self,
         x: &mut Operand,
-        call: &CallExpr,
-        call_span: Span,
+        _call: &CallExpr,
+        _call_span: Span,
         fctx: &mut FilesContext<F>,
     ) -> bool {
         // Record panic call if inside a function with result parameters
@@ -480,7 +480,7 @@ impl<F: FileSystem> Checker<F> {
         &mut self,
         x: &mut Operand,
         call: &CallExpr,
-        call_span: Span,
+        _call_span: Span,
         id: Builtin,
         fctx: &mut FilesContext<F>,
     ) -> bool {

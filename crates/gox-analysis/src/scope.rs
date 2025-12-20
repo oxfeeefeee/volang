@@ -91,7 +91,7 @@ impl Scope {
     /// Looks up a name in this scope and all parent scopes.
     pub fn lookup_parent(&self, name: &str, objs: &TCObjects) -> Option<(ScopeKey, ObjKey)> {
         // First check this scope
-        if let Some(obj) = self.elems.get(name) {
+        if let Some(_obj) = self.elems.get(name) {
             // We need the scope key for this scope, but we don't have it here
             // This is a limitation - caller should use lookup_parent_with_key
             return None;

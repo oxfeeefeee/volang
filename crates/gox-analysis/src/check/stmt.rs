@@ -760,7 +760,7 @@ impl<F: FileSystem> Checker<F> {
                         };
                         
                         // Check for duplicate types
-                        if let Some(&prev_span) = seen_types.iter()
+                        if let Some(&_prev_span) = seen_types.iter()
                             .find(|(&t2, _)| typ::identical_o(t, t2, &self.tc_objs))
                             .map(|(_, s)| s) 
                         {
@@ -894,7 +894,7 @@ impl<F: FileSystem> Checker<F> {
                             let xtype = x.typ.unwrap();
                             let under = typ::underlying_type(xtype, &self.tc_objs);
                             match self.otype(under) {
-                                typ::Type::Basic(b) if typ::is_string(under, &self.tc_objs) => {
+                                typ::Type::Basic(_) if typ::is_string(under, &self.tc_objs) => {
                                     (Some(self.basic_type(BasicType::Int)), 
                                      Some(self.basic_type(BasicType::Rune)))
                                 }
@@ -991,7 +991,7 @@ impl<F: FileSystem> Checker<F> {
                     let declared_type = spec.ty.as_ref().map(|ty| self.type_expr(ty, fctx));
                     
                     // Evaluate constant expressions
-                    for (i, (name, val)) in spec.names.iter().zip(spec.values.iter()).enumerate() {
+                    for (_i, (name, val)) in spec.names.iter().zip(spec.values.iter()).enumerate() {
                         let x = &mut Operand::new();
                         self.expr(x, val, fctx);
                         

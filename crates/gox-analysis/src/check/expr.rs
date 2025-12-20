@@ -30,10 +30,8 @@ use gox_common_core::ExprId;
 use gox_syntax::ast::{BinaryOp, CompositeLitKey, Expr, ExprKind, UnaryOp};
 
 use crate::constant::Value;
-use crate::obj::LangObj;
 use crate::objects::TypeKey;
 use crate::operand::{Operand, OperandMode};
-use crate::scope;
 use crate::typ::{self, BasicType, Type};
 
 use super::checker::{Checker, FilesContext};
@@ -952,7 +950,7 @@ impl<F: FileSystem> Checker<F> {
                 }
 
                 let utype = typ::underlying_type(x.typ.unwrap(), &self.tc_objs);
-                let utype_val = self.otype(utype).clone();
+                let utype_val = self.otype(utype);
                 let (valid, length) = match &utype_val {
                     Type::Basic(_) if typ::is_string(utype, &self.tc_objs) => {
                         // String indexing yields byte
@@ -1143,7 +1141,7 @@ impl<F: FileSystem> Checker<F> {
                 }
                 
                 let utype = typ::underlying_type(ty, &self.tc_objs);
-                let utype_val = self.otype(utype).clone();
+                let utype_val = self.otype(utype);
                 
                 match &utype_val {
                     Type::Struct(detail) => {
@@ -1422,7 +1420,7 @@ impl<F: FileSystem> Checker<F> {
 
     /// Simple expression check - for use in stmt.rs where fctx is not available.
     /// Returns the type of the expression.
-    pub fn check_expr(&mut self, e: &Expr) -> TypeKey {
+    pub fn check_expr(&mut self, _e: &Expr) -> TypeKey {
         // Simplified check - just record the expression type
         // Full checking is done when fctx is available
         self.invalid_type()

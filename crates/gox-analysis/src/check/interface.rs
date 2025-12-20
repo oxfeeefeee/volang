@@ -12,7 +12,6 @@
 
 #![allow(dead_code)]
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -22,7 +21,6 @@ use gox_syntax::ast::{InterfaceElem, InterfaceType};
 
 use crate::obj::EntityType;
 use crate::objects::{ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
-use crate::scope::Scope;
 use crate::typ::{self, InterfaceDetail, Type};
 
 use super::checker::{Checker, FilesContext};
@@ -81,7 +79,7 @@ impl MethodInfo {
     }
 
     /// Returns the method id (for duplicate checking).
-    pub fn id(&self, pkg: PackageKey, tc_objs: &TCObjects) -> String {
+    pub fn id(&self, _pkg: PackageKey, tc_objs: &TCObjects) -> String {
         if let Some(okey) = self.func {
             tc_objs.lobjs[okey].id(tc_objs).to_string()
         } else if let Some(name) = &self.name {
@@ -257,7 +255,7 @@ impl<F: FileSystem> Checker<F> {
         scope: ScopeKey,
         name: &str,
         path: &Vec<ObjKey>,
-        fctx: &mut FilesContext<F>,
+        _fctx: &mut FilesContext<F>,
     ) -> Option<RcIfaceInfo> {
         let start = path.len();
         let mut cur_path = path.clone();
@@ -358,7 +356,7 @@ impl<F: FileSystem> Checker<F> {
     /// Returns (method_name, have_type, want_type) or None if T implements I.
     pub fn missing_method(
         &self,
-        t: TypeKey,
+        _t: TypeKey,
         iface: TypeKey,
     ) -> Option<(String, Option<TypeKey>, Option<TypeKey>)> {
         let iface_detail = match &self.tc_objs.types[iface] {

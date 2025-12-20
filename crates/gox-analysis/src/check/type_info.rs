@@ -141,7 +141,7 @@ impl TypeInfo {
     pub fn record_comma_ok_types(
         &mut self,
         expr: &gox_syntax::ast::Expr,
-        types: [TypeKey; 2],
+        _types: [TypeKey; 2],
         tuple_type: TypeKey,
     ) {
         use gox_syntax::ast::ExprKind;

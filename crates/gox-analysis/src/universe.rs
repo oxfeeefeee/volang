@@ -424,7 +424,7 @@ impl Universe {
         universe_scope: ScopeKey,
         objs: &mut TCObjects,
     ) {
-        for (&builtin, info) in builtins {
+        for (&builtin, _info) in builtins {
             let obj = LangObj::new_builtin(builtin, invalid_type);
             let obj_key = objs.lobjs.insert(obj);
             Scope::insert(universe_scope, obj_key, objs);

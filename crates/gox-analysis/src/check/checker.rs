@@ -17,7 +17,7 @@ use gox_common_core::ExprId;
 use gox_syntax::ast::{Expr, File};
 
 use super::type_info::TypeInfo;
-use crate::obj::{ConstValue, LangObj, Pos};
+use crate::obj::{ConstValue, Pos};
 use crate::objects::{DeclInfoKey, ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
 use crate::operand::OperandMode;
 use crate::universe::Universe;

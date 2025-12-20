@@ -64,7 +64,7 @@ impl<F: FileSystem> Checker<F> {
 
             // Expression statement terminates if it's a panic call
             StmtKind::Expr(expr) => {
-                if let ExprKind::Call(call) = &expr.kind {
+                if let ExprKind::Call(_call) = &expr.kind {
                     if let Some(ref panics) = self.octx.panics {
                         panics.contains(&expr.id)
                     } else {

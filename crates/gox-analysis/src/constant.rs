@@ -12,7 +12,7 @@ use num_rational::BigRational;
 use num_traits::cast::FromPrimitive;
 use num_traits::cast::ToPrimitive;
 use num_traits::sign::Signed;
-use num_traits::{Num, Zero};
+use num_traits::Zero;
 use std::borrow::Cow;
 use std::fmt;
 
@@ -188,7 +188,7 @@ impl Value {
     }
 
     /// Convert to integer if possible.
-    pub fn to_int(&self) -> Cow<Value> {
+    pub fn to_int(&self) -> Cow<'_, Value> {
         let f64_to_int = |x: f64| -> Cow<Value> {
             match BigRational::from_f64(x) {
                 Some(v) => {

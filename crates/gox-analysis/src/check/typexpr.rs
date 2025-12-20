@@ -5,23 +5,19 @@
 
 #![allow(dead_code)]
 
-use gox_common::span::Span;
 use gox_common::symbol::{Ident, Symbol};
 use gox_common::vfs::FileSystem;
 
-use crate::obj::{EntityType, LangObj};
+use crate::obj::EntityType;
 use crate::objects::{ObjKey, ScopeKey, TypeKey};
 use crate::operand::{Operand, OperandMode};
 use crate::lookup;
-use crate::scope::{self, Scope};
-use crate::typ::{
-    self, ArrayDetail, BasicType, ChanDetail, ChanDir, MapDetail, PointerDetail, SignatureDetail,
-    SliceDetail, StructDetail, TupleDetail, Type,
-};
+use crate::scope;
+use crate::typ::{self, ChanDir, Type};
 use gox_syntax::ast::{self, Expr, FuncSig, Param, TypeExpr, TypeExprKind, InterfaceElem};
 use gox_common_core::ExprId;
 
-use super::checker::{Checker, FilesContext, ObjContext};
+use super::checker::{Checker, FilesContext};
 
 impl<F: FileSystem> Checker<F> {
     // =========================================================================
@@ -188,7 +184,7 @@ impl<F: FileSystem> Checker<F> {
         &mut self,
         x: &mut Operand,
         ident: &Ident,
-        def: Option<TypeKey>,
+        _def: Option<TypeKey>,
         want_type: bool,
         fctx: &mut FilesContext<F>,
     ) {
@@ -199,7 +195,7 @@ impl<F: FileSystem> Checker<F> {
 
         // Look up in scope
         if let Some(scope_key) = self.octx.scope {
-            if let Some((skey, okey)) = scope::lookup_parent(scope_key, name, &self.tc_objs) {
+            if let Some((_skey, okey)) = scope::lookup_parent(scope_key, name, &self.tc_objs) {
                 self.result.record_use(ident.clone(), okey);
 
                 // Type-check the object if needed
@@ -500,7 +496,7 @@ impl<F: FileSystem> Checker<F> {
                 let underlying_type = typ::underlying_type(underlying, &self.tc_objs);
                 
                 let is_valid = match &self.tc_objs.types[underlying_type] {
-                    Type::Basic(b) if underlying_type == invalid_type => false,
+                    Type::Basic(_) if underlying_type == invalid_type => false,
                     Type::Pointer(_) => {
                         self.error(field.ty.span, "embedded field type cannot be a pointer".to_string());
                         false
