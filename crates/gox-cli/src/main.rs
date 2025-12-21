@@ -325,28 +325,27 @@ fn cmd_run(file: &str, std_mode: &str) -> Result<(), Box<dyn std::error::Error>>
     }
 }
 
-/// Compile and return module from a single source file or its parent directory.
+/// Compile and return module from a single source file.
 fn run_source_file(path: &std::path::Path) -> Result<gox_vm::Module, Box<dyn std::error::Error>> {
     use gox_common::vfs::{FileSet, RealFs};
     use gox_analysis::analyze_project;
     use gox_module::VfsConfig;
     use gox_codegen_vm::compile_project;
     
-    // If it's a file, use its parent directory as project root
-    let project_dir = if path.is_file() {
-        path.parent().unwrap_or(path).canonicalize()?
-    } else {
-        path.canonicalize()?
-    };
-    
     let fs = RealFs;
-    let file_set = FileSet::collect(&fs, &project_dir)?;
+    
+    // Use from_file for single file, collect for directory
+    let file_set = if path.is_file() {
+        FileSet::from_file(&fs, path)?
+    } else {
+        FileSet::collect(&fs, path)?
+    };
     
     if file_set.files.is_empty() {
         return Err("no .gox files found".into());
     }
     
-    let vfs_config = VfsConfig::from_env(project_dir);
+    let vfs_config = VfsConfig::from_env(file_set.root.clone());
     let vfs = vfs_config.to_vfs();
     
     let project = analyze_project(file_set, &vfs).map_err(|e| format!("analysis error: {}", e))?;

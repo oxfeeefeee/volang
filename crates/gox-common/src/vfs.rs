@@ -142,6 +142,17 @@ impl FileSet {
         Ok(file_set)
     }
     
+    /// Create a FileSet from a single source file.
+    /// The root is set to the file's parent directory.
+    pub fn from_file<F: FileSystem>(fs: &F, file_path: &Path) -> io::Result<Self> {
+        let file_path = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
+        let root = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let mut file_set = Self::new(root);
+        let content = fs.read_file(&file_path)?;
+        file_set.files.insert(file_path, content);
+        Ok(file_set)
+    }
+    
     fn collect_dir<F: FileSystem>(&mut self, fs: &F, dir: &Path) -> io::Result<()> {
         for entry in fs.read_dir(dir)? {
             if fs.is_dir(&entry) {
