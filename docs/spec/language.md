@@ -6,25 +6,14 @@ GoX is a statically typed, Go-like language.
 
 ## For Go Programmers
 
-**Most Go programs run directly on GoX** with minimal or no changes. The main differences are:
+**Most Go programs run directly on GoX** with minimal or no changes. If your code compiles, it behaves the same as Go.
 
-- **No generics** – use `interface{}` or code generation
-- **Pointers only for structs** – `*int`, `*[]T` not supported; `*MyStruct` works as expected
-- **Some stdlib differences** – check GoX stdlib for available packages
-- **Minor omissions** – no complex numbers, no method expressions/values
+GoX aims to match the Go language specification as closely as possible, except for:
 
-If your code compiles, it behaves the same as Go.
-
----
-
-## Differences from Go
-
-GoX aims to match the Go language specification as closely as possible, except for the following intentional differences:
-
-- **No generics**: GoX does not support type parameters.
-- **No complex numbers**: GoX does not support `complex*` types, imaginary literals, or the `complex/real/imag` built-ins.
-- **Limited pointer types**: GoX supports `*T` and `&`/`*` operators only for struct types. No pointer arithmetic. Semantics match Go exactly.
-- **No method expressions/values**: Go method expressions (`T.M`) and method values (`x.M` used as a function value) are not supported. Use `func` literals to create closures instead (see §9.3).
+- **No generics**: Use `interface{}` or code generation.
+- **No complex numbers**: No `complex*` types, imaginary literals, or `complex/real/imag` built-ins.
+- **Limited pointer types**: Only `*StructType` is supported (`*int`, `*[]T` not allowed). No pointer arithmetic.
+- **Some stdlib differences**: Check GoX stdlib for available packages.
 
 ---
 
@@ -1268,13 +1257,6 @@ Selector    ::= "." Ident ;
 Index       ::= "[" Expr "]" ;
 SliceExpr   ::= "[" Expr? ":" Expr? "]" ;
 Call        ::= "(" ( Expr ( "," Expr )* "..."? )? ")" ;
-```
-
-> **Note**: GoX does not support Go's method expressions (`T.M`) or method values (`x.M` used as a function value). To pass a method as a value, use a `func` literal:
-
-```gox
-// Instead of: f := x.M
-f := func(a int) int { return x.M(a) }
 ```
 
 **Slice Expressions**: Create a sub-slice from an array or slice.

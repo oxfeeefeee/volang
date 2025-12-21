@@ -15,7 +15,7 @@ pub enum SelectionKind {
     FieldVal,
     /// x.f is a method selector.
     MethodVal,
-    /// x.f is a method expression (GoX doesn't support this, but kept for compatibility).
+    /// x.f is a method expression.
     MethodExpr,
 }
 
