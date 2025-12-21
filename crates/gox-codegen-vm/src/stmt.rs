@@ -149,6 +149,13 @@ fn compile_assign(
     info: &TypeInfo,
 ) -> Result<()> {
     for (l, r) in lhs.iter().zip(rhs.iter()) {
+        let lhs_ty = info.expr_type(l);
+        let rhs_ty = info.expr_type(r);
+        
+        // Check if this is an interface assignment (concrete type -> interface)
+        let is_iface_assign = lhs_ty.map(|t| info.is_interface(t)).unwrap_or(false)
+            && rhs_ty.map(|t| !info.is_interface(t)).unwrap_or(false);
+        
         // For simple assignment (=), use compile_expr_value for struct deep copy
         // For compound assignment (+=, etc.), use compile_expr (no copy needed)
         let src = if op == AssignOp::Assign {
@@ -157,9 +164,15 @@ fn compile_assign(
             compile_expr(r, ctx, func, info)?
         };
 
+        // If assigning to interface, register dispatch table
+        if is_iface_assign && op == AssignOp::Assign {
+            if let (Some(lhs_type_key), Some(rhs_type_key)) = (info.expr_type_key(l), info.expr_type_key(r)) {
+                register_iface_dispatch_if_needed(lhs_type_key, rhs_type_key, ctx, info);
+            }
+        }
+
         match &l.kind {
             ExprKind::Ident(ident) => {
-                let lhs_ty = info.expr_type(l);
                 let is_float = is_float_type(lhs_ty);
                 if let Some(local) = func.lookup_local(ident.symbol) {
                     let dst = local.slot;
@@ -657,4 +670,42 @@ fn compile_switch(
 
     func.pop_scope();
     Ok(())
+}
+
+/// Register interface dispatch table entry if not already registered.
+/// This is called when assigning a concrete type to an interface variable.
+fn register_iface_dispatch_if_needed(
+    iface_type_key: gox_analysis::TypeKey,
+    concrete_type_key: gox_analysis::TypeKey,
+    ctx: &mut CodegenContext,
+    info: &TypeInfo,
+) {
+    // Get type IDs
+    let iface_type_id = ctx.get_interface_type_id(iface_type_key);
+    let concrete_type_id = ctx.get_struct_type_id(concrete_type_key);
+    
+    // Both must be registered
+    let (Some(iface_id), Some(concrete_id)) = (iface_type_id, concrete_type_id) else {
+        return;
+    };
+    
+    // Build method mapping: for each interface method, find the corresponding concrete method
+    let Some(method_mapping) = info.build_iface_method_mapping(concrete_type_key, iface_type_key) else {
+        return;
+    };
+    
+    // Convert method ObjKeys to func_ids
+    let mut method_funcs = Vec::with_capacity(method_mapping.len());
+    for (_method_name, method_obj) in method_mapping {
+        // Look up the func_id by ObjKey
+        if let Some(func_idx) = ctx.get_func_by_objkey(method_obj) {
+            method_funcs.push(func_idx);
+        } else {
+            // Method not found - this shouldn't happen if type checking passed
+            return;
+        }
+    }
+    
+    // Register the dispatch entry
+    ctx.register_iface_dispatch(concrete_id, iface_id, method_funcs);
 }

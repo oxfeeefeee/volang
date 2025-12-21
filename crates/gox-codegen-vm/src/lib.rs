@@ -221,7 +221,12 @@ fn collect_declarations(
                     let recv_type_key = func.receiver.as_ref().and_then(|recv| {
                         info.lookup_type_key(recv.ty.symbol)
                     });
-                    ctx.register_method(recv_type_key, func.name.symbol);
+                    let func_idx = ctx.register_method(recv_type_key, func.name.symbol);
+                    
+                    // Register ObjKey -> func_idx mapping for interface dispatch
+                    if let Some(objkey) = info.lookup_symbol_objkey(func.name.symbol) {
+                        ctx.register_objkey_func(objkey, func_idx);
+                    }
                 } else {
                     let name = info.symbol_str(func.name.symbol);
                     let param_slots: u16 = func.sig.params.iter()

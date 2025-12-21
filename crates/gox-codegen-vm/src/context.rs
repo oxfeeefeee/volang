@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gox_analysis::TypeKey;
+use gox_analysis::{ObjKey, TypeKey};
 use gox_common::Symbol;
 use gox_vm::bytecode::{Constant, IfaceDispatchEntry, Module};
 
@@ -25,6 +25,8 @@ pub struct CodegenContext {
     next_interface_id: u16,
     // Track which (concrete, interface) pairs have dispatch entries
     iface_dispatch_registered: HashSet<(u16, u16)>,
+    // ObjKey to func_idx mapping for method dispatch
+    objkey_to_func: HashMap<ObjKey, u32>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -49,6 +51,7 @@ impl CodegenContext {
             next_struct_id: 0,
             next_interface_id: 0,
             iface_dispatch_registered: HashSet::new(),
+            objkey_to_func: HashMap::new(),
         }
     }
 
@@ -115,6 +118,16 @@ impl CodegenContext {
     /// Get function index for a method with receiver type.
     pub fn get_method_index(&self, recv_type: Option<TypeKey>, symbol: Symbol) -> Option<u32> {
         self.func_indices.get(&(recv_type, symbol)).copied()
+    }
+
+    /// Register ObjKey to func_idx mapping (for interface dispatch).
+    pub fn register_objkey_func(&mut self, objkey: ObjKey, func_idx: u32) {
+        self.objkey_to_func.insert(objkey, func_idx);
+    }
+
+    /// Get func_idx by ObjKey.
+    pub fn get_func_by_objkey(&self, objkey: ObjKey) -> Option<u32> {
+        self.objkey_to_func.get(&objkey).copied()
     }
 
     // === Extern management ===

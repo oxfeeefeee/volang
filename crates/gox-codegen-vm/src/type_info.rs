@@ -339,4 +339,28 @@ impl<'a> TypeInfo<'a> {
         
         Some((recv_type_key, method_idx))
     }
+
+    /// Lookup a symbol and return its ObjKey.
+    pub fn lookup_symbol_objkey(&self, sym: Symbol) -> Option<gox_analysis::ObjKey> {
+        self.query.lookup_symbol_objkey(sym)
+    }
+
+    /// Build method dispatch mapping for a concrete type implementing an interface.
+    /// Returns Vec of (method_name, concrete_method_obj_key) for each interface method.
+    pub fn build_iface_method_mapping(
+        &self,
+        concrete_type_key: TypeKey,
+        iface_type_key: TypeKey,
+    ) -> Option<Vec<(String, gox_analysis::ObjKey)>> {
+        let iface_detail = self.query.get_interface_detail_by_key(iface_type_key)?;
+        let iface_methods = self.query.interface_all_methods(iface_detail);
+        
+        let mut result = Vec::with_capacity(iface_methods.len());
+        for iface_method_obj in iface_methods {
+            let method_name = self.query.obj_name(iface_method_obj);
+            let concrete_method = self.query.lookup_concrete_method(concrete_type_key, method_name)?;
+            result.push((method_name.to_string(), concrete_method));
+        }
+        Some(result)
+    }
 }

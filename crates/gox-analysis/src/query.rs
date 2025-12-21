@@ -345,6 +345,39 @@ impl<'a> TypeQuery<'a> {
         self.objs.lobjs[okey].name()
     }
 
+    /// Get the all_methods list from an interface type.
+    /// Returns method ObjKeys in order (for dispatch table indexing).
+    pub fn interface_all_methods(&self, iface_detail: &crate::typ::InterfaceDetail) -> Vec<ObjKey> {
+        iface_detail.all_methods()
+            .as_ref()
+            .map(|v| v.clone())
+            .unwrap_or_default()
+    }
+
+    /// Lookup a symbol and return its ObjKey.
+    pub fn lookup_symbol_objkey(&self, sym: gox_common::Symbol) -> Option<ObjKey> {
+        let name = self.symbol_str(sym);
+        let scope_key = self.pkg_scope?;
+        self.objs.scopes[scope_key].lookup(name)
+    }
+
+    /// Lookup a method in a concrete type by name.
+    /// Returns the ObjKey of the method if found.
+    pub fn lookup_concrete_method(&self, concrete_type_key: TypeKey, method_name: &str) -> Option<ObjKey> {
+        use crate::lookup::{lookup_field_or_method, LookupResult};
+        // For method lookup, we pass None as package to match any package (works for exported methods)
+        match lookup_field_or_method(concrete_type_key, true, None, method_name, self.objs) {
+            LookupResult::Entry(okey, _, _) => {
+                if self.objs.lobjs[okey].entity_type().is_func() {
+                    Some(okey)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     // =========================================================================
     // Internal helpers
     // =========================================================================
