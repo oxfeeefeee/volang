@@ -214,10 +214,19 @@ impl Checker {
         }
 
         // spec: "Each left-hand side operand must be addressable, a map index
-        // expression, or the blank identifier."
+        // expression, or the blank identifier. Operands may be parenthesized."
         match z.mode {
             OperandMode::Variable | OperandMode::MapIndex => {}
             _ => {
+                // Check if this is a selector on a map index (cannot assign to struct field in map)
+                if let gox_syntax::ast::ExprKind::Selector(sel) = &lhs.kind {
+                    let mut op = Operand::new();
+                    self.expr(&mut op, &sel.expr, fctx);
+                    if op.mode == OperandMode::MapIndex {
+                        self.error(lhs.span, "cannot assign to struct field in map".to_string());
+                        return None;
+                    }
+                }
                 self.error(lhs.span, "cannot assign to expression".to_string());
                 return None;
             }
