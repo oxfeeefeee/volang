@@ -1,9 +1,37 @@
 //! Statement compilation.
 
-use gox_analysis::Type;
+use gox_analysis::{BasicType, Type};
 use gox_common_core::SlotType;
 use gox_syntax::ast::{AssignOp, CaseClause, Expr, ExprKind, ForClause, Stmt, StmtKind};
 use gox_vm::instruction::Opcode;
+
+fn is_float_type(ty: Option<&Type>) -> bool {
+    match ty {
+        Some(Type::Basic(b)) => matches!(b.typ(), BasicType::Float32 | BasicType::Float64),
+        _ => false,
+    }
+}
+
+fn compound_assign_opcode(op: AssignOp, is_float: bool) -> Opcode {
+    match op {
+        AssignOp::Add if is_float => Opcode::AddF64,
+        AssignOp::Add => Opcode::AddI64,
+        AssignOp::Sub if is_float => Opcode::SubF64,
+        AssignOp::Sub => Opcode::SubI64,
+        AssignOp::Mul if is_float => Opcode::MulF64,
+        AssignOp::Mul => Opcode::MulI64,
+        AssignOp::Div if is_float => Opcode::DivF64,
+        AssignOp::Div => Opcode::DivI64,
+        AssignOp::Rem => Opcode::ModI64,
+        AssignOp::And => Opcode::Band,
+        AssignOp::Or => Opcode::Bor,
+        AssignOp::Xor => Opcode::Bxor,
+        AssignOp::AndNot => Opcode::Band,
+        AssignOp::Shl => Opcode::Shl,
+        AssignOp::Shr => Opcode::Shr,
+        AssignOp::Assign => unreachable!(),
+    }
+}
 
 use crate::context::CodegenContext;
 use crate::error::Result;
@@ -38,8 +66,8 @@ pub fn compile_stmt(
         StmtKind::Continue(_) => compile_continue(func),
         StmtKind::IncDec(inc_dec) => compile_inc_dec(&inc_dec.expr, inc_dec.is_inc, ctx, func, info),
         StmtKind::Send(send) => compile_send(&send.chan, &send.value, ctx, func, info),
-        StmtKind::Go(go) => compile_go(&go.call, ctx, func, info),
-        StmtKind::Defer(defer) => compile_defer(&defer.call, ctx, func, info),
+        StmtKind::Go(go) => compile_async_call(&go.call, Opcode::Go, ctx, func, info),
+        StmtKind::Defer(defer) => compile_async_call(&defer.call, Opcode::DeferPush, ctx, func, info),
         StmtKind::Select(select) => compile_select(&select.cases, ctx, func, info),
         StmtKind::Switch(switch) => compile_switch(
             switch.init.as_deref(),
@@ -71,22 +99,16 @@ fn compile_assign(
 
         match &l.kind {
             ExprKind::Ident(ident) => {
+                let lhs_ty = info.expr_type(l);
+                let is_float = is_float_type(lhs_ty);
                 if let Some(local) = func.lookup_local(ident.symbol) {
                     let dst = local.slot;
-                    match op {
-                        AssignOp::Assign => func.emit_op(Opcode::Mov, dst, src, 0),
-                        AssignOp::Add => func.emit_op(Opcode::AddI64, dst, dst, src),
-                        AssignOp::Sub => func.emit_op(Opcode::SubI64, dst, dst, src),
-                        AssignOp::Mul => func.emit_op(Opcode::MulI64, dst, dst, src),
-                        AssignOp::Div => func.emit_op(Opcode::DivI64, dst, dst, src),
-                        AssignOp::Rem => func.emit_op(Opcode::ModI64, dst, dst, src),
-                        AssignOp::And => func.emit_op(Opcode::Band, dst, dst, src),
-                        AssignOp::Or => func.emit_op(Opcode::Bor, dst, dst, src),
-                        AssignOp::Xor => func.emit_op(Opcode::Bxor, dst, dst, src),
-                        AssignOp::AndNot => func.emit_op(Opcode::Band, dst, dst, src),
-                        AssignOp::Shl => func.emit_op(Opcode::Shl, dst, dst, src),
-                        AssignOp::Shr => func.emit_op(Opcode::Shr, dst, dst, src),
-                    };
+                    if op == AssignOp::Assign {
+                        func.emit_op(Opcode::Mov, dst, src, 0);
+                    } else {
+                        let opcode = compound_assign_opcode(op, is_float);
+                        func.emit_op(opcode, dst, dst, src);
+                    }
                 } else if let Some(idx) = ctx.get_global_index(ident.symbol) {
                     func.emit_op(Opcode::SetGlobal, idx as u16, src, 0);
                 }
@@ -143,28 +165,16 @@ fn compile_assign(
                 let byte_offset = (field_idx.unwrap_or(0) * 8) as u16;
                 
                 // Handle compound assignment (+=, -=, etc.)
+                let field_ty = info.expr_type(l);
+                let is_float = is_float_type(field_ty);
                 let final_src = match op {
                     AssignOp::Assign => src,
                     _ => {
-                        // Read current field value
                         let old_val = func.alloc_temp(1);
                         func.emit_with_flags(Opcode::GetField, 3, old_val, base, byte_offset);
-                        // Apply operation
                         let new_val = func.alloc_temp(1);
-                        match op {
-                            AssignOp::Add => func.emit_op(Opcode::AddI64, new_val, old_val, src),
-                            AssignOp::Sub => func.emit_op(Opcode::SubI64, new_val, old_val, src),
-                            AssignOp::Mul => func.emit_op(Opcode::MulI64, new_val, old_val, src),
-                            AssignOp::Div => func.emit_op(Opcode::DivI64, new_val, old_val, src),
-                            AssignOp::Rem => func.emit_op(Opcode::ModI64, new_val, old_val, src),
-                            AssignOp::And => func.emit_op(Opcode::Band, new_val, old_val, src),
-                            AssignOp::Or => func.emit_op(Opcode::Bor, new_val, old_val, src),
-                            AssignOp::Xor => func.emit_op(Opcode::Bxor, new_val, old_val, src),
-                            AssignOp::AndNot => func.emit_op(Opcode::Band, new_val, old_val, src),
-                            AssignOp::Shl => func.emit_op(Opcode::Shl, new_val, old_val, src),
-                            AssignOp::Shr => func.emit_op(Opcode::Shr, new_val, old_val, src),
-                            AssignOp::Assign => unreachable!(),
-                        };
+                        let opcode = compound_assign_opcode(op, is_float);
+                        func.emit_op(opcode, new_val, old_val, src);
                         new_val
                     }
                 };
@@ -388,9 +398,9 @@ fn compile_continue(func: &mut FuncBuilder) -> Result<()> {
 fn compile_inc_dec(
     expr: &Expr,
     is_inc: bool,
-    ctx: &mut CodegenContext,
+    _ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
-    info: &TypeInfo,
+    _info: &TypeInfo,
 ) -> Result<()> {
     if let ExprKind::Ident(ident) = &expr.kind {
         if let Some(local) = func.lookup_local(ident.symbol) {
@@ -420,8 +430,9 @@ fn compile_send(
     Ok(())
 }
 
-fn compile_go(
+fn compile_async_call(
     call: &Expr,
+    opcode: Opcode,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfo,
@@ -429,7 +440,6 @@ fn compile_go(
     if let ExprKind::Call(call_expr) = &call.kind {
         if let ExprKind::Ident(ident) = &call_expr.func.kind {
             if let Some(func_idx) = ctx.get_func_index(ident.symbol) {
-                // Allocate contiguous slots for arguments
                 let args_start = func.current_slot();
                 let arg_slots: Vec<u16> = (0..call_expr.args.len())
                     .map(|_| func.alloc_temp(1))
@@ -437,39 +447,9 @@ fn compile_go(
                 
                 for (i, arg) in call_expr.args.iter().enumerate() {
                     let src = compile_expr(arg, ctx, func, info)?;
-                    if src != arg_slots[i] {
-                        func.emit_op(Opcode::Mov, arg_slots[i], src, 0);
-                    }
+                    func.emit_mov_slots(arg_slots[i], src, 1);
                 }
-                func.emit_op(Opcode::Go, func_idx as u16, args_start, call_expr.args.len() as u16);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn compile_defer(
-    call: &Expr,
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfo,
-) -> Result<()> {
-    if let ExprKind::Call(call_expr) = &call.kind {
-        if let ExprKind::Ident(ident) = &call_expr.func.kind {
-            if let Some(func_idx) = ctx.get_func_index(ident.symbol) {
-                // Allocate contiguous slots for arguments
-                let args_start = func.current_slot();
-                let arg_slots: Vec<u16> = (0..call_expr.args.len())
-                    .map(|_| func.alloc_temp(1))
-                    .collect();
-                
-                for (i, arg) in call_expr.args.iter().enumerate() {
-                    let src = compile_expr(arg, ctx, func, info)?;
-                    if src != arg_slots[i] {
-                        func.emit_op(Opcode::Mov, arg_slots[i], src, 0);
-                    }
-                }
-                func.emit_op(Opcode::DeferPush, func_idx as u16, args_start, call_expr.args.len() as u16);
+                func.emit_op(opcode, func_idx as u16, args_start, call_expr.args.len() as u16);
             }
         }
     }

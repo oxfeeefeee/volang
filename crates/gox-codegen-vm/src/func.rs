@@ -181,6 +181,17 @@ impl FuncBuilder {
         self.emit(Instruction::with_flags(op, flags, a, b, c))
     }
 
+    /// Emit Mov instructions for multi-slot values (e.g., interface = 2 slots).
+    /// Skips if src == dst.
+    pub fn emit_mov_slots(&mut self, dst: u16, src: u16, slots: u16) {
+        if dst == src {
+            return;
+        }
+        for i in 0..slots {
+            self.emit_op(Opcode::Mov, dst + i, src + i, 0);
+        }
+    }
+
     pub fn code_pos(&self) -> usize {
         self.code.len()
     }

@@ -14,12 +14,11 @@ pub use error::{CodegenError, Result};
 pub use func::FuncBuilder;
 pub use type_info::TypeInfo;
 
-use gox_analysis::{Project, TypeQuery};
+use gox_analysis::Project;
 use gox_common_core::SlotType;
 use gox_syntax::ast::{Decl, File, FuncDecl};
 use gox_vm::bytecode::Module;
 use gox_vm::instruction::Opcode;
-use std::collections::HashMap;
 
 use crate::expr::compile_expr;
 use crate::stmt::compile_stmt;
@@ -119,7 +118,7 @@ fn register_types(project: &Project, ctx: &mut CodegenContext, info: &TypeInfo) 
             key_type: None,
             value_type: None,
         };
-        ctx.module.struct_types.push(meta);
+        ctx.add_struct_type(meta);
     }
     
     // Third pass: generate TypeMeta for interfaces, sorted by type_id
@@ -141,7 +140,7 @@ fn register_types(project: &Project, ctx: &mut CodegenContext, info: &TypeInfo) 
             key_type: None,
             value_type: None,
         };
-        ctx.module.interface_types.push(meta);
+        ctx.add_interface_type(meta);
     }
 }
 
@@ -172,21 +171,21 @@ fn compile_init_and_entry_files(
 
     init_builder.emit_op(Opcode::Return, 0, 0, 0);
     let init_def = init_builder.build();
-    ctx.module.add_function(init_def);
+    ctx.add_function(init_def);
 
     let mut entry_builder = FuncBuilder::new("__entry__");
 
-    let init_idx = ctx.module.functions.len() as u16 - 1;
+    let init_idx = ctx.func_count() as u16 - 1;
     entry_builder.emit_op(Opcode::Call, init_idx, 0, 0);
 
-    if let Some(main_idx) = ctx.module.find_function("main") {
+    if let Some(main_idx) = ctx.find_function("main") {
         entry_builder.emit_with_flags(Opcode::Call, 0, main_idx as u16, 0, 0);
     }
 
     entry_builder.emit_op(Opcode::Return, 0, 0, 0);
     let entry_def = entry_builder.build();
-    let entry_idx = ctx.module.add_function(entry_def);
-    ctx.module.entry_func = entry_idx;
+    let entry_idx = ctx.add_function(entry_def);
+    ctx.set_entry_func(entry_idx);
 
     Ok(())
 }
@@ -200,7 +199,7 @@ pub fn compile_single_file(project: &Project) -> Result<Module> {
 
     collect_declarations(file, &info, &mut ctx)?;
     compile_functions(file, &info, &mut ctx)?;
-    compile_init_and_entry(file, &info, &mut ctx)?;
+    compile_init_and_entry_files(&project.files, &info, &mut ctx)?;
 
     Ok(ctx.finish())
 }
@@ -314,50 +313,8 @@ fn compile_func_decl(
     }
 
     let func_def = builder.build();
-    ctx.module.add_function(func_def);
+    ctx.add_function(func_def);
 
     Ok(())
 }
 
-fn compile_init_and_entry(
-    file: &File,
-    info: &TypeInfo,
-    ctx: &mut CodegenContext,
-) -> Result<()> {
-    let mut init_builder = FuncBuilder::new("__init__");
-
-    for decl in &file.decls {
-        if let Decl::Var(var) = decl {
-            for spec in &var.specs {
-                for (i, name) in spec.names.iter().enumerate() {
-                    if i < spec.values.len() {
-                        let src = compile_expr(&spec.values[i], ctx, &mut init_builder, info)?;
-                        if let Some(idx) = ctx.get_global_index(name.symbol) {
-                            init_builder.emit_op(Opcode::SetGlobal, idx as u16, src, 0);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    init_builder.emit_op(Opcode::Return, 0, 0, 0);
-    let init_def = init_builder.build();
-    ctx.module.add_function(init_def);
-
-    let mut entry_builder = FuncBuilder::new("__entry__");
-
-    let init_idx = ctx.module.functions.len() as u16 - 1;
-    entry_builder.emit_op(Opcode::Call, init_idx, 0, 0);
-
-    if let Some(main_idx) = ctx.module.find_function("main") {
-        entry_builder.emit_with_flags(Opcode::Call, 0, main_idx as u16, 0, 0);
-    }
-
-    entry_builder.emit_op(Opcode::Return, 0, 0, 0);
-    let entry_def = entry_builder.build();
-    let entry_idx = ctx.module.add_function(entry_def);
-    ctx.module.entry_func = entry_idx;
-
-    Ok(())
-}

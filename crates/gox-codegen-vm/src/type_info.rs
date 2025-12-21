@@ -11,6 +11,167 @@ use std::collections::HashMap;
 
 use gox_common_core::{ExprId, TypeExprId};
 
+/// Layout calculation helpers for struct types.
+/// Separated from TypeInfo for single responsibility.
+pub struct LayoutCalculator;
+
+impl LayoutCalculator {
+    /// Check if a type is a struct (including named structs).
+    pub fn is_struct_type(query: &TypeQuery, ty: &Type) -> bool {
+        match ty {
+            Type::Struct(_) => true,
+            Type::Named(named) => {
+                matches!(query.named_underlying(named), Some(Type::Struct(_)))
+            }
+            _ => false,
+        }
+    }
+
+    /// Get the size in slots for a struct type.
+    pub fn struct_size_slots(query: &TypeQuery, ty: &Type) -> u16 {
+        match ty {
+            Type::Struct(s) => {
+                s.fields()
+                    .iter()
+                    .map(|&okey| {
+                        query.get_obj_type(okey)
+                            .map(|field_ty| {
+                                if Self::is_struct_type(query, field_ty) {
+                                    1
+                                } else {
+                                    query.type_slots(field_ty)
+                                }
+                            })
+                            .unwrap_or(1)
+                    })
+                    .sum()
+            }
+            Type::Named(named) => {
+                if let Some(underlying) = query.named_underlying(named) {
+                    Self::struct_size_slots(query, underlying)
+                } else {
+                    1
+                }
+            }
+            _ => 1,
+        }
+    }
+
+    /// Get slot types for struct fields (for TypeMeta generation).
+    pub fn struct_field_slot_types(query: &TypeQuery, ty: &Type) -> Vec<SlotType> {
+        let struct_detail = match ty {
+            Type::Struct(s) => Some(s),
+            Type::Named(named) => {
+                if let Some(Type::Struct(s)) = query.named_underlying(named) {
+                    Some(s)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        
+        let Some(s) = struct_detail else {
+            return Vec::new();
+        };
+        
+        let mut result = Vec::new();
+        for &okey in s.fields() {
+            if let Some(field_ty) = query.get_obj_type(okey) {
+                if Self::is_struct_type(query, field_ty) {
+                    result.push(SlotType::GcRef);
+                } else {
+                    result.extend(query.type_slot_types(field_ty));
+                }
+            } else {
+                result.push(SlotType::Value);
+            }
+        }
+        result
+    }
+
+    /// Get the byte offset and slot count of a struct field.
+    pub fn struct_field_info(query: &TypeQuery, struct_type: &Type, field: Symbol) -> Option<(u16, usize)> {
+        let struct_detail = match struct_type {
+            Type::Named(named) => {
+                if let Some(Type::Struct(s)) = query.named_underlying(named) {
+                    Some(s)
+                } else {
+                    None
+                }
+            }
+            Type::Struct(s) => Some(s),
+            _ => None,
+        }?;
+        
+        let fields = query.struct_fields(struct_detail);
+        let field_name = query.symbol_str(field);
+        
+        let mut byte_offset: u16 = 0;
+        for f in &fields {
+            if f.name == field_name {
+                if let Some(field_type) = f.typ {
+                    let slots = if Self::is_struct_type(query, field_type) {
+                        1
+                    } else {
+                        query.type_slots(field_type) as usize
+                    };
+                    return Some((byte_offset, slots));
+                }
+            }
+            if let Some(field_type) = f.typ {
+                let field_slots = if Self::is_struct_type(query, field_type) {
+                    1
+                } else {
+                    query.type_slots(field_type) as usize
+                };
+                byte_offset += (field_slots * 8) as u16;
+            } else {
+                byte_offset += 8;
+            }
+        }
+        None
+    }
+
+    /// Get nested struct fields that need recursive deep copy.
+    pub fn struct_nested_fields<'a>(query: &TypeQuery<'a>, ty: &Type) -> Vec<(u16, &'a Type)> {
+        let struct_detail = match ty {
+            Type::Struct(s) => Some(s),
+            Type::Named(named) => {
+                if let Some(Type::Struct(s)) = query.named_underlying(named) {
+                    Some(s)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        
+        let Some(s) = struct_detail else {
+            return Vec::new();
+        };
+        
+        let mut result = Vec::new();
+        let mut byte_offset: u16 = 0;
+        
+        for &okey in s.fields() {
+            if let Some(field_ty) = query.get_obj_type(okey) {
+                let field_slots = if Self::is_struct_type(query, field_ty) {
+                    result.push((byte_offset, field_ty));
+                    1
+                } else {
+                    query.type_slots(field_ty) as usize
+                };
+                byte_offset += (field_slots * 8) as u16;
+            } else {
+                byte_offset += 8;
+            }
+        }
+        
+        result
+    }
+}
+
 /// Type information for code generation.
 ///
 /// Wraps TypeQuery from gox-analysis and adds expression type tracking.
@@ -130,170 +291,29 @@ impl<'a> TypeInfo<'a> {
         }
     }
 
-    /// Get the byte offset and slot count of a struct field.
-    /// Note: In VM, structs are always heap-allocated (GcRef = 1 slot).
-    /// Returns (byte_offset, slot_count).
+    /// Delegate to LayoutCalculator for struct field info.
     pub fn struct_field_info(&self, struct_type: &Type, field: Symbol) -> Option<(u16, usize)> {
-        let struct_detail = match struct_type {
-            Type::Named(named) => {
-                if let Some(Type::Struct(s)) = self.query.named_underlying(named) {
-                    Some(s)
-                } else {
-                    None
-                }
-            }
-            Type::Struct(s) => Some(s),
-            _ => None,
-        }?;
-        
-        let fields = self.query.struct_fields(struct_detail);
-        let field_name = self.query.symbol_str(field);
-        
-        // Calculate byte offset by summing slots of preceding fields
-        let mut byte_offset: u16 = 0;
-        for f in &fields {
-            if f.name == field_name {
-                if let Some(field_type) = f.typ {
-                    // In VM, struct fields are stored as GcRef (1 slot)
-                    let slots = if self.is_struct_type(field_type) {
-                        1 // GcRef
-                    } else {
-                        self.type_slots(field_type) as usize
-                    };
-                    return Some((byte_offset, slots));
-                }
-            }
-            // Add this field's size to offset
-            if let Some(field_type) = f.typ {
-                let field_slots = if self.is_struct_type(field_type) {
-                    1
-                } else {
-                    self.type_slots(field_type) as usize
-                };
-                byte_offset += (field_slots * 8) as u16;
-            } else {
-                byte_offset += 8; // default 1 slot
-            }
-        }
-        None
+        LayoutCalculator::struct_field_info(&self.query, struct_type, field)
     }
     
-    /// Check if a type is a struct (including named structs).
+    /// Delegate to LayoutCalculator.
     pub fn is_struct_type(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Struct(_) => true,
-            Type::Named(named) => {
-                matches!(self.query.named_underlying(named), Some(Type::Struct(_)))
-            }
-            _ => false,
-        }
+        LayoutCalculator::is_struct_type(&self.query, ty)
     }
     
-    /// Get the size in slots for a struct type.
-    /// Returns 1 for non-struct types (GcRef).
+    /// Delegate to LayoutCalculator.
     pub fn struct_size_slots(&self, ty: &Type) -> u16 {
-        match ty {
-            Type::Struct(s) => {
-                s.fields()
-                    .iter()
-                    .map(|&okey| {
-                        self.query.get_obj_type(okey)
-                            .map(|field_ty| {
-                                // Nested structs are stored as GcRef (1 slot)
-                                if self.is_struct_type(field_ty) {
-                                    1
-                                } else {
-                                    self.type_slots(field_ty)
-                                }
-                            })
-                            .unwrap_or(1)
-                    })
-                    .sum()
-            }
-            Type::Named(named) => {
-                if let Some(underlying) = self.query.named_underlying(named) {
-                    self.struct_size_slots(underlying)
-                } else {
-                    1
-                }
-            }
-            _ => 1,
-        }
+        LayoutCalculator::struct_size_slots(&self.query, ty)
     }
 
-    /// Get slot types for struct fields (for TypeMeta generation).
-    /// Each field is either GcRef (for nested struct) or Value.
+    /// Delegate to LayoutCalculator.
     pub fn struct_field_slot_types(&self, ty: &Type) -> Vec<SlotType> {
-        let struct_detail = match ty {
-            Type::Struct(s) => Some(s),
-            Type::Named(named) => {
-                if let Some(Type::Struct(s)) = self.query.named_underlying(named) {
-                    Some(s)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        
-        let Some(s) = struct_detail else {
-            return Vec::new();
-        };
-        
-        let mut result = Vec::new();
-        for &okey in s.fields() {
-            if let Some(field_ty) = self.query.get_obj_type(okey) {
-                if self.is_struct_type(field_ty) {
-                    result.push(SlotType::GcRef);
-                } else {
-                    // Use type_slot_types for correct handling of other types
-                    result.extend(self.type_slot_types(field_ty));
-                }
-            } else {
-                result.push(SlotType::Value);
-            }
-        }
-        result
+        LayoutCalculator::struct_field_slot_types(&self.query, ty)
     }
 
-    /// Get nested struct fields that need recursive deep copy.
-    /// Returns Vec of (byte_offset, field_type) for each struct-typed field.
+    /// Delegate to LayoutCalculator.
     pub fn struct_nested_fields(&self, ty: &Type) -> Vec<(u16, &'a Type)> {
-        let struct_detail = match ty {
-            Type::Struct(s) => Some(s),
-            Type::Named(named) => {
-                if let Some(Type::Struct(s)) = self.query.named_underlying(named) {
-                    Some(s)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        
-        let Some(s) = struct_detail else {
-            return Vec::new();
-        };
-        
-        let mut result = Vec::new();
-        let mut byte_offset: u16 = 0;
-        
-        for &okey in s.fields() {
-            if let Some(field_ty) = self.query.get_obj_type(okey) {
-                let field_slots = if self.is_struct_type(field_ty) {
-                    // This is a nested struct that needs recursive clone
-                    result.push((byte_offset, field_ty));
-                    1 // GcRef
-                } else {
-                    self.type_slots(field_ty) as usize
-                };
-                byte_offset += (field_slots * 8) as u16;
-            } else {
-                byte_offset += 8;
-            }
-        }
-        
-        result
+        LayoutCalculator::struct_nested_fields(&self.query, ty)
     }
 
     /// Get the base type key for method dispatch.

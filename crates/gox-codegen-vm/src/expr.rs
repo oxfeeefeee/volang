@@ -4,7 +4,7 @@ use gox_analysis::{Builtin, ConstValue, Type, BasicType};
 use num_traits::ToPrimitive;
 use gox_common::Span;
 use gox_common_core::SlotType;
-use gox_syntax::ast::{BinaryOp, CompositeLitElem, Expr, ExprKind, TypeExpr, TypeExprKind, UnaryOp};
+use gox_syntax::ast::{BinaryOp, CompositeLitElem, Expr, ExprKind, TypeExpr, UnaryOp};
 use gox_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
@@ -334,6 +334,35 @@ fn compile_call(
     todo!("closure call / method call")
 }
 
+/// Compile arguments into contiguous slots.
+/// Returns (args_start, arg_count).
+/// If `use_value_semantics` is true, uses compile_expr_value (deep copy for structs).
+fn compile_call_args(
+    args: &[Expr],
+    use_value_semantics: bool,
+    min_slots: usize,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfo,
+) -> Result<(u16, usize)> {
+    let args_start = func.current_slot();
+    let num_slots = args.len().max(min_slots);
+    let arg_slots: Vec<u16> = (0..num_slots)
+        .map(|_| func.alloc_temp(1))
+        .collect();
+    
+    for (i, arg) in args.iter().enumerate() {
+        let src = if use_value_semantics {
+            compile_expr_value(arg, ctx, func, info)?
+        } else {
+            compile_expr(arg, ctx, func, info)?
+        };
+        func.emit_mov_slots(arg_slots[i], src, 1);
+    }
+    
+    Ok((args_start, args.len()))
+}
+
 fn compile_func_call(
     func_idx: u32,
     args: &[Expr],
@@ -341,26 +370,9 @@ fn compile_func_call(
     func: &mut FuncBuilder,
     info: &TypeInfo,
 ) -> Result<u16> {
-    // Allocate contiguous slots for arguments first
-    // Return value will be written to args_start by VM
-    let args_start = func.current_slot();
-    let num_slots = args.len().max(1); // At least 1 slot for return value
-    let arg_slots: Vec<u16> = (0..num_slots)
-        .map(|_| func.alloc_temp(1))
-        .collect();
-    
-    // Compile each argument with value semantics (deep copy for structs)
-    for (i, arg) in args.iter().enumerate() {
-        let src = compile_expr_value(arg, ctx, func, info)?;
-        if src != arg_slots[i] {
-            func.emit_op(Opcode::Mov, arg_slots[i], src, 0);
-        }
-    }
-
+    let (args_start, arg_count) = compile_call_args(args, true, 1, ctx, func, info)?;
     let ret_slots = 1;
-    func.emit_with_flags(Opcode::Call, ret_slots as u8, func_idx as u16, args_start, args.len() as u16);
-
-    // Return value is at args_start
+    func.emit_with_flags(Opcode::Call, ret_slots as u8, func_idx as u16, args_start, arg_count as u16);
     Ok(args_start)
 }
 
@@ -372,36 +384,23 @@ fn compile_method_call(
     func: &mut FuncBuilder,
     info: &TypeInfo,
 ) -> Result<u16> {
-    // Method call: receiver is the first argument
-    // Total args = 1 (receiver) + args.len()
-    let total_args = 1 + args.len();
-    
-    // Allocate contiguous slots for all arguments (receiver + args)
     let args_start = func.current_slot();
-    let num_slots = total_args.max(1); // At least 1 slot for return value
+    let total_args = 1 + args.len();
+    let num_slots = total_args.max(1);
     let arg_slots: Vec<u16> = (0..num_slots)
         .map(|_| func.alloc_temp(1))
         .collect();
     
-    // Compile receiver with value semantics (deep copy for value receivers)
-    // Note: For pointer receivers (*T), the type is Pointer so no copy occurs
     let recv_src = compile_expr_value(receiver, ctx, func, info)?;
-    if recv_src != arg_slots[0] {
-        func.emit_op(Opcode::Mov, arg_slots[0], recv_src, 0);
-    }
+    func.emit_mov_slots(arg_slots[0], recv_src, 1);
     
-    // Compile each argument with value semantics
     for (i, arg) in args.iter().enumerate() {
         let src = compile_expr_value(arg, ctx, func, info)?;
-        if src != arg_slots[i + 1] {
-            func.emit_op(Opcode::Mov, arg_slots[i + 1], src, 0);
-        }
+        func.emit_mov_slots(arg_slots[i + 1], src, 1);
     }
 
     let ret_slots = 1;
     func.emit_with_flags(Opcode::Call, ret_slots as u8, func_idx as u16, args_start, total_args as u16);
-
-    // Return value is at args_start
     Ok(args_start)
 }
 
@@ -412,25 +411,10 @@ fn compile_extern_call(
     func: &mut FuncBuilder,
     info: &TypeInfo,
 ) -> Result<u16> {
-    // Allocate contiguous slots for arguments first
-    let args_start = func.current_slot();
-    let arg_slots: Vec<u16> = (0..args.len())
-        .map(|_| func.alloc_temp(1))
-        .collect();
-    
-    // Compile each argument and move to argument slot
-    for (i, arg) in args.iter().enumerate() {
-        let src = compile_expr(arg, ctx, func, info)?;
-        if src != arg_slots[i] {
-            func.emit_op(Opcode::Mov, arg_slots[i], src, 0);
-        }
-    }
-
+    let (args_start, arg_count) = compile_call_args(args, false, 0, ctx, func, info)?;
     let ret_slots = 1;
     let dst = func.alloc_temp(ret_slots);
-
-    func.emit_with_flags(Opcode::CallExtern, ret_slots as u8, extern_idx as u16, args_start, args.len() as u16);
-
+    func.emit_with_flags(Opcode::CallExtern, ret_slots as u8, extern_idx as u16, args_start, arg_count as u16);
     Ok(dst)
 }
 

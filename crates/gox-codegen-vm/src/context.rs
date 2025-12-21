@@ -2,31 +2,9 @@
 
 use std::collections::HashMap;
 
-use gox_analysis::{BasicType, TypeKey};
+use gox_analysis::TypeKey;
 use gox_common::Symbol;
-use gox_common_core::ValueKind;
 use gox_vm::bytecode::{Constant, Module};
-
-fn basic_to_value_kind(b: BasicType) -> ValueKind {
-    match b {
-        BasicType::Bool => ValueKind::Bool,
-        BasicType::Int => ValueKind::Int,
-        BasicType::Int8 => ValueKind::Int8,
-        BasicType::Int16 => ValueKind::Int16,
-        BasicType::Int32 | BasicType::Rune => ValueKind::Int32,
-        BasicType::Int64 => ValueKind::Int64,
-        BasicType::Uint => ValueKind::Uint,
-        BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,
-        BasicType::Uint16 => ValueKind::Uint16,
-        BasicType::Uint32 => ValueKind::Uint32,
-        BasicType::Uint64 => ValueKind::Uint64,
-        BasicType::Uintptr => ValueKind::Uint,
-        BasicType::Float32 => ValueKind::Float32,
-        BasicType::Float64 => ValueKind::Float64,
-        BasicType::Str => ValueKind::String,
-        _ => ValueKind::Nil,
-    }
-}
 
 /// Key for function/method lookup: (receiver_type, method_name)
 /// For regular functions, receiver_type is None.
@@ -34,7 +12,7 @@ type FuncKey = (Option<TypeKey>, Symbol);
 
 /// Package-level codegen context.
 pub struct CodegenContext {
-    pub module: Module,
+    module: Module,
     func_indices: HashMap<FuncKey, u32>,
     next_func_idx: u32,
     extern_indices: HashMap<Symbol, u32>,
@@ -206,6 +184,32 @@ impl CodegenContext {
         let idx = self.module.add_constant(Constant::Bool(value));
         self.const_indices.insert(key, idx);
         idx
+    }
+
+    // === Module operations ===
+
+    pub fn add_struct_type(&mut self, meta: gox_vm::types::TypeMeta) {
+        self.module.struct_types.push(meta);
+    }
+
+    pub fn add_interface_type(&mut self, meta: gox_vm::types::TypeMeta) {
+        self.module.interface_types.push(meta);
+    }
+
+    pub fn add_function(&mut self, func_def: gox_vm::bytecode::FunctionDef) -> u32 {
+        self.module.add_function(func_def)
+    }
+
+    pub fn func_count(&self) -> usize {
+        self.module.functions.len()
+    }
+
+    pub fn find_function(&self, name: &str) -> Option<u32> {
+        self.module.find_function(name).map(|i| i as u32)
+    }
+
+    pub fn set_entry_func(&mut self, idx: u32) {
+        self.module.entry_func = idx;
     }
 
     // === Build ===
