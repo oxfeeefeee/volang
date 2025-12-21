@@ -9,7 +9,7 @@ use gox_common_core::SlotType;
 use gox_syntax::ast::{Expr, TypeExpr, TypeExprKind};
 use std::collections::HashMap;
 
-use gox_common_core::ExprId;
+use gox_common_core::{ExprId, TypeExprId};
 
 /// Type information for code generation.
 ///
@@ -19,11 +19,17 @@ pub struct TypeInfo<'a> {
     pub query: TypeQuery<'a>,
     /// Expression types and values recorded during type checking.
     pub expr_types: &'a HashMap<ExprId, TypeAndValue>,
+    /// Type expression types recorded during type checking.
+    pub type_expr_types: &'a HashMap<TypeExprId, TypeKey>,
 }
 
 impl<'a> TypeInfo<'a> {
-    pub fn new(query: TypeQuery<'a>, expr_types: &'a HashMap<ExprId, TypeAndValue>) -> Self {
-        Self { query, expr_types }
+    pub fn new(
+        query: TypeQuery<'a>,
+        expr_types: &'a HashMap<ExprId, TypeAndValue>,
+        type_expr_types: &'a HashMap<TypeExprId, TypeKey>,
+    ) -> Self {
+        Self { query, expr_types, type_expr_types }
     }
 
     // === Expression type queries ===
@@ -94,15 +100,25 @@ impl<'a> TypeInfo<'a> {
         self.query.lookup_type_key(sym)
     }
 
-    /// Resolve a TypeExpr to its Type.
+    /// Resolve a TypeExpr to its Type using analysis results.
+    /// Returns the type recorded during type checking.
     pub fn resolve_type_expr(&self, ty: &TypeExpr) -> Option<&'a Type> {
-        match &ty.kind {
-            TypeExprKind::Ident(ident) => {
-                let type_key = self.query.lookup_type_key(ident.symbol)?;
-                Some(self.query.get_type(type_key))
-            }
-            TypeExprKind::Interface(_) => None, // Anonymous interface
-            _ => None,
+        let type_key = self.type_expr_types.get(&ty.id)?;
+        Some(self.query.get_type(*type_key))
+    }
+    
+    /// Get TypeKey for a TypeExpr from analysis results.
+    pub fn type_expr_type_key(&self, ty: &TypeExpr) -> Option<TypeKey> {
+        self.type_expr_types.get(&ty.id).copied()
+    }
+    
+    /// Get slot types for a TypeExpr using analysis results.
+    pub fn type_expr_slot_types(&self, ty: &TypeExpr) -> Vec<SlotType> {
+        if let Some(t) = self.resolve_type_expr(ty) {
+            self.type_slot_types(t)
+        } else {
+            // Fallback for unresolved types
+            vec![SlotType::Value]
         }
     }
 
@@ -110,6 +126,20 @@ impl<'a> TypeInfo<'a> {
     pub fn type_expr_key(&self, ty: &TypeExpr) -> Option<TypeKey> {
         match &ty.kind {
             TypeExprKind::Ident(ident) => self.query.lookup_type_key(ident.symbol),
+            _ => None,
+        }
+    }
+
+    /// Get the receiver type for a function symbol (from its signature).
+    /// Returns None if no receiver or not a function.
+    pub fn func_recv_type(&self, func_sym: Symbol) -> Option<&'a Type> {
+        use gox_analysis::query::EntityRef;
+        match self.query.lookup_symbol(func_sym)? {
+            EntityRef::Func { sig, .. } => {
+                let sig_detail = sig?;
+                let recv_obj_key = sig_detail.recv().as_ref()?;
+                self.query.get_obj_type(*recv_obj_key)
+            }
             _ => None,
         }
     }

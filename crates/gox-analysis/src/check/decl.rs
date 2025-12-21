@@ -358,8 +358,8 @@ impl Checker {
         if let DeclInfo::Func(fd) = d {
             let fdecl = fd.fdecl.clone();
 
-            // Type-check function signature
-            let sig_key = self.func_type_from_sig(&fdecl.sig, fctx);
+            // Type-check function signature (with receiver if present)
+            let sig_key = self.func_type_from_sig(fdecl.receiver.as_ref(), &fdecl.sig, fctx);
             self.lobj_mut(okey).set_type(Some(sig_key));
 
             // Check for 'init' func

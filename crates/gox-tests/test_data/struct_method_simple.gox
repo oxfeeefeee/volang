@@ -1,0 +1,20 @@
+// +vm
+package main
+
+type Counter struct {
+    value int
+}
+
+func (c Counter) Double() int {
+    return c.value * 2
+}
+
+func testMethod(n int) int {
+    // Receiver passed as first argument (value copy)
+    return n * 2
+}
+
+func main() {
+    x := testMethod(21)
+    println(x)
+}

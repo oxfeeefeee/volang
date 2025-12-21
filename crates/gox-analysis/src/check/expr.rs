@@ -1234,7 +1234,7 @@ impl Checker {
             }
             ExprKind::FuncLit(func) => {
                 // Get function type from signature
-                let t = self.func_type_from_sig(&func.sig, fctx);
+                let t = self.func_type_from_sig(None, &func.sig, fctx);
                 if self.otype(t).try_as_signature().is_some() {
                     x.mode = OperandMode::Value;
                     x.typ = Some(t);

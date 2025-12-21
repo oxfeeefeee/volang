@@ -57,6 +57,8 @@ pub struct Project {
     pub main_package: PackageKey,
     /// Expression types and values from type checking.
     pub expr_types: HashMap<gox_common_core::ExprId, crate::check::TypeAndValue>,
+    /// Type expression types from type checking.
+    pub type_expr_types: HashMap<gox_common_core::TypeExprId, TypeKey>,
     /// Parsed files from the main package.
     pub files: Vec<File>,
 }
@@ -88,6 +90,11 @@ impl Project {
     pub fn expr_types(&self) -> &HashMap<gox_common_core::ExprId, crate::check::TypeAndValue> {
         &self.expr_types
     }
+
+    /// Gets the type expression types map.
+    pub fn type_expr_types(&self) -> &HashMap<gox_common_core::TypeExprId, TypeKey> {
+        &self.type_expr_types
+    }
 }
 
 /// Shared state for project analysis.
@@ -104,6 +111,8 @@ struct ProjectState {
     parse_base: u32,
     /// Expression types collected from type checking.
     expr_types: HashMap<gox_common_core::ExprId, crate::check::TypeAndValue>,
+    /// Type expression types collected from type checking.
+    type_expr_types: HashMap<gox_common_core::TypeExprId, TypeKey>,
 }
 
 /// Analyze a project starting from the given source files.
@@ -122,6 +131,7 @@ pub fn analyze_project(
         checked_packages: Vec::new(),
         parse_base: 0,
         expr_types: HashMap::new(),
+        type_expr_types: HashMap::new(),
     }));
     
     // Create the main package
@@ -151,6 +161,11 @@ pub fn analyze_project(
         // Collect expression types from checker result
         for (expr_id, tv) in &checker.result.types {
             state_ref.expr_types.insert(*expr_id, tv.clone());
+        }
+        
+        // Collect type expression types from checker result
+        for (type_expr_id, type_key) in &checker.result.type_exprs {
+            state_ref.type_expr_types.insert(*type_expr_id, *type_key);
         }
         
         match result {
@@ -183,6 +198,7 @@ pub fn analyze_project(
         packages,
         main_package: main_pkg_key,
         expr_types: final_state.expr_types,
+        type_expr_types: final_state.type_expr_types,
         files: parsed_files,
     })
 }
@@ -210,6 +226,9 @@ pub fn analyze_single_file(
         expr_types.insert(*expr_id, tv.clone());
     }
     
+    // Collect type expression types
+    let type_expr_types = checker.result.type_exprs.clone();
+    
     match result {
         Ok(_) => {}
         Err(_) => {
@@ -227,6 +246,7 @@ pub fn analyze_single_file(
         packages: vec![main_pkg_key],
         main_package: main_pkg_key,
         expr_types,
+        type_expr_types,
         files: vec![file],
     })
 }

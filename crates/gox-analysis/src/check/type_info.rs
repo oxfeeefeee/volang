@@ -6,7 +6,7 @@ use crate::objects::{ObjKey, ScopeKey, TypeKey};
 use crate::operand::OperandMode;
 use crate::selection::Selection;
 use gox_common::symbol::Ident;
-use gox_common_core::ExprId;
+use gox_common_core::{ExprId, TypeExprId};
 use gox_common::Span;
 use std::collections::HashMap;
 
@@ -41,6 +41,9 @@ impl Initializer {
 pub struct TypeInfo {
     /// Maps expressions to their types (and values for constants).
     pub types: HashMap<ExprId, TypeAndValue>,
+
+    /// Maps type expressions to their resolved types.
+    pub type_exprs: HashMap<TypeExprId, TypeKey>,
 
     /// Maps identifiers to the objects they define.
     /// Key is the Ident (which contains span for uniqueness).
@@ -79,6 +82,11 @@ impl TypeInfo {
     /// Records a type and value for an expression (alias for record_type).
     pub fn record_type_and_value(&mut self, expr_id: ExprId, mode: OperandMode, typ: TypeKey) {
         self.record_type(expr_id, mode, typ);
+    }
+
+    /// Records the resolved type for a type expression.
+    pub fn record_type_expr(&mut self, type_expr_id: TypeExprId, typ: TypeKey) {
+        self.type_exprs.insert(type_expr_id, typ);
     }
 
     /// Records a definition.

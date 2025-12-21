@@ -102,6 +102,12 @@ impl<'a> TypeQuery<'a> {
         &self.objs.types[key]
     }
 
+    /// Gets the type for an ObjKey (the object's type).
+    pub fn get_obj_type(&self, key: ObjKey) -> Option<&'a Type> {
+        let type_key = self.objs.lobjs[key].typ()?;
+        Some(&self.objs.types[type_key])
+    }
+
     /// Iterates over all types.
     pub fn iter_types(&self) -> impl Iterator<Item = (TypeKey, &'a Type)> {
         self.objs.types.iter()

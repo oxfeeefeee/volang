@@ -13,8 +13,7 @@ use crate::operand::{Operand, OperandMode};
 use crate::lookup;
 use crate::scope;
 use crate::typ::{self, ChanDir, Type};
-use gox_syntax::ast::{self, Expr, FuncSig, Param, TypeExpr, TypeExprKind, InterfaceElem};
-use gox_common_core::ExprId;
+use gox_syntax::ast::{self, Expr, FuncSig, Param, Receiver, TypeExpr, TypeExprKind, InterfaceElem};
 
 use super::checker::{Checker, FilesContext};
 
@@ -33,7 +32,8 @@ impl Checker {
     pub fn defined_type(&mut self, ty: &TypeExpr, def: Option<TypeKey>, fctx: &mut FilesContext) -> TypeKey {
         let t = self.type_internal(ty, def, fctx);
         debug_assert!(typ::is_typed(t, &self.tc_objs));
-        self.result.record_type_and_value(ExprId(ty.id.0), OperandMode::TypeExpr, t);
+        // Record the resolved type for this TypeExpr
+        self.result.record_type_expr(ty.id, t);
         t
     }
 
@@ -96,11 +96,15 @@ impl Checker {
                                 if is_type {
                                     if let Some(t) = typ {
                                         set_underlying(Some(t), &mut self.tc_objs);
+                                        // Record type before early return (since we bypass defined_type's record)
+                                        self.result.record_type_expr(ty.id, t);
                                         return t;
                                     }
                                 }
+                                self.error(ty.span, format!("{}.{} is not a type", pkg_name, type_name));
+                            } else {
+                                self.error(ty.span, format!("{}.{} is not a type", pkg_name, type_name));
                             }
-                            self.error(ty.span, format!("{}.{} is not a type", pkg_name, type_name));
                         } else {
                             self.error(sel.pkg.span, format!("{} is not a package", pkg_name));
                         }
@@ -128,6 +132,16 @@ impl Checker {
                 let value = self.indirect_type(&map.value, fctx);
                 let t = self.tc_objs.new_t_map(key, value);
                 set_underlying(Some(t), &mut self.tc_objs);
+
+                // Check map key is comparable (like goscript: delayed check via fctx.later)
+                let key_span = map.key.span;
+                let f = move |checker: &mut Checker, _: &mut FilesContext| {
+                    if !crate::typ::comparable(key, &checker.tc_objs) {
+                        checker.error(key_span, format!("invalid map key type"));
+                    }
+                };
+                fctx.later(Box::new(f));
+
                 Some(t)
             }
             TypeExprKind::Chan(chan) => {
@@ -345,8 +359,14 @@ impl Checker {
     }
 
     /// Type-checks a function signature and returns its type.
-    pub fn func_type_from_sig(&mut self, sig: &FuncSig, fctx: &mut FilesContext) -> TypeKey {
-        // Create a new scope for the function
+    /// Aligned with goscript's func_type implementation.
+    pub fn func_type_from_sig(
+        &mut self,
+        recv: Option<&Receiver>,
+        sig: &FuncSig,
+        fctx: &mut FilesContext,
+    ) -> TypeKey {
+        // Create a new scope for the function (like goscript)
         let scope_key = self.tc_objs.new_scope(
             self.octx.scope,
             0,
@@ -354,91 +374,206 @@ impl Checker {
             "function",
             true,
         );
+        // Record scope for this function signature (like goscript: self.result.record_scope(&ftype, skey))
+        self.result.record_scope(sig.span, scope_key);
 
-        // Collect parameter types
-        let mut param_vars = Vec::new();
-        let variadic = sig.variadic;
+        // Collect receiver (like goscript's collect_params for recv)
+        let recv_list = self.collect_receiver(scope_key, recv, fctx);
+        
+        // Collect params (like goscript's collect_params with variadic_ok=true)
+        let (params, variadic) = self.collect_params_from_sig(scope_key, &sig.params, sig.variadic, fctx);
+        
+        // Collect results (like goscript's collect_params with variadic_ok=false)
+        let (results, _) = self.collect_results_from_sig(scope_key, &sig.results, fctx);
 
-        for (i, param) in sig.params.iter().enumerate() {
-            let param_type = self.indirect_type(&param.ty, fctx);
+        // Validate receiver (like goscript)
+        let recv_okey = if recv.is_some() {
+            let r = recv.unwrap();
+            let invalid_type = self.invalid_type();
             
-            // For variadic, wrap the last param type in slice
-            let final_type = if variadic && i == sig.params.len() - 1 {
-                self.tc_objs.new_t_slice(param_type)
+            // GoX Receiver is always exactly one, so recv_list has 0 or 1 element
+            let recv_var = if recv_list.is_empty() {
+                // This shouldn't happen with valid GoX syntax, but handle like goscript
+                self.error(r.span, "method is missing receiver".to_string());
+                self.tc_objs.new_param_var(0, None, String::new(), Some(invalid_type))
             } else {
-                param_type
+                recv_list[0]
             };
 
-            // Create var for each name, or anonymous if no names
-            if param.names.is_empty() {
-                let var = self.tc_objs.new_param_var(0, Some(self.pkg), String::new(), Some(final_type));
-                param_vars.push(var);
-            } else {
-                for name in &param.names {
-                    let name_str = self.resolve_ident(name).to_string();
-                    let var = self.tc_objs.new_param_var(0, Some(self.pkg), name_str.clone(), Some(final_type));
-                    self.declare(scope_key, var);
-                    param_vars.push(var);
+            // spec: "The receiver type must be of the form T or *T where T is a type name."
+            let recv_var_val = self.lobj(recv_var);
+            let recv_type = recv_var_val.typ().unwrap();
+            let (t, _) = crate::lookup::try_deref(recv_type, &self.tc_objs);
+            
+            if t != invalid_type {
+                let err_msg = if let Some(n) = self.otype(t).try_as_named() {
+                    // spec: "The type denoted by T is called the receiver base type; it must not
+                    // be a pointer or interface type and it must be declared in the same package
+                    // as the method."
+                    if let Some(obj_key) = n.obj() {
+                        if self.lobj(*obj_key).pkg() != Some(self.pkg) {
+                            Some("type not defined in this package")
+                        } else {
+                            match self.otype(n.underlying()) {
+                                Type::Pointer(_) | Type::Interface(_) => {
+                                    Some("pointer or interface type")
+                                }
+                                _ => None,
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    Some("basic or unnamed type")
+                };
+                
+                if let Some(err) = err_msg {
+                    self.error(r.span, format!("invalid receiver ({})", err));
+                    // ok to continue
                 }
             }
-        }
 
-        // Collect result types
-        let mut result_vars = Vec::new();
-        for result in &sig.results {
-            let result_type = self.indirect_type(&result.ty, fctx);
-            if let Some(name) = &result.name {
-                let name_str = self.resolve_ident(name).to_string();
-                let var = self.tc_objs.new_param_var(0, Some(self.pkg), name_str.clone(), Some(result_type));
-                self.declare(scope_key, var);
-                result_vars.push(var);
-            } else {
-                let var = self.tc_objs.new_param_var(0, Some(self.pkg), String::new(), Some(result_type));
-                result_vars.push(var);
-            }
-        }
+            Some(recv_var)
+        } else {
+            None
+        };
 
-        let params_tuple = self.new_tuple(param_vars);
-        let results_tuple = self.new_tuple(result_vars);
+        let params_tuple = self.new_tuple(params);
+        let results_tuple = self.new_tuple(results);
 
-        self.tc_objs.new_t_signature(Some(scope_key), None, params_tuple, results_tuple, variadic)
+        self.tc_objs.new_t_signature(Some(scope_key), recv_okey, params_tuple, results_tuple, variadic)
+    }
+
+    /// Collect receiver parameter (adapted from goscript's collect_params for GoX Receiver).
+    fn collect_receiver(
+        &mut self,
+        scope_key: ScopeKey,
+        recv: Option<&Receiver>,
+        fctx: &mut FilesContext,
+    ) -> Vec<ObjKey> {
+        let Some(r) = recv else {
+            return vec![];
+        };
+
+        // Build TypeExpr for base type
+        let base_type_expr = TypeExpr {
+            id: gox_common_core::TypeExprId::DUMMY,
+            kind: TypeExprKind::Ident(r.ty.clone()),
+            span: r.ty.span,
+        };
+        
+        // Resolve type using indirect_type (like goscript)
+        let base_type = self.indirect_type(&base_type_expr, fctx);
+        
+        // Final type is T or *T
+        let recv_type = if r.is_pointer {
+            self.tc_objs.new_t_pointer(base_type)
+        } else {
+            base_type
+        };
+
+        // Create param var and declare (like goscript's collect_params)
+        let recv_name = self.resolve_ident(&r.name).to_string();
+        let par = self.tc_objs.new_param_var(0, Some(self.pkg), recv_name, Some(recv_type));
+        self.declare(scope_key, par);
+
+        vec![par]
     }
 
     /// Collects function parameters from FuncSig AST.
+    /// Aligned with goscript's collect_params: returns (vars, variadic).
+    /// Like goscript: first resolve type T, then if variadic, change last param's type to []T.
     fn collect_params_from_sig(
         &mut self,
         scope_key: ScopeKey,
         params: &[Param],
-        variadic: bool,
+        variadic_ok: bool,
         fctx: &mut FilesContext,
-    ) -> Vec<ObjKey> {
+    ) -> (Vec<ObjKey>, bool) {
+        if params.is_empty() {
+            return (vec![], false);
+        }
+
+        let mut named = false;
+        let mut anonymous = false;
         let mut vars = Vec::new();
 
-        for (i, param) in params.iter().enumerate() {
-            let is_last = i == params.len() - 1;
+        for param in params.iter() {
+            // Resolve parameter type (without slice wrapping first, like goscript)
             let param_type = self.indirect_type(&param.ty, fctx);
-            
-            // Wrap last param in slice if variadic
-            let final_type = if variadic && is_last {
-                self.tc_objs.new_t_slice(param_type)
-            } else {
-                param_type
-            };
 
             if param.names.is_empty() {
-                let var = self.tc_objs.new_param_var(0, Some(self.pkg), String::new(), Some(final_type));
+                // Anonymous parameter
+                let var = self.tc_objs.new_param_var(0, Some(self.pkg), String::new(), Some(param_type));
+                // Record implicit object (like goscript: self.result.record_implicit(fkey, par))
+                self.result.record_implicit(param.ty.span, var);
                 vars.push(var);
+                anonymous = true;
             } else {
+                // Named parameters
                 for name in &param.names {
                     let name_str = self.resolve_ident(name).to_string();
-                    let var = self.tc_objs.new_param_var(0, Some(self.pkg), name_str.clone(), Some(final_type));
+                    if name_str.is_empty() {
+                        // This is an invalid case, but continue like goscript
+                    }
+                    let var = self.tc_objs.new_param_var(0, Some(self.pkg), name_str, Some(param_type));
                     self.declare(scope_key, var);
                     vars.push(var);
                 }
+                named = true;
             }
         }
 
-        vars
+        // Check mixed named/anonymous (like goscript)
+        if named && anonymous {
+            // GoX parser should prevent this, but check anyway
+            // goscript: self.invalid_ast(...)
+        }
+
+        // For variadic function, change last param's type from T to []T (like goscript)
+        // goscript does this AFTER collecting all params
+        let variadic = variadic_ok && !vars.is_empty() && !params.is_empty();
+        if variadic {
+            let last = vars[vars.len() - 1];
+            let t = self.tc_objs.new_t_slice(self.lobj(last).typ().unwrap());
+            self.lobj_mut(last).set_type(Some(t));
+            // Note: goscript also calls record_type_and_value for the ellipsis expression,
+            // but GoX uses TypeExpr (not Expr), so we skip this recording
+        }
+
+        (vars, variadic)
+    }
+
+    /// Collects function results from FuncSig AST.
+    /// Like goscript's collect_params with variadic_ok=false.
+    fn collect_results_from_sig(
+        &mut self,
+        scope_key: ScopeKey,
+        results: &[ast::ResultParam],
+        fctx: &mut FilesContext,
+    ) -> (Vec<ObjKey>, bool) {
+        if results.is_empty() {
+            return (vec![], false);
+        }
+
+        let mut vars = Vec::new();
+
+        for result in results {
+            let result_type = self.indirect_type(&result.ty, fctx);
+
+            if let Some(name) = &result.name {
+                let name_str = self.resolve_ident(name).to_string();
+                let var = self.tc_objs.new_param_var(0, Some(self.pkg), name_str, Some(result_type));
+                self.declare(scope_key, var);
+                vars.push(var);
+            } else {
+                let var = self.tc_objs.new_param_var(0, Some(self.pkg), String::new(), Some(result_type));
+                vars.push(var);
+            }
+        }
+
+        (vars, false) // results are never variadic
     }
 
     /// Creates a new tuple type.
@@ -597,6 +732,7 @@ impl Checker {
     // =========================================================================
 
     /// Type-checks an interface type.
+    /// Aligned with goscript's interface_type: delays embedded interface checking.
     fn interface_type(&mut self, iface: &ast::InterfaceType, def: Option<TypeKey>, fctx: &mut FilesContext) -> TypeKey {
         if iface.elems.is_empty() {
             return self.tc_objs.new_t_empty_interface();
@@ -605,9 +741,11 @@ impl Checker {
         // Create the interface type first (methods will be added later)
         let itype = self.tc_objs.new_t_interface(vec![], vec![]);
 
-        // Collect methods and embedded interfaces
+        // Collect embedded interface idents for delayed processing (like goscript)
+        let mut embedded_idents: Vec<Ident> = Vec::new();
+        
+        // Collect methods immediately
         let mut methods: Vec<ObjKey> = Vec::new();
-        let mut embeds: Vec<TypeKey> = Vec::new();
         let mut method_set: std::collections::HashMap<String, ObjKey> = std::collections::HashMap::new();
 
         // Use named receiver type if available (for better error messages)
@@ -635,7 +773,7 @@ impl Checker {
                     let recv_var = self.tc_objs.new_var(0, Some(self.pkg), String::new(), Some(recv_type));
                     
                     // Type-check the method signature
-                    let sig_type = self.func_type_from_sig(&method.sig, fctx);
+                    let sig_type = self.func_type_from_sig(None, &method.sig, fctx);
                     
                     // Update signature with receiver
                     if let Type::Signature(sig) = &mut self.tc_objs.types[sig_type] {
@@ -649,27 +787,8 @@ impl Checker {
                     methods.push(method_obj);
                 }
                 InterfaceElem::Embedded(ident) => {
-                    // Look up the embedded interface type
-                    let mut x = Operand::new();
-                    self.ident(&mut x, ident, None, true, fctx);
-                    
-                    if let Some(typ) = x.typ {
-                        let invalid_type = self.invalid_type();
-                        if typ == invalid_type {
-                            continue; // error reported before
-                        }
-                        
-                        // Check that it's actually an interface
-                        let underlying = typ::underlying_type(typ, &self.tc_objs);
-                        match &self.tc_objs.types[underlying] {
-                            Type::Interface(_) => {
-                                embeds.push(typ);
-                            }
-                            _ => {
-                                self.error(ident.span, format!("{} is not an interface", self.resolve_ident(ident)));
-                            }
-                        }
-                    }
+                    // Collect for delayed processing (like goscript's fctx.later)
+                    embedded_idents.push(ident.clone());
                 }
             }
         }
@@ -681,14 +800,60 @@ impl Checker {
             name_a.cmp(name_b)
         });
 
-        // Update the interface type with collected methods and embeds
+        // Set methods immediately
         if let Type::Interface(iface_detail) = &mut self.tc_objs.types[itype] {
             *iface_detail.methods_mut() = methods.clone();
-            *iface_detail.embeddeds_mut() = embeds;
-            
-            // Set all_methods (methods from this interface + embedded)
-            // For now, just use explicit methods; embedded methods require more work
-            iface_detail.set_complete(methods);
+        }
+
+        // Delay embedded interface checking (like goscript: fctx.later)
+        // This handles circular dependencies between interfaces
+        if !embedded_idents.is_empty() {
+            let f = move |checker: &mut Checker, _fctx: &mut FilesContext| {
+                let mut embeds: Vec<TypeKey> = Vec::new();
+                let invalid_type = checker.invalid_type();
+                
+                for ident in &embedded_idents {
+                    let _x = Operand::new();
+                    // Note: we pass a dummy fctx since we're in delayed context
+                    // The type should already be resolved
+                    let name = checker.resolve_ident(ident);
+                    if let Some(scope_key) = checker.octx.scope {
+                        if let Some((_, okey)) = scope::lookup_parent(scope_key, name, &checker.tc_objs) {
+                            let typ = checker.tc_objs.lobjs[okey].typ();
+                            if let Some(t) = typ {
+                                if t == invalid_type {
+                                    continue;
+                                }
+                                let underlying = typ::underlying_type(t, &checker.tc_objs);
+                                match &checker.tc_objs.types[underlying] {
+                                    Type::Interface(_) => {
+                                        embeds.push(t);
+                                    }
+                                    _ => {
+                                        checker.error(ident.span, format!("{} is not an interface", name));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Note: goscript sorts embeds by type name, but we skip sorting
+                // since TypeKey doesn't implement Ord
+                
+                if let Type::Interface(iface_detail) = &mut checker.tc_objs.types[itype] {
+                    *iface_detail.embeddeds_mut() = embeds;
+                    // Set complete with current methods
+                    let current_methods = iface_detail.methods().clone();
+                    iface_detail.set_complete(current_methods);
+                }
+            };
+            fctx.later(Box::new(f));
+        } else {
+            // No embedded interfaces, set complete immediately
+            if let Type::Interface(iface_detail) = &mut self.tc_objs.types[itype] {
+                iface_detail.set_complete(methods);
+            }
         }
 
         itype

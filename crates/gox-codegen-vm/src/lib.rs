@@ -33,8 +33,8 @@ pub fn compile_project(project: &Project) -> Result<Module> {
     // Create a TypeQuery for the main package
     let query = project.query();
     
-    // Use expr_types from Project
-    let info = TypeInfo::new(query, project.expr_types());
+    // Use expr_types and type_expr_types from Project
+    let info = TypeInfo::new(query, project.expr_types(), project.type_expr_types());
 
     // Register all struct and interface types (Pass 1)
     register_types(project, &mut ctx);
@@ -136,14 +136,12 @@ fn compile_init_and_entry_files(
     Ok(())
 }
 
-/// Compile a single file to a Module with a TypeQuery.
-pub fn compile_file(
-    file: &File,
-    query: TypeQuery<'_>,
-    expr_types: &HashMap<gox_common_core::ExprId, gox_analysis::TypeAndValue>,
-) -> Result<Module> {
+/// Compile a single file to a Module using a Project.
+pub fn compile_single_file(project: &Project) -> Result<Module> {
+    let file = project.files.first().expect("project must have at least one file");
+    let query = project.query();
     let mut ctx = CodegenContext::new("main");
-    let info = TypeInfo::new(query, expr_types);
+    let info = TypeInfo::new(query, project.expr_types(), project.type_expr_types());
 
     collect_declarations(file, &info, &mut ctx)?;
     compile_functions(file, &info, &mut ctx)?;
@@ -213,19 +211,43 @@ fn compile_func_decl(
     let name = info.symbol_str(func.name.symbol);
     let mut builder = FuncBuilder::new(name);
 
+    // Define receiver parameter first (for methods)
+    // Get receiver type from the function's signature (computed during analysis)
+    if let Some(recv) = &func.receiver {
+        if let Some(recv_type) = info.func_recv_type(func.name.symbol) {
+            let slot_types = info.type_slot_types(recv_type);
+            let slots = slot_types.len() as u16;
+            builder.define_param(recv.name.symbol, slots, &slot_types);
+        } else {
+            // Fallback: pointer receiver is always 1 slot (GcRef)
+            if recv.is_pointer {
+                builder.define_param(recv.name.symbol, 1, &[SlotType::GcRef]);
+            } else {
+                // Value receiver - look up the base type
+                let type_key = info.lookup_type_key(recv.ty.symbol)
+                    .expect("receiver type must resolve");
+                let recv_type = info.query.get_type(type_key);
+                let slot_types = info.type_slot_types(recv_type);
+                let slots = slot_types.len() as u16;
+                builder.define_param(recv.name.symbol, slots, &slot_types);
+            }
+        }
+    }
+
     // Define parameters with proper type handling
+    // Use analysis-recorded TypeExpr types (handles all types including literals)
     for param in &func.sig.params {
-        let param_type = info.resolve_type_expr(&param.ty).expect("param type must resolve");
+        let param_type = info.resolve_type_expr(&param.ty)
+            .expect("param type must be recorded by analysis");
         let is_interface = info.is_interface(param_type);
         
         for pname in &param.names {
             if is_interface {
                 // Interface parameter: 2 slots + InitInterface
-                let type_key = info.type_expr_key(&param.ty).expect("interface type must have TypeKey");
+                let type_key = info.type_expr_type_key(&param.ty).expect("interface type must have TypeKey");
                 let iface_type_id = ctx.type_id_for_interface(type_key);
                 builder.define_param_interface(pname.symbol, iface_type_id as u32);
             } else {
-                // Regular parameter
                 let slot_types = info.type_slot_types(param_type);
                 let slots = slot_types.len() as u16;
                 builder.define_param(pname.symbol, slots, &slot_types);
