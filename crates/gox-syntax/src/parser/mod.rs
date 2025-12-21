@@ -370,7 +370,6 @@ impl<'a> Parser<'a> {
                 TokenKind::Const,
                 TokenKind::Type,
                 TokenKind::Func,
-                TokenKind::Interface,
             ]) {
                 return;
             }

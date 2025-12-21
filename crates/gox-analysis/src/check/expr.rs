@@ -118,21 +118,17 @@ impl Checker {
         x: &mut Operand,
         e: Option<ExprId>,
         op: UnaryOp,
+        operand_expr: &Expr,
         fctx: &mut FilesContext,
     ) {
         match op {
             UnaryOp::Addr => {
                 // spec: "As an exception to the addressability requirement
                 // x may also be a composite literal."
-                if let Some(expr_id) = x.expr_id {
-                    if x.mode != OperandMode::Variable {
-                        // Check if it's a composite literal (addressable)
-                        let is_composite_lit = fctx
-                            .untyped
-                            .get(&expr_id)
-                            .map(|info| matches!(info.expr.kind, ExprKind::CompositeLit(_)))
-                            .unwrap_or(false);
-                        if !is_composite_lit {
+                match &Self::unparen(operand_expr).kind {
+                    ExprKind::CompositeLit(_) => {}
+                    _ => {
+                        if x.mode != OperandMode::Variable {
                             self.invalid_op(Span::default(), "cannot take address of expression");
                             x.mode = OperandMode::Invalid;
                             return;
@@ -934,7 +930,7 @@ impl Checker {
                 if x.invalid() {
                     return;
                 }
-                self.unary(x, Some(e.id), u.op, fctx);
+                self.unary(x, Some(e.id), u.op, &u.operand, fctx);
             }
             ExprKind::Binary(b) => {
                 self.binary(x, Some(e.id), &b.left, &b.right, b.op, fctx);
