@@ -322,4 +322,21 @@ impl<'a> TypeInfo<'a> {
             _ => None,
         }
     }
+
+    /// Get the interface method index for an interface method call.
+    /// Returns (interface_type_key, method_index) if the receiver is an interface.
+    pub fn interface_method_info(&self, receiver_expr: &Expr, method_selection: &Selection) -> Option<(TypeKey, usize)> {
+        let recv_type_key = self.expr_type_key(receiver_expr)?;
+        let recv_type = self.query.get_type(recv_type_key);
+        
+        if !self.query.is_interface(recv_type) {
+            return None;
+        }
+        
+        let iface_detail = self.query.get_interface_detail_by_key(recv_type_key)?;
+        let method_obj = method_selection.obj();
+        let method_idx = self.query.interface_method_index(iface_detail, method_obj)?;
+        
+        Some((recv_type_key, method_idx))
+    }
 }

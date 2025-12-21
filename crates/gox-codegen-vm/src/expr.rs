@@ -313,7 +313,14 @@ fn compile_call(
         let is_method_call = base_type.is_some() && !matches!(base_type, Some(Type::Signature(_)));
         
         if is_method_call {
-            // Method call: receiver is the first argument
+            // Check if this is an interface method call
+            if let Some(selection) = info.expr_selection(callee) {
+                if let Some((iface_type_key, method_idx)) = info.interface_method_info(&sel.expr, selection) {
+                    return compile_interface_call(iface_type_key, method_idx, &sel.expr, args, ctx, func, info);
+                }
+            }
+            
+            // Concrete type method call: receiver is the first argument
             // Get the receiver's base type key for method lookup
             let recv_type_key = info.method_receiver_type_key(&sel.expr);
             if let Some(func_idx) = ctx.get_method_index(recv_type_key, func_sym) {
@@ -331,7 +338,8 @@ fn compile_call(
         }
     }
 
-    todo!("closure call / method call")
+    // Closure calls not yet supported
+    Err(CodegenError::internal("closure calls not yet supported", callee.span))
 }
 
 /// Compile arguments into contiguous slots.
@@ -402,6 +410,46 @@ fn compile_method_call(
     let ret_slots = 1;
     func.emit_with_flags(Opcode::Call, ret_slots as u8, func_idx as u16, args_start, total_args as u16);
     Ok(args_start)
+}
+
+fn compile_interface_call(
+    iface_type_key: gox_analysis::TypeKey,
+    method_idx: usize,
+    receiver: &Expr,
+    args: &[Expr],
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfo,
+) -> Result<u16> {
+    // Interface value is 2 slots
+    let iface_reg = compile_expr(receiver, ctx, func, info)?;
+    
+    // Compile arguments into contiguous slots (after interface slots)
+    let args_start = func.current_slot();
+    let arg_slots: Vec<u16> = (0..args.len().max(1))
+        .map(|_| func.alloc_temp(1))
+        .collect();
+    
+    for (i, arg) in args.iter().enumerate() {
+        let src = compile_expr_value(arg, ctx, func, info)?;
+        func.emit_mov_slots(arg_slots[i], src, 1);
+    }
+    
+    // Get interface type id for runtime dispatch (reserved for future use)
+    let _iface_type_id = ctx.type_id_for_interface(iface_type_key);
+    
+    // CallInterface: a=iface_reg, b=method_idx, c=args_start
+    // flags = (ret_count << 4) | arg_count
+    let arg_count = args.len() as u8;
+    let ret_count = 1u8;
+    let flags = (ret_count << 4) | arg_count;
+    func.emit_with_flags(Opcode::CallInterface, flags, iface_reg, method_idx as u16, args_start);
+    
+    // Return value is at args_start (or we need a separate dst)
+    // For now, allocate a return slot
+    let dst = func.alloc_temp(1);
+    func.emit_op(Opcode::Mov, dst, args_start, 0);
+    Ok(dst)
 }
 
 fn compile_extern_call(

@@ -494,6 +494,16 @@ impl Vm {
                 return self.do_return(fiber_id, a, b as usize);
             }
             
+            Opcode::CallInterface => {
+                // a=iface_reg, b=method_idx, c=args_start, flags=(ret_count<<4)|arg_count
+                // TODO: Implement interface method dispatch
+                // 1. Read interface slot[0] to get concrete type info
+                // 2. Lookup method in dispatch table: (concrete_type_id, method_idx) -> func_id
+                // 3. Read interface slot[1] to get receiver value
+                // 4. Call the resolved function with receiver + args
+                todo!("CallInterface not yet implemented in VM");
+            }
+            
             // ============ Extern call (zero-copy) ============
             Opcode::CallExtern => {
                 // a=extern_id, b=arg_start, c=pair_count (each arg is type,value pair)

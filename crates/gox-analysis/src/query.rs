@@ -320,6 +320,31 @@ impl<'a> TypeQuery<'a> {
         }
     }
 
+    /// Get the underlying interface detail from a TypeKey (handles Named types).
+    pub fn get_interface_detail_by_key(&self, type_key: TypeKey) -> Option<&'a crate::typ::InterfaceDetail> {
+        let ty = &self.objs.types[type_key];
+        match ty {
+            Type::Interface(i) => Some(i),
+            Type::Named(n) => {
+                let u = n.try_underlying()?;
+                self.objs.types[u].try_as_interface()
+            }
+            _ => None,
+        }
+    }
+
+    /// Find the index of a method in an interface's method list by ObjKey.
+    pub fn interface_method_index(&self, iface: &crate::typ::InterfaceDetail, method_obj: ObjKey) -> Option<usize> {
+        let all_methods = iface.all_methods();
+        let methods = all_methods.as_ref()?;
+        methods.iter().position(|&m| m == method_obj)
+    }
+
+    /// Get the name of an object by its ObjKey.
+    pub fn obj_name(&self, okey: ObjKey) -> &str {
+        self.objs.lobjs[okey].name()
+    }
+
     // =========================================================================
     // Internal helpers
     // =========================================================================
