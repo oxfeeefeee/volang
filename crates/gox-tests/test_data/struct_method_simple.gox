@@ -5,16 +5,40 @@ type Counter struct {
     value int
 }
 
+// 值接收器方法
+func (c Counter) GetValue() int {
+    return c.value
+}
+
 func (c Counter) Double() int {
     return c.value * 2
 }
 
-func testMethod(n int) int {
-    // Receiver passed as first argument (value copy)
-    return n * 2
+// 指针接收器方法
+func (c *Counter) Increment() {
+    c.value += 1
+}
+
+func (c *Counter) Add(n int) {
+    c.value += n
 }
 
 func main() {
-    x := testMethod(21)
-    println(x)
+    c := Counter{value: 10}
+    
+    // 值方法调用
+    println(c.GetValue())   // 10
+    println(c.Double())     // 20
+    
+    // 指针方法调用
+    c.Increment()
+    println(c.GetValue())   // 11
+    
+    c.Add(5)
+    println(c.GetValue())   // 16
+    
+    // 通过指针调用
+    p := &c
+    p.Increment()
+    println(p.GetValue())   // 17
 }

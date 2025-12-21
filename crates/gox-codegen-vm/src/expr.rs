@@ -241,10 +241,23 @@ fn compile_call(
         }
     }
 
-    // Handle pkg.Func() calls (selector on package)
+    // Handle selector calls: pkg.Func() or obj.Method()
     if let ExprKind::Selector(sel) = &callee.kind {
         let func_sym = sel.sel.symbol;
         
+        // Check if selector base is a value (method call) or package (function call)
+        // If sel.expr has a type (struct, pointer, etc.), it's a method call
+        let base_type = info.expr_type(&sel.expr);
+        let is_method_call = base_type.is_some() && !matches!(base_type, Some(Type::Signature(_)));
+        
+        if is_method_call {
+            // Method call: receiver is the first argument
+            if let Some(func_idx) = ctx.get_func_index(func_sym) {
+                return compile_method_call(func_idx, &sel.expr, args, ctx, func, info);
+            }
+        }
+        
+        // Package function call or fallback
         if let Some(func_idx) = ctx.get_func_index(func_sym) {
             return compile_func_call(func_idx, args, ctx, func, info);
         }
@@ -282,6 +295,46 @@ fn compile_func_call(
 
     let ret_slots = 1;
     func.emit_with_flags(Opcode::Call, ret_slots as u8, func_idx as u16, args_start, args.len() as u16);
+
+    // Return value is at args_start
+    Ok(args_start)
+}
+
+fn compile_method_call(
+    func_idx: u32,
+    receiver: &Expr,
+    args: &[Expr],
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfo,
+) -> Result<u16> {
+    // Method call: receiver is the first argument
+    // Total args = 1 (receiver) + args.len()
+    let total_args = 1 + args.len();
+    
+    // Allocate contiguous slots for all arguments (receiver + args)
+    let args_start = func.current_slot();
+    let num_slots = total_args.max(1); // At least 1 slot for return value
+    let arg_slots: Vec<u16> = (0..num_slots)
+        .map(|_| func.alloc_temp(1))
+        .collect();
+    
+    // Compile receiver and move to first argument slot
+    let recv_src = compile_expr(receiver, ctx, func, info)?;
+    if recv_src != arg_slots[0] {
+        func.emit_op(Opcode::Mov, arg_slots[0], recv_src, 0);
+    }
+    
+    // Compile each argument and move to argument slot
+    for (i, arg) in args.iter().enumerate() {
+        let src = compile_expr(arg, ctx, func, info)?;
+        if src != arg_slots[i + 1] {
+            func.emit_op(Opcode::Mov, arg_slots[i + 1], src, 0);
+        }
+    }
+
+    let ret_slots = 1;
+    func.emit_with_flags(Opcode::Call, ret_slots as u8, func_idx as u16, args_start, total_args as u16);
 
     // Return value is at args_start
     Ok(args_start)

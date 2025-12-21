@@ -113,11 +113,56 @@ fn compile_assign(
                             None
                         }
                     }
+                    Some(Type::Pointer(ptr)) => {
+                        let base_ty = info.query.pointer_base(ptr);
+                        match base_ty {
+                            Type::Named(named) => {
+                                if let Some(underlying) = info.query.named_underlying(named) {
+                                    if let Type::Struct(s) = underlying {
+                                        info.query.struct_field_index(s, sel.sel.symbol)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                            Type::Struct(s) => info.query.struct_field_index(s, sel.sel.symbol),
+                            _ => None,
+                        }
+                    }
                     Some(Type::Struct(s)) => info.query.struct_field_index(s, sel.sel.symbol),
                     _ => None,
                 };
                 let byte_offset = (field_idx.unwrap_or(0) * 8) as u16;
-                func.emit_with_flags(Opcode::SetField, 3, base, byte_offset, src);
+                
+                // Handle compound assignment (+=, -=, etc.)
+                let final_src = match op {
+                    AssignOp::Assign => src,
+                    _ => {
+                        // Read current field value
+                        let old_val = func.alloc_temp(1);
+                        func.emit_with_flags(Opcode::GetField, 3, old_val, base, byte_offset);
+                        // Apply operation
+                        let new_val = func.alloc_temp(1);
+                        match op {
+                            AssignOp::Add => func.emit_op(Opcode::AddI64, new_val, old_val, src),
+                            AssignOp::Sub => func.emit_op(Opcode::SubI64, new_val, old_val, src),
+                            AssignOp::Mul => func.emit_op(Opcode::MulI64, new_val, old_val, src),
+                            AssignOp::Div => func.emit_op(Opcode::DivI64, new_val, old_val, src),
+                            AssignOp::Rem => func.emit_op(Opcode::ModI64, new_val, old_val, src),
+                            AssignOp::And => func.emit_op(Opcode::Band, new_val, old_val, src),
+                            AssignOp::Or => func.emit_op(Opcode::Bor, new_val, old_val, src),
+                            AssignOp::Xor => func.emit_op(Opcode::Bxor, new_val, old_val, src),
+                            AssignOp::AndNot => func.emit_op(Opcode::Band, new_val, old_val, src),
+                            AssignOp::Shl => func.emit_op(Opcode::Shl, new_val, old_val, src),
+                            AssignOp::Shr => func.emit_op(Opcode::Shr, new_val, old_val, src),
+                            AssignOp::Assign => unreachable!(),
+                        };
+                        new_val
+                    }
+                };
+                func.emit_with_flags(Opcode::SetField, 3, base, byte_offset, final_src);
             }
             _ => {}
         }
