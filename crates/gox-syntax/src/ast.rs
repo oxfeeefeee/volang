@@ -510,10 +510,10 @@ pub enum ForClause {
         cond: Option<Expr>,
         post: Option<Box<Stmt>>,
     },
-    /// A range for: `for k, v := range expr { }`
+    /// A range for: `for k, v := range expr { }` or `for k, v = range expr { }`
     Range {
-        key: Option<Ident>,
-        value: Option<Ident>,
+        key: Option<Expr>,
+        value: Option<Expr>,
         define: bool,
         expr: Expr,
     },

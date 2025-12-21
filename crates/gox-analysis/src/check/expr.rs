@@ -1257,12 +1257,17 @@ impl Checker {
                 if x.invalid() {
                     return;
                 }
-                if let Some(chan) = self.otype(x.typ.unwrap()).try_as_chan() {
+                if let Some(chan) = self.otype(x.typ.unwrap()).underlying_val(&self.tc_objs).try_as_chan() {
+                    if chan.dir() == typ::ChanDir::SendOnly {
+                        self.invalid_op(recv.span, "cannot receive from send-only channel");
+                        x.mode = OperandMode::Invalid;
+                        return;
+                    }
                     x.mode = OperandMode::CommaOk;
                     x.typ = Some(chan.elem());
                     self.octx.has_call_or_recv = true;
                 } else {
-                    self.invalid_op(Span::default(), "cannot receive from non-channel");
+                    self.invalid_op(recv.span, "cannot receive from non-channel");
                     x.mode = OperandMode::Invalid;
                 }
             }

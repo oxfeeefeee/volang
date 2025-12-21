@@ -587,32 +587,45 @@ impl Checker {
             }
 
             StmtKind::Return(rs) => {
-                // Aligned with goscript/types/src/check/stmt.rs::Stmt::Return
-                if let Some(sig_key) = self.octx.sig {
-                    let sig = self.otype(sig_key).try_as_signature().unwrap();
-                    let results_key = sig.results();
-                    let results_tuple = self.otype(results_key).try_as_tuple().unwrap();
-                    let result_vars = results_tuple.vars().clone();
-                    let result_count = result_vars.len();
-                    
-                    if result_count > 0 {
-                        if rs.values.is_empty() {
-                            // Empty return with results - check named returns are in scope
-                            // For now, allow empty return with named results
-                        } else {
-                            // Return has results - use init_vars for type checking
-                            self.init_vars(&result_vars, &rs.values, Some(stmt.span), fctx);
+                let reskey = self
+                    .otype(self.octx.sig.unwrap())
+                    .try_as_signature()
+                    .unwrap()
+                    .results();
+                let res = self.otype(reskey).try_as_tuple().unwrap();
+                if res.vars().len() > 0 {
+                    // function returns results
+                    // (if one, say the first, result parameter is named, all of them are named)
+                    if rs.values.is_empty() && self.lobj(res.vars()[0]).name() != "" {
+                        // spec: "Implementation restriction: A compiler may disallow an empty expression
+                        // list in a "return" statement if a different entity (constant, type, or variable)
+                        // with the same name as a result parameter is in scope at the place of the return."
+                        for &okey in res.vars().iter() {
+                            let lobj = self.lobj(okey);
+                            if let Some(alt) = self.lookup(lobj.name()) {
+                                if alt == okey {
+                                    continue;
+                                }
+                                self.error(
+                                    stmt.span,
+                                    format!(
+                                        "result parameter {} not in scope at return",
+                                        lobj.name()
+                                    ),
+                                );
+                                let alt_pos = self.lobj(alt).pos();
+                                self.error_str(alt_pos, &format!("\tinner declaration of {}", lobj.name()));
+                                // ok to continue
+                            }
                         }
-                    } else if !rs.values.is_empty() {
-                        self.error(stmt.span, "no result values expected".to_string());
-                        self.use_exprs(&rs.values, fctx);
+                    } else {
+                        // return has results or result parameters are unnamed
+                        let vars = res.vars().clone();
+                        self.init_vars(&vars, &rs.values, Some(stmt.span), fctx);
                     }
-                } else {
-                    // No function signature, just check expressions
-                    for val in &rs.values {
-                        let x = &mut Operand::new();
-                        self.expr(x, val, fctx);
-                    }
+                } else if !rs.values.is_empty() {
+                    self.error(rs.values[0].span, "no result values expected".to_string());
+                    self.use_exprs(&rs.values, fctx);
                 }
             }
 
@@ -711,76 +724,83 @@ impl Checker {
                 if let Some(init) = &tss.init {
                     self.stmt(init, &StmtContext::new(), fctx);
                 }
-                let x = &mut Operand::new();
-                self.expr(x, &tss.expr, fctx);
-                self.multiple_defaults_type(&tss.cases);
                 
-                // Check expression is interface type
-                let xtype = if x.invalid() { 
-                    None 
-                } else { 
-                    let t = x.typ.unwrap();
-                    let under = typ::underlying_type(t, &self.tc_objs);
-                    if self.otype(under).try_as_interface().is_none() {
-                        self.error(tss.expr.span, "cannot type switch on non-interface type".to_string());
+                // Check if there's a lhs variable (x := expr.(type))
+                // If name is "_", treat as None to avoid declared but not used error
+                let lhs: Option<&Ident> = tss.assign.as_ref().and_then(|assign| {
+                    let name = self.resolve_symbol(assign.symbol);
+                    if name == "_" {
+                        self.soft_error(assign.span, "no new variable on left side of :=".to_string());
                         None
                     } else {
-                        Some(t)
+                        self.result.record_def(assign.clone(), None);
+                        Some(assign)
                     }
-                };
+                });
+                
+                let x = &mut Operand::new();
+                self.expr(x, &tss.expr, fctx);
+                if x.invalid() {
+                    self.close_scope();
+                    return;
+                }
+                let xtype = typ::underlying_type(x.typ.unwrap(), &self.tc_objs);
+                if self.otype(xtype).try_as_interface().is_none() {
+                    self.error(tss.expr.span, "cannot type switch on non-interface type".to_string());
+                    self.close_scope();
+                    return;
+                }
+                
+                self.multiple_defaults_type(&tss.cases);
                 
                 // Track seen types for duplicate detection
                 let mut seen_types: HashMap<Option<TypeKey>, Span> = HashMap::new();
+                let mut lhs_vars: Vec<crate::objects::ObjKey> = Vec::new();
                 
                 for clause in &tss.cases {
+                    // Check each type in this type switch case.
+                    let mut t = self.case_types(x, xtype, &clause.types, &mut seen_types, fctx);
                     self.open_scope(clause.span, "case");
                     
-                    // Check case types
-                    for ty_opt in &clause.types {
-                        let t = match ty_opt {
-                            Some(ty) => {
-                                let t = self.type_expr(ty, fctx);
-                                if t != self.invalid_type() { Some(t) } else { None }
-                            }
-                            None => None, // nil case
-                        };
-                        
-                        // Check for duplicate types
-                        if let Some(&_prev_span) = seen_types.iter()
-                            .find(|(&t2, _)| typ::identical_o(t, t2, &self.tc_objs))
-                            .map(|(_, s)| s) 
-                        {
-                            let ts = t.map_or("nil".to_owned(), |tk| format!("{:?}", tk));
-                            let span = ty_opt.as_ref().map_or(Span::default(), |ty| ty.span);
-                            self.error(span, format!("duplicate case {} in type switch", ts));
-                        } else {
-                            let span = ty_opt.as_ref().map_or(Span::default(), |ty| ty.span);
-                            seen_types.insert(t, span);
+                    // If lhs exists, declare a corresponding variable in the case-local scope.
+                    if let Some(lhs_ident) = lhs {
+                        // spec: "The TypeSwitchGuard may include a short variable declaration.
+                        // When that form is used, the variable is declared at the beginning of
+                        // the implicit block in each clause. In clauses with a case listing
+                        // exactly one type, the variable has that type; otherwise, the variable
+                        // has the type of the expression in the TypeSwitchGuard."
+                        if clause.types.len() != 1 || t.is_none() {
+                            t = x.typ;
                         }
-                    }
-                    
-                    // Bind variable if present (x := expr.(type))
-                    if let Some(ref assign) = tss.assign {
-                        let scope_key = self.octx.scope.unwrap();
-                        let name = self.resolve_symbol(assign.symbol).to_string();
-                        if name != "_" {
-                            // Type of bound variable depends on case types
-                            let bind_type = if clause.types.len() == 1 {
-                                // Single type case: variable has that type
-                                clause.types[0].as_ref().map(|ty| self.type_expr(ty, fctx))
-                            } else {
-                                // Multiple types or default: variable has original type
-                                xtype
-                            };
-                            let okey = self.tc_objs.new_var(assign.span.start.to_usize(), Some(self.pkg), name, bind_type);
-                            self.result.record_def(assign.clone(), Some(okey));
-                            self.declare(scope_key, okey);
-                        }
+                        let name = self.resolve_symbol(lhs_ident.symbol).to_string();
+                        let okey = self.tc_objs.new_var(lhs_ident.span.start.to_usize(), Some(self.pkg), name, t);
+                        self.declare(self.octx.scope.unwrap(), okey);
+                        self.result.record_implicit(clause.span, okey);
+                        // For the "declared but not used" error, all lhs variables act as
+                        // one; i.e., if any one of them is 'used', all of them are 'used'.
+                        // Collect them for later analysis.
+                        lhs_vars.push(okey);
                     }
                     
                     self.stmt_list(&clause.body, &inner_ctx, fctx);
                     self.close_scope();
                 }
+                
+                // If lhs exists, we must have at least one lhs variable that was used.
+                if lhs.is_some() {
+                    let used = lhs_vars.iter().fold(false, |acc, &okey| {
+                        let prop = self.tc_objs.lobjs[okey].entity_type_mut().var_property_mut();
+                        let var_used = prop.used;
+                        prop.used = true; // avoid usage error when checking entire function
+                        acc || var_used
+                    });
+                    if !used {
+                        let lhs_ident = lhs.unwrap();
+                        let name = self.resolve_symbol(lhs_ident.symbol);
+                        self.soft_error(lhs_ident.span, format!("{} declared but not used", name));
+                    }
+                }
+                
                 self.close_scope();
             }
 
@@ -909,22 +929,30 @@ impl Checker {
                         // Declare or assign key/value variables
                         // Aligned with goscript/types/src/check/stmt.rs::Stmt::Range
                         let scope_key = self.octx.scope.unwrap();
-                        let lhs = [key.as_ref(), value.as_ref()];
+                        let lhs: [Option<&Expr>; 2] = [key.as_ref(), value.as_ref()];
                         let rhs = [key_type, val_type];
                         
                         if *define {
                             // Short variable declaration
                             let mut vars = vec![];
-                            for (i, lhs_ident) in lhs.iter().enumerate() {
-                                if lhs_ident.is_none() {
+                            for (i, lhs_expr) in lhs.iter().enumerate() {
+                                if lhs_expr.is_none() {
                                     continue;
                                 }
-                                let ident = lhs_ident.unwrap();
-                                let name = self.resolve_symbol(ident.symbol).to_string();
+                                let lhs_e = lhs_expr.unwrap();
+                                // For define, lhs must be an identifier
+                                let ident = match self.expr_as_ident(lhs_e) {
+                                    Some(id) => id,
+                                    None => {
+                                        self.error(lhs_e.span, "expected identifier on left side of :=".to_string());
+                                        continue;
+                                    }
+                                };
+                                let name = self.resolve_ident(&ident).to_string();
                                 let has_name = name != "_";
                                 // Create var with type None - init_var will set type
-                                let okey = self.tc_objs.new_var(ident.span.start.to_usize(), Some(self.pkg), name, None);
-                                self.result.record_def(ident.clone(), Some(okey));
+                                let okey = self.tc_objs.new_var(lhs_e.span.start.to_usize(), Some(self.pkg), name, None);
+                                self.result.record_def(ident, Some(okey));
                                 if has_name {
                                     vars.push(okey);
                                 }
@@ -944,9 +972,14 @@ impl Checker {
                                 self.declare(scope_key, okey);
                             }
                         } else {
-                            // Ordinary assignment - would need to look up existing variables
-                            // For now, just skip the non-define case
-                            // TODO: implement ordinary assignment for range
+                            // ordinary assignment
+                            for (i, lhs_expr) in lhs.iter().enumerate() {
+                                if lhs_expr.is_some() && rhs[i].is_some() {
+                                    x.mode = OperandMode::Value;
+                                    x.typ = rhs[i];
+                                    self.assign_var(lhs_expr.unwrap(), x, fctx);
+                                }
+                            }
                         }
                     }
                 }

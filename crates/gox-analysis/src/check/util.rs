@@ -8,7 +8,6 @@
 use std::cmp::Ordering;
 
 use gox_common::span::Span;
-use gox_common_core::ExprId;
 use gox_syntax::ast::{Expr, ExprKind};
 
 use crate::obj::{self, Builtin, LangObj};
@@ -28,9 +27,9 @@ use super::checker::{Checker, FilesContext};
 #[derive(Debug)]
 pub enum UnpackResult<'a> {
     /// RHS is a tuple expression.
-    Tuple(Option<ExprId>, Vec<Option<TypeKey>>, Ordering),
+    Tuple(Option<&'a Expr>, Vec<Option<TypeKey>>, Ordering),
     /// RHS returns comma-ok (map index, type assert, channel receive).
-    CommaOk(Option<ExprId>, [TypeKey; 2]),
+    CommaOk(Option<&'a Expr>, [TypeKey; 2]),
     /// Multiple expressions (N to N assignment).
     Multiple(&'a [Expr], Ordering),
     /// Single expression (1 to 1 assignment).
@@ -51,14 +50,14 @@ impl<'a> UnpackResult<'a> {
         fctx: &mut FilesContext,
     ) {
         match self {
-            UnpackResult::Tuple(expr_id, types, _) => {
+            UnpackResult::Tuple(expr, types, _) => {
                 x.mode = OperandMode::Value;
-                x.expr_id = *expr_id;
+                x.expr_id = expr.map(|e| e.id);
                 x.typ = types[i];
             }
-            UnpackResult::CommaOk(expr_id, types) => {
+            UnpackResult::CommaOk(expr, types) => {
                 x.mode = OperandMode::Value;
-                x.expr_id = *expr_id;
+                x.expr_id = expr.map(|e| e.id);
                 x.typ = Some(types[i]);
             }
             UnpackResult::Multiple(exprs, _) => {
@@ -277,11 +276,11 @@ impl Checker {
             let types: Vec<Option<TypeKey>> =
                 t.vars().iter().map(|x| self.lobj(*x).typ()).collect();
             let matching = do_match(types.len());
-            return UnpackResult::Tuple(x.expr_id, types, matching);
+            return UnpackResult::Tuple(Some(&rhs[0]), types, matching);
         } else if x.mode == OperandMode::MapIndex || x.mode == OperandMode::CommaOk {
             if allow_comma_ok {
                 let types = [x.typ.unwrap(), self.basic_type(BasicType::UntypedBool)];
-                return UnpackResult::CommaOk(x.expr_id, types);
+                return UnpackResult::CommaOk(Some(&rhs[0]), types);
             }
             x.mode = OperandMode::Value;
         }

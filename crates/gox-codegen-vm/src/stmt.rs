@@ -342,6 +342,7 @@ fn compile_for(
                 func.patch_jump(exit);
             }
         }
+        // TODO rewrite
         ForClause::Range { key, value, define, expr } => {
             // Compile the container expression
             let container = compile_expr(expr, ctx, func, info)?;
@@ -369,31 +370,47 @@ fn compile_for(
             // IterNext: a=key_dest, b=value_dest, c=done_offset (patch later)
             let iter_next_pos = func.emit_op(Opcode::IterNext, key_reg, value_reg, 0);
             
+            // Helper to extract symbol from Expr (must be Ident)
+            let get_symbol = |e: &Expr| -> Option<gox_common::symbol::Symbol> {
+                match &e.kind {
+                    ExprKind::Ident(ident) => Some(ident.symbol),
+                    _ => None,
+                }
+            };
+            
             // Bind key and value to local variables if defined
             if *define {
                 if let Some(k) = key {
-                    // For range loops, key/value are already in temp registers
-                    // Just bind the symbol to that register
-                    func.bind_local(k.symbol, key_reg, 1, &[SlotType::Value]);
+                    if let Some(sym) = get_symbol(k) {
+                        // For range loops, key/value are already in temp registers
+                        // Just bind the symbol to that register
+                        func.bind_local(sym, key_reg, 1, &[SlotType::Value]);
+                    }
                 }
                 if let Some(v) = value {
-                    func.bind_local(v.symbol, value_reg, 1, &[SlotType::Value]);
+                    if let Some(sym) = get_symbol(v) {
+                        func.bind_local(sym, value_reg, 1, &[SlotType::Value]);
+                    }
                 }
             } else {
                 // Assignment to existing variables
                 if let Some(k) = key {
-                    if let Some(local) = func.lookup_local(k.symbol) {
-                        let local_slot = local.slot;
-                        if local_slot != key_reg {
-                            func.emit_op(Opcode::Mov, local_slot, key_reg, 0);
+                    if let Some(sym) = get_symbol(k) {
+                        if let Some(local) = func.lookup_local(sym) {
+                            let local_slot = local.slot;
+                            if local_slot != key_reg {
+                                func.emit_op(Opcode::Mov, local_slot, key_reg, 0);
+                            }
                         }
                     }
                 }
                 if let Some(v) = value {
-                    if let Some(local) = func.lookup_local(v.symbol) {
-                        let local_slot = local.slot;
-                        if local_slot != value_reg {
-                            func.emit_op(Opcode::Mov, local_slot, value_reg, 0);
+                    if let Some(sym) = get_symbol(v) {
+                        if let Some(local) = func.lookup_local(sym) {
+                            let local_slot = local.slot;
+                            if local_slot != value_reg {
+                                func.emit_op(Opcode::Mov, local_slot, value_reg, 0);
+                            }
                         }
                     }
                 }

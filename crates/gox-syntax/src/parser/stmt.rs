@@ -297,14 +297,16 @@ impl<'a> Parser<'a> {
                     StmtKind::ShortVar(svd) if self.at(TokenKind::Range) => {
                         self.advance();
                         let expr = self.parse_expr()?;
-                        let (key, value) = self.idents_to_key_value(&svd.names);
+                        let exprs: Vec<Expr> = svd.names.iter().map(|ident| {
+                            self.make_expr(ExprKind::Ident(ident.clone()), ident.span)
+                        }).collect();
+                        let (key, value) = self.exprs_to_key_value(&exprs);
                         ForClause::Range { key, value, define: true, expr }
                     }
                     StmtKind::Assign(assign) if self.at(TokenKind::Range) => {
                         self.advance();
                         let expr = self.parse_expr()?;
-                        let names = self.exprs_to_idents(assign.lhs.clone())?;
-                        let (key, value) = self.idents_to_key_value(&names);
+                        let (key, value) = self.exprs_to_key_value(&assign.lhs);
                         ForClause::Range { key, value, define: false, expr }
                     }
                     _ => {
@@ -652,11 +654,11 @@ impl<'a> Parser<'a> {
         Ok(idents)
     }
 
-    fn idents_to_key_value(&self, idents: &[Ident]) -> (Option<Ident>, Option<Ident>) {
-        match idents.len() {
+    fn exprs_to_key_value(&self, exprs: &[Expr]) -> (Option<Expr>, Option<Expr>) {
+        match exprs.len() {
             0 => (None, None),
-            1 => (Some(idents[0].clone()), None),
-            _ => (Some(idents[0].clone()), Some(idents[1].clone())),
+            1 => (Some(exprs[0].clone()), None),
+            _ => (Some(exprs[0].clone()), Some(exprs[1].clone())),
         }
     }
 

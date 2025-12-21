@@ -487,10 +487,11 @@ impl<'a> AstPrinter<'a> {
                         self.write_indent();
                         write!(self.output, "range: ").unwrap();
                         if let Some(k) = key {
-                            write!(self.output, "{}", self.resolve_symbol(k.symbol)).unwrap();
+                            self.write_expr_inline(k);
                         }
                         if let Some(v) = value {
-                            write!(self.output, ", {}", self.resolve_symbol(v.symbol)).unwrap();
+                            write!(self.output, ", ").unwrap();
+                            self.write_expr_inline(v);
                         }
                         write!(self.output, " {} ", if *define { ":=" } else { "=" }).unwrap();
                         self.write_expr_inline(expr);

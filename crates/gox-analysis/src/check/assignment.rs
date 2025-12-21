@@ -166,7 +166,10 @@ impl Checker {
             return None;
         }
 
-        // Check if lhs is a blank identifier
+        let mut v: Option<ObjKey> = None;
+        let mut v_used = false;
+        
+        // determine if the lhs is a (possibly parenthesized) identifier.
         if let Some(ident) = self.expr_as_ident(lhs) {
             let name = self.resolve_ident(&ident);
             if name == "_" {
@@ -177,12 +180,34 @@ impl Checker {
                 } else {
                     None
                 };
+            } else {
+                // If the lhs is an identifier denoting a variable v, this assignment
+                // is not a 'use' of v. Remember current value of v.used and restore
+                // after evaluating the lhs via check.expr.
+                if let Some(okey) = self.lookup(name) {
+                    // It's ok to mark non-local variables, but ignore variables
+                    // from other packages to avoid potential race conditions with
+                    // dot-imported variables.
+                    if self.lobj(okey).entity_type().is_var() {
+                        v = Some(okey);
+                        if let crate::obj::EntityType::Var(prop) = self.lobj(okey).entity_type() {
+                            v_used = prop.used;
+                        }
+                    }
+                }
             }
         }
 
         // Evaluate lhs
         let mut z = Operand::new();
         self.expr(&mut z, lhs, fctx);
+        
+        // restore v.used
+        if let Some(okey) = v {
+            if let crate::obj::EntityType::Var(prop) = self.lobj_mut(okey).entity_type_mut() {
+                prop.used = v_used;
+            }
+        }
 
         if z.mode == OperandMode::Invalid || z.typ == Some(invalid_type) {
             return None;
@@ -266,6 +291,12 @@ impl Checker {
                 }
             }
         }
+        if let UnpackResult::CommaOk(e, types) = result {
+            if let Some(expr) = e {
+                let tuple_type = self.new_comma_ok_tuple(&types);
+                self.result.record_comma_ok_types(expr, types, tuple_type);
+            }
+        }
     }
 
     /// Assigns multiple values to multiple variables.
@@ -306,10 +337,17 @@ impl Checker {
                 }
             }
         }
+        if let UnpackResult::CommaOk(e, types) = result {
+            if let Some(expr) = e {
+                let tuple_type = self.new_comma_ok_tuple(&types);
+                self.result.record_comma_ok_types(expr, types, tuple_type);
+            }
+        }
     }
 
     /// Handles short variable declarations (:=).
     pub fn short_var_decl(&mut self, lhs: &[Expr], rhs: &[Expr], pos: Span, fctx: &mut FilesContext) {
+        let top = fctx.delayed_count();
         let scope_key = match self.octx.scope {
             Some(s) => s,
             None => return,
@@ -349,6 +387,9 @@ impl Checker {
         }
 
         self.init_vars(&lhs_vars, rhs, None, fctx);
+
+        // process function literals in rhs expressions before scope changes
+        fctx.process_delayed(top, self);
 
         // Declare new variables in scope
         if !new_vars.is_empty() {
@@ -490,7 +531,7 @@ impl Checker {
     }
 
     /// Extracts an identifier from an expression if possible.
-    fn expr_as_ident(&self, e: &Expr) -> Option<Ident> {
+    pub fn expr_as_ident(&self, e: &Expr) -> Option<Ident> {
         match &e.kind {
             gox_syntax::ast::ExprKind::Ident(ident) => Some(ident.clone()),
             gox_syntax::ast::ExprKind::Paren(inner) => self.expr_as_ident(inner),

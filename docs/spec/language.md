@@ -1019,7 +1019,7 @@ if err := doSomething(); err != nil {
 ForStmt        ::= "for" ForClause Block ;
 ForClause      ::= Expr | ForThreeClause | ForRangeClause ;
 ForThreeClause ::= SimpleStmt? ";" Expr? ";" SimpleStmt? ;
-ForRangeClause ::= ( IdentList ( ":=" | "=" ) )? "range" Expr ;
+ForRangeClause ::= ( ExprList ( ":=" | "=" ) )? "range" Expr ;
 ```
 
 **Parsing Note**: The parser distinguishes forms by the presence of `;` or `range` keyword.

@@ -581,6 +581,13 @@ impl Checker {
         self.tc_objs.new_t_tuple(vars)
     }
 
+    /// Creates a new comma-ok tuple type from the given types.
+    pub fn new_comma_ok_tuple(&mut self, types: &[TypeKey; 2]) -> TypeKey {
+        let var0 = self.tc_objs.new_var(0, None, "".to_string(), Some(types[0]));
+        let var1 = self.tc_objs.new_var(0, None, "".to_string(), Some(types[1]));
+        self.tc_objs.new_t_tuple(vec![var0, var1])
+    }
+
     /// Type-checks the type expression (or nil value) and returns the type, or None for nil.
     /// If e is neither a type nor nil, returns Invalid type.
     pub fn type_or_nil(&mut self, e: &Expr, fctx: &mut FilesContext) -> Option<TypeKey> {
