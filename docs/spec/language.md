@@ -2,37 +2,26 @@
 
 This document defines the syntax and semantics of the **GoX** programming language.
 
-GoX is a statically typed, Go-like language.
-
-## For Go Programmers
-
-**Most Go programs run directly on GoX** with minimal or no changes. If your code compiles, it behaves the same as Go.
-
-GoX aims to match the Go language specification as closely as possible, except for:
-
-- **No generics**: Use `interface{}` or code generation.
-- **No complex numbers**: No `complex*` types, imaginary literals, or `complex/real/imag` built-ins.
-- **Limited pointer types**: Only `*StructType` is supported (`*int`, `*[]T` not allowed). No pointer arithmetic.
-- **Some stdlib differences**: Check GoX stdlib for available packages.
+GoX is a statically typed, Go-like language. **Most Go programs run directly on GoX** with minimal or no changes.
 
 ---
 
 ## 1. Design Philosophy
 
+Go's appeal is **low ceremony**: it writes like a scripting language but ships like a compiled one. GoX doubles down on this strength—adding flexible execution modes (VM/JIT/AOT) and error handling sugar, while keeping the language simple. Target niche: where you might reach for Go, Python, or Lua.
+
 ### 1.1 Goals
 
-- Familiar syntax for Go programmers
-- Static, strong typing with local type inference
-- Simple memory model: **reference types** (heap-allocated, reference semantics) vs **value types** (copied on assignment)
-- Multiple backend targets (LLVM, WASM, VM)
+- **Scripting-language ergonomics**: Minimal boilerplate, quick to write, easy to read
+- **Flexible execution**: Run like a script (VM) or deploy like Go (JIT/AOT)—single binary, no dependencies
+- Static typing with local inference—types help, but don't get in the way
+- Simple memory model: **value types** (copied) vs **reference types** (heap-allocated)
 
-### 1.2 Non-Goals
+### 1.2 Differences from Go
 
-The following are explicitly out of scope:
-
-- Generics
-- Pointer arithmetic
-- Pointers to non-struct types (`*int`, `*[]T`, etc.)
+- **No generics**: Use `interface{}` or code generation
+- **No pointer arithmetic**: Pointers only for struct types (`*MyStruct`)
+- **Error handling sugar**: `?` operator, `fail`, and `errdefer` for cleaner error handling
 
 ---
 
