@@ -99,8 +99,10 @@ pub struct ExternDef {
 pub struct GlobalDef {
     pub name: String,
     pub slots: u16,
-    /// Runtime type ID for GC scanning.
-    pub type_id: u32,
+    /// ValueKind for GC scanning.
+    pub value_kind: u8,
+    /// Runtime type ID (for struct/interface).
+    pub type_id: u16,
 }
 
 /// Bytecode module.
@@ -129,11 +131,12 @@ impl Module {
     }
     
     /// Add a global variable and return its index.
-    pub fn add_global(&mut self, name: &str, type_id: u32, slots: u16) -> u32 {
+    pub fn add_global(&mut self, name: &str, value_kind: u8, type_id: u16, slots: u16) -> u32 {
         let idx = self.globals.len();
         self.globals.push(GlobalDef {
             name: name.to_string(),
             slots,
+            value_kind,
             type_id,
         });
         idx as u32
@@ -214,7 +217,8 @@ impl Module {
         for g in &self.globals {
             write_string(&mut buf, &g.name);
             write_u16(&mut buf, g.slots);
-            write_u32(&mut buf, g.type_id);
+            buf.push(g.value_kind);
+            write_u16(&mut buf, g.type_id);
         }
         
         // Externs section
@@ -277,8 +281,9 @@ impl Module {
         for _ in 0..global_count {
             let g_name = read_string(&mut cursor)?;
             let slots = read_u16(&mut cursor)?;
-            let type_id = read_u32(&mut cursor)?;
-            globals.push(GlobalDef { name: g_name, slots, type_id });
+            let value_kind = read_u8(&mut cursor)?;
+            let type_id = read_u16(&mut cursor)?;
+            globals.push(GlobalDef { name: g_name, slots, value_kind, type_id });
         }
         
         // Externs section
@@ -379,7 +384,8 @@ fn write_constant(buf: &mut Vec<u8>, c: &Constant) {
 }
 
 fn write_type_meta(buf: &mut Vec<u8>, ty: &TypeMeta) {
-    write_u32(buf, ty.type_id);
+    buf.push(ty.value_kind as u8);
+    write_u16(buf, ty.type_id);
     write_u16(buf, ty.size_slots as u16);
     write_string(buf, &ty.name);
     
@@ -486,7 +492,8 @@ fn read_constant(cursor: &mut Cursor<&[u8]>) -> Result<Constant, BytecodeError> 
 
 #[cfg(feature = "std")]
 fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError> {
-    let id = read_u32(cursor)?;
+    let value_kind = gox_common_core::ValueKind::from_u8(read_u8(cursor)?);
+    let type_id = read_u16(cursor)?;
     let size_slots = read_u16(cursor)? as usize;
     let name = read_string(cursor)?;
     
@@ -505,7 +512,8 @@ fn read_type_meta(cursor: &mut Cursor<&[u8]>) -> Result<TypeMeta, BytecodeError>
     let value_type = read_u32(cursor)?;
     
     Ok(TypeMeta {
-        type_id: id,
+        value_kind,
+        type_id,
         size_slots,
         size_bytes: size_slots * 8,
         slot_types,

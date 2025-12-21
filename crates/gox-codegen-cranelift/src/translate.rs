@@ -1187,51 +1187,68 @@ impl FunctionTranslator {
             // ==================== Interface ====================
             Opcode::InitInterface => {
                 // a=dest (2 slots), b=iface_type_lo, c=iface_type_hi
-                // Initialize interface with iface_type in high 32 bits, value_type=0, data=0
-                // slot0 = (iface_type << 32) | 0
+                // Initialize interface with iface_type, value_kind=Nil, value_type_id=0
+                // Layout: iface_type_id at bits 48-63, value_type_id at bits 16-31, value_kind at bits 8-15
                 let iface_type_id = (inst.b as u32) | ((inst.c as u32) << 16);
-                let iface_type = builder.ins().iconst(I64, iface_type_id as i64);
-                let slot0 = builder.ins().ishl_imm(iface_type, 32);
+                // slot0 = (iface_type_id << 48) | 0  (value_kind=Nil=0)
+                let slot0 = (iface_type_id as u64) << 48;
+                let slot0_val = builder.ins().iconst(I64, slot0 as i64);
                 let zero = builder.ins().iconst(I64, 0);
-                builder.def_var(self.variables[inst.a as usize], slot0);
+                builder.def_var(self.variables[inst.a as usize], slot0_val);
                 builder.def_var(self.variables[(inst.a + 1) as usize], zero);
             }
 
             Opcode::BoxInterface => {
-                // a=dest (2 slots), b=value_type, c=value
-                // Preserve iface_type (high 32 bits), update value_type (low 32 bits) and data
+                // a=dest (2 slots), b=value_kind, c=value, flags=value_type_id
+                // Preserve iface_type_id (bits 48-63), update value_type_id (bits 16-31) and value_kind (bits 8-15)
+                // New layout: iface_type_id(16) | unused(16) || value_type_id(16) | value_kind(8) | flags(8)
                 let old_slot0 = builder.use_var(self.variables[inst.a as usize]);
-                let mask = builder.ins().iconst(I64, 0xFFFF_FFFF_0000_0000u64 as i64);
+                // Mask to keep only iface_type_id (bits 48-63)
+                let mask = builder.ins().iconst(I64, 0xFFFF_0000_0000_0000u64 as i64);
                 let iface_type_part = builder.ins().band(old_slot0, mask);
-                let value_type = builder.ins().iconst(I64, inst.b as i64);
-                let slot0 = builder.ins().bor(iface_type_part, value_type);
+                // Pack value_type_id and value_kind into low 32 bits
+                let value_type_id = inst.flags as u64;
+                let value_kind = inst.b as u64;
+                let low_part = (value_type_id << 16) | (value_kind << 8);
+                let low_val = builder.ins().iconst(I64, low_part as i64);
+                let slot0 = builder.ins().bor(iface_type_part, low_val);
                 let val = builder.use_var(self.variables[inst.c as usize]);
                 builder.def_var(self.variables[inst.a as usize], slot0);
                 builder.def_var(self.variables[(inst.a + 1) as usize], val);
             }
 
             Opcode::UnboxInterface => {
-                // a=dest, b=interface (2 slots), c=type_reg
-                // Extract type_id and data from interface slots
-                let type_id = builder.use_var(self.variables[inst.b as usize]);
+                // a=dest, b=interface (2 slots), c=value_kind_reg
+                // Extract value_kind from slot0 (bits 8-15), data from slot1
+                let slot0 = builder.use_var(self.variables[inst.b as usize]);
                 let data = builder.use_var(self.variables[(inst.b + 1) as usize]);
+                // Extract value_kind: (slot0 >> 8) & 0xFF
+                let shifted = builder.ins().ushr_imm(slot0, 8);
+                let mask = builder.ins().iconst(I64, 0xFF);
+                let value_kind = builder.ins().band(shifted, mask);
                 builder.def_var(self.variables[inst.a as usize], data);
-                builder.def_var(self.variables[inst.c as usize], type_id);
+                builder.def_var(self.variables[inst.c as usize], value_kind);
             }
 
             Opcode::TypeAssert => {
-                // a=dest, b=interface (2 slots), c=expected_type, flags=ok_reg
-                let actual_type = builder.use_var(self.variables[inst.b as usize]);
+                // a=dest, b=interface (2 slots), c=expected_kind, flags=ok_reg
+                // Extract value_kind from slot0 (bits 8-15) and compare with expected_kind
+                let slot0 = builder.use_var(self.variables[inst.b as usize]);
                 let data = builder.use_var(self.variables[(inst.b + 1) as usize]);
-                let expected_type = builder.ins().iconst(I64, inst.c as i64);
                 
-                // Compare types
-                let types_match = builder.ins().icmp(IntCC::Equal, actual_type, expected_type);
-                let ok = builder.ins().uextend(I64, types_match);
+                // Extract value_kind: (slot0 >> 8) & 0xFF
+                let shifted = builder.ins().ushr_imm(slot0, 8);
+                let mask = builder.ins().iconst(I64, 0xFF);
+                let actual_kind = builder.ins().band(shifted, mask);
+                let expected_kind = builder.ins().iconst(I64, inst.c as i64);
+                
+                // Compare value_kind
+                let kinds_match = builder.ins().icmp(IntCC::Equal, actual_kind, expected_kind);
+                let ok = builder.ins().uextend(I64, kinds_match);
                 
                 // Select data or 0 based on match
                 let zero = builder.ins().iconst(I64, 0);
-                let result = builder.ins().select(types_match, data, zero);
+                let result = builder.ins().select(kinds_match, data, zero);
                 
                 builder.def_var(self.variables[inst.a as usize], result);
                 builder.def_var(self.variables[inst.flags as usize], ok);

@@ -5,7 +5,8 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::gc::{Gc, GcRef, TypeId};
+use crate::gc::{Gc, GcRef};
+use gox_common_core::ValueKind;
 
 #[cfg(feature = "std")]
 use indexmap::IndexMap;
@@ -22,13 +23,10 @@ pub mod string {
     const LEN_SLOT: usize = 2;
     pub const SIZE_SLOTS: usize = 3;
     
-    /// Array type_id (ValueKind::Array = 20)
-    const ARRAY_TYPE_ID: TypeId = 20;
-    
-    pub fn create(gc: &mut Gc, type_id: TypeId, bytes: &[u8]) -> GcRef {
-        // Create byte array (use Array type_id, not String)
+    pub fn create(gc: &mut Gc, bytes: &[u8]) -> GcRef {
+        // Create byte array
         let array_slots = (bytes.len() + 7) / 8;
-        let array = gc.alloc(ARRAY_TYPE_ID, 1 + array_slots); // len + data
+        let array = gc.alloc(ValueKind::Array as u8, 0, 1 + array_slots); // len + data
         Gc::write_slot(array, 0, bytes.len() as u64);
         let data_ptr = unsafe { Gc::get_data_ptr(array).add(1) as *mut u8 };
         unsafe {
@@ -36,7 +34,7 @@ pub mod string {
         }
         
         // Create string object
-        let str_obj = gc.alloc(type_id, SIZE_SLOTS);
+        let str_obj = gc.alloc(ValueKind::String as u8, 0, SIZE_SLOTS);
         Gc::write_slot(str_obj, ARRAY_SLOT, array as u64);
         Gc::write_slot(str_obj, START_SLOT, 0);
         Gc::write_slot(str_obj, LEN_SLOT, bytes.len() as u64);
@@ -44,8 +42,8 @@ pub mod string {
         str_obj
     }
     
-    pub fn from_rust_str(gc: &mut Gc, type_id: TypeId, s: &str) -> GcRef {
-        create(gc, type_id, s.as_bytes())
+    pub fn from_rust_str(gc: &mut Gc, s: &str) -> GcRef {
+        create(gc, s.as_bytes())
     }
     
     pub fn len(str_ref: GcRef) -> usize {
@@ -69,13 +67,13 @@ pub mod string {
         as_bytes(str_ref)[idx]
     }
     
-    pub fn concat(gc: &mut Gc, type_id: TypeId, a: GcRef, b: GcRef) -> GcRef {
+    pub fn concat(gc: &mut Gc, a: GcRef, b: GcRef) -> GcRef {
         let a_bytes = as_bytes(a);
         let b_bytes = as_bytes(b);
         let mut combined = Vec::with_capacity(a_bytes.len() + b_bytes.len());
         combined.extend_from_slice(a_bytes);
         combined.extend_from_slice(b_bytes);
-        create(gc, type_id, &combined)
+        create(gc, &combined)
     }
     
     pub fn array_ref(str_ref: GcRef) -> GcRef {
@@ -83,9 +81,9 @@ pub mod string {
     }
     
     /// Create a substring (string slice).
-    pub fn slice_of(gc: &mut Gc, type_id: TypeId, str_ref: GcRef, start: usize, end: usize) -> GcRef {
+    pub fn slice_of(gc: &mut Gc, str_ref: GcRef, start: usize, end: usize) -> GcRef {
         let bytes = as_bytes(str_ref);
-        create(gc, type_id, &bytes[start..end])
+        create(gc, &bytes[start..end])
     }
     
     pub fn eq(a: GcRef, b: GcRef) -> bool {
@@ -126,10 +124,11 @@ pub mod string {
 pub mod array {
     use super::*;
     
-    const ELEM_TYPE_SLOT: usize = 0;
-    const ELEM_BYTES_SLOT: usize = 1;  // bytes per element: 1, 2, 4, 8, or 8*n for structs
-    const LEN_SLOT: usize = 2;
-    const DATA_START: usize = 3;
+    const ELEM_KIND_SLOT: usize = 0;    // ValueKind of elements
+    const ELEM_TYPE_ID_SLOT: usize = 1; // RuntimeTypeId (for struct elements)
+    const ELEM_BYTES_SLOT: usize = 2;   // bytes per element: 1, 2, 4, 8, or 8*n for structs
+    const LEN_SLOT: usize = 3;
+    const DATA_START: usize = 4;
     
     /// Calculate slots needed for `len` elements of `elem_bytes` size.
     #[inline]
@@ -143,10 +142,11 @@ pub mod array {
         }
     }
     
-    pub fn create(gc: &mut Gc, type_id: TypeId, elem_type: TypeId, elem_bytes: usize, len: usize) -> GcRef {
+    pub fn create(gc: &mut Gc, elem_kind: u8, elem_type_id: u16, elem_bytes: usize, len: usize) -> GcRef {
         let total_slots = DATA_START + data_slots(len, elem_bytes);
-        let arr = gc.alloc(type_id, total_slots);
-        Gc::write_slot(arr, ELEM_TYPE_SLOT, elem_type as u64);
+        let arr = gc.alloc(ValueKind::Array as u8, 0, total_slots);
+        Gc::write_slot(arr, ELEM_KIND_SLOT, elem_kind as u64);
+        Gc::write_slot(arr, ELEM_TYPE_ID_SLOT, elem_type_id as u64);
         Gc::write_slot(arr, ELEM_BYTES_SLOT, elem_bytes as u64);
         Gc::write_slot(arr, LEN_SLOT, len as u64);
         arr
@@ -167,8 +167,12 @@ pub mod array {
         if bytes <= 8 { 1 } else { bytes / 8 }
     }
     
-    pub fn elem_type(arr: GcRef) -> TypeId {
-        Gc::read_slot(arr, ELEM_TYPE_SLOT) as TypeId
+    pub fn elem_kind(arr: GcRef) -> ValueKind {
+        ValueKind::from_u8(Gc::read_slot(arr, ELEM_KIND_SLOT) as u8)
+    }
+    
+    pub fn elem_type_id(arr: GcRef) -> u16 {
+        Gc::read_slot(arr, ELEM_TYPE_ID_SLOT) as u16
     }
     
     /// Get element at index. Supports packed access for 1/2/4 byte elements.
@@ -303,8 +307,8 @@ pub mod slice {
     const CAP_SLOT: usize = 3;
     pub const SIZE_SLOTS: usize = 4;
     
-    pub fn create(gc: &mut Gc, type_id: TypeId, array: GcRef, start: usize, len: usize, cap: usize) -> GcRef {
-        let slice = gc.alloc(type_id, SIZE_SLOTS);
+    pub fn create(gc: &mut Gc, array: GcRef, start: usize, len: usize, cap: usize) -> GcRef {
+        let slice = gc.alloc(ValueKind::Slice as u8, 0, SIZE_SLOTS);
         Gc::write_slot(slice, ARRAY_SLOT, array as u64);
         Gc::write_slot(slice, START_SLOT, start as u64);
         Gc::write_slot(slice, LEN_SLOT, len as u64);
@@ -312,9 +316,9 @@ pub mod slice {
         slice
     }
     
-    pub fn from_array(gc: &mut Gc, type_id: TypeId, array: GcRef) -> GcRef {
+    pub fn from_array(gc: &mut Gc, array: GcRef) -> GcRef {
         let len = super::array::len(array);
-        create(gc, type_id, array, 0, len, len)
+        create(gc, array, 0, len, len)
     }
     
     pub fn array_ref(slice: GcRef) -> GcRef {
@@ -337,8 +341,12 @@ pub mod slice {
         super::array::elem_size(array_ref(slice))
     }
     
-    pub fn elem_type(slice: GcRef) -> TypeId {
-        super::array::elem_type(array_ref(slice))
+    pub fn elem_kind(slice: GcRef) -> ValueKind {
+        super::array::elem_kind(array_ref(slice))
+    }
+    
+    pub fn elem_type_id(slice: GcRef) -> u16 {
+        super::array::elem_type_id(array_ref(slice))
     }
     
     pub fn get(slice: GcRef, idx: usize) -> u64 {
@@ -361,7 +369,7 @@ pub mod slice {
         super::array::set_n(array_ref(slice), start(slice) + idx, src);
     }
     
-    pub fn slice_of(gc: &mut Gc, type_id: TypeId, slice: GcRef, new_start: usize, new_end: usize) -> GcRef {
+    pub fn slice_of(gc: &mut Gc, slice: GcRef, new_start: usize, new_end: usize) -> GcRef {
         let arr = array_ref(slice);
         let base = start(slice);
         let old_cap = cap(slice);
@@ -370,23 +378,22 @@ pub mod slice {
         debug_assert!(new_end <= len(slice));
         
         let new_cap = old_cap - new_start;
-        create(gc, type_id, arr, base + new_start, new_end - new_start, new_cap)
+        create(gc, arr, base + new_start, new_end - new_start, new_cap)
     }
     
-    pub fn append(gc: &mut Gc, type_id: TypeId, arr_type_id: TypeId, slice: GcRef, val: u64) -> GcRef {
+    pub fn append(gc: &mut Gc, new_elem_kind: u8, new_elem_type_id: u16, new_elem_bytes: usize, slice: GcRef, val: u64) -> GcRef {
         // Handle nil slice
         if slice.is_null() {
-            let elem_sz = 1;
-            let elem_ty = 0;
-            let new_arr = super::array::create(gc, arr_type_id, elem_ty, elem_sz, 4);
+            let new_arr = super::array::create(gc, new_elem_kind, new_elem_type_id, new_elem_bytes, 4);
             super::array::set(new_arr, 0, val);
-            return create(gc, type_id, new_arr, 0, 1, 4);
+            return create(gc, new_arr, 0, 1, 4);
         }
         
         let current_len = len(slice);
         let current_cap = cap(slice);
-        let elem_sz = elem_size(slice);
-        let elem_ty = elem_type(slice);
+        let arr_elem_kind = elem_kind(slice) as u8;
+        let arr_elem_type_id = elem_type_id(slice);
+        let arr_elem_bytes = super::array::elem_bytes(array_ref(slice));
         
         if current_len < current_cap {
             // Has capacity, just extend
@@ -397,7 +404,7 @@ pub mod slice {
         } else {
             // Need to grow
             let new_cap = if current_cap == 0 { 4 } else { current_cap * 2 };
-            let new_arr = super::array::create(gc, arr_type_id, elem_ty, elem_sz, new_cap);
+            let new_arr = super::array::create(gc, arr_elem_kind, arr_elem_type_id, arr_elem_bytes, new_cap);
             
             // Copy old data
             let old_arr = array_ref(slice);
@@ -410,7 +417,7 @@ pub mod slice {
             // Add new element
             super::array::set(new_arr, current_len, val);
             
-            create(gc, type_id, new_arr, 0, current_len + 1, new_cap)
+            create(gc, new_arr, 0, current_len + 1, new_cap)
         }
     }
 }
@@ -432,8 +439,8 @@ pub unsafe extern "C" fn gox_string_index(str_ref: GcRef, idx: usize) -> u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn gox_string_concat(gc: *mut Gc, type_id: TypeId, a: GcRef, b: GcRef) -> GcRef {
-    string::concat(&mut *gc, type_id, a, b)
+pub unsafe extern "C" fn gox_string_concat(gc: *mut Gc, a: GcRef, b: GcRef) -> GcRef {
+    string::concat(&mut *gc, a, b)
 }
 
 #[no_mangle]
@@ -471,12 +478,12 @@ pub unsafe extern "C" fn gox_string_ge(a: GcRef, b: GcRef) -> bool {
 #[no_mangle]
 pub unsafe extern "C" fn gox_array_create(
     gc: *mut Gc, 
-    type_id: TypeId, 
-    elem_type: TypeId, 
-    elem_size: usize, 
+    elem_kind: u8, 
+    elem_type_id: u16, 
+    elem_bytes: usize, 
     len: usize
 ) -> GcRef {
-    array::create(&mut *gc, type_id, elem_type, elem_size, len)
+    array::create(&mut *gc, elem_kind, elem_type_id, elem_bytes, len)
 }
 
 #[no_mangle]
@@ -499,13 +506,12 @@ pub unsafe extern "C" fn gox_array_set(arr: GcRef, idx: usize, val: u64) {
 #[no_mangle]
 pub unsafe extern "C" fn gox_slice_create(
     gc: *mut Gc,
-    type_id: TypeId,
     array: GcRef,
     start: usize,
     len: usize,
     cap: usize
 ) -> GcRef {
-    slice::create(&mut *gc, type_id, array, start, len, cap)
+    slice::create(&mut *gc, array, start, len, cap)
 }
 
 #[no_mangle]
@@ -537,23 +543,23 @@ pub unsafe extern "C" fn gox_slice_set(slice_ref: GcRef, idx: usize, val: u64) {
 #[no_mangle]
 pub unsafe extern "C" fn gox_slice_append(
     gc: *mut Gc,
-    type_id: TypeId,
-    arr_type_id: TypeId,
+    new_elem_kind: u8,
+    new_elem_type_id: u16,
+    new_elem_bytes: usize,
     slice_ref: GcRef,
     val: u64
 ) -> GcRef {
-    slice::append(&mut *gc, type_id, arr_type_id, slice_ref, val)
+    slice::append(&mut *gc, new_elem_kind, new_elem_type_id, new_elem_bytes, slice_ref, val)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn gox_slice_slice(
     gc: *mut Gc,
-    type_id: TypeId,
     slice_ref: GcRef,
     start: usize,
     end: usize
 ) -> GcRef {
-    slice::slice_of(&mut *gc, type_id, slice_ref, start, end)
+    slice::slice_of(&mut *gc, slice_ref, start, end)
 }
 
 // =============================================================================
@@ -588,18 +594,18 @@ pub mod map {
     use super::*;
     
     const MAP_PTR_SLOT: usize = 0;
-    const KEY_TYPE_SLOT: usize = 1;
-    const VAL_TYPE_SLOT: usize = 2;
+    const KEY_KIND_SLOT: usize = 1;
+    const VAL_KIND_SLOT: usize = 2;
     pub const SIZE_SLOTS: usize = 3;
     
     type MapInner = IndexMap<u64, u64>;
     
-    pub fn create(gc: &mut Gc, type_id: TypeId, key_type: TypeId, val_type: TypeId) -> GcRef {
-        let map_obj = gc.alloc(type_id, SIZE_SLOTS);
+    pub fn create(gc: &mut Gc, key_kind: u8, val_kind: u8) -> GcRef {
+        let map_obj = gc.alloc(ValueKind::Map as u8, 0, SIZE_SLOTS);
         let inner = Box::new(MapInner::new());
         Gc::write_slot(map_obj, MAP_PTR_SLOT, Box::into_raw(inner) as u64);
-        Gc::write_slot(map_obj, KEY_TYPE_SLOT, key_type as u64);
-        Gc::write_slot(map_obj, VAL_TYPE_SLOT, val_type as u64);
+        Gc::write_slot(map_obj, KEY_KIND_SLOT, key_kind as u64);
+        Gc::write_slot(map_obj, VAL_KIND_SLOT, val_kind as u64);
         map_obj
     }
     
@@ -640,12 +646,12 @@ pub mod map {
         get_inner(map).get_index(idx).map(|(&k, &v)| (k, v))
     }
     
-    pub fn key_type(map: GcRef) -> TypeId {
-        Gc::read_slot(map, KEY_TYPE_SLOT) as TypeId
+    pub fn key_kind(map: GcRef) -> ValueKind {
+        ValueKind::from_u8(Gc::read_slot(map, KEY_KIND_SLOT) as u8)
     }
     
-    pub fn val_type(map: GcRef) -> TypeId {
-        Gc::read_slot(map, VAL_TYPE_SLOT) as TypeId
+    pub fn val_kind(map: GcRef) -> ValueKind {
+        ValueKind::from_u8(Gc::read_slot(map, VAL_KIND_SLOT) as u8)
     }
     
     /// Drop the internal map (must be called before GC frees the object).
@@ -664,11 +670,10 @@ pub mod map {
 #[no_mangle]
 pub unsafe extern "C" fn gox_map_create(
     gc: *mut Gc,
-    type_id: TypeId,
-    key_type: TypeId,
-    val_type: TypeId
+    key_kind: u8,
+    val_kind: u8
 ) -> GcRef {
-    map::create(&mut *gc, type_id, key_type, val_type)
+    map::create(&mut *gc, key_kind, val_kind)
 }
 
 #[cfg(feature = "std")]
@@ -718,9 +723,9 @@ pub mod closure {
     const UPVAL_COUNT_SLOT: usize = 1;
     const UPVAL_START: usize = 2;
     
-    pub fn create(gc: &mut Gc, type_id: TypeId, func_id: u32, upvalue_count: usize) -> GcRef {
+    pub fn create(gc: &mut Gc, func_id: u32, upvalue_count: usize) -> GcRef {
         let total_slots = UPVAL_START + upvalue_count;
-        let closure = gc.alloc(type_id, total_slots);
+        let closure = gc.alloc(ValueKind::Closure as u8, 0, total_slots);
         Gc::write_slot(closure, FUNC_ID_SLOT, func_id as u64);
         Gc::write_slot(closure, UPVAL_COUNT_SLOT, upvalue_count as u64);
         closure
@@ -746,8 +751,8 @@ pub mod closure {
     
     // === Upval Box (for reference capture semantics) ===
     
-    pub fn create_upval_box(gc: &mut Gc, type_id: TypeId) -> GcRef {
-        let uv = gc.alloc(type_id, 1);
+    pub fn create_upval_box(gc: &mut Gc) -> GcRef {
+        let uv = gc.alloc(ValueKind::Closure as u8, 0, 1);
         Gc::write_slot(uv, 0, 0);
         uv
     }
@@ -766,11 +771,10 @@ pub mod closure {
 #[no_mangle]
 pub unsafe extern "C" fn gox_closure_create(
     gc: *mut Gc,
-    type_id: TypeId,
     func_id: u32,
     upvalue_count: usize
 ) -> GcRef {
-    closure::create(&mut *gc, type_id, func_id, upvalue_count)
+    closure::create(&mut *gc, func_id, upvalue_count)
 }
 
 #[no_mangle]
@@ -794,8 +798,8 @@ pub unsafe extern "C" fn gox_closure_set_upvalue(closure: GcRef, idx: usize, val
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn gox_upval_box_create(gc: *mut Gc, type_id: TypeId) -> GcRef {
-    closure::create_upval_box(&mut *gc, type_id)
+pub unsafe extern "C" fn gox_upval_box_create(gc: *mut Gc) -> GcRef {
+    closure::create_upval_box(&mut *gc)
 }
 
 #[no_mangle]
@@ -817,35 +821,38 @@ pub mod interface {
     
     pub const SIZE_SLOTS: usize = 2;
     
-    /// Pack iface_type and value_type into slot0.
-    /// slot0 = (iface_type << 32) | value_type
-    pub fn pack_types(iface_type: u32, value_type: u32) -> u64 {
-        ((iface_type as u64) << 32) | (value_type as u64)
+    /// Pack interface slot0.
+    /// Layout (64 bits):
+    ///   High 32: iface_type_id (16) | unused (16)
+    ///   Low 32:  value_type_id (16) | value_kind (8) | flags (8)
+    /// This layout keeps vkind+vid in low 32 bits for efficient 32-bit access.
+    pub fn pack_slot0(iface_type_id: u16, value_type_id: u16, value_kind: u8) -> u64 {
+        ((iface_type_id as u64) << 48) |   // high word, bits 48-63
+        ((value_type_id as u64) << 16) |   // low word, bits 16-31
+        ((value_kind as u64) << 8)         // low word, bits 8-15
     }
     
-    /// Unpack iface_type from slot0 (high 32 bits).
-    pub fn unpack_iface_type(slot0: u64) -> u32 {
-        (slot0 >> 32) as u32
+    /// Unpack iface_type_id from slot0 (high word).
+    #[inline]
+    pub fn unpack_iface_type_id(slot0: u64) -> u16 {
+        (slot0 >> 48) as u16
     }
     
-    /// Unpack value_type from slot0 (low 32 bits).
-    pub fn unpack_value_type(slot0: u64) -> u32 {
-        slot0 as u32
+    /// Unpack value_type_id from slot0 (low word, bits 16-31).
+    #[inline]
+    pub fn unpack_value_type_id(slot0: u64) -> u16 {
+        (slot0 >> 16) as u16
     }
     
-    /// Update value_type in slot0, preserving iface_type.
-    pub fn update_value_type(slot0: u64, value_type: u32) -> u64 {
-        (slot0 & 0xFFFF_FFFF_0000_0000) | (value_type as u64)
+    /// Unpack value_kind from slot0 (low word, bits 8-15).
+    #[inline]
+    pub fn unpack_value_kind(slot0: u64) -> ValueKind {
+        ValueKind::from_u8((slot0 >> 8) as u8)
     }
     
-    /// Box a value into interface (legacy, for backward compatibility).
-    pub fn box_value(type_id: TypeId, data: u64) -> (u64, u64) {
-        (type_id as u64, data)
-    }
-    
-    /// Unbox type (returns value_type, low 32 bits).
-    pub fn unbox_type(slot0: u64) -> TypeId {
-        unpack_value_type(slot0)
+    /// Box a value into interface.
+    pub fn box_value(iface_type_id: u16, value_type_id: u16, value_kind: u8, data: u64) -> (u64, u64) {
+        (pack_slot0(iface_type_id, value_type_id, value_kind), data)
     }
     
     pub fn unbox_data(slot1: u64) -> u64 {
@@ -853,16 +860,21 @@ pub mod interface {
     }
     
     pub fn is_nil(slot0: u64, _slot1: u64) -> bool {
-        // nil interface: value_type (low 32 bits) == 0
-        unpack_value_type(slot0) == 0
+        // nil interface: value_kind == Nil
+        unpack_value_kind(slot0) == ValueKind::Nil
     }
 }
 
 // --- Interface C ABI ---
 
 #[no_mangle]
-pub unsafe extern "C" fn gox_interface_unbox_type(slot0: u64) -> TypeId {
-    interface::unbox_type(slot0)
+pub unsafe extern "C" fn gox_interface_unbox_value_kind(slot0: u64) -> u8 {
+    interface::unpack_value_kind(slot0) as u8
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn gox_interface_unbox_value_type_id(slot0: u64) -> u16 {
+    interface::unpack_value_type_id(slot0)
 }
 
 #[no_mangle]
@@ -1029,11 +1041,11 @@ pub mod channel {
     // =========================================================================
     
     /// Create a channel GC object.
-    pub fn create(gc: &mut Gc, type_id: TypeId, elem_type: TypeId, capacity: usize) -> GcRef {
-        let chan = gc.alloc(type_id, SIZE_SLOTS);
+    pub fn create(gc: &mut Gc, elem_kind: u8, capacity: usize) -> GcRef {
+        let chan = gc.alloc(ValueKind::Channel as u8, 0, SIZE_SLOTS);
         let state = Box::new(ChannelState::new(capacity));
         Gc::write_slot(chan, CHAN_PTR_SLOT, Box::into_raw(state) as u64);
-        Gc::write_slot(chan, ELEM_TYPE_SLOT, elem_type as u64);
+        Gc::write_slot(chan, ELEM_TYPE_SLOT, elem_kind as u64);
         Gc::write_slot(chan, CAP_SLOT, capacity as u64);
         chan
     }
@@ -1044,9 +1056,9 @@ pub mod channel {
         unsafe { &mut *ptr }
     }
     
-    /// Get element type.
-    pub fn elem_type(chan: GcRef) -> TypeId {
-        Gc::read_slot(chan, ELEM_TYPE_SLOT) as TypeId
+    /// Get element kind.
+    pub fn elem_kind(chan: GcRef) -> ValueKind {
+        ValueKind::from_u8(Gc::read_slot(chan, ELEM_TYPE_SLOT) as u8)
     }
     
     /// Get capacity.

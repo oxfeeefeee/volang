@@ -348,8 +348,8 @@ fn compile_builtin_call(
             for arg in args {
                 let src = compile_expr(arg, ctx, func, info)?;
                 let ty = info.expr_type(arg);
-                let type_id = ty.map(|t| info.runtime_type_id(t)).unwrap_or(0);
-                func.emit_op(Opcode::DebugPrint, src, type_id as u16, 0);
+                let vk = ty.map(|t| info.value_kind(t) as u8).unwrap_or(0);
+                func.emit_op(Opcode::DebugPrint, src, vk as u16, 0);
             }
             let dst = func.alloc_temp(1);
             func.emit_op(Opcode::LoadNil, dst, 0, 0);
@@ -397,16 +397,16 @@ fn compile_builtin_call(
             match result_ty {
                 Some(Type::Slice(s)) => {
                     let elem = info.query.slice_elem(s);
-                    let elem_type_id = info.runtime_type_id(elem);
-                    func.emit_with_flags(Opcode::SliceNew, elem_type_id as u8, dst, size_reg, cap_reg);
+                    let elem_vk = info.value_kind(elem) as u8;
+                    func.emit_with_flags(Opcode::SliceNew, elem_vk, dst, size_reg, cap_reg);
                 }
                 Some(Type::Map(_)) => {
                     func.emit_op(Opcode::MapNew, dst, 0, 0);
                 }
                 Some(Type::Chan(c)) => {
                     let elem = info.query.chan_elem(c);
-                    let elem_type_id = info.runtime_type_id(elem);
-                    func.emit_op(Opcode::ChanNew, dst, elem_type_id as u16, size_reg);
+                    let elem_vk = info.value_kind(elem) as u8;
+                    func.emit_op(Opcode::ChanNew, dst, elem_vk as u16, size_reg);
                 }
                 _ => {
                     func.emit_op(Opcode::SliceNew, dst, size_reg, cap_reg);
@@ -419,14 +419,14 @@ fn compile_builtin_call(
             let elem_val = compile_expr(&args[1], ctx, func, info)?;
             let dst = func.alloc_temp(1);
             let ty = info.expr_type(&args[0]);
-            let elem_type_id = match ty {
+            let elem_vk = match ty {
                 Some(Type::Slice(s)) => {
                     let elem = info.query.slice_elem(s);
-                    info.runtime_type_id(elem)
+                    info.value_kind(elem) as u8
                 }
                 _ => 0,
             };
-            func.emit_with_flags(Opcode::SliceAppend, elem_type_id as u8, dst, slice, elem_val);
+            func.emit_with_flags(Opcode::SliceAppend, elem_vk, dst, slice, elem_val);
             Ok(dst)
         }
         Builtin::Close => {
@@ -546,10 +546,10 @@ fn compile_composite_lit(
         Some(Type::Struct(s)) => {
             // Struct literal: S{a, b, c} or S{x: a, y: b}
             let field_count = s.fields().len() as u16;
-            let type_key = info.expr_type_key(expr);
-            let type_id = ctx.runtime_type_id(lit_type.unwrap(), type_key);
-            let type_id_lo = (type_id & 0xFFFF) as u16;
-            let type_id_hi = ((type_id >> 16) & 0xFFFF) as u16;
+            let type_key = info.expr_type_key(expr).expect("struct literal must have type_key");
+            let type_id = ctx.type_id_for_struct(type_key);
+            let type_id_lo = type_id;
+            let type_id_hi = 0u16;
             let dst = func.alloc_temp(1);
             // Alloc: a=dest, b=type_id_lo, c=type_id_hi, flags=field_count
             func.emit_with_flags(Opcode::Alloc, field_count as u8, dst, type_id_lo, type_id_hi);
@@ -566,12 +566,12 @@ fn compile_composite_lit(
         Some(Type::Slice(slice_info)) => {
             // Slice literal: []int{1, 2, 3}
             let elem_type = info.query.get_type(slice_info.elem());
-            let elem_type_id = info.runtime_type_id(elem_type);
+            let elem_vk = info.value_kind(elem_type) as u8;
             let len = elems.len();
             
             // Create array first
             let arr = func.alloc_temp(1);
-            func.emit_op(Opcode::ArrayNew, arr, elem_type_id as u16, len as u16);
+            func.emit_op(Opcode::ArrayNew, arr, elem_vk as u16, len as u16);
             
             // Set each element
             for (i, elem) in elems.iter().enumerate() {
@@ -581,9 +581,8 @@ fn compile_composite_lit(
                 func.emit_op(Opcode::ArraySet, arr, idx, val);
             }
             
-            // Create slice from array
+            // Create slice from array (start=0, len=len)
             let dst = func.alloc_temp(1);
-            func.emit_op(Opcode::SliceNew, dst, arr, 0);
             func.emit_with_flags(Opcode::SliceNew, len as u8, dst, arr, 0);
             
             Ok(dst)
@@ -591,11 +590,11 @@ fn compile_composite_lit(
         Some(Type::Array(arr_info)) => {
             // Array literal: [3]int{1, 2, 3}
             let elem_type = info.query.get_type(arr_info.elem());
-            let elem_type_id = info.runtime_type_id(elem_type);
+            let elem_vk = info.value_kind(elem_type) as u8;
             let len = arr_info.len().unwrap_or(elems.len() as u64) as u16;
             
             let dst = func.alloc_temp(1);
-            func.emit_op(Opcode::ArrayNew, dst, elem_type_id as u16, len);
+            func.emit_op(Opcode::ArrayNew, dst, elem_vk as u16, len);
             
             // Set each element
             for (i, elem) in elems.iter().enumerate() {

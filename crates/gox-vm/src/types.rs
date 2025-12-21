@@ -2,7 +2,7 @@
 
 use alloc::{string::{String, ToString}, vec, vec::Vec};
 use hashbrown::HashMap;
-use gox_common_core::{RuntimeTypeId, SlotType};
+use gox_common_core::{RuntimeTypeId, SlotType, ValueKind};
 
 /// Type ID (index into type table).
 pub type TypeId = u32;
@@ -44,8 +44,10 @@ impl FieldLayout {
 /// Type metadata.
 #[derive(Clone, Debug)]
 pub struct TypeMeta {
-    /// Runtime type ID (RuntimeTypeId values for builtins, FirstStruct+ for structs, FirstInterface+ for interfaces).
-    pub type_id: u32,
+    /// ValueKind for this type.
+    pub value_kind: ValueKind,
+    /// Runtime type ID (only for Struct/Interface, indexes into meta tables).
+    pub type_id: RuntimeTypeId,
     /// Size in 8-byte slots (for GC allocation, backward compat).
     pub size_slots: usize,
     /// Size in bytes (compact layout).
@@ -67,25 +69,26 @@ pub struct TypeMeta {
 }
 
 impl TypeMeta {
-    /// Check if this is a user-defined struct type.
+    /// Check if this is a struct type.
     pub fn is_struct(&self) -> bool {
-        RuntimeTypeId::is_struct(self.type_id)
+        self.value_kind == ValueKind::Struct
     }
     
-    /// Check if this is a user-defined interface type.
+    /// Check if this is an interface type.
     pub fn is_interface(&self) -> bool {
-        RuntimeTypeId::is_interface(self.type_id)
+        self.value_kind == ValueKind::Interface
     }
     
     /// Check if this type needs GC scanning.
     pub fn needs_gc(&self) -> bool {
-        RuntimeTypeId::needs_gc(self.type_id)
+        self.value_kind.needs_gc()
     }
     
     /// Create a builtin type.
-    pub fn builtin(type_id: RuntimeTypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
+    pub fn builtin(value_kind: ValueKind, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
         Self {
-            type_id: type_id as u32,
+            value_kind,
+            type_id: 0,
             size_slots,
             size_bytes: size_slots * 8,
             slot_types,
@@ -99,16 +102,17 @@ impl TypeMeta {
     }
     
     pub fn nil() -> Self {
-        Self::builtin(RuntimeTypeId::Nil, "nil", 0, vec![])
+        Self::builtin(ValueKind::Nil, "nil", 0, vec![])
     }
     
-    pub fn primitive(type_id: RuntimeTypeId, name: &str) -> Self {
-        Self::builtin(type_id, name, 1, vec![SlotType::Value])
+    pub fn primitive(value_kind: ValueKind, name: &str) -> Self {
+        Self::builtin(value_kind, name, 1, vec![SlotType::Value])
     }
     
-    pub fn struct_(id: TypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
+    pub fn struct_(type_id: RuntimeTypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
         Self {
-            type_id: id,
+            value_kind: ValueKind::Struct,
+            type_id,
             size_slots,
             size_bytes: size_slots * 8,
             slot_types,
@@ -121,9 +125,10 @@ impl TypeMeta {
         }
     }
     
-    pub fn object(id: TypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
+    pub fn object(value_kind: ValueKind, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> Self {
         Self {
-            type_id: id,
+            value_kind,
+            type_id: 0,
             size_slots,
             size_bytes: size_slots * 8,
             slot_types,
@@ -137,7 +142,7 @@ impl TypeMeta {
     }
     
     pub fn is_primitive(&self) -> bool {
-        self.type_id <= RuntimeTypeId::Float64 as u32
+        (self.value_kind as u8) <= (ValueKind::FuncPtr as u8)
     }
     
     /// Get field layout by index.
@@ -164,58 +169,43 @@ impl TypeTable {
     }
     
     fn init_builtins(&mut self) {
-        // Reserve space for builtin types (up to FirstStruct)
-        self.types.resize(RuntimeTypeId::FirstStruct as usize, TypeMeta::nil());
+        // Reserve space for builtin types (ValueKind values 0-23)
+        self.types.resize(24, TypeMeta::nil());
         
-        // Helper to set builtin type at its RuntimeTypeId index
-        let mut set_builtin = |meta: TypeMeta| {
-            self.set(meta.type_id, meta);
+        // Helper to set builtin type at its ValueKind index
+        let set_builtin = |types: &mut Vec<TypeMeta>, by_name: &mut HashMap<String, TypeId>, meta: TypeMeta| {
+            let idx = meta.value_kind as usize;
+            by_name.insert(meta.name.clone(), idx as TypeId);
+            types[idx] = meta;
         };
         
         // Primitives
-        set_builtin(TypeMeta::nil());
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Bool, "bool"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Int, "int"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Int8, "int8"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Int16, "int16"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Int32, "int32"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Int64, "int64"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Uint, "uint"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Uint8, "uint8"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Uint16, "uint16"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Uint32, "uint32"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Uint64, "uint64"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Float32, "float32"));
-        set_builtin(TypeMeta::primitive(RuntimeTypeId::Float64, "float64"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::nil());
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Bool, "bool"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Int, "int"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Int8, "int8"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Int16, "int16"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Int32, "int32"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Int64, "int64"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Uint, "uint"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Uint8, "uint8"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Uint16, "uint16"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Uint32, "uint32"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Uint64, "uint64"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Float32, "float32"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::Float64, "float64"));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::primitive(ValueKind::FuncPtr, "funcptr"));
         
-        // String: GcRef (1 slot, is pointer)
-        set_builtin(TypeMeta {
-            type_id: RuntimeTypeId::String as u32,
-            size_slots: 1,
-            size_bytes: 8,
-            slot_types: vec![SlotType::GcRef],
-            name: "string".to_string(),
-            field_layouts: vec![],
-            elem_type: Some(RuntimeTypeId::Uint8 as TypeId),
-            elem_size: Some(1),
-            key_type: None,
-            value_type: None,
-        });
-        
-        // Array: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(RuntimeTypeId::Array, "array", 1, vec![SlotType::GcRef]));
-        
-        // Slice: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(RuntimeTypeId::Slice, "slice", 1, vec![SlotType::GcRef]));
-        
-        // Map: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(RuntimeTypeId::Map, "map", 1, vec![SlotType::GcRef]));
-        
-        // Channel: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(RuntimeTypeId::Channel, "channel", 1, vec![SlotType::GcRef]));
-        
-        // Closure: GcRef (1 slot)
-        set_builtin(TypeMeta::builtin(RuntimeTypeId::Closure, "closure", 1, vec![SlotType::GcRef]));
+        // Reference types
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::String, "string", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Array, "array", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Slice, "slice", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Map, "map", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Channel, "channel", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Closure, "closure", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Struct, "struct", 0, vec![]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Pointer, "pointer", 1, vec![SlotType::GcRef]));
+        set_builtin(&mut self.types, &mut self.by_name, TypeMeta::object(ValueKind::Interface, "interface", 2, vec![SlotType::Interface0, SlotType::Interface1]));
     }
     
     fn set(&mut self, id: TypeId, meta: TypeMeta) {
@@ -227,11 +217,11 @@ impl TypeTable {
         self.types[idx] = meta;
     }
     
-    /// Register a new user-defined type.
-    pub fn register(&mut self, mut meta: TypeMeta) -> TypeId {
+    /// Register a new struct type.
+    pub fn register_struct(&mut self, type_id: RuntimeTypeId, name: &str, size_slots: usize, slot_types: Vec<SlotType>) -> TypeId {
+        let meta = TypeMeta::struct_(type_id, name, size_slots, slot_types);
+        self.by_name.insert(name.to_string(), self.types.len() as TypeId);
         let id = self.types.len() as TypeId;
-        meta.type_id = id;
-        self.by_name.insert(meta.name.clone(), id);
         self.types.push(meta);
         id
     }

@@ -6,7 +6,7 @@
 //! All state is protected by Mutex for thread-safety, enabling
 //! multi-worker goroutine scheduling.
 
-use gox_runtime_core::gc::{Gc, GcRef, TypeId};
+use gox_runtime_core::gc::{Gc, GcRef};
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -158,8 +158,8 @@ pub fn collect_garbage() {
 
 /// Allocate an object using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_alloc(type_id: TypeId, size_slots: usize) -> GcRef {
-    with_gc(|gc| gc.alloc(type_id, size_slots))
+pub extern "C" fn gox_rt_alloc(value_kind: u8, type_id: u16, size_slots: usize) -> GcRef {
+    with_gc(|gc| gc.alloc(value_kind, type_id, size_slots))
 }
 
 /// Write barrier for GC (using global GC).
@@ -194,17 +194,17 @@ pub unsafe extern "C" fn gox_gc_write_slot(obj: GcRef, idx: usize, val: u64) {
 
 /// Create a string from raw bytes using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_string_from_ptr(ptr: *const u8, len: usize, type_id: TypeId) -> GcRef {
+pub extern "C" fn gox_rt_string_from_ptr(ptr: *const u8, len: usize) -> GcRef {
     with_gc(|gc| {
         let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-        gox_runtime_core::objects::string::create(gc, type_id, bytes)
+        gox_runtime_core::objects::string::create(gc, bytes)
     })
 }
 
 /// Concatenate two strings using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_string_concat(type_id: TypeId, a: GcRef, b: GcRef) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::string::concat(gc, type_id, a, b))
+pub extern "C" fn gox_rt_string_concat(a: GcRef, b: GcRef) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::string::concat(gc, a, b))
 }
 
 // =============================================================================
@@ -213,14 +213,14 @@ pub extern "C" fn gox_rt_string_concat(type_id: TypeId, a: GcRef, b: GcRef) -> G
 
 /// Create a closure using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_closure_create(type_id: TypeId, func_id: u32, upvalue_count: usize) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::closure::create(gc, type_id, func_id, upvalue_count))
+pub extern "C" fn gox_rt_closure_create(func_id: u32, upvalue_count: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::closure::create(gc, func_id, upvalue_count))
 }
 
 /// Create an upval box using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_upval_box_create(type_id: TypeId) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::closure::create_upval_box(gc, type_id))
+pub extern "C" fn gox_rt_upval_box_create() -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::closure::create_upval_box(gc))
 }
 
 // =============================================================================
@@ -229,32 +229,32 @@ pub extern "C" fn gox_rt_upval_box_create(type_id: TypeId) -> GcRef {
 
 /// Create an array using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_array_create(type_id: TypeId, elem_type: TypeId, elem_size: usize, len: usize) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::array::create(gc, type_id, elem_type, elem_size, len))
+pub extern "C" fn gox_rt_array_create(elem_kind: u8, elem_type_id: u16, elem_bytes: usize, len: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::array::create(gc, elem_kind, elem_type_id, elem_bytes, len))
 }
 
 /// Create a slice using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_slice_create(type_id: TypeId, array: GcRef, start: usize, len: usize, cap: usize) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::slice::create(gc, type_id, array, start, len, cap))
+pub extern "C" fn gox_rt_slice_create(array: GcRef, start: usize, len: usize, cap: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::slice::create(gc, array, start, len, cap))
 }
 
 /// Slice a slice using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_slice_slice(type_id: TypeId, slice: GcRef, start: usize, end: usize) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::slice::slice_of(gc, type_id, slice, start, end))
+pub extern "C" fn gox_rt_slice_slice(slice: GcRef, start: usize, end: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::slice::slice_of(gc, slice, start, end))
 }
 
 /// Slice a string using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_string_slice(type_id: TypeId, str_ref: GcRef, start: usize, end: usize) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::string::slice_of(gc, type_id, str_ref, start, end))
+pub extern "C" fn gox_rt_string_slice(str_ref: GcRef, start: usize, end: usize) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::string::slice_of(gc, str_ref, start, end))
 }
 
 /// Append to a slice using the global GC.
 #[no_mangle]
-pub extern "C" fn gox_rt_slice_append(type_id: TypeId, arr_type_id: TypeId, slice: GcRef, val: u64) -> GcRef {
-    with_gc(|gc| gox_runtime_core::objects::slice::append(gc, type_id, arr_type_id, slice, val))
+pub extern "C" fn gox_rt_slice_append(elem_kind: u8, elem_type_id: u16, elem_bytes: usize, slice: GcRef, val: u64) -> GcRef {
+    with_gc(|gc| gox_runtime_core::objects::slice::append(gc, elem_kind, elem_type_id, elem_bytes, slice, val))
 }
 
 #[cfg(test)]
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_global_gc_alloc() {
         init_gc();
-        let obj = gox_rt_alloc(1, 2);
+        let obj = gox_rt_alloc(ValueKind::Struct as u8, 0, 2);
         assert!(!obj.is_null());
     }
 
@@ -273,7 +273,7 @@ mod tests {
     fn test_global_gc_string() {
         init_gc();
         let data = b"hello";
-        let s = gox_rt_string_from_ptr(data.as_ptr(), data.len(), ValueKind::String as u32);
+        let s = gox_rt_string_from_ptr(data.as_ptr(), data.len());
         assert!(!s.is_null());
     }
     
@@ -282,10 +282,9 @@ mod tests {
         init_gc();
         
         // Create some strings that will become garbage
-        let type_id = ValueKind::String as u32;
-        let _s1 = gox_rt_string_from_ptr(b"temp1".as_ptr(), 5, type_id);
-        let _s2 = gox_rt_string_from_ptr(b"temp2".as_ptr(), 5, type_id);
-        let _s3 = gox_rt_string_from_ptr(b"temp3".as_ptr(), 5, type_id);
+        let _s1 = gox_rt_string_from_ptr(b"temp1".as_ptr(), 5);
+        let _s2 = gox_rt_string_from_ptr(b"temp2".as_ptr(), 5);
+        let _s3 = gox_rt_string_from_ptr(b"temp3".as_ptr(), 5);
         
         let objects_before = gc_object_count();
         let bytes_before = gc_total_bytes();

@@ -465,15 +465,11 @@ func main() {
     // Should have at least 2 Alloc instructions (for Point and Person)
     assert!(alloc_type_ids.len() >= 2, "Expected at least 2 struct allocations, found {}", alloc_type_ids.len());
     
-    // All struct type_ids should be >= FirstStruct (100)
-    let first_struct = RuntimeTypeId::FirstStruct as u16;
+    // Struct type_ids now start from 0 (no FirstStruct offset)
+    // Just verify we have valid type_ids
     for &type_id in &alloc_type_ids {
-        assert!(
-            type_id >= first_struct,
-            "Struct type_id {} should be >= FirstStruct ({})",
-            type_id,
-            first_struct
-        );
+        // type_id is u16, all values are valid
+        println!("Struct type_id: {}", type_id);
     }
     
     // Type IDs should be unique for different struct types
@@ -484,7 +480,7 @@ func main() {
         unique_ids.len()
     );
     
-    println!("✓ test_struct_type_id_initialized passed: type_ids {:?} all >= {}", alloc_type_ids, first_struct);
+    println!("✓ test_struct_type_id_initialized passed: type_ids {:?}", alloc_type_ids);
 }
 
 #[test]
@@ -572,15 +568,11 @@ func main() {
     
     println!("Found {} InitInterface instructions with type_ids: {:?}", init_interface_count, init_interface_type_ids);
     
-    // Verify interface type_ids are >= FirstInterface (0x8000_0000)
-    let first_interface = RuntimeTypeId::FirstInterface as u32;
+    // Interface type_ids now start from 0 (no FirstInterface offset)
+    // Just verify we have valid type_ids
     for &type_id in &init_interface_type_ids {
-        assert!(
-            type_id >= first_interface,
-            "Interface type_id 0x{:08x} should be >= FirstInterface (0x{:08x})",
-            type_id,
-            first_interface
-        );
+        // type_id is u32 (packed with value_kind), all values are valid
+        println!("Interface type_id: 0x{:08x}", type_id);
     }
     
     assert!(init_interface_count >= 1, "Expected at least 1 InitInterface instruction");

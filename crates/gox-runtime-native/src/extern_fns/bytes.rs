@@ -1,7 +1,7 @@
 //! bytes package C ABI for JIT.
 
 use gox_runtime_core::builtins::bytes as core;
-use gox_runtime_core::gc::{Gc, GcRef, TypeId};
+use gox_runtime_core::gc::{Gc, GcRef};
 use gox_runtime_core::objects::{array, slice};
 use gox_common_core::ValueKind;
 
@@ -21,11 +21,11 @@ unsafe fn bytes_to_slice(gc: &mut Gc, bytes: &[u8]) -> GcRef {
         return std::ptr::null_mut();
     }
     
-    let arr = array::create(gc, ValueKind::Array as TypeId, ValueKind::Uint8 as TypeId, 1, len);
+    let arr = array::create(gc, ValueKind::Uint8 as u8, 0, 1, len);
     // Direct memory copy for packed bytes
     let dest = array::as_bytes_mut(arr);
     std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest, len);
-    slice::create(gc, ValueKind::Slice as TypeId, arr, 0, len, len)
+    slice::create(gc, arr, 0, len, len)
 }
 
 #[no_mangle]

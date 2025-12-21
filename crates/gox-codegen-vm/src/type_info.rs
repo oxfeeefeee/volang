@@ -60,8 +60,8 @@ impl<'a> TypeInfo<'a> {
 
     // === Type property queries (delegate to TypeQuery) ===
 
-    pub fn runtime_type_id(&self, ty: &Type) -> u32 {
-        self.query.runtime_type_id(ty)
+    pub fn value_kind(&self, ty: &Type) -> gox_common_core::ValueKind {
+        self.query.value_kind(ty)
     }
 
     pub fn type_slots(&self, ty: &Type) -> u16 {

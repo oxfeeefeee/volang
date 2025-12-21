@@ -55,6 +55,7 @@ impl GoxValue {
             ValueKind::Array => GoxValue::Slice(raw as GcRef), // Arrays are similar to slices at runtime
             ValueKind::Channel => GoxValue::Int(raw as i64),   // Channel handle
             ValueKind::Closure => GoxValue::Int(raw as i64),   // Closure reference
+            ValueKind::FuncPtr => GoxValue::Int(raw as i64),   // Function pointer
         }
     }
 

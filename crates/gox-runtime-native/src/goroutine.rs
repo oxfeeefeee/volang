@@ -468,8 +468,6 @@ pub extern "C" fn gox_yield() {
 #[no_mangle]
 pub unsafe extern "C" fn gox_chan_new(elem_type: u32, capacity: u64) -> GcRef {
     use gox_runtime_core::objects::channel;
-    use gox_runtime_core::gc::TypeId;
-    use gox_common_core::ValueKind;
     
     let scheduler = match current_scheduler() {
         Some(s) => s,
@@ -478,7 +476,7 @@ pub unsafe extern "C" fn gox_chan_new(elem_type: u32, capacity: u64) -> GcRef {
     
     // Create channel GC object using global GC
     let chan_ref = crate::gc_global::with_gc(|gc| {
-        channel::create(gc, ValueKind::Channel as TypeId, elem_type as TypeId, capacity as usize)
+        channel::create(gc, elem_type as u8, capacity as usize)
     });
     
     // Register channel in scheduler

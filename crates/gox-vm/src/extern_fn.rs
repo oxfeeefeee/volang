@@ -23,7 +23,6 @@ use hashbrown::HashMap;
 
 use crate::gc::{Gc, GcRef};
 use crate::objects::string;
-use crate::types::TypeId;
 pub use gox_common_core::ValueKind;
 
 /// Extern function signature - direct register access.
@@ -160,7 +159,7 @@ impl<'a> ExternCtx<'a> {
     /// Return a new string (requires GC allocation).
     #[inline]
     pub fn ret_string(&mut self, idx: usize, s: &str) {
-        let str_ref = string::from_rust_str(self.gc, ValueKind::String as TypeId, s);
+        let str_ref = string::from_rust_str(self.gc, s);
         self.ret_raw(idx, str_ref as u64);
     }
 
@@ -187,7 +186,7 @@ impl<'a> ExternCtx<'a> {
     /// Allocate a new string.
     #[inline]
     pub fn new_string(&mut self, s: &str) -> GcRef {
-        string::from_rust_str(self.gc, ValueKind::String as TypeId, s)
+        string::from_rust_str(self.gc, s)
     }
 
     /// Get string content from GcRef.
@@ -212,16 +211,16 @@ impl<'a> ExternCtx<'a> {
         }
         
         // Create array to hold string pointers (8 bytes per pointer)
-        let arr = array::create(self.gc, ValueKind::Array as TypeId, ValueKind::String as TypeId, 8, len);
+        let arr = array::create(self.gc, ValueKind::String as u8, 0, 8, len);
         
         // Allocate each string and store in array
         for (i, s) in strings.iter().enumerate() {
-            let str_ref = string::from_rust_str(self.gc, ValueKind::String as TypeId, s);
+            let str_ref = string::from_rust_str(self.gc, s);
             array::set(arr, i, str_ref as u64);
         }
         
         // Create slice wrapping the array
-        let sl = slice::create(self.gc, ValueKind::Slice as TypeId, arr, 0, len, len);
+        let sl = slice::create(self.gc, arr, 0, len, len);
         self.ret_raw(idx, sl as u64);
     }
 
@@ -289,7 +288,7 @@ impl<'a> ExternCtx<'a> {
         }
         
         // Create packed byte array (1 byte per element)
-        let arr = array::create(self.gc, ValueKind::Array as TypeId, ValueKind::Uint8 as TypeId, 1, len);
+        let arr = array::create(self.gc, ValueKind::Uint8 as u8, 0, 1, len);
         
         // Direct memory copy for packed bytes
         unsafe {
@@ -297,7 +296,7 @@ impl<'a> ExternCtx<'a> {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest, len);
         }
         
-        let sl = slice::create(self.gc, ValueKind::Slice as TypeId, arr, 0, len, len);
+        let sl = slice::create(self.gc, arr, 0, len, len);
         self.ret_raw(idx, sl as u64);
     }
 
@@ -329,6 +328,7 @@ impl<'a> ExternCtx<'a> {
             ValueKind::Interface => "<interface>".into(),
             ValueKind::Channel => "<chan>".into(),
             ValueKind::Closure => "<closure>".into(),
+            ValueKind::FuncPtr => "<funcptr>".into(),
         }
     }
 

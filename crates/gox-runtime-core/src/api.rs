@@ -4,7 +4,7 @@
 //! offers convenient methods for common operations. Both VM and Cranelift
 //! backends use the same underlying implementation.
 
-use crate::gc::{Gc, GcRef, TypeId};
+use crate::gc::{Gc, GcRef};
 use crate::objects::{string, array, slice};
 
 /// High-level runtime API wrapper.
@@ -37,20 +37,20 @@ impl RuntimeApi {
 
     /// Create a string from bytes.
     #[inline]
-    pub fn string_create(&mut self, type_id: TypeId, bytes: &[u8]) -> GcRef {
-        string::create(&mut self.gc, type_id, bytes)
+    pub fn string_create(&mut self, bytes: &[u8]) -> GcRef {
+        string::create(&mut self.gc, bytes)
     }
 
     /// Create a string from &str.
     #[inline]
-    pub fn string_from_str(&mut self, type_id: TypeId, s: &str) -> GcRef {
-        string::from_rust_str(&mut self.gc, type_id, s)
+    pub fn string_from_str(&mut self, s: &str) -> GcRef {
+        string::from_rust_str(&mut self.gc, s)
     }
 
     /// Concatenate two strings.
     #[inline]
-    pub fn string_concat(&mut self, type_id: TypeId, a: GcRef, b: GcRef) -> GcRef {
-        string::concat(&mut self.gc, type_id, a, b)
+    pub fn string_concat(&mut self, a: GcRef, b: GcRef) -> GcRef {
+        string::concat(&mut self.gc, a, b)
     }
 
     // === Array operations ===
@@ -59,32 +59,33 @@ impl RuntimeApi {
     #[inline]
     pub fn array_create(
         &mut self,
-        type_id: TypeId,
-        elem_type: TypeId,
-        elem_size: usize,
+        elem_kind: u8,
+        elem_type_id: u16,
+        elem_bytes: usize,
         len: usize,
     ) -> GcRef {
-        array::create(&mut self.gc, type_id, elem_type, elem_size, len)
+        array::create(&mut self.gc, elem_kind, elem_type_id, elem_bytes, len)
     }
 
     // === Slice operations ===
 
     /// Create a slice from an array.
     #[inline]
-    pub fn slice_from_array(&mut self, type_id: TypeId, arr: GcRef) -> GcRef {
-        slice::from_array(&mut self.gc, type_id, arr)
+    pub fn slice_from_array(&mut self, arr: GcRef) -> GcRef {
+        slice::from_array(&mut self.gc, arr)
     }
 
     /// Append to a slice.
     #[inline]
     pub fn slice_append(
         &mut self,
-        type_id: TypeId,
-        arr_type_id: TypeId,
+        elem_kind: u8,
+        elem_type_id: u16,
+        elem_bytes: usize,
         s: GcRef,
         val: u64,
     ) -> GcRef {
-        slice::append(&mut self.gc, type_id, arr_type_id, s, val)
+        slice::append(&mut self.gc, elem_kind, elem_type_id, elem_bytes, s, val)
     }
 
     // === GC operations ===

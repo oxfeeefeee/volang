@@ -11,7 +11,7 @@ use crate::typ::{
 };
 use gox_common::symbol::Symbol;
 use gox_common::SymbolInterner;
-use gox_common_core::SlotType;
+use gox_common_core::{SlotType, ValueKind};
 
 /// Unified type information query interface for code generation.
 ///
@@ -219,27 +219,23 @@ impl<'a> TypeQuery<'a> {
     // Type properties for codegen
     // =========================================================================
 
-    /// Computes the runtime type ID for a type.
-    pub fn runtime_type_id(&self, ty: &Type) -> u32 {
-        use gox_common_core::RuntimeTypeId;
+    /// Computes the ValueKind for a type.
+    pub fn value_kind(&self, ty: &Type) -> ValueKind {
         match ty {
-            Type::Basic(b) => basic_to_runtime_id(b.typ()),
-            Type::Slice(_) => RuntimeTypeId::Slice as u32,
-            Type::Map(_) => RuntimeTypeId::Map as u32,
-            Type::Array(_) => RuntimeTypeId::Array as u32,
-            Type::Chan(_) => RuntimeTypeId::Channel as u32,
-            Type::Signature(_) => RuntimeTypeId::Closure as u32,
-            Type::Pointer(p) => self.runtime_type_id(&self.objs.types[p.base()]),
-            Type::Struct(_) => RuntimeTypeId::FirstStruct as u32,
-            Type::Interface(_) => RuntimeTypeId::FirstInterface as u32,
+            Type::Basic(b) => basic_to_value_kind(b.typ()),
+            Type::Slice(_) => ValueKind::Slice,
+            Type::Map(_) => ValueKind::Map,
+            Type::Array(_) => ValueKind::Array,
+            Type::Chan(_) => ValueKind::Channel,
+            Type::Signature(_) => ValueKind::Closure,
+            Type::Pointer(_) => ValueKind::Pointer,
+            Type::Struct(_) => ValueKind::Struct,
+            Type::Interface(_) => ValueKind::Interface,
             Type::Named(n) => {
-                if let Some(u) = n.try_underlying() {
-                    self.runtime_type_id(&self.objs.types[u])
-                } else {
-                    RuntimeTypeId::Nil as u32
-                }
+                let u = n.try_underlying().expect("Named type must have underlying in codegen");
+                self.value_kind(&self.objs.types[u])
             }
-            Type::Tuple(_) => RuntimeTypeId::Nil as u32,
+            Type::Tuple(_) => ValueKind::Nil,
         }
     }
 
@@ -265,11 +261,8 @@ impl<'a> TypeQuery<'a> {
             }
             Type::Interface(_) => 2,
             Type::Named(n) => {
-                if let Some(u) = n.try_underlying() {
-                    self.type_slots(&self.objs.types[u])
-                } else {
-                    1
-                }
+                let u = n.try_underlying().expect("Named type must have underlying in codegen");
+                self.type_slots(&self.objs.types[u])
             }
             Type::Tuple(_) => 1,
         }
@@ -302,11 +295,8 @@ impl<'a> TypeQuery<'a> {
             }
             Type::Interface(_) => vec![SlotType::Interface0, SlotType::Interface1],
             Type::Named(n) => {
-                if let Some(u) = n.try_underlying() {
-                    self.type_slot_types(&self.objs.types[u])
-                } else {
-                    vec![SlotType::Value]
-                }
+                let u = n.try_underlying().expect("Named type must have underlying in codegen");
+                self.type_slot_types(&self.objs.types[u])
             }
             Type::Tuple(_) => vec![SlotType::Value],
         }
@@ -320,11 +310,8 @@ impl<'a> TypeQuery<'a> {
             Type::Array(_) | Type::Struct(_) | Type::Tuple(_) => false,
             Type::Interface(_) => true,
             Type::Named(n) => {
-                if let Some(u) = n.try_underlying() {
-                    self.is_ref_type(&self.objs.types[u])
-                } else {
-                    false
-                }
+                let u = n.try_underlying().expect("Named type must have underlying in codegen");
+                self.is_ref_type(&self.objs.types[u])
             }
         }
     }
@@ -334,11 +321,8 @@ impl<'a> TypeQuery<'a> {
         match ty {
             Type::Interface(_) => true,
             Type::Named(n) => {
-                if let Some(u) = n.try_underlying() {
-                    matches!(&self.objs.types[u], Type::Interface(_))
-                } else {
-                    false
-                }
+                let u = n.try_underlying().expect("Named type must have underlying in codegen");
+                matches!(&self.objs.types[u], Type::Interface(_))
             }
             _ => false,
         }
@@ -419,24 +403,23 @@ pub struct FieldInfo<'a> {
 }
 
 // Helper function
-fn basic_to_runtime_id(b: BasicType) -> u32 {
-    use gox_common_core::RuntimeTypeId;
+fn basic_to_value_kind(b: BasicType) -> ValueKind {
     match b {
-        BasicType::Bool => RuntimeTypeId::Bool as u32,
-        BasicType::Int => RuntimeTypeId::Int as u32,
-        BasicType::Int8 => RuntimeTypeId::Int8 as u32,
-        BasicType::Int16 => RuntimeTypeId::Int16 as u32,
-        BasicType::Int32 | BasicType::Rune => RuntimeTypeId::Int32 as u32,
-        BasicType::Int64 => RuntimeTypeId::Int64 as u32,
-        BasicType::Uint => RuntimeTypeId::Uint as u32,
-        BasicType::Uint8 | BasicType::Byte => RuntimeTypeId::Uint8 as u32,
-        BasicType::Uint16 => RuntimeTypeId::Uint16 as u32,
-        BasicType::Uint32 => RuntimeTypeId::Uint32 as u32,
-        BasicType::Uint64 => RuntimeTypeId::Uint64 as u32,
-        BasicType::Uintptr => RuntimeTypeId::Uint as u32,
-        BasicType::Float32 => RuntimeTypeId::Float32 as u32,
-        BasicType::Float64 => RuntimeTypeId::Float64 as u32,
-        BasicType::Str => RuntimeTypeId::String as u32,
-        _ => RuntimeTypeId::Nil as u32,
+        BasicType::Bool => ValueKind::Bool,
+        BasicType::Int => ValueKind::Int,
+        BasicType::Int8 => ValueKind::Int8,
+        BasicType::Int16 => ValueKind::Int16,
+        BasicType::Int32 | BasicType::Rune => ValueKind::Int32,
+        BasicType::Int64 => ValueKind::Int64,
+        BasicType::Uint => ValueKind::Uint,
+        BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,
+        BasicType::Uint16 => ValueKind::Uint16,
+        BasicType::Uint32 => ValueKind::Uint32,
+        BasicType::Uint64 => ValueKind::Uint64,
+        BasicType::Uintptr => ValueKind::Uint,
+        BasicType::Float32 => ValueKind::Float32,
+        BasicType::Float64 => ValueKind::Float64,
+        BasicType::Str => ValueKind::String,
+        _ => ValueKind::Nil,
     }
 }

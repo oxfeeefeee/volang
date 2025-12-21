@@ -43,6 +43,7 @@ fn format_value(value: u64, type_tag: u8) -> String {
         ValueKind::Interface => format!("interface{{{}}}", value),
         ValueKind::Channel => format!("chan({})", value),
         ValueKind::Closure => format!("func({})", value),
+        ValueKind::FuncPtr => format!("funcptr(0x{:x})", value),
     }
 }
 

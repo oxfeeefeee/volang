@@ -70,7 +70,8 @@ impl RuntimeSymbols {
             RuntimeSymbol { name: "gox_upval_box_set", ptr: ffi::gox_upval_box_set as *const u8 },
             
             // Interface functions
-            RuntimeSymbol { name: "gox_interface_unbox_type", ptr: ffi::gox_interface_unbox_type as *const u8 },
+            RuntimeSymbol { name: "gox_interface_unbox_value_kind", ptr: ffi::gox_interface_unbox_value_kind as *const u8 },
+            RuntimeSymbol { name: "gox_interface_unbox_value_type_id", ptr: ffi::gox_interface_unbox_value_type_id as *const u8 },
             RuntimeSymbol { name: "gox_interface_unbox_data", ptr: ffi::gox_interface_unbox_data as *const u8 },
             RuntimeSymbol { name: "gox_interface_is_nil", ptr: ffi::gox_interface_is_nil as *const u8 },
             

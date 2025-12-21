@@ -35,24 +35,28 @@ pub enum GcState {
 }
 
 /// Object header (8 bytes).
+///
+/// Layout: mark:u8 | gen:u8 | value_kind:u8 | flags:u8 | type_id:u16 | _pad:u16
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct GcHeader {
     pub mark: u8,
     pub gen: u8,
+    pub value_kind: u8,   // ValueKind
     pub flags: u8,
-    pub _pad: u8,
-    pub type_id: u32,
+    pub type_id: u16,     // RuntimeTypeId (only for Struct/Interface)
+    pub _pad: u16,
 }
 
 impl GcHeader {
-    pub fn new(type_id: u32) -> Self {
+    pub fn new(value_kind: u8, type_id: u16) -> Self {
         Self {
             mark: GcColor::White as u8,
             gen: GcGen::Young as u8,
+            value_kind,
             flags: 0,
-            _pad: 0,
             type_id,
+            _pad: 0,
         }
     }
 }
@@ -141,7 +145,7 @@ impl Gc {
     }
     
     /// Allocate a GC object with given number of data slots.
-    pub fn alloc(&mut self, type_id: TypeId, size_slots: usize) -> GcRef {
+    pub fn alloc(&mut self, value_kind: u8, type_id: u16, size_slots: usize) -> GcRef {
         let size_bytes = core::mem::size_of::<GcHeader>() + size_slots * 8;
         let layout = Layout::from_size_align(size_bytes, 8).unwrap();
         
@@ -150,7 +154,7 @@ impl Gc {
             if ptr.is_null() {
                 panic!("GC allocation failed");
             }
-            (*ptr).header = GcHeader::new(type_id);
+            (*ptr).header = GcHeader::new(value_kind, type_id);
             // Zero-initialize data slots
             let data_ptr = Self::get_data_ptr(ptr);
             for i in 0..size_slots {
@@ -309,7 +313,7 @@ mod tests {
     #[test]
     fn test_alloc() {
         let mut gc = Gc::new();
-        let obj = gc.alloc(1, 2);
+        let obj = gc.alloc(1, 0, 2); // value_kind=1, type_id=0, size_slots=2
         assert!(!obj.is_null());
         assert_eq!(gc.object_count(), 1);
         
@@ -323,7 +327,7 @@ mod tests {
     #[test]
     fn test_slot_access() {
         let mut gc = Gc::new();
-        let obj = gc.alloc(1, 2);
+        let obj = gc.alloc(1, 0, 2); // value_kind=1, type_id=0, size_slots=2
         assert!(!obj.is_null());
         
         // Test using Rust methods directly (VM style)

@@ -13,7 +13,7 @@
 //! ```
 
 // Re-export core types
-pub use crate::gc::{Gc, GcRef, GcHeader, TypeId, NULL_REF};
+pub use crate::gc::{Gc, GcRef, GcHeader, NULL_REF};
 
 // =============================================================================
 // GC C ABI - All moved to gox-runtime-native/src/gc_global.rs
@@ -43,10 +43,9 @@ pub unsafe extern "C" fn gox_string_from_ptr(
     gc: *mut Gc,
     ptr: *const u8,
     len: usize,
-    type_id: TypeId,
 ) -> GcRef {
     let bytes = core::slice::from_raw_parts(ptr, len);
-    crate::objects::string::create(&mut *gc, type_id, bytes)
+    crate::objects::string::create(&mut *gc, bytes)
 }
 
 // =============================================================================
@@ -108,7 +107,8 @@ pub use crate::objects::{
 // Interface C ABI (3 functions)
 // =============================================================================
 pub use crate::objects::{
-    gox_interface_unbox_type,
+    gox_interface_unbox_value_kind,
+    gox_interface_unbox_value_type_id,
     gox_interface_unbox_data,
     gox_interface_is_nil,
 };
@@ -149,18 +149,18 @@ pub unsafe extern "C" fn gox_strings_count(s: GcRef, substr: GcRef) -> usize {
 
 #[cfg(feature = "std")]
 #[no_mangle]
-pub unsafe extern "C" fn gox_strings_to_lower(gc: *mut Gc, s: GcRef, type_id: TypeId) -> GcRef {
+pub unsafe extern "C" fn gox_strings_to_lower(gc: *mut Gc, s: GcRef) -> GcRef {
     use crate::objects::string;
     let result = crate::builtins::strings::to_lower(string::as_str(s));
-    string::from_rust_str(&mut *gc, type_id, &result)
+    string::from_rust_str(&mut *gc, &result)
 }
 
 #[cfg(feature = "std")]
 #[no_mangle]
-pub unsafe extern "C" fn gox_strings_to_upper(gc: *mut Gc, s: GcRef, type_id: TypeId) -> GcRef {
+pub unsafe extern "C" fn gox_strings_to_upper(gc: *mut Gc, s: GcRef) -> GcRef {
     use crate::objects::string;
     let result = crate::builtins::strings::to_upper(string::as_str(s));
-    string::from_rust_str(&mut *gc, type_id, &result)
+    string::from_rust_str(&mut *gc, &result)
 }
 
 #[cfg(feature = "std")]
@@ -176,11 +176,11 @@ pub unsafe extern "C" fn gox_strings_equal_fold(s: GcRef, t: GcRef) -> bool {
 #[cfg(feature = "std")]
 #[no_mangle]
 pub unsafe extern "C" fn gox_fmt_format_value(
-    gc: *mut Gc, val: u64, type_tag: u8, type_id: TypeId
+    gc: *mut Gc, val: u64, type_tag: u8
 ) -> GcRef {
     use crate::objects::string;
     let result = crate::builtins::fmt::format_value(val, type_tag);
-    string::from_rust_str(&mut *gc, type_id, &result)
+    string::from_rust_str(&mut *gc, &result)
 }
 
 #[cfg(feature = "std")]

@@ -69,16 +69,21 @@ pub struct GlobalDef {
 
 ```
 slot[0]: Packed type info (64 bits)
-┌────────────────────────────────────────────────────────────────┐
-│ iface_type_id (16) │ value_type_id (16) │ value_kind (8) │ ... │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────┬─────────────────────────────────┐
+│         High 32 bits            │          Low 32 bits            │
+├─────────────────────────────────┼─────────────────────────────────┤
+│ iface_type_id (16) │ unused(16) │ value_type_id(16) │ vkind(8) │  │
+└─────────────────────────────────┴─────────────────────────────────┘
+  bits 48-63           bits 32-47    bits 16-31        bits 8-15
 
 slot[1]: Data (value or GcRef, depends on value_kind)
 ```
 
-- **iface_type_id**: The interface's own RuntimeTypeId (indexes interface_metas)
-- **value_kind**: The held value's ValueKind
-- **value_type_id**: The held value's RuntimeTypeId (only if value_kind is Struct/Interface)
+- **iface_type_id** (bits 48-63): The interface's own RuntimeTypeId
+- **value_type_id** (bits 16-31): The held value's RuntimeTypeId (for Struct/Interface)
+- **value_kind** (bits 8-15): The held value's ValueKind
+
+This layout keeps `value_kind` and `value_type_id` in the low 32 bits for efficient access on 32-bit systems.
 
 ## 5. Codegen Flow
 

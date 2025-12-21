@@ -177,9 +177,10 @@ fn collect_declarations(
                         let name_str = info.symbol_str(name.symbol);
                         // Without type info, use default slot count
                         // TODO: Get actual type from expr_types when available
-                        let type_id = 0;
+                        let value_kind = gox_common_core::ValueKind::Nil as u8;
+                        let type_id = 0u16;
                         let slots = 1;
-                        ctx.register_global(name.symbol, name_str, type_id, slots);
+                        ctx.register_global(name.symbol, name_str, value_kind, type_id, slots);
                     }
                 }
             }
@@ -221,8 +222,8 @@ fn compile_func_decl(
             if is_interface {
                 // Interface parameter: 2 slots + InitInterface
                 let type_key = info.type_expr_key(&param.ty).expect("interface type must have TypeKey");
-                let iface_type_id = ctx.runtime_type_id(param_type, Some(type_key));
-                builder.define_param_interface(pname.symbol, iface_type_id);
+                let iface_type_id = ctx.type_id_for_interface(type_key);
+                builder.define_param_interface(pname.symbol, iface_type_id as u32);
             } else {
                 // Regular parameter
                 let slot_types = info.type_slot_types(param_type);

@@ -7,7 +7,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use once_cell::sync::OnceCell;
-use gox_common_core::{ValueKind, SlotType, RuntimeTypeId};
+use gox_common_core::{ValueKind, SlotType};
 
 use crate::gc::{Gc, GcRef};
 
@@ -18,7 +18,7 @@ use crate::objects::map;
 // Static Struct SlotType Table
 // =============================================================================
 
-/// Struct slot_types, indexed by (type_id - RuntimeTypeId::FirstStruct).
+/// Struct slot_types, indexed by type_id (starting from 0).
 /// Each entry describes how GC should scan each slot.
 static STRUCT_SLOT_TYPES: OnceCell<Box<[Box<[SlotType]>]>> = OnceCell::new();
 
@@ -32,15 +32,11 @@ pub fn init_struct_slot_types(slot_types: Vec<Vec<SlotType>>) {
     let _ = STRUCT_SLOT_TYPES.set(boxed);
 }
 
-/// Get slot_types for a user-defined struct type.
-/// Returns None if type_id < FirstStruct or not registered.
+/// Get slot_types for a struct type by its type_id.
+/// Returns None if type_id is out of range.
 #[inline]
-pub fn get_struct_slot_types(type_id: u32) -> Option<&'static [SlotType]> {
-    if !RuntimeTypeId::is_struct(type_id) {
-        return None;
-    }
-    let idx = (type_id - RuntimeTypeId::FirstStruct as u32) as usize;
-    STRUCT_SLOT_TYPES.get()?.get(idx).map(|b| b.as_ref())
+pub fn get_struct_slot_types(type_id: u16) -> Option<&'static [SlotType]> {
+    STRUCT_SLOT_TYPES.get()?.get(type_id as usize).map(|b| b.as_ref())
 }
 
 // =============================================================================
@@ -54,18 +50,18 @@ pub fn scan_object(gc: &mut Gc, obj: GcRef) {
         return;
     }
     
-    let type_id = unsafe { (*obj).header.type_id };
+    let header = unsafe { (*obj).header };
+    let kind = ValueKind::from_u8(header.value_kind);
     
-    // User-defined struct: use slot_types for dynamic scanning
-    if RuntimeTypeId::is_struct(type_id) {
-        if let Some(slot_types) = get_struct_slot_types(type_id) {
+    // Struct: use slot_types for dynamic scanning
+    if kind == ValueKind::Struct {
+        if let Some(slot_types) = get_struct_slot_types(header.type_id) {
             scan_with_slot_types(gc, obj, slot_types, 0);
         }
         return;
     }
     
     // Built-in types: fixed layouts
-    let kind = ValueKind::from_u8(type_id as u8);
     match kind {
         ValueKind::String | ValueKind::Slice => {
             // String: [array_ref, start, len]
@@ -86,27 +82,28 @@ pub fn scan_object(gc: &mut Gc, obj: GcRef) {
 
 /// Scan array elements.
 fn scan_array(gc: &mut Gc, obj: GcRef) {
-    // Array: [elem_type, elem_bytes, len, data...]
-    let elem_type = Gc::read_slot(obj, 0) as u32;
-    let len = Gc::read_slot(obj, 2) as usize;
+    // Array: [elem_kind:u8, elem_type_id:u16, elem_bytes, len, data...]
+    let elem_kind = ValueKind::from_u8(Gc::read_slot(obj, 0) as u8);
+    let elem_type_id = Gc::read_slot(obj, 1) as u16;
+    let len = Gc::read_slot(obj, 3) as usize;
     
-    if !RuntimeTypeId::needs_gc(elem_type) {
+    if !elem_kind.needs_gc() {
         return;
     }
     
-    if RuntimeTypeId::is_struct(elem_type) {
+    if elem_kind == ValueKind::Struct {
         // Struct elements: use slot_types for each element
-        if let Some(slot_types) = get_struct_slot_types(elem_type) {
+        if let Some(slot_types) = get_struct_slot_types(elem_type_id) {
             let slots_per_elem = slot_types.len().max(1);
             for i in 0..len {
-                let base = 3 + i * slots_per_elem;
+                let base = 4 + i * slots_per_elem;
                 scan_with_slot_types(gc, obj, slot_types, base);
             }
         }
     } else {
         // Built-in reference elements: each element is a GcRef
         for i in 0..len {
-            let val = Gc::read_slot(obj, 3 + i);
+            let val = Gc::read_slot(obj, 4 + i);
             if val != 0 {
                 gc.mark_gray(val as GcRef);
             }
@@ -118,10 +115,10 @@ fn scan_array(gc: &mut Gc, obj: GcRef) {
 /// Note: Map keys must be comparable types (no slices, maps, funcs), so no GC refs.
 #[cfg(feature = "std")]
 fn scan_map(gc: &mut Gc, obj: GcRef) {
-    // Map: [map_ptr, key_type, val_type]
-    let val_type = Gc::read_slot(obj, 2) as u32;
+    // Map: [map_ptr, key_kind, val_kind]
+    let val_kind = ValueKind::from_u8(Gc::read_slot(obj, 2) as u8);
     
-    if !RuntimeTypeId::needs_gc(val_type) {
+    if !val_kind.needs_gc() {
         return;
     }
     
@@ -141,10 +138,10 @@ fn scan_map(gc: &mut Gc, obj: GcRef) {
 fn scan_channel(gc: &mut Gc, obj: GcRef) {
     use crate::objects::channel;
     
-    // Channel: [chan_ptr, elem_type, cap]
-    let elem_type = Gc::read_slot(obj, 1) as u32;
+    // Channel: [chan_ptr, elem_kind, cap]
+    let elem_kind = ValueKind::from_u8(Gc::read_slot(obj, 1) as u8);
     
-    if !RuntimeTypeId::needs_gc(elem_type) {
+    if !elem_kind.needs_gc() {
         return;
     }
     
@@ -198,15 +195,15 @@ fn scan_with_slot_types(gc: &mut Gc, obj: GcRef, slot_types: &[SlotType], base_o
                 }
             }
             SlotType::Interface0 => {
-                // Interface first slot is type_id, not a pointer
+                // Interface first slot is packed type info, not a pointer
                 // Next slot (Interface1) needs dynamic check
             }
             SlotType::Interface1 => {
-                // Dynamic check: look at the type_id in previous slot
+                // Dynamic check: use unpack_value_kind from interface module
                 if i > 0 {
-                    let type_id = Gc::read_slot(obj, base_offset + i - 1) as u32;
-                    // If type_id indicates a reference type, scan the data slot
-                    if RuntimeTypeId::needs_gc(type_id) {
+                    let packed = Gc::read_slot(obj, base_offset + i - 1);
+                    let value_kind = crate::objects::interface::unpack_value_kind(packed);
+                    if value_kind.needs_gc() {
                         let val = Gc::read_slot(obj, base_offset + i);
                         if val != 0 {
                             gc.mark_gray(val as GcRef);
@@ -227,19 +224,14 @@ mod tests {
     fn test_init_and_get_slot_types() {
         // Note: OnceCell can only be set once, so this test may conflict with others
         let slot_types = vec![
-            vec![SlotType::GcRef, SlotType::Value, SlotType::GcRef],  // type_id 100 (FirstStruct)
-            vec![SlotType::Value, SlotType::GcRef],                   // type_id 101
+            vec![SlotType::GcRef, SlotType::Value, SlotType::GcRef],  // type_id 0
+            vec![SlotType::Value, SlotType::GcRef],                   // type_id 1
         ];
         init_struct_slot_types(slot_types);
         
-        // Should return None for built-in types
-        assert!(get_struct_slot_types(0).is_none());
-        assert!(get_struct_slot_types(14).is_none());
-        assert!(get_struct_slot_types(99).is_none());
-        
-        // Should return slot_types for user types (FirstStruct = 100)
-        assert_eq!(get_struct_slot_types(100), Some(&[SlotType::GcRef, SlotType::Value, SlotType::GcRef][..]));
-        assert_eq!(get_struct_slot_types(101), Some(&[SlotType::Value, SlotType::GcRef][..]));
-        assert!(get_struct_slot_types(102).is_none());
+        // Should return slot_types for struct types (starting from 0)
+        assert_eq!(get_struct_slot_types(0), Some(&[SlotType::GcRef, SlotType::Value, SlotType::GcRef][..]));
+        assert_eq!(get_struct_slot_types(1), Some(&[SlotType::Value, SlotType::GcRef][..]));
+        assert!(get_struct_slot_types(2).is_none());
     }
 }

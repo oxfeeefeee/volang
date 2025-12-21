@@ -4,27 +4,27 @@ use std::collections::HashMap;
 
 use gox_analysis::{BasicType, TypeKey};
 use gox_common::Symbol;
-use gox_common_core::RuntimeTypeId;
+use gox_common_core::ValueKind;
 use gox_vm::bytecode::{Constant, Module};
 
-fn basic_to_runtime_id(b: BasicType) -> u32 {
+fn basic_to_value_kind(b: BasicType) -> ValueKind {
     match b {
-        BasicType::Bool => RuntimeTypeId::Bool as u32,
-        BasicType::Int => RuntimeTypeId::Int as u32,
-        BasicType::Int8 => RuntimeTypeId::Int8 as u32,
-        BasicType::Int16 => RuntimeTypeId::Int16 as u32,
-        BasicType::Int32 | BasicType::Rune => RuntimeTypeId::Int32 as u32,
-        BasicType::Int64 => RuntimeTypeId::Int64 as u32,
-        BasicType::Uint => RuntimeTypeId::Uint as u32,
-        BasicType::Uint8 | BasicType::Byte => RuntimeTypeId::Uint8 as u32,
-        BasicType::Uint16 => RuntimeTypeId::Uint16 as u32,
-        BasicType::Uint32 => RuntimeTypeId::Uint32 as u32,
-        BasicType::Uint64 => RuntimeTypeId::Uint64 as u32,
-        BasicType::Uintptr => RuntimeTypeId::Uint as u32,
-        BasicType::Float32 => RuntimeTypeId::Float32 as u32,
-        BasicType::Float64 => RuntimeTypeId::Float64 as u32,
-        BasicType::Str => RuntimeTypeId::String as u32,
-        _ => RuntimeTypeId::Nil as u32,
+        BasicType::Bool => ValueKind::Bool,
+        BasicType::Int => ValueKind::Int,
+        BasicType::Int8 => ValueKind::Int8,
+        BasicType::Int16 => ValueKind::Int16,
+        BasicType::Int32 | BasicType::Rune => ValueKind::Int32,
+        BasicType::Int64 => ValueKind::Int64,
+        BasicType::Uint => ValueKind::Uint,
+        BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,
+        BasicType::Uint16 => ValueKind::Uint16,
+        BasicType::Uint32 => ValueKind::Uint32,
+        BasicType::Uint64 => ValueKind::Uint64,
+        BasicType::Uintptr => ValueKind::Uint,
+        BasicType::Float32 => ValueKind::Float32,
+        BasicType::Float64 => ValueKind::Float64,
+        BasicType::Str => ValueKind::String,
+        _ => ValueKind::Nil,
     }
 }
 
@@ -36,11 +36,11 @@ pub struct CodegenContext {
     extern_indices: HashMap<Symbol, u32>,
     global_indices: HashMap<Symbol, u32>,
     const_indices: HashMap<ConstKey, u16>,
-    // Type ID registry for structs and interfaces
-    struct_type_ids: HashMap<TypeKey, u32>,
-    interface_type_ids: HashMap<TypeKey, u32>,
-    next_struct_id: u32,
-    next_interface_id: u32,
+    // Type ID registry for structs and interfaces (u16 RuntimeTypeId)
+    struct_type_ids: HashMap<TypeKey, u16>,
+    interface_type_ids: HashMap<TypeKey, u16>,
+    next_struct_id: u16,
+    next_interface_id: u16,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -62,14 +62,14 @@ impl CodegenContext {
             const_indices: HashMap::new(),
             struct_type_ids: HashMap::new(),
             interface_type_ids: HashMap::new(),
-            next_struct_id: RuntimeTypeId::FirstStruct as u32,
-            next_interface_id: RuntimeTypeId::FirstInterface as u32,
+            next_struct_id: 0,
+            next_interface_id: 0,
         }
     }
 
     // === Type ID management ===
 
-    pub fn register_struct_type(&mut self, type_key: TypeKey) -> u32 {
+    pub fn register_struct_type(&mut self, type_key: TypeKey) -> u16 {
         if let Some(&id) = self.struct_type_ids.get(&type_key) {
             return id;
         }
@@ -79,11 +79,11 @@ impl CodegenContext {
         id
     }
 
-    pub fn get_struct_type_id(&self, type_key: TypeKey) -> Option<u32> {
+    pub fn get_struct_type_id(&self, type_key: TypeKey) -> Option<u16> {
         self.struct_type_ids.get(&type_key).copied()
     }
 
-    pub fn register_interface_type(&mut self, type_key: TypeKey) -> u32 {
+    pub fn register_interface_type(&mut self, type_key: TypeKey) -> u16 {
         if let Some(&id) = self.interface_type_ids.get(&type_key) {
             return id;
         }
@@ -93,56 +93,17 @@ impl CodegenContext {
         id
     }
 
-    pub fn get_interface_type_id(&self, type_key: TypeKey) -> Option<u32> {
+    pub fn get_interface_type_id(&self, type_key: TypeKey) -> Option<u16> {
         self.interface_type_ids.get(&type_key).copied()
     }
 
-    /// Get runtime type ID, using registered IDs for struct/interface types.
-    pub fn runtime_type_id(&self, ty: &gox_analysis::Type, type_key: Option<TypeKey>) -> u32 {
-        use gox_analysis::Type;
-        use gox_common_core::RuntimeTypeId;
+    /// Get type_id for struct/interface types (u16 index).
+    pub fn type_id_for_struct(&self, type_key: TypeKey) -> u16 {
+        self.get_struct_type_id(type_key).expect("struct type must be registered")
+    }
 
-        match ty {
-            Type::Struct(_) => {
-                let key = type_key.expect("struct type must have TypeKey");
-                self.get_struct_type_id(key).expect("struct type must be registered")
-            }
-            Type::Interface(_) => {
-                let key = type_key.expect("interface type must have TypeKey");
-                self.get_interface_type_id(key).expect("interface type must be registered")
-            }
-            Type::Named(n) => {
-                let key = type_key.expect("named type must have TypeKey");
-                // Check if this named type wraps a struct or interface
-                if let Some(&id) = self.struct_type_ids.get(&key) {
-                    return id;
-                }
-                if let Some(&id) = self.interface_type_ids.get(&key) {
-                    return id;
-                }
-                // Try underlying key
-                if let Some(underlying_key) = n.try_underlying() {
-                    if let Some(&id) = self.struct_type_ids.get(&underlying_key) {
-                        return id;
-                    }
-                    if let Some(&id) = self.interface_type_ids.get(&underlying_key) {
-                        return id;
-                    }
-                }
-                panic!("named type {:?} must be registered as struct or interface", key)
-            }
-            Type::Basic(b) => basic_to_runtime_id(b.typ()),
-            Type::Slice(_) => RuntimeTypeId::Slice as u32,
-            Type::Map(_) => RuntimeTypeId::Map as u32,
-            Type::Array(_) => RuntimeTypeId::Array as u32,
-            Type::Chan(_) => RuntimeTypeId::Channel as u32,
-            Type::Signature(_) => RuntimeTypeId::Closure as u32,
-            Type::Pointer(_) => {
-                let key = type_key.expect("pointer type must have TypeKey");
-                self.get_struct_type_id(key).expect("pointer base type must be registered struct")
-            }
-            Type::Tuple(_) => RuntimeTypeId::Nil as u32,
-        }
+    pub fn type_id_for_interface(&self, type_key: TypeKey) -> u16 {
+        self.get_interface_type_id(type_key).expect("interface type must be registered")
     }
 
     // === Function management ===
@@ -175,11 +136,11 @@ impl CodegenContext {
 
     // === Global management ===
 
-    pub fn register_global(&mut self, symbol: Symbol, name: &str, type_id: u32, slots: u16) -> u32 {
+    pub fn register_global(&mut self, symbol: Symbol, name: &str, value_kind: u8, type_id: u16, slots: u16) -> u32 {
         if let Some(&idx) = self.global_indices.get(&symbol) {
             return idx;
         }
-        let idx = self.module.add_global(name, type_id, slots);
+        let idx = self.module.add_global(name, value_kind, type_id, slots);
         self.global_indices.insert(symbol, idx);
         idx
     }

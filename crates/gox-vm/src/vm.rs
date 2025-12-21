@@ -7,7 +7,7 @@ use crate::instruction::{Instruction, Opcode};
 use crate::extern_fn::{ExternCtx, ExternFn, ExternRegistry, ExternResult};
 use crate::objects::{self, array, channel, closure, interface, map, slice, string};
 use crate::types::{TypeId, TypeTable};
-use gox_common_core::RuntimeTypeId;
+use gox_common_core::{RuntimeTypeId, ValueKind};
 
 use alloc::{format, string::{String, ToString}, vec::Vec};
 
@@ -73,7 +73,7 @@ impl Vm {
         self.string_constants.clear();
         for c in &module.constants {
             if let Constant::String(s) = c {
-                let str_ref = string::from_rust_str(&mut self.gc, RuntimeTypeId::String as TypeId, s);
+                let str_ref = string::from_rust_str(&mut self.gc, s);
                 self.string_constants.push(str_ref);
             } else {
                 self.string_constants.push(NULL_REF);
@@ -554,7 +554,7 @@ impl Vm {
                     let type_meta = self.types.get_unchecked(type_id);
                     type_meta.size_slots
                 };
-                let obj = self.gc.alloc(type_id, size);
+                let obj = self.gc.alloc(ValueKind::Struct as u8, type_id as u16, size);
                 self.write_reg(fiber_id, a, obj as u64);
             }
             
@@ -639,7 +639,7 @@ impl Vm {
                 // Compute elem_bytes from type_id
                 let elem_bytes = elem_bytes_from_type_id(elem_type);
                 let len = c as usize;
-                let arr = array::create(&mut self.gc, RuntimeTypeId::Array as TypeId, elem_type, elem_bytes, len);
+                let arr = array::create(&mut self.gc, type_meta.value_kind as u8, type_meta.type_id, elem_bytes, len);
                 self.write_reg(fiber_id, a, arr as u64);
             }
             
@@ -678,7 +678,7 @@ impl Vm {
                 let start = c as usize;
                 let end = flags as usize;
                 let cap = array::len(arr) - start;
-                let sl = slice::create(&mut self.gc, RuntimeTypeId::Slice as TypeId, arr, start, end - start, cap);
+                let sl = slice::create(&mut self.gc, arr, start, end - start, cap);
                 self.write_reg(fiber_id, a, sl as u64);
             }
             
@@ -723,7 +723,7 @@ impl Vm {
                 let sl = self.read_reg(fiber_id, b) as GcRef;
                 let start = self.read_reg(fiber_id, c) as usize;
                 let end = self.read_reg(fiber_id, flags as u16) as usize;
-                let new_sl = slice::slice_of(&mut self.gc, RuntimeTypeId::Slice as TypeId, sl, start, end);
+                let new_sl = slice::slice_of(&mut self.gc, sl, start, end);
                 self.write_reg(fiber_id, a, new_sl as u64);
             }
             
@@ -731,7 +731,13 @@ impl Vm {
                 // a=dest, b=slice, c=value
                 let sl = self.read_reg(fiber_id, b) as GcRef;
                 let val = self.read_reg(fiber_id, c);
-                let new_sl = slice::append(&mut self.gc, RuntimeTypeId::Slice as TypeId, RuntimeTypeId::Array as TypeId, sl, val);
+                // For append, we need elem info from the slice (or use defaults for nil slice)
+                let (elem_kind, elem_type_id, elem_bytes) = if sl.is_null() {
+                    (ValueKind::Int as u8, 0u16, 8usize) // default: int elements
+                } else {
+                    (slice::elem_kind(sl) as u8, slice::elem_type_id(sl), array::elem_bytes(slice::array_ref(sl)))
+                };
+                let new_sl = slice::append(&mut self.gc, elem_kind, elem_type_id, elem_bytes, sl, val);
                 self.write_reg(fiber_id, a, new_sl as u64);
             }
             
@@ -746,7 +752,7 @@ impl Vm {
                 // a=dest, b=str1, c=str2
                 let s1 = self.read_reg(fiber_id, b) as GcRef;
                 let s2 = self.read_reg(fiber_id, c) as GcRef;
-                let result = string::concat(&mut self.gc, RuntimeTypeId::String as TypeId, s1, s2);
+                let result = string::concat(&mut self.gc, s1, s2);
                 self.write_reg(fiber_id, a, result as u64);
             }
             
@@ -809,14 +815,14 @@ impl Vm {
                 let str_ref = self.read_reg(fiber_id, b) as GcRef;
                 let start = self.read_reg(fiber_id, c) as usize;
                 let end = self.read_reg(fiber_id, flags as u16) as usize;
-                let new_str = string::slice_of(&mut self.gc, RuntimeTypeId::String as TypeId, str_ref, start, end);
+                let new_str = string::slice_of(&mut self.gc, str_ref, start, end);
                 self.write_reg(fiber_id, a, new_str as u64);
             }
             
             // ============ Map ============
             Opcode::MapNew => {
                 // a=dest, b=key_type, c=val_type
-                let m = map::create(&mut self.gc, RuntimeTypeId::Map as TypeId, b as TypeId, c as TypeId);
+                let m = map::create(&mut self.gc, b as u8, c as u8);
                 self.write_reg(fiber_id, a, m as u64);
             }
             
@@ -860,7 +866,7 @@ impl Vm {
             // ============ Channel ============
             Opcode::ChanNew => {
                 // a=dest, b=elem_type, c=capacity
-                let ch = channel::create(&mut self.gc, RuntimeTypeId::Channel as TypeId, b as TypeId, c as usize);
+                let ch = channel::create(&mut self.gc, b as u8, c as usize);
                 self.write_reg(fiber_id, a, ch as u64);
             }
             
@@ -1188,7 +1194,7 @@ impl Vm {
             // ============ Closure ============
             Opcode::ClosureNew => {
                 // a=dest, b=func_id, c=upvalue_count
-                let cl = closure::create(&mut self.gc, RuntimeTypeId::Closure as TypeId, b as u32, c as usize);
+                let cl = closure::create(&mut self.gc, b as u32, c as usize);
                 self.write_reg(fiber_id, a, cl as u64);
             }
             
@@ -1231,7 +1237,7 @@ impl Vm {
             
             Opcode::UpvalNew => {
                 // a=dest: create new upval_box for reference capture
-                let uv = closure::create_upval_box(&mut self.gc, RuntimeTypeId::Closure as TypeId);
+                let uv = closure::create_upval_box(&mut self.gc);
                 self.write_reg(fiber_id, a, uv as u64);
             }
             
@@ -1362,42 +1368,46 @@ impl Vm {
             
             // ============ Interface ============
             Opcode::InitInterface => {
-                // a=dest (2 slots), b=iface_type_lo, c=iface_type_hi
-                // Initialize interface with iface_type in high 32 bits, value_type=0, data=0
-                let iface_type = (b as u32) | ((c as u32) << 16);
-                let slot0 = interface::pack_types(iface_type, 0);
+                // a=dest (2 slots), b=iface_type_id, c=unused
+                // Initialize interface with iface_type_id, value_kind=Nil, value_type_id=0
+                let iface_type_id = b as u16;
+                let slot0 = interface::pack_slot0(iface_type_id, 0, ValueKind::Nil as u8);
                 self.write_reg(fiber_id, a, slot0);
                 self.write_reg(fiber_id, a + 1, 0);
             }
             
             Opcode::BoxInterface => {
-                // a=dest (2 slots), b=value_type, c=value
-                // Preserve iface_type (high 32 bits), update value_type and data
+                // a=dest (2 slots), b=value_kind, c=value, flags=value_type_id
+                // Preserve iface_type_id, set value_kind, value_type_id, and data
                 let old_slot0 = self.read_reg(fiber_id, a);
-                let slot0 = interface::update_value_type(old_slot0, b as u32);
+                let iface_type_id = interface::unpack_iface_type_id(old_slot0);
+                let value_kind = b as u8;
+                let value_type_id = flags as u16;
+                let slot0 = interface::pack_slot0(iface_type_id, value_type_id, value_kind);
                 let val = self.read_reg(fiber_id, c);
                 self.write_reg(fiber_id, a, slot0);
                 self.write_reg(fiber_id, a + 1, val);
             }
             
             Opcode::UnboxInterface => {
-                // a=dest, b=interface (2 slots), c=type_reg
+                // a=dest, b=interface (2 slots), c=value_kind_reg
+                // Returns data in a, value_kind in c
                 let slot0 = self.read_reg(fiber_id, b);
                 let slot1 = self.read_reg(fiber_id, b + 1);
-                let type_id = interface::unbox_type(slot0);
+                let value_kind = interface::unpack_value_kind(slot0);
                 let data = interface::unbox_data(slot1);
                 self.write_reg(fiber_id, a, data);
-                self.write_reg(fiber_id, c, type_id as u64);
+                self.write_reg(fiber_id, c, value_kind as u8 as u64);
             }
             
             Opcode::TypeAssert => {
-                // a=dest, b=interface (2 slots), c=expected_type, flags=ok_reg
+                // a=dest, b=interface (2 slots), c=expected_kind, flags=ok_reg
                 let slot0 = self.read_reg(fiber_id, b);
                 let slot1 = self.read_reg(fiber_id, b + 1);
-                let actual_type = interface::unbox_type(slot0);
-                let expected_type = c as TypeId;
+                let actual_kind = interface::unpack_value_kind(slot0);
+                let expected_kind = ValueKind::from_u8(c as u8);
                 
-                if actual_type == expected_type {
+                if actual_kind == expected_kind {
                     self.write_reg(fiber_id, a, interface::unbox_data(slot1));
                     self.write_reg(fiber_id, flags as u16, 1);
                 } else {
@@ -1431,18 +1441,18 @@ impl Vm {
             
             // ============ Debug ============
             Opcode::DebugPrint => {
-                let type_id = b as u32;
+                let value_kind = ValueKind::from_u8(b as u8);
                 
-                let (val, inner_type_id, is_iface) = if RuntimeTypeId::is_interface(type_id) {
+                let (val, inner_kind, is_iface) = if value_kind == ValueKind::Interface {
                     let slot0 = self.read_reg(fiber_id, a);
-                    let value_type = interface::unpack_value_type(slot0);
+                    let inner = interface::unpack_value_kind(slot0);
                     let data = self.read_reg(fiber_id, a + 1);
-                    (data, value_type, true)
+                    (data, inner, true)
                 } else {
-                    (self.read_reg(fiber_id, a), type_id, false)
+                    (self.read_reg(fiber_id, a), value_kind, false)
                 };
                 
-                let s = format_value(val, inner_type_id);
+                let s = format_value(val, inner_kind as u32);
                 #[cfg(feature = "std")]
                 if is_iface {
                     println!("(interface){}", s);
@@ -1484,17 +1494,18 @@ impl Vm {
             Opcode::AssertArg => {
                 let fiber = self.scheduler.get(fiber_id).unwrap();
                 if fiber.assert_failed {
-                    let type_id = b as u32;
+                    let value_kind = ValueKind::from_u8(b as u8);
                     
-                    let (val, inner_type_id, is_iface) = if RuntimeTypeId::is_interface(type_id) {
-                        let inner_type_id = self.read_reg(fiber_id, a) as u32;
+                    let (val, inner_kind, is_iface) = if value_kind == ValueKind::Interface {
+                        let slot0 = self.read_reg(fiber_id, a);
+                        let inner = interface::unpack_value_kind(slot0);
                         let data = self.read_reg(fiber_id, a + 1);
-                        (data, inner_type_id, true)
+                        (data, inner, true)
                     } else {
-                        (self.read_reg(fiber_id, a), type_id, false)
+                        (self.read_reg(fiber_id, a), value_kind, false)
                     };
                     
-                    let s = format_value(val, inner_type_id);
+                    let s = format_value(val, inner_kind as u32);
                     #[cfg(feature = "std")]
                     if is_iface {
                         eprint!("(interface){}", s);
@@ -1724,10 +1735,11 @@ impl Vm {
                             }
                         }
                         SlotType::Interface1 => {
-                            // Dynamic check: type_id in previous slot determines if this is a ref
+                            // Dynamic check: value_kind in previous slot determines if this is a ref
                             if slot_idx > 0 {
-                                let type_id = fiber.stack[slot_idx - 1] as u32;
-                                if gox_common_core::RuntimeTypeId::needs_gc(type_id) && val != 0 {
+                                let packed = fiber.stack[slot_idx - 1];
+                                let value_kind = interface::unpack_value_kind(packed);
+                                if value_kind.needs_gc() && val != 0 {
                                     self.gc.mark_gray(val as GcRef);
                                 }
                             }
@@ -1774,18 +1786,20 @@ impl Vm {
             }
         }
         
-        // Mark globals using type_id for GC scanning
+        // Mark globals using value_kind for GC scanning
         if let Some(ref module) = self.module {
             let mut slot_idx = 0usize;
             for g in &module.globals {
-                if RuntimeTypeId::is_interface(g.type_id) {
-                    // Interface: 2 slots - first is type_id, second may be GcRef
-                    let inner_type_id = self.globals.get(slot_idx).copied().unwrap_or(0) as u32;
+                let value_kind = ValueKind::from_u8(g.value_kind);
+                if value_kind == ValueKind::Interface {
+                    // Interface: 2 slots - first is packed info, second may be GcRef
+                    let packed = self.globals.get(slot_idx).copied().unwrap_or(0);
+                    let inner_kind = interface::unpack_value_kind(packed);
                     let data = self.globals.get(slot_idx + 1).copied().unwrap_or(0);
-                    if RuntimeTypeId::needs_gc(inner_type_id) && data != 0 {
+                    if inner_kind.needs_gc() && data != 0 {
                         self.gc.mark_gray(data as GcRef);
                     }
-                } else if RuntimeTypeId::needs_gc(g.type_id) {
+                } else if value_kind.needs_gc() {
                     // GC type: 1 slot
                     let val = self.globals.get(slot_idx).copied().unwrap_or(0);
                     if val != 0 {
@@ -1820,21 +1834,21 @@ impl Default for Vm {
     }
 }
 
-/// Format a value for printing based on its type_id.
-fn format_value(val: u64, type_id: u32) -> String {
-    if type_id == RuntimeTypeId::Float32 as u32 {
+/// Format a value for printing based on its ValueKind.
+fn format_value(val: u64, value_kind: u32) -> String {
+    if value_kind == ValueKind::Float32 as u32 {
         let f = f32::from_bits(val as u32);
         format!("{}", f)
-    } else if type_id == RuntimeTypeId::Float64 as u32 {
+    } else if value_kind == ValueKind::Float64 as u32 {
         let f = f64::from_bits(val);
         if f.abs() >= 1e10 || (f != 0.0 && f.abs() < 1e-4) {
             format!("{:e}", f)
         } else {
             format!("{}", f)
         }
-    } else if type_id == RuntimeTypeId::Bool as u32 {
+    } else if value_kind == ValueKind::Bool as u32 {
         if val != 0 { "true".to_string() } else { "false".to_string() }
-    } else if type_id == RuntimeTypeId::String as u32 {
+    } else if value_kind == ValueKind::String as u32 {
         let ptr = val as crate::gc::GcRef;
         if ptr.is_null() {
             String::new()
@@ -1846,17 +1860,17 @@ fn format_value(val: u64, type_id: u32) -> String {
     }
 }
 
-/// Get element byte size from type_id.
-fn elem_bytes_from_type_id(type_id: u32) -> usize {
-    match type_id {
-        t if t == RuntimeTypeId::Bool as u32 => 1,
-        t if t == RuntimeTypeId::Int8 as u32 => 1,
-        t if t == RuntimeTypeId::Uint8 as u32 => 1,
-        t if t == RuntimeTypeId::Int16 as u32 => 2,
-        t if t == RuntimeTypeId::Uint16 as u32 => 2,
-        t if t == RuntimeTypeId::Int32 as u32 => 4,
-        t if t == RuntimeTypeId::Uint32 as u32 => 4,
-        t if t == RuntimeTypeId::Float32 as u32 => 4,
+/// Get element byte size from ValueKind.
+fn elem_bytes_from_type_id(value_kind: u32) -> usize {
+    match value_kind {
+        t if t == ValueKind::Bool as u32 => 1,
+        t if t == ValueKind::Int8 as u32 => 1,
+        t if t == ValueKind::Uint8 as u32 => 1,
+        t if t == ValueKind::Int16 as u32 => 2,
+        t if t == ValueKind::Uint16 as u32 => 2,
+        t if t == ValueKind::Int32 as u32 => 4,
+        t if t == ValueKind::Uint32 as u32 => 4,
+        t if t == ValueKind::Float32 as u32 => 4,
         _ => 8, // 64-bit types and all references
     }
 }
