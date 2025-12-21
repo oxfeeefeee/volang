@@ -57,7 +57,11 @@ fn main() -> ExitCode {
     let summary = if path.is_file() {
         let result = run_single_file_with_mode(&path, mode);
         let mut s = gox_tests::TestSummary::default();
-        if result.skipped {
+        if result.ignored {
+            // Mode mismatch - test doesn't apply to this mode
+            println!("  ⊘ {} (not applicable for {} mode)", result.path, mode);
+            // Don't count in stats, exit success
+        } else if result.skipped {
             s.skipped = 1;
             println!("  ⊘ {} (skipped)", result.path);
             if let Some(reason) = &result.error {
