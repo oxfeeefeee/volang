@@ -326,7 +326,7 @@ impl Checker {
         if info.mode.constant_val().is_some() {
             // If x is a constant, it must be representable as a value of typ.
             let mut c = Operand::with_expr(info.mode.clone(), expr_id, info.typ);
-            self.convert_untyped(&mut c, t);
+            self.convert_untyped(&mut c, t, fctx);
             if c.invalid() {
                 return;
             }
@@ -346,8 +346,7 @@ impl Checker {
     }
 
     /// Attempts to set the type of an untyped value to the target type.
-    /// This is the version that takes fctx for updating expression types.
-    pub fn convert_untyped_fctx(
+    pub fn convert_untyped(
         &mut self,
         x: &mut Operand,
         target: TypeKey,
@@ -358,32 +357,31 @@ impl Checker {
         }
 
         if typ::is_untyped(target, &self.tc_objs) {
-            // Both x and target are untyped
+            // both x and target are untyped
             let order = |bt: BasicType| -> usize {
                 match bt {
                     BasicType::UntypedInt => 1,
                     BasicType::UntypedRune => 2,
                     BasicType::UntypedFloat => 3,
-                    _ => 0,
+                    _ => unreachable!(),
                 }
             };
             let xtval = self.otype(x.typ.unwrap());
             let ttval = self.otype(target);
-            if let (Some(xbasic), Some(tbasic)) = (xtval.try_as_basic(), ttval.try_as_basic()) {
-                let xbt = xbasic.typ();
-                let tbt = tbasic.typ();
-                if xbt != tbt {
-                    if xtval.is_numeric(&self.tc_objs) && ttval.is_numeric(&self.tc_objs) {
-                        if order(xbt) < order(tbt) {
-                            x.typ = Some(target);
-                            if let Some(expr_id) = x.expr_id {
-                                self.update_expr_type(expr_id, target, false, fctx);
-                            }
+            let xbasic = xtval.try_as_basic().unwrap().typ();
+            let tbasic = ttval.try_as_basic().unwrap().typ();
+            if xbasic != tbasic {
+                if xtval.is_numeric(&self.tc_objs) && ttval.is_numeric(&self.tc_objs) {
+                    if order(xbasic) < order(tbasic) {
+                        x.typ = Some(target);
+                        if let Some(expr_id) = x.expr_id {
+                            self.update_expr_type(expr_id, target, false, fctx);
                         }
-                    } else {
-                        self.error(Span::default(), "cannot convert untyped value".to_string());
-                        x.mode = OperandMode::Invalid;
                     }
+                } else {
+                    self.error(Span::default(), "cannot convert untyped value".to_string());
+                    x.mode = OperandMode::Invalid;
+                    return;
                 }
             }
             return;
@@ -406,18 +404,18 @@ impl Checker {
                     }
                     Some(target)
                 } else {
-                    // Non-constant untyped values
-                    let ok = if let Some(xbasic) = self.otype(x.typ.unwrap()).try_as_basic() {
-                        match xbasic.typ() {
-                            BasicType::UntypedBool => tval.is_boolean(&self.tc_objs),
-                            BasicType::UntypedInt
-                            | BasicType::UntypedRune
-                            | BasicType::UntypedFloat => tval.is_numeric(&self.tc_objs),
-                            BasicType::UntypedNil => typ::has_nil(t, &self.tc_objs),
-                            _ => false,
-                        }
-                    } else {
-                        false
+                    // Non-constant untyped values may appear as the
+                    // result of comparisons (untyped bool), intermediate
+                    // (delayed-checked) rhs operands of shifts, and as
+                    // the value nil.
+                    let ok = match self.otype(x.typ.unwrap()).try_as_basic().unwrap().typ() {
+                        BasicType::UntypedBool => tval.is_boolean(&self.tc_objs),
+                        BasicType::UntypedInt
+                        | BasicType::UntypedRune
+                        | BasicType::UntypedFloat => tval.is_numeric(&self.tc_objs),
+                        BasicType::UntypedString => unreachable!(),
+                        BasicType::UntypedNil => typ::has_nil(t, &self.tc_objs),
+                        _ => false,
                     };
                     if ok { Some(target) } else { None }
                 }
@@ -553,7 +551,7 @@ impl Checker {
         if ytval.is_unsigned(&self.tc_objs) {
             // ok
         } else if ytval.is_untyped(&self.tc_objs) {
-            self.convert_untyped(y, self.basic_type(BasicType::Uint));
+            self.convert_untyped(y, self.basic_type(BasicType::Uint), fctx);
             if y.invalid() {
                 x.mode = OperandMode::Invalid;
                 return;
@@ -657,12 +655,12 @@ impl Checker {
             return;
         }
 
-        self.convert_untyped(x, y.typ.unwrap());
+        self.convert_untyped(x, y.typ.unwrap(), fctx);
         if x.invalid() {
             return;
         }
 
-        self.convert_untyped(&mut y, x.typ.unwrap());
+        self.convert_untyped(&mut y, x.typ.unwrap(), fctx);
         if y.invalid() {
             x.mode = OperandMode::Invalid;
             return;
@@ -736,7 +734,7 @@ impl Checker {
         }
 
         // An untyped constant must be representable as Int
-        self.convert_untyped(x, self.basic_type(BasicType::Int));
+        self.convert_untyped(x, self.basic_type(BasicType::Int), fctx);
         if x.invalid() {
             return Err(());
         }
@@ -1246,7 +1244,7 @@ impl Checker {
                 if x.invalid() {
                     return;
                 }
-                self.convert_untyped_fctx(x, ty, fctx);
+                self.convert_untyped(x, ty, fctx);
             }
             ExprKind::Receive(recv) => {
                 self.expr(x, recv, fctx);

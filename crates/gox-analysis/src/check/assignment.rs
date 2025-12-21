@@ -23,7 +23,7 @@ impl Checker {
     /// If necessary, converts untyped values to the appropriate type.
     /// Use t == None to indicate assignment to an untyped blank identifier.
     /// x.mode is set to invalid if the assignment failed.
-    pub fn assignment(&mut self, x: &mut Operand, t: Option<TypeKey>, note: &str, _fctx: &mut FilesContext) {
+    pub fn assignment(&mut self, x: &mut Operand, t: Option<TypeKey>, note: &str, fctx: &mut FilesContext) {
         self.single_value(x);
         if x.invalid() {
             return;
@@ -57,7 +57,7 @@ impl Checker {
             } else {
                 t.unwrap()
             };
-            self.convert_untyped(x, target);
+            self.convert_untyped(x, target, fctx);
             if x.invalid() {
                 return;
             }
@@ -415,38 +415,6 @@ impl Checker {
         if let OperandMode::CommaOk = x.mode {
             x.mode = OperandMode::Value;
         }
-    }
-
-    /// Converts an untyped operand to a typed value (simple version without fctx).
-    /// For the full version with expression type updating, use convert_untyped_fctx in expr.rs.
-    pub fn convert_untyped(&mut self, x: &mut Operand, target: TypeKey) {
-        if x.invalid() {
-            return;
-        }
-        
-        let xt = match x.typ {
-            Some(t) => t,
-            None => return,
-        };
-        
-        if !typ::is_untyped(xt, &self.tc_objs) {
-            return;
-        }
-
-        let t = typ::underlying_type(target, &self.tc_objs);
-        
-        // Check if conversion is valid
-        if let OperandMode::Constant(ref val) = x.mode {
-            if let Type::Basic(detail) = &self.tc_objs.types[t] {
-                if !val.representable(detail, None) {
-                    self.error(DEFAULT_SPAN, "constant not representable".to_string());
-                    x.mode = OperandMode::Invalid;
-                    return;
-                }
-            }
-        }
-
-        x.typ = Some(target);
     }
 
     /// Checks if x is assignable to type t.

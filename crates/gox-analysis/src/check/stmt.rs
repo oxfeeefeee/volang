@@ -324,13 +324,14 @@ impl Checker {
             if x.invalid() || v.invalid() {
                 continue;
             }
-            self.convert_untyped(v, x.typ.unwrap());
+            self.convert_untyped(v, x.typ.unwrap(), fctx);
             if v.invalid() {
                 continue;
             }
-            // Check comparability (== operation)
-            self.comparison(x, v, gox_syntax::ast::BinaryOp::Eq, fctx);
-            if x.invalid() {
+            // Order matters: By comparing v against x, error positions are at the case values.
+            let res = &mut v.clone();
+            self.comparison(res, x, gox_syntax::ast::BinaryOp::Eq, fctx);
+            if res.invalid() {
                 continue;
             }
             
