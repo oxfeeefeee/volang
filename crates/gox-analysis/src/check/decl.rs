@@ -302,7 +302,7 @@ impl Checker {
             }
         }
 
-        self.init_vars(lhs.as_ref().unwrap(), &[init.clone().unwrap()], fctx);
+        self.init_vars(lhs.as_ref().unwrap(), &[init.clone().unwrap()], None, fctx);
     }
 
     /// Type-checks a type declaration.

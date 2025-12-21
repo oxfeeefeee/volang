@@ -587,38 +587,25 @@ impl Checker {
             }
 
             StmtKind::Return(rs) => {
-                // Get function signature results
+                // Aligned with goscript/types/src/check/stmt.rs::Stmt::Return
                 if let Some(sig_key) = self.octx.sig {
                     let sig = self.otype(sig_key).try_as_signature().unwrap();
-                    let result_count = sig.results_count(&self.tc_objs);
+                    let results_key = sig.results();
+                    let results_tuple = self.otype(results_key).try_as_tuple().unwrap();
+                    let result_vars = results_tuple.vars().clone();
+                    let result_count = result_vars.len();
                     
-                    if rs.values.is_empty() && result_count > 0 {
-                        // Check for named returns (implicit return values)
-                        // For now, allow empty return with named results
-                    } else if rs.values.len() != result_count {
-                        self.error(stmt.span, format!(
-                            "wrong number of return values: have {}, want {}",
-                            rs.values.len(), result_count
-                        ));
-                    } else {
-                        // Get result types first to avoid borrow conflicts
-                        let results_key = sig.results();
-                        let result_types: Vec<Option<TypeKey>> = {
-                            let results_tuple = self.otype(results_key).try_as_tuple().unwrap();
-                            results_tuple.vars().iter()
-                                .map(|&v| self.tc_objs.lobjs[v].typ())
-                                .collect()
-                        };
-                        // Check each return value against result tuple
-                        for (i, val) in rs.values.iter().enumerate() {
-                            let x = &mut Operand::new();
-                            self.expr(x, val, fctx);
-                            if !x.invalid() {
-                                if let Some(rt) = result_types.get(i).copied().flatten() {
-                                    self.assignment(x, Some(rt), "return statement", fctx);
-                                }
-                            }
+                    if result_count > 0 {
+                        if rs.values.is_empty() {
+                            // Empty return with results - check named returns are in scope
+                            // For now, allow empty return with named results
+                        } else {
+                            // Return has results - use init_vars for type checking
+                            self.init_vars(&result_vars, &rs.values, Some(stmt.span), fctx);
                         }
+                    } else if !rs.values.is_empty() {
+                        self.error(stmt.span, "no result values expected".to_string());
+                        self.use_exprs(&rs.values, fctx);
                     }
                 } else {
                     // No function signature, just check expressions
@@ -920,27 +907,47 @@ impl Checker {
                         };
                         
                         // Declare or assign key/value variables
+                        // Aligned with goscript/types/src/check/stmt.rs::Stmt::Range
                         let scope_key = self.octx.scope.unwrap();
+                        let lhs = [key.as_ref(), value.as_ref()];
+                        let rhs = [key_type, val_type];
+                        
                         if *define {
                             // Short variable declaration
-                            if let Some(k) = key {
-                                let name = self.resolve_symbol(k.symbol).to_string();
-                                if name != "_" {
-                                    let okey = self.tc_objs.new_var(k.span.start.to_usize(), Some(self.pkg), name, key_type);
-                                    self.result.record_def(k.clone(), Some(okey));
-                                    self.declare(scope_key, okey);
+                            let mut vars = vec![];
+                            for (i, lhs_ident) in lhs.iter().enumerate() {
+                                if lhs_ident.is_none() {
+                                    continue;
+                                }
+                                let ident = lhs_ident.unwrap();
+                                let name = self.resolve_symbol(ident.symbol).to_string();
+                                let has_name = name != "_";
+                                // Create var with type None - init_var will set type
+                                let okey = self.tc_objs.new_var(ident.span.start.to_usize(), Some(self.pkg), name, None);
+                                self.result.record_def(ident.clone(), Some(okey));
+                                if has_name {
+                                    vars.push(okey);
+                                }
+                                // Initialize lhs variable using init_var
+                                if let Some(rhs_type) = rhs[i] {
+                                    let mut x = Operand::new();
+                                    x.mode = OperandMode::Value;
+                                    x.typ = Some(rhs_type);
+                                    self.init_var(okey, &mut x, "range clause", fctx);
+                                } else {
+                                    let invalid_type = self.invalid_type();
+                                    self.tc_objs.lobjs[okey].set_type(Some(invalid_type));
                                 }
                             }
-                            if let Some(v) = value {
-                                let name = self.resolve_symbol(v.symbol).to_string();
-                                if name != "_" {
-                                    let okey = self.tc_objs.new_var(v.span.start.to_usize(), Some(self.pkg), name, val_type);
-                                    self.result.record_def(v.clone(), Some(okey));
-                                    self.declare(scope_key, okey);
-                                }
+                            // Declare variables
+                            for okey in vars {
+                                self.declare(scope_key, okey);
                             }
+                        } else {
+                            // Ordinary assignment - would need to look up existing variables
+                            // For now, just skip the non-define case
+                            // TODO: implement ordinary assignment for range
                         }
-                        // else: assignment - would need to check assignability
                     }
                 }
                 self.open_scope(fs.body.span, "for body");
@@ -1051,6 +1058,7 @@ impl Checker {
     }
 
     /// Short variable declaration in statement context.
+    /// Aligned with goscript/types/src/check/assignment.rs::short_var_decl
     fn short_var_decl_stmt(
         &mut self,
         names: &[Ident],
@@ -1063,37 +1071,26 @@ impl Checker {
             None => return,
         };
 
-        // Evaluate rhs first
-        let mut rhs_types: Vec<Option<TypeKey>> = Vec::with_capacity(values.len());
-        for val in values {
-            let x = &mut Operand::new();
-            self.expr(x, val, fctx);
-            rhs_types.push(x.typ);
-        }
-
-        // Check count match
-        if names.len() != rhs_types.len() && rhs_types.len() != 1 {
-            self.error(span, format!(
-                "assignment mismatch: {} variables but {} values",
-                names.len(), rhs_types.len()
-            ));
-            return;
-        }
-
         let mut new_vars = Vec::new();
         let mut lhs_vars = Vec::new();
 
-        for (i, ident) in names.iter().enumerate() {
+        for ident in names.iter() {
             let name = self.resolve_symbol(ident.symbol).to_string();
-            let typ = if rhs_types.len() == 1 { rhs_types[0] } else { rhs_types.get(i).copied().flatten() };
 
             // Check if variable already exists in current scope
             if let Some(okey) = self.scope(scope_key).lookup(&name) {
                 self.result.record_use(ident.clone(), okey);
-                lhs_vars.push(okey);
+                if self.tc_objs.lobjs[okey].entity_type().is_var() {
+                    lhs_vars.push(okey);
+                } else {
+                    self.error(ident.span, format!("cannot assign to {}", name));
+                    // dummy variable
+                    let dummy = self.tc_objs.new_var(ident.span.start.to_usize(), Some(self.pkg), "_".to_string(), None);
+                    lhs_vars.push(dummy);
+                }
             } else {
-                // Declare new variable
-                let okey = self.tc_objs.new_var(ident.span.start.to_usize(), Some(self.pkg), name.clone(), typ);
+                // Declare new variable with type=None (init_var will set type)
+                let okey = self.tc_objs.new_var(ident.span.start.to_usize(), Some(self.pkg), name.clone(), None);
                 if name != "_" {
                     new_vars.push(okey);
                 }
@@ -1101,6 +1098,9 @@ impl Checker {
                 lhs_vars.push(okey);
             }
         }
+
+        // Use init_vars to properly handle type inference (converts untyped to default types)
+        self.init_vars(&lhs_vars, values, None, fctx);
 
         // Declare new variables in scope
         if !new_vars.is_empty() {

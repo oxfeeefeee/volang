@@ -11,7 +11,7 @@ use gox_syntax::ast::Expr;
 
 use crate::objects::{ObjKey, TypeKey};
 use crate::operand::{Operand, OperandMode};
-use crate::typ::{self, BasicType};
+use crate::typ::{self, BasicType, Type};
 
 /// Default span for error reporting when no span is available.
 const DEFAULT_SPAN: Span = Span { start: BytePos(0), end: BytePos(0) };
@@ -207,97 +207,105 @@ impl Checker {
     }
 
     /// Initializes multiple variables from multiple values.
-    pub fn init_vars(&mut self, lhs: &[ObjKey], rhs: &[Expr], fctx: &mut FilesContext) {
-        let invalid_type = self.invalid_type();
+    /// Aligned with goscript/types/src/check/assignment.rs::init_vars
+    /// If return_pos is Some, init_vars is called to type-check return expressions.
+    pub fn init_vars(&mut self, lhs: &[ObjKey], rhs: &[Expr], return_pos: Option<Span>, fctx: &mut FilesContext) {
+        use std::cmp::Ordering;
+        use super::util::UnpackResult;
         
-        // Simple case: same number of lhs and rhs
-        if lhs.len() == rhs.len() {
-            for (i, &l) in lhs.iter().enumerate() {
-                let mut x = Operand::new();
-                self.expr(&mut x, &rhs[i], fctx);
-                self.init_var(l, &mut x, "assignment", fctx);
+        let invalid_type = self.invalid_type();
+        let ll = lhs.len();
+        
+        // Use unpack to handle all cases uniformly
+        // requires return_pos.is_none for comma-ok handling
+        let result = self.unpack(rhs, ll, ll == 2 && return_pos.is_none(), false, fctx);
+        
+        let mut invalidate_lhs = || {
+            for &okey in lhs.iter() {
+                if self.tc_objs.lobjs[okey].typ().is_none() {
+                    self.tc_objs.lobjs[okey].set_type(Some(invalid_type));
+                }
             }
-            return;
-        }
-
-        // Handle tuple assignment (single rhs with multiple values)
-        if rhs.len() == 1 {
-            let mut x = Operand::new();
-            self.expr(&mut x, &rhs[0], fctx);
-            
-            // Check if x is a tuple
-            if let Some(typ) = x.typ {
-                if let crate::typ::Type::Tuple(tuple) = &self.tc_objs.types[typ] {
-                    let vars = tuple.vars().clone();
-                    if vars.len() == lhs.len() {
-                        for (i, &l) in lhs.iter().enumerate() {
-                            let var_type = self.tc_objs.lobjs[vars[i]].typ();
-                            let mut elem = Operand::new();
-                            elem.mode = OperandMode::Value;
-                            elem.typ = var_type;
-                            elem.expr_id = x.expr_id;
-                            self.init_var(l, &mut elem, "assignment", fctx);
+        };
+        
+        match &result {
+            UnpackResult::Error => invalidate_lhs(),
+            UnpackResult::Tuple(_, _, _)
+            | UnpackResult::CommaOk(_, _)
+            | UnpackResult::Multiple(_, _)
+            | UnpackResult::Single(_, _)
+            | UnpackResult::Nothing(_) => {
+                let (count, ord) = result.rhs_count();
+                match ord {
+                    Ordering::Greater | Ordering::Less => {
+                        invalidate_lhs();
+                        result.use_(self, 0, fctx);
+                        if !rhs.is_empty() {
+                            if let Some(pos) = return_pos {
+                                self.error(
+                                    pos,
+                                    format!("wrong number of return values (want {}, got {})", ll, count),
+                                );
+                            } else {
+                                self.error(
+                                    rhs[0].span,
+                                    format!("cannot initialize {} variables with {} values", ll, count),
+                                );
+                            }
                         }
                         return;
                     }
+                    Ordering::Equal => {
+                        let context = if return_pos.is_some() { "return statement" } else { "assignment" };
+                        for (i, &l) in lhs.iter().enumerate() {
+                            let mut x = Operand::new();
+                            result.get(self, &mut x, i, fctx);
+                            self.init_var(l, &mut x, context, fctx);
+                        }
+                    }
                 }
-            }
-        }
-
-        // Error: mismatched counts
-        self.error(
-            rhs[0].span,
-            format!("cannot initialize {} variables with {} values", lhs.len(), rhs.len()),
-        );
-        
-        // Set all lhs to invalid
-        for &l in lhs {
-            if self.tc_objs.lobjs[l].typ().is_none() {
-                self.tc_objs.lobjs[l].set_type(Some(invalid_type));
             }
         }
     }
 
     /// Assigns multiple values to multiple variables.
+    /// Aligned with goscript/types/src/check/assignment.rs::assign_vars
     pub fn assign_vars(&mut self, lhs: &[Expr], rhs: &[Expr], fctx: &mut FilesContext) {
-        // Simple case: same number of lhs and rhs
-        if lhs.len() == rhs.len() {
-            for (i, l) in lhs.iter().enumerate() {
-                let mut x = Operand::new();
-                self.expr(&mut x, &rhs[i], fctx);
-                self.assign_var(l, &mut x, fctx);
-            }
-            return;
-        }
-
-        // Handle tuple assignment
-        if rhs.len() == 1 {
-            let mut x = Operand::new();
-            self.expr(&mut x, &rhs[0], fctx);
-            
-            if let Some(typ) = x.typ {
-                if let crate::typ::Type::Tuple(tuple) = &self.tc_objs.types[typ] {
-                    let vars = tuple.vars().clone();
-                    if vars.len() == lhs.len() {
-                        for (i, l) in lhs.iter().enumerate() {
-                            let var_type = self.tc_objs.lobjs[vars[i]].typ();
-                            let mut elem = Operand::new();
-                            elem.mode = OperandMode::Value;
-                            elem.typ = var_type;
-                            elem.expr_id = x.expr_id;
-                            self.assign_var(l, &mut elem, fctx);
+        use std::cmp::Ordering;
+        use super::util::UnpackResult;
+        
+        let ll = lhs.len();
+        let result = self.unpack(rhs, ll, ll == 2, false, fctx);
+        
+        match &result {
+            UnpackResult::Error => self.use_lhs(lhs, fctx),
+            UnpackResult::Tuple(_, _, _)
+            | UnpackResult::CommaOk(_, _)
+            | UnpackResult::Multiple(_, _)
+            | UnpackResult::Single(_, _)
+            | UnpackResult::Nothing(_) => {
+                let (count, ord) = result.rhs_count();
+                match ord {
+                    Ordering::Greater | Ordering::Less => {
+                        result.use_(self, 0, fctx);
+                        if !rhs.is_empty() {
+                            self.error(
+                                rhs[0].span,
+                                format!("cannot assign {} values to {} variables", count, ll),
+                            );
                         }
                         return;
+                    }
+                    Ordering::Equal => {
+                        for (i, l) in lhs.iter().enumerate() {
+                            let mut x = Operand::new();
+                            result.get(self, &mut x, i, fctx);
+                            self.assign_var(l, &mut x, fctx);
+                        }
                     }
                 }
             }
         }
-
-        // Error: mismatched counts
-        self.error(
-            rhs[0].span,
-            format!("cannot assign {} values to {} variables", rhs.len(), lhs.len()),
-        );
     }
 
     /// Handles short variable declarations (:=).
@@ -340,7 +348,7 @@ impl Checker {
             }
         }
 
-        self.init_vars(&lhs_vars, rhs, fctx);
+        self.init_vars(&lhs_vars, rhs, None, fctx);
 
         // Declare new variables in scope
         if !new_vars.is_empty() {
@@ -359,7 +367,8 @@ impl Checker {
         }
     }
 
-    /// Converts an untyped operand to a typed value.
+    /// Converts an untyped operand to a typed value (simple version without fctx).
+    /// For the full version with expression type updating, use convert_untyped_fctx in expr.rs.
     pub fn convert_untyped(&mut self, x: &mut Operand, target: TypeKey) {
         if x.invalid() {
             return;
@@ -374,13 +383,16 @@ impl Checker {
             return;
         }
 
+        let t = typ::underlying_type(target, &self.tc_objs);
+        
         // Check if conversion is valid
         if let OperandMode::Constant(ref val) = x.mode {
-            // For constants, check representability
-            if !self.is_representable(val, target) {
-                self.error(DEFAULT_SPAN, "constant not representable".to_string());
-                x.mode = OperandMode::Invalid;
-                return;
+            if let Type::Basic(detail) = &self.tc_objs.types[t] {
+                if !val.representable(detail, None) {
+                    self.error(DEFAULT_SPAN, "constant not representable".to_string());
+                    x.mode = OperandMode::Invalid;
+                    return;
+                }
             }
         }
 
@@ -388,6 +400,7 @@ impl Checker {
     }
 
     /// Checks if x is assignable to type t.
+    /// Aligned with goscript/types/src/operand.rs::assignable_to
     pub fn assignable_to(&self, x: &Operand, t: TypeKey, reason: &mut String) -> bool {
         let xt = match x.typ {
             Some(typ) => typ,
@@ -402,9 +415,38 @@ impl Checker {
         // Check underlying types
         let xu = typ::underlying_type(xt, &self.tc_objs);
         let tu = typ::underlying_type(t, &self.tc_objs);
+        let ut_x = self.otype(xu).underlying_val(&self.tc_objs);
+        let ut_t = self.otype(tu).underlying_val(&self.tc_objs);
 
+        // x is untyped
+        if typ::is_untyped(xt, &self.tc_objs) {
+            match ut_t {
+                Type::Basic(detail) => {
+                    // untyped constant representable as t
+                    if let Some(val) = x.mode.constant_val() {
+                        return val.representable(detail, None);
+                    }
+                    // The result of a comparison is an untyped boolean, but may not be a constant
+                    if detail.typ() == BasicType::Bool {
+                        if let Type::Basic(xb) = ut_x {
+                            return xb.typ() == BasicType::UntypedBool;
+                        }
+                    }
+                }
+                Type::Interface(detail) => {
+                    // untyped nil or empty interface
+                    return x.is_nil(&self.tc_objs) || detail.is_empty();
+                }
+                Type::Pointer(_) | Type::Signature(_) | Type::Slice(_) | Type::Map(_) | Type::Chan(_) => {
+                    return x.is_nil(&self.tc_objs);
+                }
+                _ => {}
+            }
+        }
+
+        // x is typed
+        // x's type V and T have identical underlying types and at least one is not a named type
         if typ::identical(xu, tu, &self.tc_objs) {
-            // Check if either is a defined type
             let x_is_named = !typ::identical(xt, xu, &self.tc_objs);
             let t_is_named = !typ::identical(t, tu, &self.tc_objs);
             if !x_is_named || !t_is_named {
@@ -421,10 +463,18 @@ impl Checker {
             return false;
         }
 
-        // x is nil and T is a pointer, function, slice, map, channel, or interface type
-        if x.is_nil(&self.tc_objs) {
-            if typ::has_nil(t, &self.tc_objs) {
-                return true;
+        // x is a bidirectional channel value, T is a channel type,
+        // they have identical element types, and at least one is not a named type
+        if let (Type::Chan(xc), Type::Chan(tc)) = (ut_x, ut_t) {
+            use crate::typ::ChanDir;
+            if xc.dir() == ChanDir::SendRecv {
+                if typ::identical(xc.elem(), tc.elem(), &self.tc_objs) {
+                    let x_is_named = !typ::identical(xt, xu, &self.tc_objs);
+                    let t_is_named = !typ::identical(t, tu, &self.tc_objs);
+                    if !x_is_named || !t_is_named {
+                        return true;
+                    }
+                }
             }
         }
 

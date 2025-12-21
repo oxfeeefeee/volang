@@ -125,6 +125,11 @@ impl FuncBuilder {
         self.locals.iter().rev().find(|v| v.symbol == symbol)
     }
 
+    /// Bind a symbol to an existing slot (for range loop variables)
+    pub fn bind_local(&mut self, symbol: Symbol, slot: u16, slots: u16, _slot_types: &[SlotType]) {
+        self.locals.push(LocalVar { symbol, slot, slots });
+    }
+
     // === Scope management ===
 
     pub fn push_scope(&mut self) {
@@ -208,6 +213,11 @@ impl FuncBuilder {
         let offset = target as i32 - pos as i32;
         self.code[pos].b = offset as u16;
         self.code[pos].c = (offset >> 16) as u16;
+    }
+
+    /// Patch the c field of an instruction (for IterNext done_offset)
+    pub fn patch_jump_c(&mut self, pos: usize, offset: u16) {
+        self.code[pos].c = offset;
     }
 
     // === Build ===

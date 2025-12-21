@@ -342,8 +342,79 @@ fn compile_for(
                 func.patch_jump(exit);
             }
         }
-        ForClause::Range { .. } => {
-            todo!("range loop")
+        ForClause::Range { key, value, define, expr } => {
+            // Compile the container expression
+            let container = compile_expr(expr, ctx, func, info)?;
+            
+            // Determine iterator type based on container type
+            let container_ty = info.expr_type(expr);
+            let iter_type: u16 = match container_ty {
+                Some(Type::Slice(_)) => 0,
+                Some(Type::Map(_)) => 1,
+                Some(Type::Basic(b)) if b.typ() == BasicType::Str => 2,
+                Some(Type::Array(_)) => 0, // Arrays iterate like slices
+                _ => 0,
+            };
+            
+            // IterBegin: a=container, b=iter_type
+            func.emit_op(Opcode::IterBegin, container, iter_type, 0);
+            
+            let loop_start = func.code_pos();
+            func.push_loop(Some(loop_start));
+            
+            // Allocate registers for key and value
+            let key_reg = func.alloc_temp(1);
+            let value_reg = func.alloc_temp(1);
+            
+            // IterNext: a=key_dest, b=value_dest, c=done_offset (patch later)
+            let iter_next_pos = func.emit_op(Opcode::IterNext, key_reg, value_reg, 0);
+            
+            // Bind key and value to local variables if defined
+            if *define {
+                if let Some(k) = key {
+                    // For range loops, key/value are already in temp registers
+                    // Just bind the symbol to that register
+                    func.bind_local(k.symbol, key_reg, 1, &[SlotType::Value]);
+                }
+                if let Some(v) = value {
+                    func.bind_local(v.symbol, value_reg, 1, &[SlotType::Value]);
+                }
+            } else {
+                // Assignment to existing variables
+                if let Some(k) = key {
+                    if let Some(local) = func.lookup_local(k.symbol) {
+                        let local_slot = local.slot;
+                        if local_slot != key_reg {
+                            func.emit_op(Opcode::Mov, local_slot, key_reg, 0);
+                        }
+                    }
+                }
+                if let Some(v) = value {
+                    if let Some(local) = func.lookup_local(v.symbol) {
+                        let local_slot = local.slot;
+                        if local_slot != value_reg {
+                            func.emit_op(Opcode::Mov, local_slot, value_reg, 0);
+                        }
+                    }
+                }
+            }
+            
+            // Compile loop body
+            for stmt in body {
+                compile_stmt(stmt, ctx, func, info)?;
+            }
+            
+            // Jump back to IterNext
+            let back_offset = loop_start as i32 - func.code_pos() as i32;
+            func.emit_op(Opcode::Jump, 0, back_offset as u16, (back_offset >> 16) as u16);
+            
+            // Patch IterNext's done_offset to jump here
+            let loop_end = func.code_pos();
+            let done_offset = loop_end as i32 - iter_next_pos as i32;
+            func.patch_jump_c(iter_next_pos, done_offset as u16);
+            
+            // IterEnd
+            func.emit_op(Opcode::IterEnd, 0, 0, 0);
         }
     }
 

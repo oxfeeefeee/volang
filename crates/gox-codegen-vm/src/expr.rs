@@ -4,7 +4,7 @@ use gox_analysis::{Builtin, ConstValue, Type, BasicType};
 use num_traits::ToPrimitive;
 use gox_common::Span;
 use gox_common_core::SlotType;
-use gox_syntax::ast::{BinaryOp, CompositeLitElem, Expr, ExprKind, TypeExpr, UnaryOp};
+use gox_syntax::ast::{BinaryOp, CompositeLitElem, CompositeLitKey, Expr, ExprKind, TypeExpr, UnaryOp};
 use gox_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
@@ -538,6 +538,15 @@ fn compile_builtin_call(
             func.emit_op(Opcode::LoadNil, dst, 0, 0);
             Ok(dst)
         }
+        Builtin::Delete => {
+            // delete(map, key)
+            let map = compile_expr(&args[0], ctx, func, info)?;
+            let key = compile_expr(&args[1], ctx, func, info)?;
+            func.emit_op(Opcode::MapDelete, map, key, 0);
+            let dst = func.alloc_temp(1);
+            func.emit_op(Opcode::LoadNil, dst, 0, 0);
+            Ok(dst)
+        }
         _ => todo!("builtin {:?}", builtin),
     }
 }
@@ -714,6 +723,31 @@ fn compile_composite_lit(
                 let idx = func.alloc_temp(1);
                 func.emit_op(Opcode::LoadInt, idx, i as u16, 0);
                 func.emit_op(Opcode::ArraySet, dst, idx, val);
+            }
+            
+            Ok(dst)
+        }
+        Some(Type::Map(map_info)) => {
+            // Map literal: map[K]V{k1: v1, k2: v2}
+            let key_type = info.query.get_type(map_info.key());
+            let val_type = info.query.get_type(map_info.elem());
+            let key_vk = info.value_kind(key_type) as u16;
+            let val_vk = info.value_kind(val_type) as u16;
+            
+            // MapNew: a = make(map), key_type=b, val_type=c
+            let dst = func.alloc_temp(1);
+            func.emit_op(Opcode::MapNew, dst, key_vk, val_vk);
+            
+            // Set each key-value pair
+            for elem in elems.iter() {
+                let key_expr = match &elem.key {
+                    Some(CompositeLitKey::Expr(e)) => e,
+                    _ => panic!("map literal element must have expression key"),
+                };
+                let key = compile_expr(key_expr, ctx, func, info)?;
+                let val = compile_expr(&elem.value, ctx, func, info)?;
+                // MapSet: a[b] = c
+                func.emit_op(Opcode::MapSet, dst, key, val);
             }
             
             Ok(dst)
