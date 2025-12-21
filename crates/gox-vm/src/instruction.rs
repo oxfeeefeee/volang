@@ -109,8 +109,11 @@ pub enum Opcode {
     JumpIfNot,    // if !a: pc += imm32(b,c)
     
     // ============ Function call ============
-    Call = 80,    // call func at a, args start at b, c=arg_count, flags=ret_count
-    Return,       // return values starting at a, b=count
+    Call = 80,        // call func[a], args at b, c=arg_count, flags=ret_count
+    CallExtern,       // call extern[a], args at b, c=arg_count, flags=ret_count
+    CallClosure,      // call closure a, args at b, c=arg_count, flags=ret_count
+    CallInterface,    // call iface a method b, args at c, flags=arg_count|ret_count
+    Return,           // return values starting at a, b=count
     
     // ============ Object operations ============
     Alloc = 85,   // a = new object, type_id=b|(c<<16), flags=field_count
@@ -175,7 +178,6 @@ pub enum Opcode {
     ClosureNew = 150, // a = closure(func=b), c=upvalue_count
     ClosureGet,       // a = closure.upvalues[b]
     ClosureSet,       // closure.upvalues[a] = b
-    ClosureCall,      // call closure at a, args at b, c=arg_count, flags=ret_count
     UpvalNew,         // a = new upval_box (for reference capture)
     UpvalGet,         // a = upval_box[b].value
     UpvalSet,         // upval_box[a].value = b
@@ -202,9 +204,6 @@ pub enum Opcode {
     F64ToI64,
     I32ToI64,
     I64ToI32,
-    
-    // ============ Extern call ============
-    CallExtern = 185, // call extern func a, args at b, c=arg_count, flags=ret_count
     
     // ============ Debug ============
     DebugPrint = 190,

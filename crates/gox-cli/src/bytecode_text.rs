@@ -171,9 +171,10 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::JumpIfNot => format!("JumpIfNot r{}, {}", a, instr.imm32()),
         
         Opcode::Call => format!("Call {}, r{}, {}, {}", a, b, c, flags),
-        Opcode::Return => format!("Return r{}, {}", a, b),
-        
         Opcode::CallExtern => format!("CallExtern {}, r{}, {}, {}", a, b, c, flags),
+        Opcode::CallClosure => format!("CallClosure r{}, r{}, {} (ret={})", a, b, c, flags),
+        Opcode::CallInterface => format!("CallInterface r{}, {}, r{} (args={}, ret={})", a, b, c, flags & 0xF, flags >> 4),
+        Opcode::Return => format!("Return r{}, {}", a, b),
         
         Opcode::Alloc => {
             let type_id = (b as u32) | ((c as u32) << 16);
@@ -229,7 +230,6 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::ClosureNew => format!("ClosureNew r{}, {}, {}", a, b, c),
         Opcode::ClosureGet => format!("ClosureGet r{}, r{}, {}", a, b, c),
         Opcode::ClosureSet => format!("ClosureSet r{}, {}, r{}", a, b, c),
-        Opcode::ClosureCall => format!("ClosureCall r{}, r{}, {} (ret={})", a, b, c, flags),
         Opcode::UpvalNew => format!("UpvalNew r{}", a),
         Opcode::UpvalGet => format!("UpvalGet r{}, r{}", a, b),
         Opcode::UpvalSet => format!("UpvalSet r{}, r{}", a, b),
@@ -565,8 +565,10 @@ fn parse_instruction(line: &str) -> Result<Instruction, String> {
         }
         
         "Call" => (Opcode::Call, get_arg(&args, 0)?, get_arg(&args, 1)?, get_arg(&args, 2)?, get_arg(&args, 3)? as i64),
-        "Return" => (Opcode::Return, get_arg(&args, 0)?, get_arg(&args, 1)?, 0, 0),
         "CallExtern" => (Opcode::CallExtern, get_arg(&args, 0)?, get_arg(&args, 1)?, get_arg(&args, 2)?, get_arg(&args, 3)? as i64),
+        "CallClosure" => (Opcode::CallClosure, get_arg(&args, 0)?, get_arg(&args, 1)?, get_arg(&args, 2)?, get_arg(&args, 3)? as i64),
+        "CallInterface" => (Opcode::CallInterface, get_arg(&args, 0)?, get_arg(&args, 1)?, get_arg(&args, 2)?, get_arg(&args, 3)? as i64),
+        "Return" => (Opcode::Return, get_arg(&args, 0)?, get_arg(&args, 1)?, 0, 0),
         
         "Alloc" => (Opcode::Alloc, get_arg(&args, 0)?, get_arg(&args, 1)?, get_arg(&args, 2)?, 0),
         "GetField" => (Opcode::GetField, get_arg(&args, 0)?, get_arg(&args, 1)?, get_arg(&args, 2)?, 0),

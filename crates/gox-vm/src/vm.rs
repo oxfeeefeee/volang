@@ -1216,7 +1216,7 @@ impl Vm {
                 closure::set_upvalue(cl, b as usize, val);
             }
             
-            Opcode::ClosureCall => {
+            Opcode::CallClosure => {
                 // a=closure_reg, b=arg_start, c=arg_count, flags=ret_count
                 let cl = self.read_reg(fiber_id, a) as GcRef;
                 let func_id = closure::func_id(cl);

@@ -1575,7 +1575,7 @@ impl FunctionTranslator {
                 builder.ins().call(func_ref, &[closure, idx, val]);
             }
 
-            Opcode::ClosureCall => {
+            Opcode::CallClosure => {
                 // a=closure_reg, b=arg_start, c=arg_count, flags=ret_count
                 let closure = builder.use_var(self.variables[inst.a as usize]);
                 let arg_start = inst.b as usize;
