@@ -152,7 +152,7 @@ impl Checker {
 
         let start = match lobj.color() {
             ObjColor::Gray(v) => v,
-            _ => return false,
+            _ => unreachable!(),
         };
 
         let cycle = &self.obj_path[start..];
@@ -170,15 +170,22 @@ impl Checker {
                         ncycle -= 1;
                         has_indir = true;
                     } else {
-                        // Check if it's an alias
+                        // Determine if the type name is an alias or not. For
+                        // package-level objects, use the object map which
+                        // provides syntactic information (which doesn't rely
+                        // on the order in which the objects are set up). For
+                        // local objects, we can rely on the order, so use
+                        // the object's predicate.
                         let alias = if let Some(&d) = self.obj_map.get(o) {
+                            // package-level object
                             if let DeclInfo::Type(td) = self.decl_info(d) {
                                 td.alias
                             } else {
                                 false
                             }
                         } else {
-                            false
+                            // function local object
+                            crate::obj::type_name_is_alias(*o, &self.tc_objs)
                         };
                         if !alias {
                             has_type_def = true;
@@ -186,7 +193,7 @@ impl Checker {
                     }
                 }
                 EntityType::Func { .. } => {} // ignored for now
-                _ => {}
+                _ => unreachable!()
             }
         }
 
@@ -214,7 +221,7 @@ impl Checker {
             }
             self.error(Span::default(), format!("\t{} refers to", self.lobj(*o).name()));
         }
-        self.error(Span::default(), format!("\t{}", lobj.name()));
+        self.error(Span::default(), format!("\t{} refers to", lobj.name()));
 
         true
     }
