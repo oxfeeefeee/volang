@@ -457,22 +457,16 @@ mod tests {
         let vfs_config = VfsConfig::from_env(project_dir);
         let vfs = vfs_config.to_vfs();
         
-        // Use catch_unwind since Checker may panic due to incomplete integration
-        let result = std::panic::catch_unwind(|| {
-            analyze_project(file_set, &vfs)
-        });
+        let result = analyze_project(file_set, &vfs);
         
         match result {
-            Ok(Ok(project)) => {
+            Ok(project) => {
                 assert!(project.packages.len() >= 1);
                 println!("✓ Multipackage: analyzed {} packages", project.packages.len());
             }
-            Ok(Err(e)) => {
-                println!("✓ Multipackage: analysis returned error (expected): {}", e);
-            }
-            Err(_) => {
-                // TODO: Fix Checker to properly share TCObjects with universe
-                println!("✓ Multipackage: panicked (known issue - Checker/TCObjects sharing)");
+            Err(e) => {
+                // Some errors are expected during development
+                println!("✓ Multipackage: analysis returned error: {}", e);
             }
         }
     }
@@ -494,20 +488,16 @@ mod tests {
         let vfs_config = VfsConfig::from_env(project_dir);
         let vfs = vfs_config.to_vfs();
         
-        let result = std::panic::catch_unwind(|| {
-            analyze_project(file_set, &vfs)
-        });
+        let result = analyze_project(file_set, &vfs);
         
         match result {
-            Ok(Ok(project)) => {
+            Ok(project) => {
                 assert_eq!(project.packages.len(), 1);
                 println!("✓ Simple: analyzed successfully");
             }
-            Ok(Err(e)) => {
-                println!("✓ Simple: analysis returned error (expected): {}", e);
-            }
-            Err(_) => {
-                println!("✓ Simple: panicked (known issue - Checker/TCObjects sharing)");
+            Err(e) => {
+                // Some errors are expected during development
+                println!("✓ Simple: analysis returned error: {}", e);
             }
         }
     }
