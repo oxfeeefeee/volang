@@ -2,22 +2,26 @@
 
 This document defines the memory layout of all runtime data structures in GoX.
 
+> **Memory Model**: See `docs/design/memory-model.md` for escape analysis and allocation decisions.
 > **GC Scanning**: See `docs/design/gc-object-scanning.md` for detailed GC scanning rules.
 
 ## 1. Memory Model
 
+GoX uses escape analysis to determine stack vs heap allocation for value types.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Stack                                    │
-│  ┌───────┬───────┬───────┬───────┬───────┐                      │
-│  │ slot0 │ slot1 │ slot2 │ slot3 │ ...   │  8 bytes each        │
-│  │ i64   │GcRef  │ bool  │GcRef  │       │                      │
-│  └───┬───┴───┬───┴───────┴───┬───┴───────┘                      │
-└──────│───────│───────────────│──────────────────────────────────┘
-       │       │               │
-       ↓       ↓               ↓
-     (value)  Heap            Heap
-              
+│  ┌───────┬───────┬───────┬───────┬───────┬───────┬───────┐      │
+│  │ slot0 │ slot1 │ slot2 │ slot3 │ slot4 │ slot5 │ ...   │      │
+│  │ i64   │GcRef  │struct.│struct.│ bool  │GcRef  │       │      │
+│  │       │  ↓    │field0 │field1 │       │  ↓    │       │      │
+│  └───────┴───┬───┴───────┴───────┴───────┴───┬───┴───────┘      │
+└──────────────│───────────────────────────────│──────────────────┘
+               │  (non-escaping struct         │
+               │   stored inline on stack)     ↓
+               ↓                              Heap
+              Heap (escaping values)           
 ┌─────────────────────────────────────────────────────────────────┐
 │                          Heap                                    │
 │  ┌─────────────────┐    ┌─────────────────┐                     │
@@ -31,6 +35,18 @@ This document defines the memory layout of all runtime data structures in GoX.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Allocation Rules
+
+| Type | Default | Escapes → |
+|------|---------|----------|
+| Primitives | Stack | Heap (BoxedInt/Float/Bool) |
+| struct | Stack (inline slots) | Heap (GcRef) |
+| array | Stack (inline slots) | Heap (GcRef) |
+| interface | Stack (2 slots) | — |
+| slice, map, chan, closure | Heap | — |
+
+**Size threshold**: struct/array > 256 slots → always heap.
+
 ## 2. Fundamental Units
 
 ### Slot
@@ -41,33 +57,47 @@ Pointer to heap-allocated GcObject: `type GcRef = *mut GcObject`
 
 ### GcHeader
 ```rust
+#[repr(C)]
 struct GcHeader {
-    mark: u8,        // GC mark (white/gray/black)
-    flags: u8,       // Object flags
-    _pad: [u8; 2],   // Alignment padding
-    type_id: u32,    // Type ID
+    mark: u8,        // GcColor: White/Gray/Black
+    gen: u8,         // GcGen: Young/Old/Touched
+    value_kind: u8,  // ValueKind
+    flags: u8,       // Reserved
+    type_id: u16,    // RuntimeTypeId (for Struct)
+    slots: u16,      // Data slot count
 }
 // Total: 8 bytes
 ```
 
-## 3. TypeId Allocation
+## 3. ValueKind and TypeId
 
-```
-0-31:           Built-in types (primitives + reference types)
-32+:            User-defined struct
+### ValueKind (u8)
 
-0x8000_0000:    interface{} (empty interface)
-0x8000_0001+:   User-defined interface
-```
+Distinguishes object types for GC scanning:
 
-**Helper functions**:
 ```rust
-const INTERFACE_FLAG: u32 = 0x8000_0000;
+#[repr(u8)]
+pub enum ValueKind {
+    // Stack-only (never in GcObject)
+    Nil = 0, Bool = 1, Int = 2, Float = 3,
 
-fn is_interface_type(type_id: u32) -> bool {
-    type_id & INTERFACE_FLAG != 0
+    // Heap objects
+    String = 10,    Slice = 11,     Array = 12,
+    Map = 13,       Channel = 14,   Closure = 15,
+    Struct = 16,
+
+    // Boxed primitives (escaped)
+    BoxedInt = 20,  BoxedFloat = 21, BoxedBool = 22,
 }
 ```
+
+### RuntimeTypeId (u16)
+
+Index into metadata tables:
+- `struct_metas[type_id]` for Struct
+- `interface_metas[type_id]` for Interface
+
+Two separate tables, both indexed from 0.
 
 ## 4. Primitive Types
 
@@ -179,10 +209,40 @@ slot 1: upval_count  (number of captured variables)
 slot 2+: upvalues    (captured variable values)
 ```
 
-## 11. Struct (type_id ≥ 32)
+## 11. Struct
 
-User-defined value types with compact field layout.
+User-defined value types. Allocation determined by escape analysis.
 
+### Stack Allocation (non-escaping)
+
+Struct fields stored as consecutive stack slots:
+```
+var s Point  // Point{x, y int} - 2 slots
+
+Stack:
+┌─────────┬─────────┐
+│   s.x   │   s.y   │
+│  slot N │ slot N+1│
+└─────────┴─────────┘
+```
+
+Field access: direct register offset (no GcRef indirection).
+
+### Heap Allocation (escaping)
+
+Struct stored as GcObject, stack holds GcRef:
+```
+var s Point  // escapes
+
+Stack:          Heap:
+┌─────────┐     ┌──────────────────┐
+│  GcRef ─┼────→│ GcHeader         │
+│  slot N │     ├──────────────────┤
+└─────────┘     │ s.x   │   s.y    │
+                └──────────────────┘
+```
+
+### Layout (heap)
 ```
 Layout: [field0, field1, ...]
 Slots:  sum of field slots
@@ -257,16 +317,29 @@ type Container struct {
 // ptr_bitmap = [false, true]  ← slot 1 conservatively marked
 ```
 
-## 13. Summary
+## 13. Boxed Primitives
 
-| Type | Stack | Heap Layout | Slots |
-|------|-------|-------------|-------|
-| Primitives | value | - | 1 |
-| String | GcRef | [array_ref, start, len] | 3 |
-| Slice | GcRef | [array_ref, start, len, cap] | 4 |
-| Array | GcRef | [elem_type, elem_bytes, len, data...] | 3+ |
-| Map | GcRef | [map_ptr, key_type, val_type] | 3 |
-| Channel | GcRef | [chan_ptr, elem_type, cap] | 3 |
-| Closure | GcRef | [func_id, count, upvals...] | 2+ |
-| Struct | GcRef | [fields...] | N |
-| Interface | inline | [type_id, data] | 2 |
+When primitives escape (e.g., captured by closure), they are boxed:
+
+```
+Layout: [value]
+Slots:  1
+
+ValueKind: BoxedInt (20), BoxedFloat (21), BoxedBool (22)
+```
+
+GC scanning: `needs_gc(BoxedInt) = false` (no internal references).
+
+## 14. Summary
+
+| Type | Stack (non-escaping) | Stack (escaping) | Heap Layout | Slots |
+|------|---------------------|------------------|-------------|-------|
+| Primitives | value | GcRef (boxed) | [value] | 1 |
+| String | GcRef | GcRef | [array_ref, start, len] | 3 |
+| Slice | GcRef | GcRef | [array_ref, start, len, cap] | 4 |
+| Array | inline slots | GcRef | [elem_kind, elem_type_id, elem_bytes, len, data...] | 4+ |
+| Map | GcRef | GcRef | [map_ptr, key_type, val_type] | 3 |
+| Channel | GcRef | GcRef | [chan_ptr, elem_type, cap] | 3 |
+| Closure | GcRef | GcRef | [func_id, count, upvals...] | 2+ |
+| Struct | inline slots | GcRef | [fields...] | N |
+| Interface | inline (2 slots) | inline (2 slots) | — | 2 |

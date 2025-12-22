@@ -264,6 +264,12 @@ impl Gc {
 
 ## 4. Root Set
 
+With escape analysis, stack may contain:
+- **GcRef** (pointer to heap object)
+- **Inline struct/array** (non-escaping, fields stored as consecutive slots)
+
+Stack scanning uses `slot_types` from function metadata:
+
 ```rust
 pub trait GcRoots {
     fn mark_roots(&self, gc: &mut Gc);
@@ -271,12 +277,35 @@ pub trait GcRoots {
 
 impl GcRoots for Vm {
     fn mark_roots(&self, gc: &mut Gc) {
-        // All Fiber stacks
         for fiber in &self.fibers {
-            // Value stack
-            for slot in &fiber.stack {
-                if is_gc_ref(*slot) {
-                    gc.mark_gray(*slot as *mut GcObject);
+            for frame in &fiber.frames {
+                // Get slot_types for current function
+                let func = &self.functions[frame.func_id];
+                let slot_types = &func.slot_types;
+                
+                // Scan stack slots using slot_types
+                for (i, &slot_type) in slot_types.iter().enumerate() {
+                    let slot_idx = frame.bp + i;
+                    match slot_type {
+                        SlotType::Value => { /* skip */ }
+                        SlotType::GcRef => {
+                            let val = fiber.stack[slot_idx];
+                            if val != 0 {
+                                gc.mark_gray(val as *mut GcObject);
+                            }
+                        }
+                        SlotType::Interface0 => { /* skip */ }
+                        SlotType::Interface1 => {
+                            // Dynamic check
+                            let packed = fiber.stack[slot_idx - 1];
+                            if needs_gc(extract_value_kind(packed)) {
+                                let val = fiber.stack[slot_idx];
+                                if val != 0 {
+                                    gc.mark_gray(val as *mut GcObject);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
@@ -304,6 +333,9 @@ impl GcRoots for Vm {
     }
 }
 ```
+
+**Note**: Non-escaping struct/array on stack have their fields stored inline.
+Fields that are GcRef are marked via slot_types. The struct itself is not a GcObject.
 
 ## 5. Object Scanning
 

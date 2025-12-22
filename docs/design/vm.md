@@ -296,12 +296,24 @@ fn exec_call(vm: &mut Vm, callable: &Callable, args: &[u64], ret: &mut [u64]) {
 
 ### 4.9 Object Operations
 
+Struct/array allocation depends on escape analysis (see `memory-model.md`).
+
+**Stack allocation (non-escaping)**:
 ```asm
-ALLOC         d, type_id     # Allocate heap object
-GET_FIELD     d, obj, idx    # d = obj.fields[idx]
-SET_FIELD     obj, idx, s    # obj.fields[idx] = s
-COPY_SLOTS    d, s, n        # Deep copy n slots (struct assignment)
+# No ALLOC needed - struct fields are consecutive registers
+# Field access: direct register offset
+MOV           r1, 42               # s.field0 = 42 (s starts at r0)
+MOV_N         d, s, n              # Copy n slots (struct assignment)
 ```
+
+**Heap allocation (escaping)**:
+```asm
+ALLOC         d, type_id, slots    # Allocate heap object
+GET_FIELD     d, obj, idx          # d = obj.fields[idx] (obj is GcRef)
+SET_FIELD     obj, idx, s          # obj.fields[idx] = s
+```
+
+Codegen decides stack vs heap at compile time based on escape analysis.
 
 ### 4.10 Array/Slice
 
@@ -459,8 +471,8 @@ FunctionDef:
 | Instruction format | 8-byte fixed |
 | Instruction dispatch | Type-specialized |
 | Registers | 16-bit numbering, stack slots |
-| struct | Multi-register, value semantics |
-| object | GcRef, reference semantics |
+| struct | Stack (inline) or Heap (GcRef), escape analysis decides |
+| array | Stack (inline) or Heap (GcRef), escape analysis decides |
 | interface | 2-slot inline [type_id, data] |
 | Iterator | Fiber internal stack |
 | defer | Fiber internal stack |

@@ -4,23 +4,44 @@
 
 GC traverses all reachable objects and marks internal references. This document describes a unified `scan_object` function shared by VM and JIT.
 
+> **Memory Model**: See `memory-model.md` for escape analysis and allocation decisions.
+
 ## Core Principle
 
+- **Only heap-allocated objects are GcObjects** (stack values are scanned via slot_types)
 - **Only user-defined structs require slot_types lookup**
 - **All built-in types have fixed internal layouts**
 - **Use ValueKind to determine scan method, RuntimeTypeId to lookup struct metadata**
+
+## Stack vs Heap
+
+With escape analysis:
+- **Non-escaping struct/array**: stored inline on stack (not GcObject)
+- **Escaping struct/array**: heap-allocated GcObject
+- **Boxed primitives**: escaped int/float/bool become heap GcObject
+
+Stack scanning uses function's `slot_types`. Heap scanning uses `scan_object`.
 
 ## Type Classification
 
 ### needs_gc
 
 ```rust
-/// Check if a ValueKind needs GC scanning.
+/// Check if a ValueKind needs GC scanning (contains internal references).
 pub fn needs_gc(value_kind: ValueKind) -> bool {
     matches!(value_kind,
         ValueKind::String | ValueKind::Slice | ValueKind::Map |
         ValueKind::Array | ValueKind::Channel | ValueKind::Closure |
         ValueKind::Struct | ValueKind::Pointer)
+}
+
+/// Check if a ValueKind is a heap-allocated type (GcObject).
+pub fn is_heap_type(value_kind: ValueKind) -> bool {
+    matches!(value_kind,
+        ValueKind::String | ValueKind::Slice | ValueKind::Map |
+        ValueKind::Array | ValueKind::Channel | ValueKind::Closure |
+        ValueKind::Struct | ValueKind::BoxedInt | ValueKind::BoxedFloat |
+        ValueKind::BoxedBool)
 }
 ```
 
@@ -42,6 +63,9 @@ pub fn needs_gc(value_kind: ValueKind) -> bool {
 | **Channel** | inline | ✅ | iterate buffer |
 | **Closure** | inline | ✅ | mark upvalues |
 | **Struct** | inline | ✅ | use slot_types from struct_metas[type_id] |
+| **BoxedInt** | boxed | ✅ | no internal refs |
+| **BoxedFloat** | boxed | ✅ | no internal refs |
+| **BoxedBool** | boxed | ✅ | no internal refs |
 
 ### Types NOT appearing as GcObject.header.value_kind
 

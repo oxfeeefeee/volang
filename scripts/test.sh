@@ -77,10 +77,12 @@ failed_list=""
 current_file=""
 current_modes=""
 current_skip=""
+current_expect_error=""
 
 run_test() {
     local file="$1"
     local mode="$2"
+    local expect_error="$3"
     
     local path="$TEST_DIR/$file"
     
@@ -101,6 +103,34 @@ run_test() {
     output=$("$BIN" run "$path" --mode="$mode" 2>&1) || true
     
     # Check output for result tags
+    local has_error=false
+    if echo "$output" | grep -q "\[GOX:PANIC:\|\[GOX:ERROR:"; then
+        has_error=true
+    fi
+    
+    # Handle expect_error tests (negative tests)
+    if [[ "$expect_error" == "true" ]]; then
+        if $has_error; then
+            # Expected error occurred - test passes
+            if [[ "$mode" == "vm" ]]; then
+                vm_passed=$((vm_passed + 1))
+            else
+                jit_passed=$((jit_passed + 1))
+            fi
+            passed_list="$passed_list  ${GREEN}✓${NC} $file [$mode] (expected error)\n"
+        else
+            # Expected error but got success - test fails
+            if [[ "$mode" == "vm" ]]; then
+                vm_failed=$((vm_failed + 1))
+            else
+                jit_failed=$((jit_failed + 1))
+            fi
+            failed_list="$failed_list  ${RED}✗${NC} $file [$mode] (expected error but passed)\n"
+        fi
+        return
+    fi
+    
+    # Normal test handling
     if echo "$output" | grep -q "\[GOX:OK\]"; then
         if [[ "$mode" == "vm" ]]; then
             vm_passed=$((vm_passed + 1))
@@ -159,10 +189,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             else
                 # Run for each mode
                 if [[ "$current_modes" == *"vm"* ]] && [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
-                    run_test "$current_file" "vm"
+                    run_test "$current_file" "vm" "$current_expect_error"
                 fi
                 if [[ "$current_modes" == *"jit"* ]] && [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
-                    run_test "$current_file" "jit"
+                    run_test "$current_file" "jit" "$current_expect_error"
                 fi
             fi
         fi
@@ -171,6 +201,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         current_file="${BASH_REMATCH[1]}"
         current_modes=""
         current_skip=""
+        current_expect_error=""
     fi
     
     # Parse mode: entry
@@ -183,6 +214,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         current_skip="${BASH_REMATCH[1]}"
     fi
     
+    # Parse expect_error: entry
+    if [[ "$line" =~ ^[[:space:]]*expect_error:[[:space:]]*(.+)$ ]]; then
+        current_expect_error="${BASH_REMATCH[1]}"
+    fi
+    
 done < "$CONFIG"
 
 # Process last test
@@ -191,10 +227,10 @@ if [[ -n "$current_file" && -n "$current_modes" ]]; then
         skipped=$((skipped + 1))
     else
         if [[ "$current_modes" == *"vm"* ]] && [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
-            run_test "$current_file" "vm"
+            run_test "$current_file" "vm" "$current_expect_error"
         fi
         if [[ "$current_modes" == *"jit"* ]] && [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
-            run_test "$current_file" "jit"
+            run_test "$current_file" "jit" "$current_expect_error"
         fi
     fi
 fi
