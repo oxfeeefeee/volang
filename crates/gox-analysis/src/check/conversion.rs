@@ -83,7 +83,7 @@ impl Checker {
             } else {
                 t
             };
-            if let Some(expr_id) = x.expr_id {
+            if let Some(expr_id) = x.expr_id() {
                 self.update_expr_type(expr_id, final_t, true);
             }
         }

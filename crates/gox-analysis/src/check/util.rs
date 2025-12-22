@@ -50,12 +50,16 @@ impl<'a> UnpackResult<'a> {
         match self {
             UnpackResult::Tuple(expr, types, _) => {
                 x.mode = OperandMode::Value;
-                x.expr_id = expr.map(|e| e.id);
+                if let Some(e) = expr {
+                    x.set_expr(e);
+                }
                 x.typ = types[i];
             }
             UnpackResult::CommaOk(expr, types) => {
                 x.mode = OperandMode::Value;
-                x.expr_id = expr.map(|e| e.id);
+                if let Some(e) = expr {
+                    x.set_expr(e);
+                }
                 x.typ = Some(types[i]);
             }
             UnpackResult::Multiple(exprs, _) => {
@@ -63,7 +67,7 @@ impl<'a> UnpackResult<'a> {
             }
             UnpackResult::Single(sx, _) => {
                 x.mode = sx.mode.clone();
-                x.expr_id = sx.expr_id;
+                x.expr = sx.expr;
                 x.typ = sx.typ;
             }
             UnpackResult::Nothing(_) => unreachable!(),
@@ -141,7 +145,7 @@ impl<'a> UnpackedResultLeftovers<'a> {
             if i < consumed.len() {
                 let c = &consumed[i];
                 x.mode = c.mode.clone();
-                x.expr_id = c.expr_id;
+                x.expr = c.expr;
                 x.typ = c.typ;
                 return;
             }

@@ -115,7 +115,7 @@ impl Checker {
     fn unary(
         &mut self,
         x: &mut Operand,
-        e: Option<ExprId>,
+        e: Option<&Expr>,
         op: UnaryOp,
         operand_expr: &Expr,
     ) {
@@ -164,8 +164,8 @@ impl Checker {
                     // Typed constants must be representable in
                     // their type after each constant operation.
                     if tval.is_typed(self.objs()) {
-                        if e.is_some() {
-                            x.expr_id = e; // for better error message
+                        if let Some(expr) = e {
+                            x.set_expr(expr); // for better error message
                         }
                         self.representable(x, ty);
                     }
@@ -323,7 +323,7 @@ impl Checker {
         }
         if info.mode.constant_val().is_some() {
             // If x is a constant, it must be representable as a value of typ.
-            let mut c = Operand::with_expr(info.mode.clone(), expr_id, info.typ);
+            let mut c = Operand::with_mode(info.mode.clone(), info.typ);
             self.convert_untyped(&mut c, t);
             if c.invalid() {
                 return;
@@ -371,7 +371,7 @@ impl Checker {
                 if xtval.is_numeric(self.objs()) && ttval.is_numeric(self.objs()) {
                     if order(xbasic) < order(tbasic) {
                         x.typ = Some(target);
-                        if let Some(expr_id) = x.expr_id {
+                        if let Some(expr_id) = x.expr_id() {
                             self.update_expr_type(expr_id, target, false);
                         }
                     }
@@ -396,7 +396,7 @@ impl Checker {
                         return;
                     }
                     // Expression value may have been rounded - update if needed
-                    if let Some(expr_id) = x.expr_id {
+                    if let Some(expr_id) = x.expr_id() {
                         self.update_expr_val(expr_id, v_clone);
                     }
                     Some(target)
@@ -438,7 +438,7 @@ impl Checker {
 
         if let Some(t) = final_target {
             x.typ = final_target;
-            if let Some(expr_id) = x.expr_id {
+            if let Some(expr_id) = x.expr_id() {
                 self.update_expr_type(expr_id, t, true);
             }
         } else {
@@ -500,11 +500,11 @@ impl Checker {
             _ => {
                 x.mode = OperandMode::Value;
                 // Update operand types to their default types
-                if let Some(expr_id) = x.expr_id {
+                if let Some(expr_id) = x.expr_id() {
                     let default_t = typ::untyped_default_type(xtype, self.objs());
                     self.update_expr_type(expr_id, default_t, true);
                 }
-                if let Some(expr_id) = y.expr_id {
+                if let Some(expr_id) = y.expr_id() {
                     let default_t = typ::untyped_default_type(ytype, self.objs());
                     self.update_expr_type(expr_id, default_t, true);
                 }
@@ -525,7 +525,7 @@ impl Checker {
         x: &mut Operand,
         y: &mut Operand,
         op: BinaryOp,
-        e: Option<ExprId>,
+        e: Option<&Expr>,
     ) {
         let xtval = self.otype(x.typ.unwrap());
         let xt_untyped = xtval.is_untyped(self.objs());
@@ -582,8 +582,8 @@ impl Checker {
                 *xv = Value::shift(&xv.to_int(), op, s);
                 // Typed constants must be representable in their type
                 if typ::is_typed(x.typ.unwrap(), self.objs()) {
-                    if e.is_some() {
-                        x.expr_id = e;
+                    if let Some(expr) = e {
+                        x.set_expr(expr);
                     }
                     self.representable(x, x.typ.unwrap());
                 }
@@ -592,7 +592,7 @@ impl Checker {
 
             if xt_untyped {
                 // Delay operand checking until we know the final type
-                if let Some(expr_id) = x.expr_id {
+                if let Some(expr_id) = x.expr_id() {
                     if let Some(info) = self.untyped.get_mut(&expr_id) {
                         info.is_lhs = true;
                     }
@@ -626,7 +626,7 @@ impl Checker {
     pub fn binary(
         &mut self,
         x: &mut Operand,
-        e: Option<ExprId>,
+        e: Option<&Expr>,
         lhs: &Expr,
         rhs: &Expr,
         op: BinaryOp,
@@ -640,7 +640,7 @@ impl Checker {
         }
         if y.invalid() {
             x.mode = OperandMode::Invalid;
-            x.expr_id = y.expr_id;
+            x.expr = y.expr;
             return;
         }
 
@@ -698,7 +698,9 @@ impl Checker {
                 *vx = Value::binary_op(vx, op, vy);
                 // Typed constants must be representable in their type
                 if typ::is_typed(ty, self.objs()) {
-                    x.expr_id = e;
+                    if let Some(expr) = e {
+                        x.set_expr(expr);
+                    }
                     self.representable(x, ty);
                 }
             }
@@ -881,7 +883,7 @@ impl Checker {
         // Make sure x has a valid state in case of bailout
         x.mode = OperandMode::Invalid;
         x.typ = Some(self.invalid_type());
-        x.expr_id = Some(e.id);
+        x.set_expr(e);
 
         match &e.kind {
             ExprKind::Ident(ident) => {
@@ -917,10 +919,10 @@ impl Checker {
                 if x.invalid() {
                     return;
                 }
-                self.unary(x, Some(e.id), u.op, &u.operand);
+                self.unary(x, Some(e), u.op, &u.operand);
             }
             ExprKind::Binary(b) => {
-                self.binary(x, Some(e.id), &b.left, &b.right, b.op);
+                self.binary(x, Some(e), &b.left, &b.right, b.op);
             }
             ExprKind::Call(call) => {
                 self.call(x, call, e.span);
@@ -1460,7 +1462,7 @@ impl Checker {
                             self.error(sel.sel.span, msg);
                         }
                         x.mode = OperandMode::Invalid;
-                        x.expr_id = Some(sel.expr.id);
+                        x.set_expr(&sel.expr);
                         return;
                     }
 
@@ -1488,7 +1490,7 @@ impl Checker {
                         _ => unreachable!(),
                     };
                     x.typ = exp.typ();
-                    x.expr_id = Some(sel.expr.id);
+                    x.set_expr(&sel.expr);
                     return;
                 }
             }
@@ -1496,7 +1498,7 @@ impl Checker {
 
         self.expr_or_type(x, &sel.expr);
         if x.invalid() {
-            x.expr_id = Some(sel.expr.id);
+            x.set_expr(&sel.expr);
             return;
         }
 
@@ -1527,7 +1529,7 @@ impl Checker {
                 };
                 self.error(sel.sel.span, msg);
                 x.mode = OperandMode::Invalid;
-                x.expr_id = Some(sel.expr.id);
+                x.set_expr(&sel.expr);
                 return;
             }
         };
@@ -1574,7 +1576,7 @@ impl Checker {
                 );
                 self.error(sel.sel.span, msg);
                 x.mode = OperandMode::Invalid;
-                x.expr_id = Some(sel.expr.id);
+                x.set_expr(&sel.expr);
                 return;
             }
         } else {
@@ -1623,6 +1625,6 @@ impl Checker {
                 unreachable!();
             }
         }
-        x.expr_id = Some(sel.expr.id);
+        x.set_expr(&sel.expr);
     }
 }

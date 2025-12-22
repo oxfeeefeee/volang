@@ -4,14 +4,29 @@
 
 
 use crate::check::Checker;
-use crate::obj::{Builtin, ConstValue, Pos};
+use crate::obj::{Builtin, ConstValue};
 use crate::objects::{TCObjects, TypeKey};
 use crate::typ::{self, BasicType};
 use crate::universe::Universe;
+use gox_common::span::Span;
 use gox_common::symbol::SymbolInterner;
 use gox_common_core::ExprId;
 use gox_syntax::ast::Expr;
 use std::fmt::{self, Display, Write};
+
+/// Reference to an expression with its location.
+/// Binds expr_id and span together to prevent inconsistency.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExprRef {
+    pub id: ExprId,
+    pub span: Span,
+}
+
+impl ExprRef {
+    pub fn from_expr(expr: &Expr) -> Self {
+        ExprRef { id: expr.id, span: expr.span }
+    }
+}
 
 /// An OperandMode specifies the (addressing) mode of an operand.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,7 +101,7 @@ impl fmt::Display for OperandMode {
 #[derive(Clone, Debug)]
 pub struct Operand {
     pub mode: OperandMode,
-    pub expr_id: Option<ExprId>,
+    pub(crate) expr: Option<ExprRef>,
     pub typ: Option<TypeKey>,
 }
 
@@ -100,26 +115,41 @@ impl Operand {
     pub fn new() -> Operand {
         Operand {
             mode: OperandMode::Invalid,
-            expr_id: None,
+            expr: None,
             typ: None,
         }
     }
 
     pub fn with_mode(mode: OperandMode, typ: Option<TypeKey>) -> Operand {
-        Operand { mode, expr_id: None, typ }
+        Operand { mode, expr: None, typ }
     }
 
-    pub fn with_expr(mode: OperandMode, expr_id: ExprId, typ: Option<TypeKey>) -> Operand {
-        Operand { mode, expr_id: Some(expr_id), typ }
+    pub fn with_expr(mode: OperandMode, e: &Expr, typ: Option<TypeKey>) -> Operand {
+        Operand { mode, expr: Some(ExprRef::from_expr(e)), typ }
     }
 
     pub fn invalid(&self) -> bool {
         self.mode == OperandMode::Invalid
     }
 
-    pub fn pos(&self) -> Pos {
-        // TODO: Get position from expr_id when AST integration is complete
-        0
+    /// Returns the span of the expression, or default if none.
+    pub fn pos(&self) -> Span {
+        self.expr.map(|e| e.span).unwrap_or_default()
+    }
+    
+    /// Returns the expression ID if set.
+    pub fn expr_id(&self) -> Option<ExprId> {
+        self.expr.map(|e| e.id)
+    }
+    
+    /// Set the expression reference from an Expr.
+    pub fn set_expr(&mut self, e: &Expr) {
+        self.expr = Some(ExprRef::from_expr(e));
+    }
+    
+    /// Clear the expression reference.
+    pub fn clear_expr(&mut self) {
+        self.expr = None;
     }
 
     pub fn is_nil(&self, objs: &TCObjects) -> bool {
@@ -202,7 +232,7 @@ impl Operand {
 
         // <val>
         if let OperandMode::Constant(val) = &self.mode {
-            if self.expr_id.is_some() {
+            if self.expr.is_some() {
                 f.write_char(' ')?;
                 write!(f, "{:?}", val)?;
             }

@@ -200,7 +200,7 @@ impl Checker {
         want_type: bool,
     ) {
         x.mode = OperandMode::Invalid;
-        x.expr_id = None;
+        x.clear_expr();
 
         let name = self.resolve_ident(ident);
 
