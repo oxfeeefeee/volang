@@ -68,7 +68,11 @@ impl std::fmt::Display for AnalysisError {
         match self {
             AnalysisError::Parse(msg) => write!(f, "parse error: {}", msg),
             AnalysisError::Check(diags) => {
-                write!(f, "type check failed: {} error(s)", diags.error_count())
+                writeln!(f, "type check failed: {} error(s)", diags.error_count())?;
+                for diag in diags.iter() {
+                    writeln!(f, "  - {}", diag.message)?;
+                }
+                Ok(())
             }
             AnalysisError::Import(msg) => write!(f, "import error: {}", msg),
             AnalysisError::Cycle(path) => write!(f, "import cycle: {}", path.join(" -> ")),

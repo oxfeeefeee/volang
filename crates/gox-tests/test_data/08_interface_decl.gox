@@ -1,6 +1,6 @@
 // +vm
 // Test: Interface declarations
-interface Reader {
+type Reader interface {
     Read(p []byte) int
 }
 
@@ -8,11 +8,6 @@ interface Reader {
 File {
   package: None,
   decls: [
-    Interface {
-      name: "Reader",
-      methods: [
-        Read,
-      ],
-    },
+    Type { name: "Reader", type: interface { Read(); } },
   ],
 }

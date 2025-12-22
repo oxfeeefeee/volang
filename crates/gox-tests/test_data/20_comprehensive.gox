@@ -21,7 +21,7 @@ type Counter struct {
     value int
 }
 
-interface Shape {
+type Shape interface {
     Area() float64
     Perimeter() float64
 }
@@ -154,13 +154,7 @@ File {
     },
     Type { name: "Point", type: struct { x int; y int; } },
     Type { name: "Counter", type: struct { value int; } },
-    Interface {
-      name: "Shape",
-      methods: [
-        Area,
-        Perimeter,
-      ],
-    },
+    Type { name: "Shape", type: interface { Area(); Perimeter(); } },
     Func {
       receiver: (c Counter),
       name: "Inc",

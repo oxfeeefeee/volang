@@ -632,16 +632,42 @@ impl Checker {
     // index function moved to expr.rs
 
     /// Type-checks a type expression from an Expr AST node.
+    /// Used for builtin calls like make(T, ...) where T is passed as Expr.
+    /// Aligned with goscript's type_internal for Expr.
     fn type_expr_from_expr(&mut self, e: &Expr) -> TypeKey {
-        // For now, delegate to a simplified type checking
-        // Full implementation would parse the TypeExpr from Expr
-        let mut x = Operand::new();
-        self.expr(&mut x, e);
-        if let OperandMode::TypeExpr = x.mode {
-            x.typ.unwrap_or(self.invalid_type())
-        } else {
-            self.error_code(TypeError::ExpectedType, e.span);
-            self.invalid_type()
+        use gox_syntax::ast::ExprKind;
+        
+        match &e.kind {
+            // Type wrapped as expression (e.g., chan int, []int, map[K]V)
+            ExprKind::TypeAsExpr(ty) => self.type_expr(ty),
+            // Parenthesized expression: (T)
+            ExprKind::Paren(inner) => self.type_expr_from_expr(inner),
+            // Identifier could be a type name
+            ExprKind::Ident(ident) => {
+                let mut x = Operand::new();
+                self.ident(&mut x, ident, None, true); // want_type = true
+                if let OperandMode::TypeExpr = x.mode {
+                    x.typ.unwrap_or(self.invalid_type())
+                } else {
+                    self.error_code(TypeError::ExpectedType, e.span);
+                    self.invalid_type()
+                }
+            }
+            // Selector could be qualified type (pkg.Type)
+            ExprKind::Selector(sel) => {
+                let mut x = Operand::new();
+                self.selector(&mut x, sel);
+                if let OperandMode::TypeExpr = x.mode {
+                    x.typ.unwrap_or(self.invalid_type())
+                } else {
+                    self.error_code(TypeError::ExpectedType, e.span);
+                    self.invalid_type()
+                }
+            }
+            _ => {
+                self.error_code(TypeError::ExpectedType, e.span);
+                self.invalid_type()
+            }
         }
     }
 }
