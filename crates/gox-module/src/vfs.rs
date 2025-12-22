@@ -278,16 +278,32 @@ impl<F: FileSystem + Clone> Vfs<F> {
 
 impl<F: FileSystem> Vfs<F> {
     /// Resolve a package by import path.
+    /// 
+    /// Resolution order follows module.md spec:
+    /// 1. Explicit local paths (./xxx or ../xxx) → LocalVfs
+    /// 2. External dependencies (has dots like github.com/...) → ModVfs  
+    /// 3. Non-dotted paths: try stdlib first, then local fallback
     pub fn resolve(&self, import_path: &str) -> Option<VfsPackage> {
-        if self.local_vfs.can_handle(import_path) {
-            self.local_vfs.resolve(import_path)
-        } else if self.std_vfs.can_handle(import_path) {
-            self.std_vfs.resolve(import_path)
-        } else if self.mod_vfs.can_handle(import_path) {
-            self.mod_vfs.resolve(import_path)
-        } else {
-            None
+        // Explicit local paths
+        if import_path.starts_with("./") || import_path.starts_with("../") {
+            return self.local_vfs.resolve(import_path);
         }
+        
+        // External dependencies (has dots = domain name)
+        if import_path.contains('.') {
+            return self.mod_vfs.resolve(import_path);
+        }
+        
+        // Non-dotted paths: try stdlib first, then local fallback
+        // This matches module.md spec section 6.3:
+        //   "P" (known stdlib) → stdlib
+        //   "P" (not stdlib) → <project-root>/<P>/
+        if let Some(pkg) = self.std_vfs.resolve(import_path) {
+            return Some(pkg);
+        }
+        
+        // Fallback to local package (e.g., "iface" → ./iface/)
+        self.local_vfs.resolve(import_path)
     }
 }
 
