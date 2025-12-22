@@ -98,17 +98,14 @@ impl MethodSet {
                         }
                     }
                     typ::Type::Interface(detail) => {
-                        let all_methods = detail.all_methods();
-                        if let Some(ref all) = *all_methods {
-                            add_to_method_set(
-                                &mut mset,
-                                all,
-                                et.indices.as_ref().unwrap_or(&vec![]),
-                                true,
-                                et.multiples,
-                                objs,
-                            );
-                        }
+                        add_to_method_set(
+                            &mut mset,
+                            detail.all_methods().as_ref().unwrap(),
+                            et.indices.as_ref().unwrap_or(&vec![]),
+                            true,
+                            et.multiples,
+                            objs,
+                        );
                     }
                     _ => {}
                 }
@@ -264,13 +261,9 @@ fn lookup_field_or_method_impl(
                     }
                 }
                 typ::Type::Interface(detail) => {
-                    // Ensure interface is complete (collects embedded methods)
-                    detail.complete(objs);
-                    let all_methods = detail.all_methods();
-                    if let Some(ref all) = *all_methods {
-                        if let Some((i, &okey)) = lookup_method(all, pkg, name, objs) {
-                            lookup_on_found!(indices, i, &mut target, et, indirect, okey);
-                        }
+                    let all = detail.all_methods();
+                    if let Some((i, &okey)) = lookup_method(all.as_ref().unwrap(), pkg, name, objs) {
+                        lookup_on_found!(indices, i, &mut target, et, indirect, okey);
                     }
                 }
                 _ => {}
