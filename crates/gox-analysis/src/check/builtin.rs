@@ -134,12 +134,9 @@ impl Checker {
             }
             Builtin::Copy => {
                 let dst_type = x.typ.unwrap_or(self.invalid_type());
-                let ok = self.builtin_copy(x, call, call_span);
+                let (ok, src_type) = self.builtin_copy(x, call, call_span);
                 if ok {
                     // copy(dst, src []T) int
-                    let mut y = Operand::new();
-                    self.multi_expr(&mut y, &call.args[1]);
-                    let src_type = y.typ.unwrap_or(self.invalid_type());
                     record_sig(self, Some(self.basic_type(BasicType::Int)), &[dst_type, src_type], false);
                 }
                 ok
@@ -189,18 +186,9 @@ impl Checker {
                 ok
             }
             Builtin::Print | Builtin::Println => {
-                let ok = self.builtin_print(x, call, call_span, id);
+                let (ok, params) = self.builtin_print(x, call, call_span, id);
                 if ok {
                     // print(x, y, ...) / println(x, y, ...)
-                    // Collect all argument types
-                    let mut params = vec![];
-                    for i in 0..nargs {
-                        let mut arg = Operand::new();
-                        self.multi_expr(&mut arg, &call.args[i]);
-                        if let Some(t) = arg.typ {
-                            params.push(t);
-                        }
-                    }
                     // note: not variadic
                     record_sig(self, None, &params, false);
                 }
@@ -386,12 +374,15 @@ impl Checker {
     }
 
     /// copy(dst, src []T) int
+    /// Returns (ok, src_type) where src_type is the type of the src argument.
     fn builtin_copy(
         &mut self,
         x: &mut Operand,
         call: &CallExpr,
         call_span: Span,
-    ) -> bool {
+    ) -> (bool, TypeKey) {
+        let invalid_type = self.invalid_type();
+        
         // dst element type
         let dst = match self.otype(x.typ.unwrap()).underlying_val(self.objs()) {
             Type::Slice(detail) => Some(detail.elem()),
@@ -402,11 +393,12 @@ impl Checker {
         let mut y = Operand::new();
         self.multi_expr(&mut y, &call.args[1]);
         if y.invalid() {
-            return false;
+            return (false, invalid_type);
         }
+        let src_type = y.typ.unwrap_or(invalid_type);
 
         // src element type
-        let src = match self.otype(y.typ.unwrap()).underlying_val(self.objs()) {
+        let src = match self.otype(src_type).underlying_val(self.objs()) {
             Type::Basic(detail) if detail.info() == BasicInfo::IsString => {
                 Some(self.universe().byte())
             }
@@ -416,17 +408,17 @@ impl Checker {
 
         if dst.is_none() || src.is_none() {
             self.error_code(TypeError::CopyNotSlice, call_span);
-            return false;
+            return (false, invalid_type);
         }
 
         if !typ::identical_o(dst, src, self.objs()) {
             self.error_code(TypeError::CopyTypeMismatch, call_span);
-            return false;
+            return (false, invalid_type);
         }
 
         x.mode = OperandMode::Value;
         x.typ = Some(self.basic_type(BasicType::Int));
-        true
+        (true, src_type)
     }
 
     /// delete(m, k)
@@ -570,15 +562,17 @@ impl Checker {
     }
 
     /// print(x...) / println(x...)
+    /// Returns (ok, arg_types) where arg_types are the converted argument types.
     fn builtin_print(
         &mut self,
         x: &mut Operand,
         call: &CallExpr,
         _call_span: Span,
         id: Builtin,
-    ) -> bool {
+    ) -> (bool, Vec<TypeKey>) {
         let name = if id == Builtin::Print { "print" } else { "println" };
         let nargs = call.args.len();
+        let mut params = Vec::with_capacity(nargs);
 
         for i in 0..nargs {
             if i > 0 {
@@ -587,12 +581,16 @@ impl Checker {
             let msg = format!("argument to {}", name);
             self.assignment(x, None, &msg);
             if x.invalid() {
-                return false;
+                return (false, vec![]);
+            }
+            // Collect the converted (typed) argument type
+            if let Some(t) = x.typ {
+                params.push(t);
             }
         }
 
         x.mode = OperandMode::NoValue;
-        true
+        (true, params)
     }
 
     /// recover() interface{}
