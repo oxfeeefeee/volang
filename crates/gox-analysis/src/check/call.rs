@@ -14,7 +14,7 @@ use crate::operand::{Operand, OperandMode};
 use crate::typ;
 use crate::universe::ExprKind;
 
-use super::checker::{Checker, FilesContext};
+use super::checker::{Checker};
 use super::util::{UnpackResult, UnpackedResultLeftovers};
 
 impl Checker {

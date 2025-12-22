@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use crate::check::{Checker, FilesContext};
+use crate::check::Checker;
 use crate::obj::{Builtin, ConstValue, Pos};
 use crate::objects::{TCObjects, TypeKey};
 use crate::typ::{self, BasicType};
@@ -229,7 +229,6 @@ impl Operand {
         t: TypeKey,
         reason: Option<&mut String>,
         checker: &mut Checker,
-        fctx: &mut FilesContext,
     ) -> bool {
         let objs = &checker.tc_objs;
         let u = checker.universe();

@@ -23,7 +23,7 @@ use crate::obj::EntityType;
 use crate::objects::{ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
 use crate::typ::{self, InterfaceDetail, Type};
 
-use super::checker::{Checker, FilesContext};
+use super::checker::{Checker};
 
 /// Shared reference to IfaceInfo.
 pub type RcIfaceInfo = Rc<IfaceInfo>;

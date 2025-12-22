@@ -18,7 +18,7 @@ use crate::objects::{ObjKey, TCObjects, TypeKey};
 use crate::operand::{Operand, OperandMode};
 use crate::typ::{self, BasicInfo, BasicType, Type};
 
-use super::checker::{Checker, FilesContext};
+use super::checker::{Checker};
 
 impl Checker {
     /// Type-checks a call to the built-in function specified by id.

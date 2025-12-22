@@ -17,7 +17,7 @@ use crate::scope;
 use crate::typ::{self, BasicType, Type};
 use crate::universe::BuiltinInfo;
 
-use super::checker::{Checker, FilesContext};
+use super::checker::{Checker};
 
 // =============================================================================
 // UnpackResult - for unpacking assignment RHS

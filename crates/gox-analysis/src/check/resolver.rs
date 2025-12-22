@@ -718,7 +718,7 @@ impl Checker {
     }
 
     /// Type-checks all package objects (but not function bodies).
-    pub fn package_objects(&mut self, fctx: &mut FilesContext) {
+    pub fn package_objects(&mut self) {
         // Process package objects in source order
         let mut obj_list: Vec<ObjKey> = self.obj_map.keys().copied().collect();
         obj_list.sort_by_key(|&o| self.lobj(o).order());
@@ -760,7 +760,7 @@ impl Checker {
     }
 
     /// Checks for unused imports.
-    pub fn unused_imports(&mut self, fctx: &mut FilesContext) {
+    pub fn unused_imports(&mut self) {
         // Check regular imported packages
         let pkg_scope = *self.package(self.pkg).scope();
         for &child_scope in self.scope(pkg_scope).children() {

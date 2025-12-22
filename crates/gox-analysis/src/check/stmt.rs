@@ -17,7 +17,7 @@ use crate::objects::{ScopeKey, TypeKey};
 use crate::operand::{Operand, OperandMode};
 use crate::typ::{self, BasicType, ChanDir};
 
-use super::checker::{Checker, FilesContext, ObjContext};
+use super::checker::{Checker, ObjContext};
 
 // =============================================================================
 // GoVal - for switch case duplicate detection

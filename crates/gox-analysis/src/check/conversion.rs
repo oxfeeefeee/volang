@@ -14,7 +14,7 @@ use crate::objects::TypeKey;
 use crate::operand::{Operand, OperandMode};
 use crate::typ::{self, BasicType, Type};
 
-use super::checker::{Checker, FilesContext};
+use super::checker::{Checker};
 
 impl Checker {
     /// Performs explicit type conversion of x to type t.

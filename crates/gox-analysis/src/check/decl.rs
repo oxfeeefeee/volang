@@ -20,7 +20,7 @@ use crate::operand::Operand;
 use crate::scope::Scope;
 use crate::typ;
 
-use super::checker::{Checker, FilesContext, ObjContext};
+use super::checker::{Checker, ObjContext};
 use super::resolver::DeclInfo;
 
 impl Checker {

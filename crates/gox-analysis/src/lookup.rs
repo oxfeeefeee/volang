@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use crate::check::{Checker, FilesContext};
+use crate::check::Checker;
 use crate::obj::LangObj;
 use crate::objects::{ObjKey, PackageKey, TCObjects, TypeKey};
 use crate::selection::{Selection, SelectionKind};

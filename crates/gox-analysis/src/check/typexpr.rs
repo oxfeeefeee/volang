@@ -15,7 +15,7 @@ use crate::scope;
 use crate::typ::{self, ChanDir, Type};
 use gox_syntax::ast::{self, Expr, FuncSig, Param, Receiver, TypeExpr, TypeExprKind, InterfaceElem};
 
-use super::checker::{Checker, FilesContext, ObjContext};
+use super::checker::{Checker, ObjContext};
 
 impl Checker {
     // =========================================================================

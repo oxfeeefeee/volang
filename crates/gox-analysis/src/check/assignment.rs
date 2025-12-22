@@ -16,7 +16,7 @@ use crate::typ::{self, BasicType, Type};
 /// Default span for error reporting when no span is available.
 const DEFAULT_SPAN: Span = Span { start: BytePos(0), end: BytePos(0) };
 
-use super::checker::{Checker, FilesContext};
+use super::checker::{Checker};
 
 impl Checker {
     /// Reports whether x can be assigned to a variable of type t.

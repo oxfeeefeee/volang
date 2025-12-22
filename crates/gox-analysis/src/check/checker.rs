@@ -19,7 +19,7 @@ use crate::obj::{ConstValue, Pos};
 use crate::objects::{DeclInfoKey, ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
 use crate::operand::OperandMode;
 use crate::universe::Universe;
-use crate::importer::{Importer, ImportResult};
+use crate::importer::{Importer};
 
 // =============================================================================
 // ExprInfo - information about untyped expressions
@@ -388,10 +388,10 @@ impl Checker {
         self.check_files_pkg_name(files)?;
         let fctx = &mut FilesContext::new(files);
         self.collect_objects(fctx);
-        self.package_objects(fctx);
+        self.package_objects();
         self.process_delayed(0);
         self.init_order();
-        self.unused_imports(fctx);
+        self.unused_imports();
         self.record_untyped();
         Ok(self.pkg)
     }
@@ -405,10 +405,10 @@ impl Checker {
         self.check_files_pkg_name(files)?;
         let fctx = &mut FilesContext::with_importer(files, importer);
         self.collect_objects(fctx);
-        self.package_objects(fctx);
+        self.package_objects();
         self.process_delayed(0);
         self.init_order();
-        self.unused_imports(fctx);
+        self.unused_imports();
         self.record_untyped();
         Ok(self.pkg)
     }
