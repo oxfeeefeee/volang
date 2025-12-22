@@ -40,9 +40,9 @@ impl Checker {
     /// Like type_expr but breaks infinite size of recursive types.
     /// Used for pointer base types, slice/map element types, function params, etc.
     pub fn indirect_type(&mut self, ty: &TypeExpr, fctx: &mut FilesContext) -> TypeKey {
-        fctx.push(self.universe().indir());
+        self.push_obj_path(self.universe().indir());
         let t = self.defined_type(ty, None, fctx);
-        fctx.pop();
+        self.pop_obj_path();
         t
     }
 
@@ -133,14 +133,14 @@ impl Checker {
                 let t = self.new_t_map(key, value);
                 set_underlying(Some(t), &mut self.tc_objs);
 
-                // Check map key is comparable (like goscript: delayed check via fctx.later)
+                // Check map key is comparable (like goscript: delayed check via self.later)
                 let key_span = map.key.span;
-                let f = move |checker: &mut Checker, _: &mut FilesContext| {
+                let f = move |checker: &mut Checker| {
                     if !crate::typ::comparable(key, &checker.tc_objs) {
                         checker.error(key_span, format!("invalid map key type"));
                     }
                 };
-                fctx.later(Box::new(f));
+                self.later(Box::new(f));
 
                 Some(t)
             }
@@ -756,10 +756,10 @@ impl Checker {
             }
         }
 
-        // Delay embedded interface checking (like goscript: fctx.later)
+        // Delay embedded interface checking (like goscript: self.later)
         // Only collects embeds - does NOT call complete() here
         if !embedded_idents.is_empty() {
-            let f = move |checker: &mut Checker, _fctx: &mut FilesContext| {
+            let f = move |checker: &mut Checker| {
                 let mut embeds: Vec<TypeKey> = Vec::new();
                 let invalid_type = checker.invalid_type();
                 
@@ -792,7 +792,7 @@ impl Checker {
                     *iface_detail.embeddeds_mut() = embeds;
                 }
             };
-            fctx.later(Box::new(f));
+            self.later(Box::new(f));
         }
 
         // Compute method set using info_from_type_lit (like goscript)
@@ -823,8 +823,8 @@ impl Checker {
 
         // Correct receiver type for all methods explicitly declared
         // by this interface after we're done with type-checking at this level.
-        // (like goscript's second fctx.later)
-        let f = move |checker: &mut Checker, _fctx: &mut FilesContext| {
+        // (like goscript's second self.later)
+        let f = move |checker: &mut Checker| {
             if let Some(iface_detail) = checker.tc_objs.types[itype].try_as_interface() {
                 for &m in iface_detail.methods().iter() {
                     let t = checker.tc_objs.lobjs[m].typ().unwrap();
@@ -836,7 +836,7 @@ impl Checker {
                 }
             }
         };
-        fctx.later(Box::new(f));
+        self.later(Box::new(f));
 
         // Two-phase processing (like goscript):
         // Phase 1: Create method objects with empty signatures, call set_func

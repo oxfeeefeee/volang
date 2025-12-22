@@ -63,13 +63,15 @@ impl Checker {
         match self.lobj(okey).color() {
             ObjColor::White => {
                 debug_assert!(self.lobj(okey).typ().is_none());
-                self.lobj_mut(okey).set_color(ObjColor::Gray(fctx.push(okey)));
+                let idx = self.push_obj_path(okey);
+                self.lobj_mut(okey).set_color(ObjColor::Gray(idx));
 
                 let dkey = match self.obj_map.get(&okey) {
                     Some(&k) => k,
                     None => {
                         // Object not in obj_map - predeclared or imported
-                        self.lobj_mut(fctx.pop()).set_color(ObjColor::Black);
+                        let popped = self.pop_obj_path();
+                        self.lobj_mut(popped).set_color(ObjColor::Black);
                         return;
                     }
                 };
@@ -110,7 +112,8 @@ impl Checker {
 
                 // Restore octx
                 std::mem::swap(&mut self.octx, &mut octx);
-                self.lobj_mut(fctx.pop()).set_color(ObjColor::Black);
+                let popped = self.pop_obj_path();
+                self.lobj_mut(popped).set_color(ObjColor::Black);
             }
             ObjColor::Black => {
                 debug_assert!(self.lobj(okey).typ().is_some());
@@ -153,7 +156,7 @@ impl Checker {
             _ => return false,
         };
 
-        let cycle = &fctx.obj_path[start..];
+        let cycle = &self.obj_path[start..];
         let mut ncycle = cycle.len();
 
         for o in cycle {
@@ -378,9 +381,10 @@ impl Checker {
             if fdecl.body.is_some() {
                 let name = lobj.name().to_string();
                 let body = fdecl.body.clone();
-                fctx.later(Box::new(move |checker: &mut Checker, fctx: &mut FilesContext| {
+                self.later(Box::new(move |checker: &mut Checker| {
                     if let Some(b) = &body {
-                        checker.func_body(None, &name, sig_key, b, None, fctx);
+                        let mut fctx = FilesContext::new(&[]);
+                        checker.func_body(None, &name, sig_key, b, None, &mut fctx);
                     }
                 }));
             }
@@ -390,10 +394,10 @@ impl Checker {
     /// Adds method declarations to a type.
     pub fn add_method_decls(&mut self, okey: ObjKey, fctx: &mut FilesContext) {
         // Get associated methods
-        if !fctx.methods.contains_key(&okey) {
+        if !self.methods.contains_key(&okey) {
             return;
         }
-        let methods = fctx.methods.remove(&okey).unwrap();
+        let methods = self.methods.remove(&okey).unwrap();
 
         let type_key = match self.lobj(okey).typ() {
             Some(t) => t,
@@ -467,7 +471,7 @@ impl Checker {
                 let mut last_full_spec: Option<&gox_syntax::ast::ConstSpec> = None;
 
                 for (iota, spec) in cdecl.specs.iter().enumerate() {
-                    let top = fctx.delayed_count();
+                    let top = self.delayed_count();
 
                     // Determine which spec to use for type/values
                     let current_spec = if spec.ty.is_some() || !spec.values.is_empty() {
@@ -505,7 +509,7 @@ impl Checker {
                     self.arity_match_const(spec, current_spec);
 
                     // Process function literals before scope changes
-                    fctx.process_delayed(top, self);
+                    self.process_delayed(top);
 
                     // Declare constants in current scope
                     if let Some(scope) = self.octx.scope {
@@ -518,7 +522,7 @@ impl Checker {
 
             Decl::Var(vdecl) => {
                 for spec in &vdecl.specs {
-                    let top = fctx.delayed_count();
+                    let top = self.delayed_count();
 
                     // Create variables
                     let vars: Vec<ObjKey> = spec
@@ -563,7 +567,7 @@ impl Checker {
                     self.arity_match_var(spec);
 
                     // Process function literals before scope changes
-                    fctx.process_delayed(top, self);
+                    self.process_delayed(top);
 
                     // Declare variables in current scope
                     if let Some(scope) = self.octx.scope {
@@ -589,10 +593,12 @@ impl Checker {
                 }
 
                 // Mark gray and type-check
-                self.lobj_mut(okey).set_color(ObjColor::Gray(fctx.push(okey)));
+                let idx = self.push_obj_path(okey);
+                self.lobj_mut(okey).set_color(ObjColor::Gray(idx));
                 // GoX doesn't have type aliases in the same way as Go
                 self.type_decl(okey, &tdecl.ty, None, false, fctx);
-                self.lobj_mut(fctx.pop()).set_color(ObjColor::Black);
+                let popped = self.pop_obj_path();
+                self.lobj_mut(popped).set_color(ObjColor::Black);
             }
 
             Decl::Func(_) => {

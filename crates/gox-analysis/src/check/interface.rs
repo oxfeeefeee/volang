@@ -214,7 +214,7 @@ impl Checker {
         // This prevents stack overflow with recursive interface declarations.
         if let Some(okey) = tname {
             debug_assert!(path.last() == Some(&okey));
-            if let Some(info) = fctx.ifaces.get(&okey) {
+            if let Some(info) = self.ifaces.get(&okey) {
                 if info.is_none() {
                     // We have a cycle
                     self.has_cycle(okey, path, true);
@@ -222,7 +222,7 @@ impl Checker {
                 return info.clone();
             } else {
                 // Computation started but not complete
-                fctx.ifaces.insert(okey, None);
+                self.ifaces.insert(okey, None);
             }
         }
 
@@ -274,7 +274,7 @@ impl Checker {
 
         // Mark as complete
         if let Some(okey) = tname {
-            fctx.ifaces.insert(okey, Some(iinfo.clone()));
+            self.ifaces.insert(okey, Some(iinfo.clone()));
         }
 
         Some(iinfo)

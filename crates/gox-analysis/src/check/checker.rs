@@ -71,24 +71,12 @@ impl ObjContext {
 // =============================================================================
 
 /// Delayed action to be executed later during type checking.
-pub type DelayedAction = Box<dyn FnOnce(&mut Checker, &mut FilesContext)>;
+pub type DelayedAction = Box<dyn FnOnce(&mut Checker)>;
 
-/// Contains information collected during type-checking of a set of package files.
+/// Simplified context for type-checking - only holds borrowed data.
 pub struct FilesContext<'a> {
     /// Package files.
     pub files: &'a [File],
-    /// Positions of unused dot-imported packages for each file scope.
-    pub unused_dot_imports: HashMap<ScopeKey, HashMap<PackageKey, Span>>,
-    /// Maps package scope type names to associated non-blank, non-interface methods.
-    pub methods: HashMap<ObjKey, Vec<ObjKey>>,
-    /// Maps interface type names to corresponding interface infos.
-    pub ifaces: HashMap<ObjKey, Option<super::interface::RcIfaceInfo>>,
-    /// Map of expressions without final type.
-    pub untyped: HashMap<ExprId, ExprInfo>,
-    /// Stack of delayed actions.
-    pub delayed: Vec<DelayedAction>,
-    /// Path of object dependencies during type inference (for cycle reporting).
-    pub obj_path: Vec<ObjKey>,
     /// Optional importer for resolving package imports.
     pub importer: Option<&'a mut dyn Importer>,
 }
@@ -97,12 +85,6 @@ impl<'a> FilesContext<'a> {
     pub fn new(files: &'a [File]) -> FilesContext<'a> {
         FilesContext {
             files,
-            unused_dot_imports: HashMap::new(),
-            methods: HashMap::new(),
-            ifaces: HashMap::new(),
-            untyped: HashMap::new(),
-            delayed: Vec::new(),
-            obj_path: Vec::new(),
             importer: None,
         }
     }
@@ -110,56 +92,8 @@ impl<'a> FilesContext<'a> {
     pub fn with_importer(files: &'a [File], importer: &'a mut dyn Importer) -> FilesContext<'a> {
         FilesContext {
             files,
-            unused_dot_imports: HashMap::new(),
-            methods: HashMap::new(),
-            ifaces: HashMap::new(),
-            untyped: HashMap::new(),
-            delayed: Vec::new(),
-            obj_path: Vec::new(),
             importer: Some(importer),
         }
-    }
-
-    /// Add an unused dot import.
-    pub fn add_unused_dot_import(&mut self, scope: ScopeKey, pkg: PackageKey, span: Span) {
-        self.unused_dot_imports
-            .entry(scope)
-            .or_default()
-            .insert(pkg, span);
-    }
-
-    /// Remember an untyped expression.
-    pub fn remember_untyped(&mut self, expr_id: ExprId, info: ExprInfo) {
-        self.untyped.insert(expr_id, info);
-    }
-
-    /// Push a delayed action onto the stack.
-    pub fn later(&mut self, action: DelayedAction) {
-        self.delayed.push(action);
-    }
-
-    /// Returns the count of delayed actions.
-    pub fn delayed_count(&self) -> usize {
-        self.delayed.len()
-    }
-
-    /// Process delayed actions starting from index `top`.
-    pub fn process_delayed(&mut self, top: usize, checker: &mut Checker) {
-        let actions: Vec<DelayedAction> = self.delayed.drain(top..).collect();
-        for action in actions {
-            action(checker, self);
-        }
-    }
-
-    /// Push an object onto the dependency path.
-    pub fn push(&mut self, obj: ObjKey) -> usize {
-        self.obj_path.push(obj);
-        self.obj_path.len() - 1
-    }
-
-    /// Pop an object from the dependency path.
-    pub fn pop(&mut self) -> ObjKey {
-        self.obj_path.pop().unwrap()
     }
 }
 
@@ -203,6 +137,20 @@ pub struct Checker {
     pub result: TypeInfo,
     /// For debug tracing.
     pub indent: Rc<RefCell<usize>>,
+    
+    // --- Fields moved from FilesContext ---
+    /// Positions of unused dot-imported packages for each file scope.
+    pub unused_dot_imports: HashMap<ScopeKey, HashMap<PackageKey, Span>>,
+    /// Maps package scope type names to associated non-blank, non-interface methods.
+    pub methods: HashMap<ObjKey, Vec<ObjKey>>,
+    /// Maps interface type names to corresponding interface infos.
+    pub ifaces: HashMap<ObjKey, Option<super::interface::RcIfaceInfo>>,
+    /// Map of expressions without final type.
+    pub untyped: HashMap<ExprId, ExprInfo>,
+    /// Stack of delayed actions.
+    pub delayed: Vec<DelayedAction>,
+    /// Path of object dependencies during type inference (for cycle reporting).
+    pub obj_path: Vec<ObjKey>,
 }
 
 impl Checker {
@@ -219,6 +167,12 @@ impl Checker {
             octx: ObjContext::new(),
             result: TypeInfo::new(),
             indent: Rc::new(RefCell::new(0)),
+            unused_dot_imports: HashMap::new(),
+            methods: HashMap::new(),
+            ifaces: HashMap::new(),
+            untyped: HashMap::new(),
+            delayed: Vec::new(),
+            obj_path: Vec::new(),
         }
     }
     
@@ -238,6 +192,12 @@ impl Checker {
             octx: ObjContext::new(),
             result: TypeInfo::new(),
             indent: Rc::new(RefCell::new(0)),
+            unused_dot_imports: HashMap::new(),
+            methods: HashMap::new(),
+            ifaces: HashMap::new(),
+            untyped: HashMap::new(),
+            delayed: Vec::new(),
+            obj_path: Vec::new(),
         }
     }
     
@@ -360,6 +320,52 @@ impl Checker {
     // Note: report_alt_decl and add_method_decls are in decl.rs
 
     // =========================================================================
+    // Methods moved from FilesContext
+    // =========================================================================
+
+    /// Add an unused dot import.
+    pub fn add_unused_dot_import(&mut self, scope: ScopeKey, pkg: PackageKey, span: Span) {
+        self.unused_dot_imports
+            .entry(scope)
+            .or_default()
+            .insert(pkg, span);
+    }
+
+    /// Remember an untyped expression.
+    pub fn remember_untyped(&mut self, expr_id: ExprId, info: ExprInfo) {
+        self.untyped.insert(expr_id, info);
+    }
+
+    /// Push a delayed action onto the stack.
+    pub fn later(&mut self, action: DelayedAction) {
+        self.delayed.push(action);
+    }
+
+    /// Returns the count of delayed actions.
+    pub fn delayed_count(&self) -> usize {
+        self.delayed.len()
+    }
+
+    /// Process delayed actions starting from index `top`.
+    pub fn process_delayed(&mut self, top: usize) {
+        let actions: Vec<DelayedAction> = self.delayed.drain(top..).collect();
+        for action in actions {
+            action(self);
+        }
+    }
+
+    /// Push an object onto the dependency path.
+    pub fn push_obj_path(&mut self, obj: ObjKey) -> usize {
+        self.obj_path.push(obj);
+        self.obj_path.len() - 1
+    }
+
+    /// Pop an object from the dependency path.
+    pub fn pop_obj_path(&mut self) -> ObjKey {
+        self.obj_path.pop().unwrap()
+    }
+
+    // =========================================================================
     // Expression checking - delegated to expr.rs
     // =========================================================================
 
@@ -384,10 +390,10 @@ impl Checker {
         let fctx = &mut FilesContext::new(files);
         self.collect_objects(fctx);
         self.package_objects(fctx);
-        fctx.process_delayed(0, self);
+        self.process_delayed(0);
         self.init_order();
         self.unused_imports(fctx);
-        self.record_untyped(fctx);
+        self.record_untyped();
         Ok(self.pkg)
     }
     
@@ -401,10 +407,10 @@ impl Checker {
         let fctx = &mut FilesContext::with_importer(files, importer);
         self.collect_objects(fctx);
         self.package_objects(fctx);
-        fctx.process_delayed(0, self);
+        self.process_delayed(0);
         self.init_order();
         self.unused_imports(fctx);
-        self.record_untyped(fctx);
+        self.record_untyped();
         Ok(self.pkg)
     }
 
@@ -441,11 +447,12 @@ impl Checker {
     }
 
     /// Record all untyped expressions in the result.
-    fn record_untyped(&mut self, fctx: &mut FilesContext) {
-        for (id, info) in fctx.untyped.iter() {
+    fn record_untyped(&mut self) {
+        let untyped: Vec<_> = self.untyped.drain().collect();
+        for (id, info) in untyped {
             if info.mode != OperandMode::Invalid {
                 if let Some(typ) = info.typ {
-                    self.result.record_type_and_value(*id, info.mode.clone(), typ);
+                    self.result.record_type_and_value(id, info.mode.clone(), typ);
                 }
             }
         }

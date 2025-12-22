@@ -340,7 +340,7 @@ impl Checker {
             for elem in elems {
                 self.declare(file_scope, elem);
             }
-            fctx.add_unused_dot_import(file_scope, imp, import.span);
+            self.add_unused_dot_import(file_scope, imp, import.span);
         } else {
             // Regular import
             self.declare(file_scope, pkg_name_obj);
@@ -561,7 +561,7 @@ impl Checker {
                 .func_set_has_ptr_recv(is_pointer);
 
             // Associate method with base type
-            fctx.methods.entry(base_obj).or_default().push(method_key);
+            self.methods.entry(base_obj).or_default().push(method_key);
         }
     }
 
@@ -757,7 +757,7 @@ impl Checker {
         }
 
         // Clear methods map
-        fctx.methods.clear();
+        self.methods.clear();
     }
 
     /// Checks for unused imports.
@@ -780,7 +780,7 @@ impl Checker {
         }
 
         // Check dot-imported packages
-        for (_, imports) in &fctx.unused_dot_imports {
+        for (_, imports) in &self.unused_dot_imports {
             for (&pkey, &span) in imports {
                 self.soft_error(
                     span,

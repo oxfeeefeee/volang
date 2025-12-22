@@ -356,7 +356,7 @@ impl Checker {
 
     /// Handles short variable declarations (:=).
     pub fn short_var_decl(&mut self, lhs: &[Expr], rhs: &[Expr], pos: Span, fctx: &mut FilesContext) {
-        let top = fctx.delayed_count();
+        let top = self.delayed_count();
         let scope_key = match self.octx.scope {
             Some(s) => s,
             None => return,
@@ -398,7 +398,7 @@ impl Checker {
         self.init_vars(&lhs_vars, rhs, None, fctx);
 
         // process function literals in rhs expressions before scope changes
-        fctx.process_delayed(top, self);
+        self.process_delayed(top);
 
         // Declare new variables in scope
         if !new_vars.is_empty() {

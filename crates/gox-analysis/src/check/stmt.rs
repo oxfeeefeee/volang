@@ -443,11 +443,11 @@ impl Checker {
     /// Main statement checking wrapper - handles delayed actions.
     fn stmt(&mut self, stmt: &Stmt, ctx: &StmtContext, fctx: &mut FilesContext) {
         let begin_scope = self.octx.scope;
-        let begin_delayed_count = fctx.delayed_count();
+        let begin_delayed_count = self.delayed_count();
 
         self.stmt_impl(stmt, ctx, fctx);
 
-        fctx.process_delayed(begin_delayed_count, self);
+        self.process_delayed(begin_delayed_count);
         debug_assert_eq!(begin_scope, self.octx.scope);
     }
 

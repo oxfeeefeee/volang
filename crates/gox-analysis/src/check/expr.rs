@@ -245,7 +245,7 @@ impl Checker {
         final_: bool,
         fctx: &mut FilesContext,
     ) {
-        let info = match fctx.untyped.get(&expr_id) {
+        let info = match self.untyped.get(&expr_id) {
             Some(i) => i.clone(),
             None => return, // nothing to do
         };
@@ -302,15 +302,16 @@ impl Checker {
 
         // If the new type is not final and still untyped, just update the recorded type.
         if !final_ && typ::is_untyped(t, self.objs()) {
-            if let Some(info) = fctx.untyped.get_mut(&expr_id) {
-                info.typ = Some(typ::underlying_type(t, self.objs()));
+            let underlying = typ::underlying_type(t, self.objs());
+            if let Some(info) = self.untyped.get_mut(&expr_id) {
+                info.typ = Some(underlying);
             }
             return;
         }
 
         // Otherwise we have the final (typed or untyped type).
         // Remove it from the map of yet untyped expressions.
-        let removed = fctx.untyped.remove(&expr_id);
+        let removed = self.untyped.remove(&expr_id);
         let info = match removed {
             Some(o) => o,
             None => return,
@@ -337,10 +338,10 @@ impl Checker {
     }
 
     /// Updates the value of x to val in the untyped map.
-    fn update_expr_val(expr_id: ExprId, val: Value, fctx: &mut FilesContext) {
-        if let Some(info) = fctx.untyped.get_mut(&expr_id) {
-            if let OperandMode::Constant(v) = &mut info.mode {
-                *v = val;
+    fn update_expr_val(&mut self, expr_id: ExprId, val: Value) {
+        if let Some(info) = self.untyped.get_mut(&expr_id) {
+            if let OperandMode::Constant(_) = &info.mode {
+                info.mode = OperandMode::Constant(val);
             }
         }
     }
@@ -400,7 +401,7 @@ impl Checker {
                     }
                     // Expression value may have been rounded - update if needed
                     if let Some(expr_id) = x.expr_id {
-                        Self::update_expr_val(expr_id, v_clone, fctx);
+                        self.update_expr_val(expr_id, v_clone);
                     }
                     Some(target)
                 } else {
@@ -598,7 +599,7 @@ impl Checker {
             if xt_untyped {
                 // Delay operand checking until we know the final type
                 if let Some(expr_id) = x.expr_id {
-                    if let Some(info) = fctx.untyped.get_mut(&expr_id) {
+                    if let Some(info) = self.untyped.get_mut(&expr_id) {
                         info.is_lhs = true;
                     }
                 }
@@ -867,7 +868,7 @@ impl Checker {
 
         if typ::is_untyped(ty, self.objs()) {
             // Delay type and value recording until we know the type
-            fctx.remember_untyped(
+            self.remember_untyped(
                 e.id,
                 super::checker::ExprInfo {
                     is_lhs: false,
