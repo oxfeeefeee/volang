@@ -149,16 +149,17 @@ impl Module {
         }
     }
     
-    /// Add a global variable and return its index.
+    /// Add a global variable and return its slot offset.
     pub fn add_global(&mut self, name: &str, value_kind: u8, type_id: u16, slots: u16) -> u32 {
-        let idx = self.globals.len();
+        // Calculate slot offset (sum of all previous globals' slots)
+        let slot_offset: u32 = self.globals.iter().map(|g| g.slots as u32).sum();
         self.globals.push(GlobalDef {
             name: name.to_string(),
             slots,
             value_kind,
             type_id,
         });
-        idx as u32
+        slot_offset
     }
     
     /// Add a constant and return its index.

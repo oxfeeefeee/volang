@@ -38,11 +38,11 @@ for test in $(find "$TEST_DIR" -name "*.gox" -o -type d -name "proj_*" | sort); 
     # Run VM mode
     if [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
         result=$("$BIN" --mode=vm "$test" 2>&1)
-        if echo "$result" | grep -q "^OK$"; then
+        if echo "$result" | grep -q "not applicable"; then
+            : # skip - check this FIRST before OK
+        elif echo "$result" | grep -q "^OK$"; then
             vm_passed=$((vm_passed + 1))
             passed_list="$passed_list  ${GREEN}✓${NC} $name [vm]\n"
-        elif echo "$result" | grep -q "not applicable"; then
-            : # skip
         else
             vm_failed=$((vm_failed + 1))
             failed_list="$failed_list  ${RED}✗${NC} $name [vm]\n"
@@ -52,11 +52,11 @@ for test in $(find "$TEST_DIR" -name "*.gox" -o -type d -name "proj_*" | sort); 
     # Run JIT mode
     if [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
         result=$("$BIN" --mode=jit "$test" 2>&1)
-        if echo "$result" | grep -q "^OK$"; then
+        if echo "$result" | grep -q "not applicable"; then
+            : # skip - check this FIRST before OK
+        elif echo "$result" | grep -q "^OK$"; then
             jit_passed=$((jit_passed + 1))
             passed_list="$passed_list  ${GREEN}✓${NC} $name [jit]\n"
-        elif echo "$result" | grep -q "not applicable"; then
-            : # skip
         else
             jit_failed=$((jit_failed + 1))
             failed_list="$failed_list  ${RED}✗${NC} $name [jit]\n"
