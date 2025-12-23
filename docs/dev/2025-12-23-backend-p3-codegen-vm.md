@@ -672,6 +672,102 @@ pub fn generate_entry(ctx: &mut CodegenContext) -> u32 {
 
 **注**：无 `Upval*` 指令，被捕获变量直接逃逸到堆。
 
+### 方法调用 - 值接收器 vs 指针接收器
+
+#### 值接收器
+
+```gox
+func (p Point) Move() { p.x += 1 }
+```
+
+**约定**：值接收器方法的 receiver 参数占 N slots（struct 大小），方法内部直接操作栈上的 slots。
+
+**调用生成**：
+
+| receiver 位置 | 生成指令 |
+|---------------|----------|
+| 栈上 | `CopyN arg_start, receiver_slot, N` |
+| 堆上 | `PtrGetN arg_start, receiver_gcref, 0, N` |
+
+**方法内部**：
+```
+// receiver 在 slot 0..N
+// 访问 p.x:
+Copy dest, 0 + field_offset
+// 修改 p.x:
+Copy 0 + field_offset, value
+```
+
+#### 指针接收器
+
+```gox
+func (p *Point) Set(x int) { p.x = x }
+```
+
+**约定**：指针接收器方法的 receiver 参数占 1 slot (GcRef)。
+
+**调用生成**：
+```
+Copy arg_start, receiver_gcref
+```
+
+**方法内部**：
+```
+// receiver 在 slot 0，是 GcRef
+// 访问 p.x:
+PtrGet dest, 0, field_offset
+// 修改 p.x:
+PtrSet 0, field_offset, value
+```
+
+#### 隐式转换 (indirect)
+
+Go/GoX 支持值/指针接收器之间的隐式转换：
+
+| 调用方式 | receiver 类型 | 方法 receiver | indirect | 操作 |
+|----------|---------------|---------------|----------|------|
+| `t.ValueMethod()` | T | T | false | 直接复制 |
+| `p.ValueMethod()` | *T | T | true | `PtrGetN` 解引用后复制 |
+| `p.PointerMethod()` | *T | *T | false | 直接传 GcRef |
+| `t.PointerMethod()` | T | *T | false | receiver 已逃逸，传 GcRef |
+
+**注**：`t.PointerMethod()` 要求 `t` 可寻址，前端逃逸分析会将其标记为逃逸。
+
+#### Codegen 伪代码
+
+```rust
+fn compile_method_call(receiver_expr, method, args) {
+    let selection = info.expr_selection(receiver_expr);
+    let indirect = selection.map(|s| s.indirect()).unwrap_or(false);
+    let is_value_receiver = !method.has_pointer_receiver();
+    let receiver_slot = self.compile_expr(receiver_expr);
+    let receiver_escaped = self.is_escaped(receiver_expr);
+    
+    if is_value_receiver {
+        let type_slots = method.receiver_type.slot_count();
+        if indirect {
+            // *T 调 T 方法：先解引用再复制
+            emit(PtrGetN, arg_start, receiver_slot, 0, type_slots);
+        } else if receiver_escaped {
+            // 堆上 T 调 T 方法：展开到参数区
+            emit(PtrGetN, arg_start, receiver_slot, 0, type_slots);
+        } else {
+            // 栈上 T 调 T 方法：直接复制
+            emit(CopyN, arg_start, receiver_slot, type_slots);
+        }
+        // 其他参数从 arg_start + type_slots 开始
+    } else {
+        // 指针接收器：传 GcRef
+        // indirect=true: *T 调 *T，receiver_slot 就是 GcRef
+        // indirect=false: T 调 *T，T 已逃逸，receiver_slot 是 GcRef
+        emit(Copy, arg_start, receiver_slot);
+        // 其他参数从 arg_start + 1 开始
+    }
+    
+    emit(Call, method.func_id, arg_start, arg_slots, ret_slots);
+}
+```
+
 ## Tasks Checklist
 
 ### context.rs
