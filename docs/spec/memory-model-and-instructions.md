@@ -1,0 +1,735 @@
+# GoX Memory Model and Instruction Set Specification
+
+**Version**: 2.0 (Memory Model Refactoring)  
+**Status**: Draft  
+**Date**: 2025-12-23
+
+## Table of Contents
+
+1. [Overview](#1-overview)
+2. [Type System](#2-type-system)
+3. [Memory Model](#3-memory-model)
+4. [Escape Analysis](#4-escape-analysis)
+5. [Instruction Set](#5-instruction-set)
+6. [Runtime Structures](#6-runtime-structures)
+
+---
+
+## 1. Overview
+
+This document specifies the GoX memory model and instruction set architecture. The key design principle is **escape-analysis-driven allocation**: values are allocated on the stack by default, and only escape to the heap when necessary.
+
+### 1.1 Design Goals
+
+1. **Value semantics by default**: `struct`, `array`, and `interface` are value types
+2. **Static escape analysis**: Determine allocation location at compile time
+3. **Unified pointer representation**: All escaped values are represented as `Pointer`
+4. **Simplified closure capture**: No delayed "upvalue promotion" - escaped variables are heap-allocated from the start
+
+### 1.2 Key Changes from Previous Model
+
+| Aspect | Old Model | New Model |
+|--------|-----------|-----------|
+| struct allocation | Always heap | Stack by default, heap if escaped |
+| array allocation | Always heap | Stack by default, heap if escaped |
+| closure capture | Upval box (delayed promotion) | Direct heap allocation via escape analysis |
+| nested struct | Separate heap objects | Flattened inline |
+
+---
+
+## 2. Type System
+
+### 2.1 ValueKind
+
+`ValueKind` is a runtime type tag (u8) that classifies all values:
+
+```rust
+pub enum ValueKind {
+    // === Primitive Types (1 slot, no GC) ===
+    Nil = 0,
+    Bool = 1,
+    Int = 2,
+    Int8 = 3,
+    Int16 = 4,
+    Int32 = 5,
+    Int64 = 6,
+    Uint = 7,
+    Uint8 = 8,
+    Uint16 = 9,
+    Uint32 = 10,
+    Uint64 = 11,
+    Float32 = 12,
+    Float64 = 13,
+    FuncPtr = 14,       // Bare function pointer (no captures)
+
+    // === Compound Value Types (multi-slot, may contain GC refs) ===
+    Array = 16,         // [N]T - elements inline
+    Struct = 21,        // Fields inline
+    Interface = 23,     // 2 slots: header + data
+
+    // === Reference Types (1 slot GcRef, heap allocated) ===
+    String = 15,
+    Slice = 17,
+    Map = 18,
+    Channel = 19,
+    Closure = 20,
+    Pointer = 22,       // *T - pointer to escaped value
+}
+```
+
+### 2.2 Type Classification
+
+#### 2.2.1 Value Types
+
+Value types can be allocated on the stack. They are copied by value.
+
+| Type | Slots | Description |
+|------|-------|-------------|
+| Primitives | 1 | `int`, `float`, `bool`, etc. |
+| `[N]T` | N × sizeof(T) | Fixed-size array, elements inline |
+| `struct` | Sum of fields | Fields inline, nested structs flattened |
+| `interface` | 2 | Header slot + data slot |
+
+#### 2.2.2 Reference Types
+
+Reference types are always represented as a single GcRef slot pointing to a heap object.
+
+| Type | Description |
+|------|-------------|
+| `string` | Immutable byte sequence |
+| `[]T` | Slice (ptr, len, cap) |
+| `map[K]V` | Hash map |
+| `chan T` | Channel |
+| `func(...)` | Closure with captures |
+| `Pointer` | Escaped value on heap |
+
+### 2.3 Helper Methods
+
+```rust
+impl ValueKind {
+    /// Returns true if this is a value type (can be stack-allocated)
+    #[inline]
+    pub fn is_value_type(self) -> bool {
+        !self.is_ref_type()
+    }
+    
+    /// Returns true if this is a reference type (always heap-allocated)
+    #[inline]
+    pub fn is_ref_type(self) -> bool {
+        matches!(self, 
+            Self::String | Self::Slice | Self::Map | 
+            Self::Channel | Self::Closure | Self::Pointer)
+    }
+    
+    /// Returns true if values of this type may contain GC references
+    #[inline]
+    pub fn may_contain_gc_refs(self) -> bool {
+        matches!(self,
+            Self::Array | Self::Struct | Self::Interface |
+            Self::String | Self::Slice | Self::Map |
+            Self::Channel | Self::Closure | Self::Pointer)
+    }
+}
+```
+
+---
+
+## 3. Memory Model
+
+### 3.1 Stack Layout
+
+Each function has a set of **slots** (registers). Each slot is 8 bytes.
+
+```
+Function Frame:
+┌─────────────────────────────┐
+│ slot 0: param 0             │
+│ slot 1: param 1             │
+│ ...                         │
+│ slot N: local var           │
+│ slot N+1: local var         │
+│ ...                         │
+│ slot M: temp                │
+└─────────────────────────────┘
+```
+
+#### 3.1.1 Value Type Layout on Stack
+
+**Primitives**: 1 slot
+```
+var x int    // slot 0: value
+```
+
+**Struct** (non-escaping, flattened):
+```gox
+type Point struct { x, y int }
+var p Point  // slot 0: p.x, slot 1: p.y
+```
+
+**Nested Struct** (flattened):
+```gox
+type Inner struct { a int; b string }
+type Outer struct { inner Inner; c int }
+var o Outer
+// slot 0: o.inner.a (Value)
+// slot 1: o.inner.b (GcRef - string is reference type)
+// slot 2: o.c (Value)
+```
+
+**Array** (non-escaping):
+```gox
+var arr [3]int  // slot 0: arr[0], slot 1: arr[1], slot 2: arr[2]
+```
+
+**Interface**: 2 slots
+```gox
+var i interface{}
+// slot 0: header (iface_type_id:16 | value_kind:8 | value_type_id:16 | ...)
+// slot 1: data (immediate value or GcRef)
+```
+
+### 3.2 Heap Layout
+
+Escaped values are allocated on the heap with a GC header.
+
+#### 3.2.1 GcHeader
+
+```rust
+pub struct GcHeader {
+    pub mark: u8,           // GC mark bit
+    pub gen: u8,            // Generation
+    pub value_kind: u8,     // ValueKind of the contained value
+    pub _pad: u8,
+    pub type_id: u16,       // RuntimeTypeId (for struct/interface)
+    pub _pad2: u16,
+}
+```
+
+#### 3.2.2 Heap Object Layout
+
+**Escaped Primitive** (BoxedInt, BoxedFloat, etc.):
+```
+┌─────────────────────────────┐
+│ GcHeader (value_kind=Int)   │
+├─────────────────────────────┤
+│ value (8 bytes)             │
+└─────────────────────────────┘
+```
+
+**Escaped Struct**:
+```
+┌─────────────────────────────┐
+│ GcHeader (value_kind=Struct)│
+├─────────────────────────────┤
+│ field 0 (8 bytes)           │
+│ field 1 (8 bytes)           │
+│ ...                         │
+└─────────────────────────────┘
+```
+
+**Escaped Array**:
+```
+┌─────────────────────────────┐
+│ GcHeader (value_kind=Array) │
+├─────────────────────────────┤
+│ element 0                   │
+│ element 1                   │
+│ ...                         │
+└─────────────────────────────┘
+```
+
+### 3.3 Global Variables
+
+Global variables are treated as **always escaped** and allocated on the heap. The global table stores GcRefs to heap objects.
+
+```gox
+var globalPoint Point  // Heap-allocated, globals[i] = GcRef
+```
+
+---
+
+## 4. Escape Analysis
+
+### 4.1 Escape Rules
+
+A local variable **escapes** (requires heap allocation) if any of the following conditions is true:
+
+#### 4.1.1 Primitives (`int`, `float`, `bool`)
+
+- Captured by a closure
+
+#### 4.1.2 Struct
+
+- Address taken: `&s`
+- Captured by a closure
+- Assigned to an interface
+- Pointer-receiver method called: `s.Method()` where `Method` has `*T` receiver
+
+#### 4.1.3 Array
+
+- Captured by a closure
+- Assigned to an interface
+- Sliced: `arr[:]` or `arr[i:j]`
+- Dynamically indexed: `arr[i]` where `i` is not a compile-time constant
+
+#### 4.1.4 Size Threshold
+
+- `struct` or `array` larger than **256 slots** → always escapes
+
+### 4.2 Nested Escape Propagation
+
+If any nested field triggers escape, the **entire root variable** escapes:
+
+```gox
+type Outer struct { inner Inner }
+var o Outer
+p := &o.inner    // o escapes (not just inner)
+```
+
+### 4.3 Non-Escape Cases
+
+- Package-level variables are **not** considered "captured" by closures (they're already global)
+- Variables only used within the declaring function without triggering any escape rule
+
+---
+
+## 5. Instruction Set
+
+### 5.1 Instruction Format
+
+Each instruction is 8 bytes:
+
+```rust
+pub struct Instruction {
+    pub op: u8,      // Opcode
+    pub flags: u8,   // Auxiliary flags
+    pub a: u16,      // Operand A
+    pub b: u16,      // Operand B
+    pub c: u16,      // Operand C
+}
+```
+
+### 5.2 Opcode Categories
+
+#### 5.2.1 LOAD: Load Immediate/Constant
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `Nop` | - | No operation |
+| `LoadNil` | a | `slots[a] = nil` |
+| `LoadTrue` | a | `slots[a] = true` |
+| `LoadFalse` | a | `slots[a] = false` |
+| `LoadInt` | a, b, c | `slots[a] = sign_extend(b \| (c << 16))` |
+| `LoadConst` | a, b | `slots[a] = constants[b]` |
+
+#### 5.2.2 COPY: Stack Slot Copy
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `Copy` | a, b | `slots[a] = slots[b]` (single slot) |
+| `CopyN` | a, b, c | `slots[a..a+c] = slots[b..b+c]` (multi-slot) |
+
+#### 5.2.3 SLOT: Stack Dynamic Indexing
+
+For stack-allocated arrays with dynamic indices.
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `SlotGet` | a, b, c | `slots[a] = slots[b + slots[c]]` |
+| `SlotSet` | a, b, c | `slots[a + slots[b]] = slots[c]` |
+| `SlotGetN` | a, b, c, flags | `slots[a..a+flags] = slots[b + slots[c]*flags..]` |
+| `SlotSetN` | a, b, c, flags | `slots[a + slots[b]*flags..] = slots[c..c+flags]` |
+
+#### 5.2.4 GLOBAL: Global Variable Access
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `GlobalGet` | a, b | `slots[a] = globals[b]` |
+| `GlobalSet` | a, b | `globals[a] = slots[b]` |
+
+#### 5.2.5 PTR: Heap Pointer Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `PtrNew` | a, b, c, flags | `slots[a] = alloc(value_kind=flags, type_id=b, size=c)` with zero-init |
+| `PtrClone` | a, b | `slots[a] = clone(slots[b])` - allocate + memcpy |
+| `PtrGet` | a, b, c | `slots[a] = heap[slots[b]].offset[c]` (single slot) |
+| `PtrSet` | a, b, c | `heap[slots[a]].offset[b] = slots[c]` (single slot) |
+| `PtrGetN` | a, b, c, flags | `slots[a..a+flags] = heap[slots[b]].offset[c..]` |
+| `PtrSetN` | a, b, c, flags | `heap[slots[a]].offset[b..] = slots[c..c+flags]` |
+
+#### 5.2.6 ARITH: Integer Arithmetic
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `AddI` | a, b, c | `slots[a] = slots[b] + slots[c]` |
+| `SubI` | a, b, c | `slots[a] = slots[b] - slots[c]` |
+| `MulI` | a, b, c | `slots[a] = slots[b] * slots[c]` |
+| `DivI` | a, b, c | `slots[a] = slots[b] / slots[c]` |
+| `ModI` | a, b, c | `slots[a] = slots[b] % slots[c]` |
+| `NegI` | a, b | `slots[a] = -slots[b]` |
+
+#### 5.2.7 ARITH: Float Arithmetic
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `AddF` | a, b, c | `slots[a] = slots[b] + slots[c]` |
+| `SubF` | a, b, c | `slots[a] = slots[b] - slots[c]` |
+| `MulF` | a, b, c | `slots[a] = slots[b] * slots[c]` |
+| `DivF` | a, b, c | `slots[a] = slots[b] / slots[c]` |
+| `NegF` | a, b | `slots[a] = -slots[b]` |
+
+#### 5.2.8 CMP: Integer Comparison
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `EqI` | a, b, c | `slots[a] = slots[b] == slots[c]` |
+| `NeI` | a, b, c | `slots[a] = slots[b] != slots[c]` |
+| `LtI` | a, b, c | `slots[a] = slots[b] < slots[c]` |
+| `LeI` | a, b, c | `slots[a] = slots[b] <= slots[c]` |
+| `GtI` | a, b, c | `slots[a] = slots[b] > slots[c]` |
+| `GeI` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
+
+#### 5.2.9 CMP: Float Comparison
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `EqF` | a, b, c | `slots[a] = slots[b] == slots[c]` |
+| `NeF` | a, b, c | `slots[a] = slots[b] != slots[c]` |
+| `LtF` | a, b, c | `slots[a] = slots[b] < slots[c]` |
+| `LeF` | a, b, c | `slots[a] = slots[b] <= slots[c]` |
+| `GtF` | a, b, c | `slots[a] = slots[b] > slots[c]` |
+| `GeF` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
+
+#### 5.2.10 CMP: Reference Comparison
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `EqRef` | a, b, c | `slots[a] = slots[b] == slots[c]` (pointer equality) |
+| `NeRef` | a, b, c | `slots[a] = slots[b] != slots[c]` |
+| `IsNil` | a, b | `slots[a] = slots[b] == nil` |
+
+#### 5.2.11 BIT: Bitwise Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `And` | a, b, c | `slots[a] = slots[b] & slots[c]` |
+| `Or` | a, b, c | `slots[a] = slots[b] \| slots[c]` |
+| `Xor` | a, b, c | `slots[a] = slots[b] ^ slots[c]` |
+| `Not` | a, b | `slots[a] = ^slots[b]` (bitwise NOT) |
+| `Shl` | a, b, c | `slots[a] = slots[b] << slots[c]` |
+| `ShrS` | a, b, c | `slots[a] = slots[b] >> slots[c]` (arithmetic) |
+| `ShrU` | a, b, c | `slots[a] = slots[b] >>> slots[c]` (logical) |
+
+#### 5.2.12 LOGIC: Logical Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `BoolNot` | a, b | `slots[a] = !slots[b]` |
+
+#### 5.2.13 JUMP: Control Flow
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `Jump` | b, c | `pc += sign_extend(b \| (c << 16))` |
+| `JumpIf` | a, b, c | `if slots[a]: pc += sign_extend(b \| (c << 16))` |
+| `JumpIfNot` | a, b, c | `if !slots[a]: pc += sign_extend(b \| (c << 16))` |
+
+#### 5.2.14 CALL: Function Calls
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `Call` | a, b, c, flags | Call `functions[a]`, args at `b`, argc=`c`, retc=`flags` |
+| `CallExtern` | a, b, c, flags | Call extern function |
+| `CallClosure` | a, b, c, flags | Call closure at `slots[a]` |
+| `CallIface` | a, b, c, flags | Call interface method: iface at `a`, method=`b`, args at `c` |
+| `Return` | a, b | Return values starting at `a`, count=`b` |
+
+#### 5.2.15 STR: String Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `StrNew` | a, b | `slots[a] = string(constants[b])` |
+| `StrConcat` | a, b, c | `slots[a] = slots[b] + slots[c]` |
+| `StrLen` | a, b | `slots[a] = len(slots[b])` |
+| `StrIndex` | a, b, c | `slots[a] = slots[b][slots[c]]` |
+| `StrSlice` | a, b, c, flags | `slots[a] = slots[b][slots[c]:flags]` |
+| `StrEq` | a, b, c | `slots[a] = slots[b] == slots[c]` |
+| `StrNe` | a, b, c | `slots[a] = slots[b] != slots[c]` |
+| `StrLt` | a, b, c | `slots[a] = slots[b] < slots[c]` |
+| `StrLe` | a, b, c | `slots[a] = slots[b] <= slots[c]` |
+| `StrGt` | a, b, c | `slots[a] = slots[b] > slots[c]` |
+| `StrGe` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
+
+#### 5.2.16 ARRAY: Heap Array Operations
+
+For escaped arrays allocated on the heap.
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `ArrayNew` | a, b, c | `slots[a] = new [c]T`, elem_vk=`b` |
+| `ArrayGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
+| `ArraySet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
+| `ArrayLen` | a, b | `slots[a] = len(slots[b])` |
+
+#### 5.2.17 SLICE: Slice Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `SliceNew` | a, b, c, flags | `slots[a] = make([]T, len=b, cap=c)`, elem_vk=`flags` |
+| `SliceGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
+| `SliceSet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
+| `SliceLen` | a, b | `slots[a] = len(slots[b])` |
+| `SliceCap` | a, b | `slots[a] = cap(slots[b])` |
+| `SliceSlice` | a, b, c, flags | `slots[a] = slots[b][slots[c]:flags]` |
+| `SliceAppend` | a, b, c, flags | `slots[a] = append(slots[b], slots[c])`, elem_vk=`flags` |
+
+#### 5.2.18 MAP: Map Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `MapNew` | a, b, c | `slots[a] = make(map)`, key_vk=`b`, val_vk=`c` |
+| `MapGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
+| `MapSet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
+| `MapDelete` | a, b | `delete(slots[a], slots[b])` |
+| `MapLen` | a, b | `slots[a] = len(slots[b])` |
+
+#### 5.2.19 CHAN: Channel Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `ChanNew` | a, b, c | `slots[a] = make(chan T, cap=c)`, elem_vk=`b` |
+| `ChanSend` | a, b | `slots[a] <- slots[b]` |
+| `ChanRecv` | a, b, c | `slots[a] = <-slots[b]`, ok at `c` |
+| `ChanClose` | a | `close(slots[a])` |
+
+#### 5.2.20 SELECT: Select Statement
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `SelectBegin` | a, b | Begin select, case_count=`a`, has_default=`b` |
+| `SelectSend` | a, b | Add send case: chan=`a`, val=`b` |
+| `SelectRecv` | a, b, c | Add recv case: dst=`a`, chan=`b`, ok=`c` |
+| `SelectEnd` | a | Execute select, chosen index → `a` |
+
+#### 5.2.21 ITER: Iterator (for-range)
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `IterBegin` | a, b | Begin iteration over `slots[a]`, type=`b` |
+| `IterNext` | a, b, c | `slots[a], slots[b] = next`, done_offset=`c` |
+| `IterEnd` | - | End iteration |
+
+#### 5.2.22 CLOSURE: Closure Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `ClosureNew` | a, b, c | `slots[a] = closure(func=b, cap_count=c)` |
+| `ClosureGet` | a, b | `slots[a] = closure.captures[b]` |
+| `ClosureSet` | a, b | `closure.captures[a] = slots[b]` |
+
+Note: `Upval*` instructions are removed. Escaped variables are heap-allocated directly, and closures capture GcRefs.
+
+#### 5.2.23 GO: Goroutine
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `GoCall` | a, b, c | `go functions[a](args at b, argc=c)` |
+| `Yield` | - | Yield current goroutine |
+
+#### 5.2.24 DEFER: Defer and Error Handling
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `DeferPush` | a, b, c | Push defer: func=`a`, args at `b`, argc=`c` |
+| `DeferPop` | - | Pop and execute defers |
+| `ErrDeferPush` | a, b, c | Push errdefer (executes only on error) |
+| `Panic` | a | `panic(slots[a])` |
+| `Recover` | a | `slots[a] = recover()` |
+
+#### 5.2.25 IFACE: Interface Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `IfaceInit` | a, b, c | Init interface at `a`, type_id=`b \| (c << 16)` |
+| `IfaceBox` | a, b, flags, c | Box value: `iface[a].data = slots[b]`, vk=`flags`, type_id=`c` |
+| `IfaceUnbox` | a, b, c | Unbox: `slots[a] = iface[b].data`, expected_type=`c` |
+| `IfaceAssert` | a, b, c, flags | Type assert: `slots[a] = slots[b].(type c)`, ok at `flags` |
+
+#### 5.2.26 CONV: Type Conversion
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `ConvI2F` | a, b | `slots[a] = float64(slots[b])` |
+| `ConvF2I` | a, b | `slots[a] = int64(slots[b])` |
+| `ConvI32I64` | a, b | `slots[a] = int64(int32(slots[b]))` |
+| `ConvI64I32` | a, b | `slots[a] = int32(slots[b])` |
+
+#### 5.2.27 DEBUG: Debug Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `Print` | a, b | Print `slots[a]`, value_kind=`b` |
+| `AssertBegin` | a, b, c | If `!slots[a]`: begin assert, argc=`b`, line=`c` |
+| `AssertArg` | a, b | Print assert arg `slots[a]`, vk=`b` |
+| `AssertEnd` | - | End assert, terminate if failed |
+
+---
+
+## 6. Runtime Structures
+
+### 6.1 SlotType
+
+Used for GC stack scanning:
+
+```rust
+pub enum SlotType {
+    Value,       // Non-GC value (int, float, bool)
+    GcRef,       // GC reference (pointer to heap object)
+    Interface0,  // Interface header slot
+    Interface1,  // Interface data slot
+}
+```
+
+### 6.2 TypeMeta
+
+Runtime type metadata for struct types:
+
+```rust
+pub struct TypeMeta {
+    pub name: String,
+    pub size_slots: u16,
+    pub slot_types: Vec<SlotType>,  // For GC scanning
+}
+```
+
+### 6.3 Closure Structure
+
+```rust
+pub struct Closure {
+    pub func_id: u32,
+    pub captures: Vec<GcRef>,  // Captured variables (already on heap)
+}
+```
+
+---
+
+## Appendix A: Instruction Opcode Values
+
+```rust
+pub enum Opcode {
+    // LOAD
+    Nop = 0, LoadNil, LoadTrue, LoadFalse, LoadInt, LoadConst,
+    
+    // COPY
+    Copy = 10, CopyN,
+    
+    // SLOT
+    SlotGet = 15, SlotSet, SlotGetN, SlotSetN,
+    
+    // GLOBAL
+    GlobalGet = 20, GlobalSet,
+    
+    // PTR
+    PtrNew = 25, PtrClone, PtrGet, PtrSet, PtrGetN, PtrSetN,
+    
+    // ARITH (int)
+    AddI = 35, SubI, MulI, DivI, ModI, NegI,
+    
+    // ARITH (float)
+    AddF = 45, SubF, MulF, DivF, NegF,
+    
+    // CMP (int)
+    EqI = 55, NeI, LtI, LeI, GtI, GeI,
+    
+    // CMP (float)
+    EqF = 65, NeF, LtF, LeF, GtF, GeF,
+    
+    // CMP (ref)
+    EqRef = 75, NeRef, IsNil,
+    
+    // BIT
+    And = 80, Or, Xor, Not, Shl, ShrS, ShrU,
+    
+    // LOGIC
+    BoolNot = 90,
+    
+    // JUMP
+    Jump = 95, JumpIf, JumpIfNot,
+    
+    // CALL
+    Call = 100, CallExtern, CallClosure, CallIface, Return,
+    
+    // STR
+    StrNew = 110, StrConcat, StrLen, StrIndex, StrSlice,
+    StrEq, StrNe, StrLt, StrLe, StrGt, StrGe,
+    
+    // ARRAY
+    ArrayNew = 125, ArrayGet, ArraySet, ArrayLen,
+    
+    // SLICE
+    SliceNew = 135, SliceGet, SliceSet, SliceLen, SliceCap, SliceSlice, SliceAppend,
+    
+    // MAP
+    MapNew = 145, MapGet, MapSet, MapDelete, MapLen,
+    
+    // CHAN
+    ChanNew = 155, ChanSend, ChanRecv, ChanClose,
+    
+    // SELECT
+    SelectBegin = 165, SelectSend, SelectRecv, SelectEnd,
+    
+    // ITER
+    IterBegin = 175, IterNext, IterEnd,
+    
+    // CLOSURE
+    ClosureNew = 185, ClosureGet, ClosureSet,
+    
+    // GO
+    GoCall = 195, Yield,
+    
+    // DEFER
+    DeferPush = 200, DeferPop, ErrDeferPush, Panic, Recover,
+    
+    // IFACE
+    IfaceInit = 210, IfaceBox, IfaceUnbox, IfaceAssert,
+    
+    // CONV
+    ConvI2F = 220, ConvF2I, ConvI32I64, ConvI64I32,
+    
+    // DEBUG
+    Print = 230, AssertBegin, AssertArg, AssertEnd,
+    
+    Invalid = 255,
+}
+```
+
+---
+
+## Appendix B: Migration Notes
+
+### B.1 Removed Instructions
+
+| Instruction | Replacement |
+|-------------|-------------|
+| `Mov` | `Copy` |
+| `MovN` | `CopyN` |
+| `Alloc` | `PtrNew` |
+| `StructClone` | `PtrClone` |
+| `GetField` / `SetField` | `PtrGet` / `PtrSet` |
+| `GetFieldN` / `SetFieldN` | `PtrGetN` / `PtrSetN` |
+| `UpvalNew` | Removed (escape analysis) |
+| `UpvalGet` | `PtrGet` on captured GcRef |
+| `UpvalSet` | `PtrSet` on captured GcRef |
+| `CallInterface` | `CallIface` |
+| `InitInterface` | `IfaceInit` |
+| `BoxInterface` | `IfaceBox` |
+| `UnboxInterface` | `IfaceUnbox` |
+| `TypeAssert` | `IfaceAssert` |
+
+### B.2 New Instructions
+
+| Instruction | Purpose |
+|-------------|---------|
+| `SlotGet` / `SlotSet` | Stack array dynamic indexing |
+| `SlotGetN` / `SlotSetN` | Multi-slot stack dynamic indexing |
