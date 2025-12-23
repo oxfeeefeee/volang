@@ -48,7 +48,36 @@ impl JitCompiler {
 
 ## ⚠️ 关键注意事项
 
-### 1. Runtime 符号必须先注册
+### 1. 函数指针统一 (VM 与 JIT)
+
+**设计**：bytecode 统一用 `func_id: u32`，JIT 运行时通过 `FUNC_TABLE` 查表获取真实指针。
+
+```rust
+// Closure 对象存 func_id（不是指针）
+pub struct Closure {
+    pub func_id: u32,
+    pub captures: Vec<u64>,
+}
+
+// VM: 通过 func_id 查 Module.functions[func_id] 执行
+// JIT: 通过 func_id 查 FUNC_TABLE[func_id] 获取指针，间接调用
+```
+
+**优点**：
+- bytecode 格式统一，VM/JIT 共用
+- 支持 AOT：func_id 在链接时解析
+
+**CallClosure 实现**：
+```rust
+// JIT 生成的代码
+let closure = slots[a];
+let func_id = closure.func_id;
+let table_ptr = gox_func_table_ptr();        // 获取表指针
+let func_ptr = table_ptr[func_id];           // 查表
+call_indirect(func_ptr, closure, args...);   // closure 作为第一个参数
+```
+
+### 2. Runtime 符号必须先注册
 ```rust
 let symbols = RuntimeSymbols::new();
 for sym in symbols.iter() {
@@ -56,7 +85,7 @@ for sym in symbols.iter() {
 }
 ```
 
-### 2. 函数指针表顺序
+### 3. 函数指针表初始化顺序
 ```rust
 self.module.define_function(func_id, ...)?;  // 1. 定义
 self.module.finalize_definitions()?;          // 2. 生成机器码

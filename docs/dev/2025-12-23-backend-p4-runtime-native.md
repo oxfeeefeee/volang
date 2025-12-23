@@ -441,7 +441,74 @@ pub extern "C" fn gox_recover() -> GcRef {
 }
 ```
 
-### 6. Extern Dispatch (extern_dispatch.rs)
+### 6. Select (goroutine.rs 续)
+
+**设计**：指令序列统一，VM 用 Fiber 切换，JIT 用 runtime 函数。
+
+```rust
+thread_local! {
+    static SELECT_STATE: RefCell<Option<SelectState>> = RefCell::new(None);
+}
+
+pub struct SelectState {
+    cases: Vec<SelectCase>,
+    has_default: bool,
+}
+
+pub enum SelectCase {
+    Send { chan: GcRef, val: u64 },
+    Recv { chan: GcRef },
+}
+
+#[no_mangle]
+pub extern "C" fn gox_select_start(case_count: u32, has_default: u32) {
+    SELECT_STATE.with(|s| {
+        *s.borrow_mut() = Some(SelectState {
+            cases: Vec::with_capacity(case_count as usize),
+            has_default: has_default != 0,
+        });
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn gox_select_add_recv(chan: GcRef) {
+    SELECT_STATE.with(|s| {
+        s.borrow_mut().as_mut().unwrap().cases.push(SelectCase::Recv { chan });
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn gox_select_add_send(chan: GcRef, val: u64) {
+    SELECT_STATE.with(|s| {
+        s.borrow_mut().as_mut().unwrap().cases.push(SelectCase::Send { chan, val });
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn gox_select_exec() -> i32 {
+    SELECT_STATE.with(|s| {
+        let state = s.borrow_mut().take().unwrap();
+        do_select(state)  // 可能阻塞（协程切换）
+    })
+}
+
+fn do_select(state: SelectState) -> i32 {
+    // 1. 随机打乱 case 顺序
+    // 2. 尝试每个 case（非阻塞检查）
+    // 3. 如果有 ready 的，执行并返回 case index
+    // 4. 如果都阻塞且有 default，返回 case_count (default)
+    // 5. 否则阻塞等待（协程 yield）
+}
+```
+
+**VM vs JIT**：
+| | VM | JIT |
+|---|---|---|
+| SelectBegin | `fiber.select_state = Some(...)` | `gox_select_start(...)` |
+| SelectRecv/Send | 填充 `select_state` | `gox_select_add_*` |
+| SelectEnd | 执行，可能切换 Fiber | `gox_select_exec()`（阻塞或协程切换） |
+
+### 7. Extern Dispatch (extern_dispatch.rs)
 
 ```rust
 /// Extern 函数类型

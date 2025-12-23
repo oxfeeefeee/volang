@@ -102,10 +102,12 @@ impl<'a> EscapeAnalyzer<'a> {
                     
                     for value in &spec.values {
                         self.visit_expr(value);
-                        // If var type is interface, value escapes
+                        // If var type is interface and value is not basic type, value escapes
                         if is_interface_type {
                             if let Some(root) = self.find_root_var(value) {
-                                self.escaped.insert(root);
+                                if !self.is_basic_type(root) {
+                                    self.escaped.insert(root);
+                                }
                             }
                         }
                     }
@@ -131,12 +133,14 @@ impl<'a> EscapeAnalyzer<'a> {
                     self.visit_expr(l);
                     self.visit_expr(r);
                     
-                    // If LHS is interface type, RHS escapes
+                    // If LHS is interface type and RHS is not basic type, RHS escapes
                     if assign.op == AssignOp::Assign {
                         if let Some(tv) = self.type_info.types.get(&l.id) {
                             if typ::is_interface(tv.typ, self.tc_objs) {
                                 if let Some(root) = self.find_root_var(r) {
-                                    self.escaped.insert(root);
+                                    if !self.is_basic_type(root) {
+                                        self.escaped.insert(root);
+                                    }
                                 }
                             }
                         }
@@ -360,6 +364,18 @@ impl<'a> EscapeAnalyzer<'a> {
         if let Some(typ) = self.tc_objs.lobjs[obj].typ() {
             let underlying = typ::underlying_type(typ, self.tc_objs);
             self.tc_objs.types[underlying].try_as_array().is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Check if the variable is a basic type (int, float, bool) that can be inlined into interface's data slot.
+    /// Reference types (slice, map, chan, closure, pointer) are already GcRef, no escape concept.
+    /// Only value types (struct, array) need to escape when assigned to interface.
+    fn is_basic_type(&self, obj: ObjKey) -> bool {
+        if let Some(typ) = self.tc_objs.lobjs[obj].typ() {
+            let underlying = typ::underlying_type(typ, self.tc_objs);
+            matches!(&self.tc_objs.types[underlying], typ::Type::Basic(_))
         } else {
             false
         }

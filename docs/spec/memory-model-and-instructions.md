@@ -272,6 +272,13 @@ A local variable **escapes** (requires heap allocation) if any of the following 
 - Sliced: `arr[:]` or `arr[i:j]`
 - Dynamically indexed: `arr[i]` where `i` is not a compile-time constant
 
+#### 4.1.5 Interface Assignment
+
+When assigning a value to an interface:
+- **Basic types** (int, float, bool): stored directly in interface's data slot, **no escape**
+- **Reference types** (slice, map, chan, closure, pointer): already GcRef, no escape concept
+- **Value types** (struct, array): must escape to heap first, data slot stores GcRef
+
 #### 4.1.4 Size Threshold
 
 - `struct` or `array` larger than **256 slots** → always escapes
@@ -439,11 +446,11 @@ For stack-allocated arrays with dynamic indices.
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `Call` | a, b, c, flags | Call `functions[a]`, args at `b`, argc=`c`, retc=`flags` |
-| `CallExtern` | a, b, c, flags | Call extern function |
-| `CallClosure` | a, b, c, flags | Call closure at `slots[a]` |
-| `CallIface` | a, b, c, flags | Call interface method: iface at `a`, method=`b`, args at `c` |
-| `Return` | a, b | Return values starting at `a`, count=`b` |
+| `Call` | a, b, c, flags | Call `functions[a]`, args at `b`, arg_slots=`c`, ret_slots=`flags` |
+| `CallExtern` | a, b, c, flags | Call extern function, arg_slots=`c`, ret_slots=`flags` |
+| `CallClosure` | a, b, c, flags | Call closure at `slots[a]`, args at `b`, arg_slots=`c`, ret_slots=`flags` |
+| `CallIface` | a, b, c, flags | Call interface method: iface at `a`, method=`b`, args at `c`, arg_slots/ret_slots in flags |
+| `Return` | a, b | Return values starting at `a`, ret_slots=`b` |
 
 #### 5.2.15 STR: String Operations
 
@@ -534,16 +541,16 @@ Note: `Upval*` instructions are removed. Escaped variables are heap-allocated di
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `GoCall` | a, b, c | `go functions[a](args at b, argc=c)` |
+| `GoCall` | a, b, c | `go functions[a](args at b, arg_slots=c)` |
 | `Yield` | - | Yield current goroutine |
 
 #### 5.2.24 DEFER: Defer and Error Handling
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `DeferPush` | a, b, c | Push defer: func=`a`, args at `b`, argc=`c` |
+| `DeferPush` | a, b, c | Push defer: func=`a`, args at `b`, arg_slots=`c` |
 | `DeferPop` | - | Pop and execute defers |
-| `ErrDeferPush` | a, b, c | Push errdefer (executes only on error) |
+| `ErrDeferPush` | a, b, c | Push errdefer: func=`a`, args at `b`, arg_slots=`c` |
 | `Panic` | a | `panic(slots[a])` |
 | `Recover` | a | `slots[a] = recover()` |
 

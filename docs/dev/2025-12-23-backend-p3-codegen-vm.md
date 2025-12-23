@@ -510,7 +510,53 @@ pub fn compile_func(
 }
 ```
 
-### 7. Interface Dispatch 生成
+### 7. Closure 生成
+
+```rust
+/// 编译函数字面量
+ExprKind::FuncLit(func_lit) => {
+    let captures = info.get_captures(func_lit);  // 从分析阶段获取
+    
+    if captures.is_empty() {
+        // 无捕获 - 只需函数 ID
+        let func_id = ctx.compile_func_lit(func_lit, info)?;
+        func.emit_op(Opcode::LoadConst, dst, ctx.const_int(func_id as i64), 0);
+    } else {
+        // 有捕获 - 生成 closure
+        let func_id = ctx.compile_func_lit(func_lit, info)?;
+        let cap_count = captures.len() as u16;
+        
+        // 1. 创建 closure
+        func.emit_op(Opcode::ClosureNew, dst, func_id as u16, cap_count);
+        
+        // 2. 填充捕获变量 (都是 GcRef，因为被捕获的变量已逃逸)
+        for (i, cap) in captures.iter().enumerate() {
+            let local = func.lookup_local(cap.symbol).unwrap();
+            func.emit_op(Opcode::ClosureSet, dst, i as u16, local.slot);
+        }
+    }
+}
+```
+
+**捕获规则**：
+1. 被闭包引用的外层变量 → 逃逸分析标记为 escaped
+2. escaped 变量在声明时堆分配（`PtrNew` 创建 BoxedInt 等）
+3. 变量在栈上是 GcRef，指向堆
+4. closure 捕获这个 GcRef（值拷贝）
+5. 闭包内外共享同一个堆对象 → 修改可见
+
+**闭包内访问捕获变量**：
+```rust
+// 闭包函数的 r0 是 closure 自身
+// 通过 ClosureGet 读取捕获的 GcRef
+Opcode::ClosureGet  // slots[a] = closure.captures[b]
+
+// 然后通过 GcRef 读写堆上的值
+Opcode::PtrGet      // 读
+Opcode::PtrSet      // 写
+```
+
+### 8. Interface Dispatch 生成
 
 ```rust
 /// 为 concrete 类型实现 interface 生成 dispatch entry
@@ -563,6 +609,68 @@ pub fn generate_entry(ctx: &mut CodegenContext) -> u32 {
     ctx.add_function(builder.finish())
 }
 ```
+
+## 对象操作指令速查表
+
+### 基础类型 (int/float/bool)
+
+| 操作 | 栈上 | 堆上 (逃逸) |
+|------|------|-------------|
+| 声明 | `LoadNil` / `LoadInt` | `PtrNew` (BoxedInt) |
+| 读取 | `Copy` | `PtrGet` |
+| 写入 | `Copy` | `PtrSet` |
+
+### Struct
+
+| 操作 | 栈上 (不逃逸) | 堆上 (逃逸) |
+|------|---------------|-------------|
+| 声明 | 分配多 slot | `PtrNew` |
+| 字段读 | `Copy` (编译期偏移) | `PtrGet` |
+| 字段写 | `Copy` | `PtrSet` |
+| 多字段 | `CopyN` | `PtrGetN/SetN` |
+| 赋值 | `CopyN` | `PtrClone` |
+| 取地址 &s | ❌ | 返回 GcRef |
+
+### Array
+
+| 操作 | 栈上 (不逃逸) | 堆上 (逃逸) |
+|------|---------------|-------------|
+| 声明 | 分配多 slot | `ArrayNew` |
+| 静态索引 | `Copy` (编译期偏移) | `ArrayGet/Set` |
+| 动态索引 | `SlotGet/Set` | `ArrayGet/Set` |
+| 多 slot 元素 | `SlotGetN/SetN` | 多次 `ArrayGet/Set` |
+| 赋值 | `CopyN` | `PtrClone` |
+| len | 编译期常量 | `ArrayLen` |
+
+### Slice/Map/Chan/String
+
+| 类型 | 创建 | 读 | 写 | 其他 |
+|------|------|----|----|------|
+| Slice | `SliceNew` | `SliceGet` | `SliceSet` | `SliceLen/Cap/Slice/Append` |
+| String | `StrNew` | `StrIndex` | ❌ | `StrLen/Concat/Slice/Eq/Lt...` |
+| Map | `MapNew` | `MapGet` | `MapSet` | `MapLen/Delete` |
+| Chan | `ChanNew` | `ChanRecv` | `ChanSend` | `ChanClose` |
+
+### Interface
+
+| 操作 | 指令 |
+|------|------|
+| 声明 (nil) | `IfaceInit` |
+| 装箱 | `IfaceBox` |
+| 拆箱 | `IfaceUnbox` |
+| 类型断言 | `IfaceAssert` |
+| 方法调用 | `CallIface` |
+
+### Closure
+
+| 操作 | 指令 |
+|------|------|
+| 创建 | `ClosureNew` |
+| 读捕获变量 | `ClosureGet` → `PtrGet` |
+| 写捕获变量 | `ClosureGet` → `PtrSet` |
+| 调用 | `CallClosure` |
+
+**注**：无 `Upval*` 指令，被捕获变量直接逃逸到堆。
 
 ## Tasks Checklist
 

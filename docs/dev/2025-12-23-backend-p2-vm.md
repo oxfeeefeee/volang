@@ -45,182 +45,128 @@ impl Instruction {
 ```rust
 #[repr(u8)]
 pub enum Opcode {
-    // === 加载/存储 (0-9) ===
+    // === LOAD: 加载立即数/常量 ===
     Nop = 0,
-    LoadNil,      // a = nil
-    LoadTrue,     // a = true
-    LoadFalse,    // a = false
-    LoadInt,      // a = sign_extend(b|c)
-    LoadConst,    // a = constants[b]
-    Copy,         // a = b
-    CopyN,        // copy c slots: a..a+c = b..b+c
+    LoadNil,      // slots[a] = nil
+    LoadTrue,     // slots[a] = true
+    LoadFalse,    // slots[a] = false
+    LoadInt,      // slots[a] = sign_extend(b | (c << 16))
+    LoadConst,    // slots[a] = constants[b]
     
-    // === 全局变量 (10-14) ===
-    GetGlobal = 10,  // a = globals[b]
-    SetGlobal,       // globals[a] = b
+    // === COPY: 栈 slot 复制 ===
+    Copy,         // slots[a] = slots[b]
+    CopyN,        // slots[a..a+c] = slots[b..b+c]
     
-    // === 算术 i64 (15-24) ===
-    AddI64 = 15,
-    SubI64,
-    MulI64,
-    DivI64,       // 有符号除法
-    DivU64,       // 无符号除法
-    ModI64,
-    ModU64,
-    NegI64,
+    // === SLOT: 栈动态索引 (栈上数组用) ===
+    SlotGet,      // slots[a] = slots[b + slots[c]]
+    SlotSet,      // slots[a + slots[b]] = slots[c]
+    SlotGetN,     // slots[a..a+flags] = slots[b + slots[c]*flags..]
+    SlotSetN,     // slots[a + slots[b]*flags..] = slots[c..c+flags]
     
-    // === 算术 f64 (25-34) ===
-    AddF64 = 25,
-    SubF64,
-    MulF64,
-    DivF64,
-    NegF64,
+    // === GLOBAL: 全局变量 ===
+    GlobalGet,    // slots[a] = globals[b]
+    GlobalSet,    // globals[a] = slots[b]
     
-    // === 比较 i64 (35-44) ===
-    EqI64 = 35,
-    NeI64,
-    LtI64,        // 有符号
-    LeI64,
-    GtI64,
-    GeI64,
-    LtU64,        // 无符号
-    LeU64,
-    GtU64,
-    GeU64,
+    // === PTR: 堆指针操作 ===
+    PtrNew,       // slots[a] = alloc(value_kind=flags, type_id=b, size=c)
+    PtrClone,     // slots[a] = clone(slots[b])
+    PtrGet,       // slots[a] = heap[slots[b]].offset[c]
+    PtrSet,       // heap[slots[a]].offset[b] = slots[c]
+    PtrGetN,      // slots[a..a+flags] = heap[slots[b]].offset[c..]
+    PtrSetN,      // heap[slots[a]].offset[b..] = slots[c..c+flags]
     
-    // === 比较 f64 (45-54) ===
-    EqF64 = 45,
-    NeF64,
-    LtF64,
-    LeF64,
-    GtF64,
-    GeF64,
+    // === ARITH: 整数算术 ===
+    AddI, SubI, MulI, DivI, ModI, NegI,
     
-    // === 引用比较 (55-59) ===
-    EqRef = 55,
-    NeRef,
-    IsNil,
+    // === ARITH: 浮点算术 ===
+    AddF, SubF, MulF, DivF, NegF,
     
-    // === 位运算 (60-69) ===
-    Band = 60,
-    Bor,
-    Bxor,
-    Bnot,
-    Shl,
-    ShrS,         // 算术右移 (有符号)
-    ShrU,         // 逻辑右移 (无符号)
+    // === CMP: 整数比较 ===
+    EqI, NeI, LtI, LeI, GtI, GeI,
     
-    // === 逻辑 (70-74) ===
-    BoolNot = 70,
+    // === CMP: 浮点比较 ===
+    EqF, NeF, LtF, LeF, GtF, GeF,
     
-    // === 控制流 (75-79) ===
-    Jump = 75,       // pc += imm32(b,c)
-    JumpIf,          // if a: pc += imm32(b,c)
-    JumpIfNot,       // if !a: pc += imm32(b,c)
+    // === CMP: 引用比较 ===
+    EqRef, NeRef, IsNil,
     
-    // === 函数调用 (80-84) ===
-    Call = 80,           // call func[a], args at b, c=arg_count, flags=ret_count
-    CallExtern,          // call extern[a], args at b, c=arg_count, flags=ret_count
-    CallClosure,         // call closure a, args at b, c=arg_count, flags=ret_count
-    CallInterface,       // call iface a method b, args at c, flags=arg|ret
-    Return,              // return values at a, count=b
+    // === BIT: 位运算 ===
+    And, Or, Xor, Not, Shl, ShrS, ShrU,
     
-    // === 堆内存 (85-94) ===
-    PtrNew = 85,         // a = alloc(type_id=b|c<<16, slots=flags)
-    PtrClone,            // a = deep_copy(b)
-    PtrGet,              // a = b.slot[c]
-    PtrSet,              // a.slot[b] = c
-    PtrGetN,             // copy c slots: a = b.slot[flags..]
-    PtrSetN,             // copy c slots: a.slot[flags..] = b
+    // === LOGIC: 逻辑运算 ===
+    BoolNot,
     
-    // === 栈内存 (95-99) ===
-    // 用于栈上 struct/array 的字段访问（扁平化后的）
-    // 实际上就是 Copy/CopyN，但语义更明确
+    // === JUMP: 控制流 ===
+    Jump,         // pc += sign_extend(b | (c << 16))
+    JumpIf,       // if slots[a]: pc += sign_extend(b | (c << 16))
+    JumpIfNot,    // if !slots[a]: pc += sign_extend(b | (c << 16))
     
-    // === Array/Slice (100-114) ===
-    ArrayNew = 100,
-    ArrayGet,
-    ArraySet,
-    ArrayLen,
-    SliceNew,
-    SliceGet,
-    SliceSet,
-    SliceLen,
-    SliceCap,
-    SliceSlice,
-    SliceAppend,
+    // === CALL: 函数调用 ===
+    Call,         // call functions[a], args at b, argc=c, retc=flags
+    CallExtern,   // call extern function
+    CallClosure,  // call closure at slots[a]
+    CallIface,    // call interface method: iface at a, method=b, args at c
+    Return,       // return values at a, count=b
     
-    // === String (115-129) ===
-    StrNew = 115,
-    StrConcat,
-    StrLen,
-    StrIndex,
-    StrSlice,
-    StrEq,
-    StrNe,
-    StrLt,
-    StrLe,
-    StrGt,
-    StrGe,
+    // === STR: 字符串操作 ===
+    StrNew, StrConcat, StrLen, StrIndex, StrSlice,
+    StrEq, StrNe, StrLt, StrLe, StrGt, StrGe,
     
-    // === Map (130-139) ===
-    MapNew = 130,
-    MapGet,           // a, ok = map[b], key at c
-    MapSet,
-    MapDelete,
-    MapLen,
+    // === ARRAY: 堆数组操作 ===
+    ArrayNew, ArrayGet, ArraySet, ArrayLen,
     
-    // === Interface (140-149) ===
-    IfaceBox = 140,   // a = box(value_kind=flags, type_id=b, data=c)
-    IfaceUnbox,       // a = unbox(iface=b, expected_type=c), panic if mismatch
-    IfaceType,        // a = typeof(iface=b)
+    // === SLICE: 切片操作 ===
+    SliceNew, SliceGet, SliceSet, SliceLen, SliceCap, SliceSlice, SliceAppend,
     
-    // === Closure (150-159) ===
-    ClosureNew = 150, // a = new_closure(func_id=b, upval_count=c)
-    ClosureGet,       // a = closure.upval[b]
-    ClosureSet,       // closure[a].upval[b] = c
-    UpvalNew,         // a = new_upval_box()
-    UpvalGet,         // a = upval_box[b].value
-    UpvalSet,         // upval_box[a].value = b
+    // === MAP: Map 操作 ===
+    MapNew, MapGet, MapSet, MapDelete, MapLen,
     
-    // === Goroutine (160-169) ===
-    Go = 160,         // go func[a](args at b, count=c)
+    // === CHAN: Channel 操作 ===
+    ChanNew, ChanSend, ChanRecv, ChanClose,
+    
+    // === SELECT: Select 语句 ===
+    SelectBegin,  // begin select, case_count=a, has_default=b
+    SelectSend,   // add send case: chan=a, val=b
+    SelectRecv,   // add recv case: dst=a, chan=b, ok=c
+    SelectEnd,    // execute select, chosen index → slots[a]
+    
+    // === ITER: 迭代器 (for-range) ===
+    IterBegin, IterNext, IterEnd,
+    
+    // === CLOSURE: 闭包操作 ===
+    ClosureNew,   // slots[a] = closure(func=b, cap_count=c)
+    ClosureGet,   // slots[a] = closure.captures[b]
+    ClosureSet,   // closure.captures[a] = slots[b]
+    // 注: 无 Upval 指令，逃逸变量直接堆分配，closure 捕获 GcRef
+    
+    // === GO: Goroutine ===
+    GoCall,       // go functions[a](args at b, argc=c)
     Yield,
     
-    // === Channel (170-179) ===
-    ChanNew = 170,    // a = make(chan, cap=b)
-    ChanSend,         // a <- b
-    ChanRecv,         // a = <-b
-    ChanClose,        // close(a)
+    // === DEFER: Defer 和错误处理 ===
+    DeferPush,    // push defer: func=a, args at b, argc=c
+    DeferPop,     // pop and execute defers
+    ErrDeferPush, // push errdefer (executes only on error)
+    Panic,        // panic(slots[a])
+    Recover,      // slots[a] = recover()
     
-    // === Select (180-189) ===
-    SelectBegin = 180,
-    SelectSend,
-    SelectRecv,
-    SelectDefault,
-    SelectEnd,
+    // === IFACE: Interface 操作 ===
+    IfaceInit,    // init interface at a, type_id=b | (c << 16)
+    IfaceBox,     // box value: iface[a].data = slots[b], vk=flags, type_id=c
+    IfaceUnbox,   // unbox: slots[a] = iface[b].data, expected_type=c
+    IfaceAssert,  // type assert: slots[a] = slots[b].(type c), ok at flags
     
-    // === Defer/Panic (190-199) ===
-    DeferPush = 190,  // defer func[a](args at b, count=c)
-    DeferPop,
-    Panic,            // panic(a)
-    Recover,          // a = recover()
+    // === CONV: 类型转换 ===
+    ConvI2F,      // slots[a] = float64(slots[b])
+    ConvF2I,      // slots[a] = int64(slots[b])
+    ConvI32I64,   // slots[a] = int64(int32(slots[b]))
+    ConvI64I32,   // slots[a] = int32(slots[b])
     
-    // === Iterator (200-209) ===
-    IterBegin = 200,  // begin iteration on container a, type=flags
-    IterNext,         // a, b = next key, value; jump if done
-    IterEnd,
-    
-    // === Debug (210-219) ===
-    Print = 210,
-    Assert,
-    
-    // === 类型转换 (220-239) ===
-    ConvI2F = 220,    // a = float64(b)
-    ConvF2I,          // a = int64(b)
-    ConvI32,          // a = int32(b) (truncate)
-    ConvU32,          // a = uint32(b) (truncate)
-    // ... 其他转换
+    // === DEBUG: 调试操作 ===
+    Print,        // print slots[a], value_kind=b
+    AssertBegin,  // if !slots[a]: begin assert, argc=b, line=c
+    AssertArg,    // print assert arg slots[a], vk=b
+    AssertEnd,    // end assert, terminate if failed
 }
 ```
 
@@ -452,10 +398,10 @@ Opcode::CallClosure => {
 }
 ```
 
-#### 7.3 Interface 调用 (CallInterface)
+#### 7.3 Interface 调用 (CallIface)
 
 ```rust
-Opcode::CallInterface => {
+Opcode::CallIface => {
     // a=iface_reg, b=method_idx, c=arg_start
     // flags 低 4 位 = arg_count, 高 4 位 = ret_count
     let (slot0, slot1) = self.read_interface(fiber_id, a);
@@ -471,7 +417,39 @@ Opcode::CallInterface => {
 }
 ```
 
-#### 7.4 GC 根扫描
+#### 7.4 Defer 实现
+
+```rust
+/// Defer 条目 - 固定 8 个参数槽
+pub struct DeferEntry {
+    pub frame_depth: usize,    // 关联的调用帧深度
+    pub func_id: u32,          // defer 的函数
+    pub arg_count: u8,         // 参数数量 (≤8)
+    pub args: [u64; 8],        // 固定 8 个参数槽
+    pub is_errdefer: bool,     // 是否是 errdefer
+}
+
+/// Defer 执行状态 (return 时暂存)
+pub struct DeferState {
+    pub pending: Vec<DeferEntry>,  // 待执行的 defer (LIFO)
+    pub ret_vals: Vec<u64>,        // 暂存的返回值
+    pub caller_ret_reg: u16,
+    pub caller_ret_count: usize,
+    pub is_error_return: bool,     // errdefer 判定用
+}
+```
+
+**执行流程**：
+1. `DeferPush`: 保存 func_id + 参数到 `defer_stack`
+2. `Return` 时:
+   - 判定是否 error return（最后返回值非 nil）
+   - 收集当前帧的 defers（LIFO）
+   - errdefer 只在 error return 时执行
+   - 逐个推入调用帧执行
+3. defer 函数返回后继续执行下一个
+4. 全部执行完，写入暂存的返回值给 caller
+
+#### 7.5 GC 根扫描
 
 ```rust
 impl Vm {
@@ -545,7 +523,7 @@ impl Vm {
 
 ### vm.rs - 执行
 - [ ] exec 加载/存储 (Nop..CopyN)
-- [ ] exec 全局变量 (GetGlobal, SetGlobal)
+- [ ] exec 全局变量 (GlobalGet, GlobalSet)
 - [ ] exec 算术 i64
 - [ ] exec 算术 f64
 - [ ] exec 比较
@@ -553,20 +531,21 @@ impl Vm {
 - [ ] exec 控制流 (Jump, JumpIf, JumpIfNot)
 - [ ] exec 函数调用 (Call, CallExtern, Return)
 - [ ] exec CallClosure
-- [ ] exec CallInterface
+- [ ] exec CallIface
 - [ ] exec 堆内存 (PtrNew, PtrGet, PtrSet, ...)
+- [ ] exec 栈动态索引 (SlotGet, SlotSet, SlotGetN, SlotSetN)
 - [ ] exec Array/Slice
 - [ ] exec String
 - [ ] exec Map
-- [ ] exec Interface (IfaceBox, IfaceUnbox)
-- [ ] exec Closure (ClosureNew, ClosureGet, ClosureSet, Upval*)
-- [ ] exec Goroutine (Go, Yield)
+- [ ] exec Interface (IfaceInit, IfaceBox, IfaceUnbox, IfaceAssert)
+- [ ] exec Closure (ClosureNew, ClosureGet, ClosureSet)
+- [ ] exec Goroutine (GoCall, Yield)
 - [ ] exec Channel
 - [ ] exec Select
-- [ ] exec Defer/Panic/Recover
+- [ ] exec Defer/Panic/Recover (含 ErrDeferPush)
 - [ ] exec Iterator
 - [ ] exec 类型转换
-- [ ] exec Debug (Print, Assert)
+- [ ] exec Debug (Print, AssertBegin, AssertArg, AssertEnd)
 
 ### vm.rs - 调度
 - [ ] Scheduler 实现
