@@ -544,6 +544,8 @@ For escaped arrays allocated on the heap.
 |--------|----------|-------------|
 | `ArrayGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
 | `ArraySet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
+| `ArrayGetN` | a, b, c, flags | `slots[a..a+flags] = slots[b][slots[c]]`, flags=elem_slots |
+| `ArraySetN` | a, b, c, flags | `slots[a][slots[b]] = slots[c..c+flags]`, flags=elem_slots |
 | `ArrayLen` | a, b | `slots[a] = len(slots[b])` |
 
 Note: `ArrayNew` uses CallExtern (`vo_array_create`).
@@ -554,6 +556,8 @@ Note: `ArrayNew` uses CallExtern (`vo_array_create`).
 |--------|----------|-------------|
 | `SliceGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
 | `SliceSet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
+| `SliceGetN` | a, b, c, flags | `slots[a..a+flags] = slots[b][slots[c]]`, flags=elem_slots |
+| `SliceSetN` | a, b, c, flags | `slots[a][slots[b]] = slots[c..c+flags]`, flags=elem_slots |
 | `SliceLen` | a, b | `slots[a] = len(slots[b])` |
 | `SliceCap` | a, b | `slots[a] = cap(slots[b])` |
 | `SliceSlice` | a, b, c, flags | `slots[a] = slots[b][slots[c]:slots[flags]]` |

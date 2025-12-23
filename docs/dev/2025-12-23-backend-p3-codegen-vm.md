@@ -229,8 +229,10 @@ ExprKind::BasicLit(lit) => {
             func.emit_op(Opcode::LoadConst, dst, idx, 0);
         }
         LitKind::String(s) => {
-            let idx = ctx.const_string(s);
-            func.emit_op(Opcode::StrNew, dst, idx, 0);
+            // CallExtern vo_string_create(const_ptr, len) -> GcRef
+            let const_idx = ctx.const_string(s);
+            let extern_idx = ctx.get_extern_index("vo_string_create");
+            func.emit_with_flags(Opcode::CallExtern, 1, extern_idx, const_idx, dst);
         }
         // ...
     }
@@ -249,7 +251,7 @@ ExprKind::Ident(ident) => {
             func.emit_with_flags(Opcode::CopyN, local.slots as u8, dst, local.slot, local.slots);
         }
     } else if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
-        func.emit_op(Opcode::GetGlobal, dst, global_idx as u16, 0);
+        func.emit_op(Opcode::GlobalGet, dst, global_idx as u16, 0);
     }
 }
 ```
@@ -263,8 +265,8 @@ ExprKind::Binary(op, left, right) => {
     
     let ty = info.expr_type(expr).unwrap();
     let opcode = match (op, ty) {
-        (BinOp::Add, Type::Basic(BasicType::Int)) => Opcode::AddI64,
-        (BinOp::Add, Type::Basic(BasicType::Float64)) => Opcode::AddF64,
+        (BinOp::Add, Type::Basic(BasicType::Int)) => Opcode::AddI,
+        (BinOp::Add, Type::Basic(BasicType::Float64)) => Opcode::AddF,
         (BinOp::Add, Type::Basic(BasicType::String)) => Opcode::StrConcat,
         // ...
     };
@@ -578,8 +580,13 @@ ExprKind::FuncLit(func_lit) => {
         let func_id = ctx.compile_func_lit(func_lit, info)?;
         let cap_count = captures.len() as u16;
         
-        // 1. 创建 closure
-        func.emit_op(Opcode::ClosureNew, dst, func_id as u16, cap_count);
+        // 1. 创建 closure: CallExtern vo_closure_create(func_id, cap_count) -> GcRef
+        let extern_idx = ctx.get_extern_index("vo_closure_create");
+        // 准备参数到临时 slot
+        let tmp = func.alloc_temp(2);
+        func.emit_op(Opcode::LoadInt, tmp, func_id as u16, 0);
+        func.emit_op(Opcode::LoadInt, tmp + 1, cap_count, 0);
+        func.emit_with_flags(Opcode::CallExtern, 1, extern_idx, tmp, dst);
         
         // 2. 填充捕获变量 (都是 GcRef，因为被捕获的变量已逃逸)
         for (i, cap) in captures.iter().enumerate() {
@@ -687,10 +694,10 @@ pub fn generate_entry(ctx: &mut CodegenContext) -> u32 {
 
 | 操作 | 栈上 (不逃逸) | 堆上 (逃逸) |
 |------|---------------|-------------|
-| 声明 | 分配多 slot | `ArrayNew` |
+| 声明 | 分配多 slot | `CallExtern(vo_array_create)` |
 | 静态索引 | `Copy` (编译期偏移) | `ArrayGet/Set` |
 | 动态索引 | `SlotGet/Set` | `ArrayGet/Set` |
-| 多 slot 元素 | `SlotGetN/SetN` | 多次 `ArrayGet/Set` |
+| 多 slot 元素 | `SlotGetN/SetN` | `ArrayGetN/SetN` |
 | 赋值 | `CopyN` | `PtrClone` |
 | len | 编译期常量 | `ArrayLen` |
 
@@ -698,10 +705,10 @@ pub fn generate_entry(ctx: &mut CodegenContext) -> u32 {
 
 | 类型 | 创建 | 读 | 写 | 其他 |
 |------|------|----|----|------|
-| Slice | `SliceNew` | `SliceGet` | `SliceSet` | `SliceLen/Cap/Slice/Append` |
-| String | `StrNew` | `StrIndex` | ❌ | `StrLen/Concat/Slice/Eq/Lt...` |
-| Map | `MapNew` | `MapGet` | `MapSet` | `MapLen/Delete` |
-| Chan | `ChanNew` | `ChanRecv` | `ChanSend` | `ChanClose` |
+| Slice | `CallExtern(vo_slice_create)` | `SliceGet/GetN` | `SliceSet/SetN` | `SliceLen/Cap/Slice/Append` |
+| String | `CallExtern(vo_string_create)` | `StrIndex` | ❌ | `StrLen/Concat/Slice/Eq/Lt...` |
+| Map | `CallExtern(vo_map_create)` | `MapGet` | `MapSet` | `MapLen/Delete` |
+| Chan | `CallExtern(vo_channel_create)` | `ChanRecv` | `ChanSend` | `ChanClose` |
 
 ### Interface
 
@@ -716,7 +723,7 @@ pub fn generate_entry(ctx: &mut CodegenContext) -> u32 {
 
 | 操作 | 指令 |
 |------|------|
-| 创建 | `ClosureNew` |
+| 创建 | `CallExtern(vo_closure_create)` |
 | 读捕获变量 | `ClosureGet` → `PtrGet` |
 | 写捕获变量 | `ClosureGet` → `PtrSet` |
 | 调用 | `CallClosure` |

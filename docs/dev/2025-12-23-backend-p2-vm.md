@@ -119,12 +119,16 @@ pub enum Opcode {
     // === ARRAY: 堆数组操作 ===
     ArrayGet,     // slots[a] = slots[b][slots[c]]
     ArraySet,     // slots[a][slots[b]] = slots[c]
+    ArrayGetN,    // slots[a..a+flags] = slots[b][slots[c]], flags=elem_slots
+    ArraySetN,    // slots[a][slots[b]] = slots[c..c+flags], flags=elem_slots
     ArrayLen,     // slots[a] = len(slots[b])
     // 注: ArrayNew 用 CallExtern
     
     // === SLICE: 切片操作 ===
     SliceGet,     // slots[a] = slots[b][slots[c]]
     SliceSet,     // slots[a][slots[b]] = slots[c]
+    SliceGetN,    // slots[a..a+flags] = slots[b][slots[c]], flags=elem_slots
+    SliceSetN,    // slots[a][slots[b]] = slots[c..c+flags], flags=elem_slots
     SliceLen,     // slots[a] = len(slots[b])
     SliceCap,     // slots[a] = cap(slots[b])
     SliceSlice,   // slots[a] = slots[b][slots[c]:slots[flags]]

@@ -370,7 +370,7 @@ impl FunctionTranslator {
             }
             
             // === 算术 ===
-            AddI64 => {
+            AddI => {
                 let a = builder.use_var(self.variables[inst.b as usize]);
                 let b = builder.use_var(self.variables[inst.c as usize]);
                 let result = builder.ins().iadd(a, b);
@@ -488,24 +488,24 @@ impl FunctionTranslator {
 
 ### translate.rs - 指令
 - [ ] 加载/存储 (LoadNil, LoadInt, LoadConst, Copy, CopyN)
-- [ ] 全局变量 (GetGlobal, SetGlobal)
-- [ ] 算术 i64 (AddI64, SubI64, MulI64, DivI64, ...)
+- [ ] 全局变量 (GlobalGet, GlobalSet)
+- [ ] 算术 i64 (AddI, SubI, MulI, DivI, ...)
 - [ ] 算术 f64
-- [ ] 比较 (EqI64, LtI64, ...)
+- [ ] 比较 (EqI, LtI, ...)
 - [ ] 位运算
 - [ ] 控制流 (Jump, JumpIf, JumpIfNot)
 - [ ] Call
 - [ ] CallExtern
 - [ ] CallClosure
-- [ ] CallInterface
+- [ ] CallIface
 - [ ] Return
 - [ ] PtrNew, PtrGet, PtrSet, PtrClone
 - [ ] Array/Slice 操作
 - [ ] String 操作
 - [ ] Map 操作
-- [ ] IfaceBox, IfaceUnbox
+- [ ] Interface (IfaceInit, IfaceAssign, IfaceAssert)
 - [ ] Closure 操作
-- [ ] Goroutine (Go, Yield)
+- [ ] Goroutine (GoCall, Yield)
 - [ ] Channel 操作
 - [ ] Select
 - [ ] Defer/Panic/Recover
