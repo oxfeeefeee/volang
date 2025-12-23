@@ -18,7 +18,7 @@ Vo provides familiar Go syntax with simplified error handling and flexible compi
 ## Project Structure
 
 ```
-vo/
+volang/
 ├── crates/
 │   │
 │   │  # ─────────── Frontend ───────────
