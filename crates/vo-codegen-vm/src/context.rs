@@ -92,6 +92,13 @@ impl CodegenContext {
         self.struct_meta_ids.get(&type_key).copied()
     }
 
+    /// Update a StructMeta's methods map after function compilation
+    pub fn update_struct_meta_method(&mut self, meta_id: u16, method_name: String, func_id: u32) {
+        if let Some(meta) = self.module.struct_metas.get_mut(meta_id as usize) {
+            meta.methods.insert(method_name, func_id);
+        }
+    }
+
     pub fn get_interface_meta_id(&self, type_key: TypeKey) -> Option<u16> {
         self.interface_meta_ids.get(&type_key).copied()
     }

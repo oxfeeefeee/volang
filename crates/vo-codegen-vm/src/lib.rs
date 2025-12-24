@@ -148,22 +148,50 @@ fn compile_functions(
     ctx: &mut CodegenContext,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Collect method info for StructMeta.methods update
+    let mut method_mappings: Vec<(vo_analysis::objects::TypeKey, String, u32)> = Vec::new();
+    
     // Iterate all files and compile function declarations
     for file in &project.files {
         for decl in &file.decls {
             if let Decl::Func(func_decl) = decl {
-                compile_func_decl(func_decl, ctx, info)?;
+                let func_id = compile_func_decl(func_decl, ctx, info)?;
+                
+                // If this is a method, record the mapping
+                if let Some(recv) = &func_decl.receiver {
+                    if let Some(recv_type) = info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj)) {
+                        let method_name = project.interner.resolve(func_decl.name.symbol)
+                            .unwrap_or("?").to_string();
+                        method_mappings.push((recv_type, method_name, func_id));
+                    }
+                }
             }
         }
     }
+    
+    // Update StructMeta.methods with method func_ids
+    update_struct_meta_methods(ctx, &method_mappings);
+    
     Ok(())
+}
+
+fn update_struct_meta_methods(
+    ctx: &mut CodegenContext,
+    method_mappings: &[(vo_analysis::objects::TypeKey, String, u32)],
+) {
+    // Group methods by type_key
+    for (type_key, method_name, func_id) in method_mappings {
+        if let Some(meta_id) = ctx.get_struct_meta_id(*type_key) {
+            ctx.update_struct_meta_method(meta_id, method_name.clone(), *func_id);
+        }
+    }
 }
 
 fn compile_func_decl(
     func_decl: &vo_syntax::ast::FuncDecl,
     ctx: &mut CodegenContext,
     info: &TypeInfoWrapper,
-) -> Result<(), CodegenError> {
+) -> Result<u32, CodegenError> {
     let name = info.project.interner.resolve(func_decl.name.symbol)
         .unwrap_or("unknown");
     
@@ -213,17 +241,101 @@ fn compile_func_decl(
     
     // Build and add to module
     let func_def = builder.build();
-    ctx.add_function(func_def);
+    let func_id = ctx.add_function(func_def);
     
-    Ok(())
+    Ok(func_id)
 }
 
 fn compile_init_and_entry(
-    _project: &Project,
-    _ctx: &mut CodegenContext,
-    _info: &TypeInfoWrapper,
+    project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // TODO: generate __init__ for global var initialization
-    // TODO: generate __entry__ that calls init funcs then main
+    // 1. Generate __init__ function for global variable initialization
+    let mut init_builder = FuncBuilder::new("__init__");
+    
+    // Collect global variable declarations
+    for file in &project.files {
+        for decl in &file.decls {
+            if let Decl::Var(var_decl) = decl {
+                for spec in &var_decl.specs {
+                    for (i, name) in spec.names.iter().enumerate() {
+                        // Get type
+                        let type_key = if let Some(ty) = &spec.ty {
+                            info.project.type_info.type_exprs.get(&ty.id).copied()
+                        } else if i < spec.values.len() {
+                            info.expr_type(spec.values[i].id)
+                        } else {
+                            None
+                        };
+                        
+                        let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                        let slot_types = type_key
+                            .map(|t| info.type_slot_types(t))
+                            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+                        
+                        // Register global variable
+                        let value_kind = type_key.map(|t| info.value_kind(t)).unwrap_or(0);
+                        let global_idx = ctx.register_global(
+                            name.symbol,
+                            vo_vm::bytecode::GlobalDef {
+                                name: project.interner.resolve(name.symbol).unwrap_or("?").to_string(),
+                                slots,
+                                value_kind,
+                                meta_id: 0,
+                            },
+                        );
+                        
+                        // Initialize if value provided
+                        if i < spec.values.len() {
+                            let tmp = init_builder.alloc_temp_typed(&slot_types);
+                            crate::expr::compile_expr_to(&spec.values[i], tmp, ctx, &mut init_builder, info)?;
+                            if slots == 1 {
+                                init_builder.emit_op(vo_vm::instruction::Opcode::GlobalSet, global_idx as u16, tmp, 0);
+                            } else {
+                                init_builder.emit_with_flags(
+                                    vo_vm::instruction::Opcode::GlobalSetN,
+                                    slots as u8,
+                                    global_idx as u16,
+                                    tmp,
+                                    0,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Add return
+    init_builder.emit_op(vo_vm::instruction::Opcode::Return, 0, 0, 0);
+    let init_func = init_builder.build();
+    let init_func_id = ctx.add_function(init_func);
+    ctx.register_init_function(init_func_id);
+    
+    // 2. Find main function
+    let main_func_id = project.interner.get("main")
+        .and_then(|sym| ctx.get_function_index(sym));
+    
+    // 3. Generate __entry__ function
+    let mut entry_builder = FuncBuilder::new("__entry__");
+    
+    // Call __init__
+    entry_builder.emit_op(vo_vm::instruction::Opcode::Call, 0, init_func_id as u16, 0);
+    
+    // Call main if exists
+    if let Some(main_id) = main_func_id {
+        let c = (0u16 << 8) | 0u16; // 0 arg slots, 0 ret slots
+        entry_builder.emit_with_flags(vo_vm::instruction::Opcode::Call, 0, main_id as u16, 0, c);
+    }
+    
+    // Return
+    entry_builder.emit_op(vo_vm::instruction::Opcode::Return, 0, 0, 0);
+    
+    let entry_func = entry_builder.build();
+    let entry_func_id = ctx.add_function(entry_func);
+    ctx.set_entry_func(entry_func_id);
+    
     Ok(())
 }

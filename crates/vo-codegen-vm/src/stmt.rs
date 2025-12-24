@@ -625,6 +625,65 @@ pub fn compile_stmt(
                         for pc in break_patches {
                             func.patch_jump(pc, func.current_pc());
                         }
+                    } else if info.is_chan(range_type.unwrap()) {
+                        // Channel iteration: for v := range ch
+                        let chan_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
+                        
+                        // Get element slot count from channel type
+                        let elem_slots = info.chan_elem_slots(range_type.unwrap()).unwrap_or(1);
+                        
+                        // Define value variable (channels don't have key in for-range)
+                        let val_slot = if let Some(v) = value {
+                            if *define {
+                                if let vo_syntax::ast::ExprKind::Ident(ident) = &v.kind {
+                                    func.define_local_stack(ident.symbol, elem_slots, &vec![vo_common_core::types::SlotType::Value; elem_slots as usize])
+                                } else { func.alloc_temp(elem_slots) }
+                            } else {
+                                crate::expr::compile_expr(v, ctx, func, info)?
+                            }
+                        } else if let Some(k) = key {
+                            // If only key is specified, use it as value (Go semantics)
+                            if *define {
+                                if let vo_syntax::ast::ExprKind::Ident(ident) = &k.kind {
+                                    func.define_local_stack(ident.symbol, elem_slots, &vec![vo_common_core::types::SlotType::Value; elem_slots as usize])
+                                } else { func.alloc_temp(elem_slots) }
+                            } else {
+                                crate::expr::compile_expr(k, ctx, func, info)?
+                            }
+                        } else {
+                            func.alloc_temp(elem_slots)
+                        };
+                        
+                        // Prepare IterBegin args: a=elem_slots, a+1=chan_ref
+                        let iter_args = func.alloc_temp(2);
+                        func.emit_op(Opcode::LoadInt, iter_args, elem_slots, 0);
+                        func.emit_op(Opcode::Copy, iter_args + 1, chan_reg, 0);
+                        
+                        // IterBegin: a=iter_args, b=iter_type(5=Channel)
+                        func.emit_op(Opcode::IterBegin, iter_args, 5, 0);
+                        
+                        // Loop
+                        let loop_start = func.current_pc();
+                        func.enter_loop(loop_start, None);
+                        
+                        let iter_next_pc = func.current_pc();
+                        // IterNext for channel: a=val_slot, returns done flag
+                        func.emit_op(Opcode::IterNext, val_slot, 0, 0);
+                        
+                        compile_block(&for_stmt.body, ctx, func, info)?;
+                        
+                        func.emit_jump_to(Opcode::Jump, 0, loop_start);
+                        
+                        let loop_end = func.current_pc();
+                        let done_offset = (loop_end as i32) - (iter_next_pc as i32);
+                        func.patch_jump(iter_next_pc, done_offset as usize);
+                        
+                        func.emit_op(Opcode::IterEnd, 0, 0, 0);
+                        
+                        let break_patches = func.exit_loop();
+                        for pc in break_patches {
+                            func.patch_jump(pc, func.current_pc());
+                        }
                     } else {
                         return Err(CodegenError::UnsupportedStmt("for-range unsupported type".to_string()));
                     }
@@ -666,10 +725,94 @@ pub fn compile_stmt(
         StmtKind::Send(send_stmt) => {
             let chan_reg = crate::expr::compile_expr(&send_stmt.chan, ctx, func, info)?;
             let val_reg = crate::expr::compile_expr(&send_stmt.value, ctx, func, info)?;
-            func.emit_op(Opcode::ChanSend, chan_reg, val_reg, 0);
+            let chan_type = info.expr_type(send_stmt.chan.id);
+            let elem_slots = chan_type
+                .and_then(|t| info.chan_elem_slots(t))
+                .unwrap_or(1) as u8;
+            func.emit_with_flags(Opcode::ChanSend, elem_slots, chan_reg, val_reg, 0);
         }
 
-        // TODO: more statement kinds
+        // === Select ===
+        StmtKind::Select(select_stmt) => {
+            compile_select(select_stmt, ctx, func, info)?;
+        }
+
+        // === Switch ===
+        StmtKind::Switch(switch_stmt) => {
+            compile_switch(switch_stmt, ctx, func, info)?;
+        }
+
+        // === Labeled statement ===
+        StmtKind::Labeled(labeled) => {
+            // Just compile the inner statement (label is for break/continue)
+            compile_stmt(&labeled.stmt, ctx, func, info)?;
+        }
+
+        // === Inc/Dec ===
+        StmtKind::IncDec(inc_dec) => {
+            let reg = crate::expr::compile_expr(&inc_dec.expr, ctx, func, info)?;
+            let one = func.alloc_temp(1);
+            func.emit_op(Opcode::LoadInt, one, 1, 0);
+            if inc_dec.is_inc {
+                func.emit_op(Opcode::AddI, reg, reg, one);
+            } else {
+                func.emit_op(Opcode::SubI, reg, reg, one);
+            }
+            // Write back if needed (for lvalue expressions)
+            if let vo_syntax::ast::ExprKind::Ident(ident) = &inc_dec.expr.kind {
+                if let Some(local) = func.lookup_local(ident.symbol) {
+                    if local.is_heap {
+                        func.emit_op(Opcode::PtrSet, local.slot, 0, reg);
+                    } else if local.slot != reg {
+                        func.emit_op(Opcode::Copy, local.slot, reg, 0);
+                    }
+                }
+            }
+        }
+
+        // === TypeSwitch ===
+        StmtKind::TypeSwitch(type_switch) => {
+            compile_type_switch(type_switch, ctx, func, info)?;
+        }
+
+        // === ErrDefer ===
+        StmtKind::ErrDefer(err_defer) => {
+            // ErrDefer is like defer but only runs on error return
+            let call_reg = crate::expr::compile_expr(&err_defer.call, ctx, func, info)?;
+            func.emit_op(Opcode::ErrDeferPush, call_reg, 0, 0);
+        }
+
+        // === Fail ===
+        StmtKind::Fail(fail_stmt) => {
+            // Fail returns an error from a fallible function
+            let err_reg = crate::expr::compile_expr(&fail_stmt.error, ctx, func, info)?;
+            // This is similar to return with error
+            func.emit_op(Opcode::Panic, err_reg, 0, 0);
+        }
+
+        // === Goto ===
+        StmtKind::Goto(_goto_stmt) => {
+            // Goto requires label resolution - for now, emit jump placeholder
+            // In a full implementation, would need to track labels and patch jumps
+            return Err(CodegenError::UnsupportedStmt("goto not fully implemented".to_string()));
+        }
+
+        // === Fallthrough ===
+        StmtKind::Fallthrough => {
+            // Fallthrough in switch - handled by switch compilation
+            // This is a marker that the switch compiler should check
+        }
+
+        // === Const declaration (in block) ===
+        StmtKind::Const(_const_decl) => {
+            // Constants are compile-time, no runtime code needed
+        }
+
+        // === Type declaration (in block) ===
+        StmtKind::Type(_type_decl) => {
+            // Type declarations are compile-time, no runtime code needed
+        }
+
         _ => {
             return Err(CodegenError::UnsupportedStmt(format!("{:?}", stmt.kind)));
         }
@@ -715,21 +858,472 @@ fn compile_go(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Compile the call expression
+    // The go statement needs to wrap the call in a closure and spawn it
+    // go f(args) -> spawn closure that calls f(args)
+    
     if let vo_syntax::ast::ExprKind::Call(call_expr) = &call.kind {
-        // Compile function/closure
-        let func_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+        // Create a 0-arg closure that captures the function and arguments
+        // For simplicity, we compile args, then create closure with captured values
         
-        // Compile arguments
-        let args_start = func.alloc_temp(call_expr.args.len() as u16);
-        for (i, arg) in call_expr.args.iter().enumerate() {
-            crate::expr::compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
+        // First, compute total arg slots
+        let mut total_arg_slots = 0u16;
+        for arg in &call_expr.args {
+            let arg_type = info.expr_type(arg.id);
+            total_arg_slots += arg_type.map(|t| info.type_slot_count(t)).unwrap_or(1);
         }
         
-        // GoCall: a=func, b=args_start, c=arg_count
-        func.emit_op(Opcode::GoCall, func_reg, args_start, call_expr.args.len() as u16);
+        // Compile function/closure reference
+        let func_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+        
+        // Compile arguments to temp slots
+        let args_start = func.alloc_temp(total_arg_slots);
+        let mut offset = 0u16;
+        for arg in &call_expr.args {
+            let arg_type = info.expr_type(arg.id);
+            let arg_slots = arg_type.map(|t| info.type_slot_count(t)).unwrap_or(1);
+            crate::expr::compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+            offset += arg_slots;
+        }
+        
+        // Create a wrapper closure that will be spawned
+        // The closure captures: func_ref + all args
+        let capture_count = 1 + total_arg_slots;
+        
+        // Generate unique closure for go call
+        let closure_name = format!("go_wrapper_{}", ctx.next_closure_id());
+        let mut closure_builder = FuncBuilder::new_closure(&closure_name);
+        
+        // The closure body:
+        // 1. Get captured function ref (capture[0])
+        // 2. Get captured args (capture[1..])
+        // 3. Call the function
+        
+        // ClosureGet capture[0] -> tmp (func ref)
+        let tmp_func = closure_builder.alloc_temp(1);
+        closure_builder.emit_op(Opcode::ClosureGet, tmp_func, 0, 0);
+        
+        // ClosureGet captures[1..] -> args
+        let tmp_args = closure_builder.alloc_temp(total_arg_slots);
+        for i in 0..total_arg_slots {
+            closure_builder.emit_op(Opcode::ClosureGet, tmp_args + i, (1 + i) as u16, 0);
+        }
+        
+        // CallClosure: a=func, b=args, c=(arg_slots<<8|ret_slots=0)
+        let c = (total_arg_slots << 8) | 0;
+        closure_builder.emit_op(Opcode::CallClosure, tmp_func, tmp_args, c);
+        closure_builder.emit_op(Opcode::Return, 0, 0, 0);
+        
+        let closure_func = closure_builder.build();
+        let closure_func_id = ctx.add_function(closure_func);
+        
+        // Create the closure instance
+        let closure_reg = func.alloc_temp(1);
+        func.emit_op(Opcode::ClosureNew, closure_reg, closure_func_id as u16, capture_count);
+        
+        // Set captures: [func_ref, args...]
+        func.emit_op(Opcode::PtrSet, closure_reg, 1, func_reg);  // capture[0] = func_ref
+        for i in 0..total_arg_slots {
+            func.emit_op(Opcode::PtrSet, closure_reg, 2 + i, args_start + i);  // capture[i+1] = arg[i]
+        }
+        
+        // GoCall: a=closure
+        func.emit_op(Opcode::GoCall, closure_reg, 0, 0);
     } else {
         return Err(CodegenError::UnsupportedStmt("go with non-call".to_string()));
+    }
+    
+    Ok(())
+}
+
+/// Compile select statement
+fn compile_select(
+    select_stmt: &vo_syntax::ast::SelectStmt,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    use vo_syntax::ast::CommClause;
+    
+    // Count cases and check for default
+    let case_count = select_stmt.cases.len() as u16;
+    let has_default = select_stmt.cases.iter().any(|c| c.comm.is_none());
+    let flags = if has_default { 1u8 } else { 0u8 };
+    
+    // SelectBegin: a=case_count, flags=has_default
+    func.emit_with_flags(Opcode::SelectBegin, flags, case_count, 0, 0);
+    
+    // Add each case
+    for (case_idx, case) in select_stmt.cases.iter().enumerate() {
+        match &case.comm {
+            None => {
+                // Default case - no instruction needed, handled by SelectExec
+            }
+            Some(CommClause::Send(send)) => {
+                // SelectSend: a=chan_reg, b=val_reg, flags=elem_slots
+                let chan_reg = crate::expr::compile_expr(&send.chan, ctx, func, info)?;
+                let val_reg = crate::expr::compile_expr(&send.value, ctx, func, info)?;
+                let chan_type = info.expr_type(send.chan.id);
+                let elem_slots = chan_type
+                    .and_then(|t| info.chan_elem_slots(t))
+                    .unwrap_or(1) as u8;
+                func.emit_with_flags(Opcode::SelectSend, elem_slots, chan_reg, val_reg, case_idx as u16);
+            }
+            Some(CommClause::Recv(recv)) => {
+                // SelectRecv: a=dst_reg, b=chan_reg, flags=(elem_slots<<1|has_ok)
+                let chan_reg = crate::expr::compile_expr(&recv.expr, ctx, func, info)?;
+                let chan_type = info.expr_type(recv.expr.id);
+                let elem_slots = chan_type
+                    .and_then(|t| info.chan_elem_slots(t))
+                    .unwrap_or(1);
+                
+                // Allocate destination for received value
+                let has_ok = recv.lhs.len() > 1;
+                let dst_slots = if has_ok { elem_slots + 1 } else { elem_slots };
+                let dst_reg = func.alloc_temp(dst_slots);
+                
+                let flags = ((elem_slots as u8) << 1) | (if has_ok { 1 } else { 0 });
+                func.emit_with_flags(Opcode::SelectRecv, flags, dst_reg, chan_reg, case_idx as u16);
+            }
+        }
+    }
+    
+    // SelectExec: a=result_reg (chosen case index, -1 for default)
+    let result_reg = func.alloc_temp(1);
+    func.emit_op(Opcode::SelectExec, result_reg, 0, 0);
+    
+    // Generate switch on result to jump to appropriate case body
+    let mut case_jumps = Vec::new();
+    let mut end_jumps = Vec::new();
+    
+    for (case_idx, _case) in select_stmt.cases.iter().enumerate() {
+        // Compare result_reg with case_idx
+        let cmp_tmp = func.alloc_temp(1);
+        let idx_val = case_idx as i32;
+        if _case.comm.is_none() {
+            // Default case: check if result == -1
+            let (b, c) = encode_i32(-1);
+            func.emit_op(Opcode::LoadInt, cmp_tmp, b, c);
+        } else {
+            let (b, c) = encode_i32(idx_val);
+            func.emit_op(Opcode::LoadInt, cmp_tmp, b, c);
+        }
+        func.emit_op(Opcode::EqI, cmp_tmp, result_reg, cmp_tmp);
+        case_jumps.push((case_idx, func.emit_jump(Opcode::JumpIf, cmp_tmp)));
+    }
+    
+    // Jump past all cases if no match (shouldn't happen)
+    let fallthrough_jump = func.emit_jump(Opcode::Jump, 0);
+    
+    // Compile case bodies
+    for (case_idx, case) in select_stmt.cases.iter().enumerate() {
+        // Patch the jump for this case
+        for (idx, jump_pc) in &case_jumps {
+            if *idx == case_idx {
+                func.patch_jump(*jump_pc, func.current_pc());
+            }
+        }
+        
+        // Define variables for recv case if needed
+        if let Some(CommClause::Recv(recv)) = &case.comm {
+            if recv.define && !recv.lhs.is_empty() {
+                // Define the received value variable(s)
+                let chan_type = info.expr_type(recv.expr.id);
+                let elem_slots = chan_type
+                    .and_then(|t| info.chan_elem_slots(t))
+                    .unwrap_or(1);
+                
+                for (i, name) in recv.lhs.iter().enumerate() {
+                    if i == 0 {
+                        // First variable gets the value
+                        let slot_types = vec![vo_common_core::types::SlotType::Value; elem_slots as usize];
+                        func.define_local_stack(name.symbol, elem_slots, &slot_types);
+                    } else {
+                        // Second variable gets the ok bool
+                        func.define_local_stack(name.symbol, 1, &[vo_common_core::types::SlotType::Value]);
+                    }
+                }
+            }
+        }
+        
+        // Compile case body
+        for stmt in &case.body {
+            compile_stmt(stmt, ctx, func, info)?;
+        }
+        
+        // Jump to end
+        end_jumps.push(func.emit_jump(Opcode::Jump, 0));
+    }
+    
+    // Patch fallthrough and end jumps
+    func.patch_jump(fallthrough_jump, func.current_pc());
+    for jump_pc in end_jumps {
+        func.patch_jump(jump_pc, func.current_pc());
+    }
+    
+    Ok(())
+}
+
+fn encode_i32(val: i32) -> (u16, u16) {
+    let bits = val as u32;
+    ((bits & 0xFFFF) as u16, ((bits >> 16) & 0xFFFF) as u16)
+}
+
+/// Compile type switch statement
+fn compile_type_switch(
+    type_switch: &vo_syntax::ast::TypeSwitchStmt,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // Init statement
+    if let Some(init) = &type_switch.init {
+        compile_stmt(init, ctx, func, info)?;
+    }
+    
+    // Compile the expression being type-switched
+    let expr_reg = crate::expr::compile_expr(&type_switch.expr, ctx, func, info)?;
+    
+    // The expression should be an interface - get its value_kind for type checking
+    // Extract value_meta from interface slot0: [itab_id:32 | value_meta:32]
+    let value_kind_reg = func.alloc_temp(1);
+    // value_kind is the low 8 bits of value_meta (low 32 bits of slot0)
+    // For simplicity, we'll use the interface's second slot (data) for comparison
+    // The actual implementation depends on VM support for type switch
+    
+    // Store interface for case comparisons
+    let iface_slot = func.alloc_temp(2);
+    func.emit_op(Opcode::Copy, iface_slot, expr_reg, 0);
+    func.emit_op(Opcode::Copy, iface_slot + 1, expr_reg + 1, 0);
+    
+    // Extract value_kind from interface slot0
+    func.emit_op(Opcode::Copy, value_kind_reg, expr_reg, 0);
+    // Mask to get value_kind (low 8 bits of low 32 bits)
+    let mask_reg = func.alloc_temp(1);
+    func.emit_op(Opcode::LoadInt, mask_reg, 0xFF, 0);
+    func.emit_op(Opcode::And, value_kind_reg, value_kind_reg, mask_reg);
+    
+    // Collect case jumps
+    let mut case_jumps: Vec<(usize, usize)> = Vec::new(); // (case_idx, jump_pc)
+    let mut end_jumps: Vec<usize> = Vec::new();
+    let mut default_case_idx: Option<usize> = None;
+    
+    // Generate type checks for each case
+    for (case_idx, case) in type_switch.cases.iter().enumerate() {
+        if case.types.is_empty() || case.types.iter().all(|t| t.is_none()) {
+            // Default case
+            default_case_idx = Some(case_idx);
+        } else {
+            // Type case - check each type
+            for type_opt in &case.types {
+                if let Some(type_expr) = type_opt {
+                    // Get type's meta_id
+                    let type_key = info.type_expr_type(type_expr.id);
+                    let meta_id = type_key
+                        .and_then(|t| ctx.get_struct_meta_id(t))
+                        .unwrap_or(0);
+                    
+                    // Compare with interface's meta_id
+                    let cmp_reg = func.alloc_temp(1);
+                    let meta_reg = func.alloc_temp(1);
+                    let (b, c) = encode_i32(meta_id as i32);
+                    func.emit_op(Opcode::LoadInt, meta_reg, b, c);
+                    
+                    // Extract meta_id from interface: (slot0 >> 8) & 0xFFFFFF
+                    let extracted_meta = func.alloc_temp(1);
+                    func.emit_op(Opcode::Copy, extracted_meta, iface_slot, 0);
+                    let shift_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadInt, shift_reg, 8, 0);
+                    func.emit_op(Opcode::ShrS, extracted_meta, extracted_meta, shift_reg);
+                    let mask24 = func.alloc_temp(1);
+                    let (b24, c24) = encode_i32(0xFFFFFF);
+                    func.emit_op(Opcode::LoadInt, mask24, b24, c24);
+                    func.emit_op(Opcode::And, extracted_meta, extracted_meta, mask24);
+                    
+                    func.emit_op(Opcode::EqI, cmp_reg, extracted_meta, meta_reg);
+                    case_jumps.push((case_idx, func.emit_jump(Opcode::JumpIf, cmp_reg)));
+                }
+            }
+        }
+    }
+    
+    // Jump to default or end if no case matched
+    let no_match_jump = if let Some(default_idx) = default_case_idx {
+        // Will jump to default case
+        Some((default_idx, func.emit_jump(Opcode::Jump, 0)))
+    } else {
+        Some((usize::MAX, func.emit_jump(Opcode::Jump, 0)))
+    };
+    
+    // Compile case bodies
+    let mut case_body_starts: Vec<usize> = Vec::new();
+    for (case_idx, case) in type_switch.cases.iter().enumerate() {
+        case_body_starts.push(func.current_pc());
+        
+        // If assign variable is specified, bind it to the asserted value
+        if let Some(assign_name) = &type_switch.assign {
+            // Get the type for this case
+            if !case.types.is_empty() {
+                if let Some(Some(type_expr)) = case.types.first() {
+                    let type_key = info.type_expr_type(type_expr.id);
+                    let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                    let slot_types = type_key
+                        .map(|t| info.type_slot_types(t))
+                        .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+                    
+                    // Define local variable for the asserted value
+                    let var_slot = func.define_local_stack(assign_name.symbol, slots, &slot_types);
+                    
+                    // Copy interface data to variable
+                    if slots == 1 {
+                        func.emit_op(Opcode::Copy, var_slot, iface_slot + 1, 0);
+                    } else {
+                        func.emit_with_flags(Opcode::CopyN, slots as u8, var_slot, iface_slot + 1, slots);
+                    }
+                }
+            }
+        }
+        
+        // Compile case body
+        for stmt in &case.body {
+            compile_stmt(stmt, ctx, func, info)?;
+        }
+        
+        // Jump to end
+        end_jumps.push(func.emit_jump(Opcode::Jump, 0));
+        
+        let _ = case_idx; // suppress warning
+    }
+    
+    let end_pc = func.current_pc();
+    
+    // Patch case jumps
+    for (case_idx, jump_pc) in &case_jumps {
+        if *case_idx < case_body_starts.len() {
+            func.patch_jump(*jump_pc, case_body_starts[*case_idx]);
+        }
+    }
+    
+    // Patch no match jump
+    if let Some((idx, jump_pc)) = no_match_jump {
+        if idx < case_body_starts.len() {
+            func.patch_jump(jump_pc, case_body_starts[idx]);
+        } else {
+            func.patch_jump(jump_pc, end_pc);
+        }
+    }
+    
+    // Patch end jumps
+    for jump_pc in end_jumps {
+        func.patch_jump(jump_pc, end_pc);
+    }
+    
+    Ok(())
+}
+
+/// Compile switch statement
+fn compile_switch(
+    switch_stmt: &vo_syntax::ast::SwitchStmt,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // Init statement
+    if let Some(init) = &switch_stmt.init {
+        compile_stmt(init, ctx, func, info)?;
+    }
+    
+    // Compile tag expression (if present)
+    let tag_reg = if let Some(tag) = &switch_stmt.tag {
+        Some(crate::expr::compile_expr(tag, ctx, func, info)?)
+    } else {
+        None
+    };
+    
+    // Collect case jumps and body positions
+    let mut case_jumps: Vec<usize> = Vec::new();
+    let mut end_jumps: Vec<usize> = Vec::new();
+    let mut default_jump: Option<usize> = None;
+    
+    // Generate comparison and conditional jumps for each case
+    for case in &switch_stmt.cases {
+        if case.exprs.is_empty() {
+            // Default case - will jump here if no other case matches
+            default_jump = Some(func.emit_jump(Opcode::Jump, 0));
+        } else {
+            // Regular case - compare with each expression
+            for case_expr in &case.exprs {
+                let case_val = crate::expr::compile_expr(case_expr, ctx, func, info)?;
+                let cmp_result = func.alloc_temp(1);
+                
+                if let Some(tag) = tag_reg {
+                    // Compare tag with case value
+                    let tag_type = switch_stmt.tag.as_ref().and_then(|t| info.expr_type(t.id));
+                    let is_string = tag_type.map(|t| info.is_string(t)).unwrap_or(false);
+                    
+                    if is_string {
+                        func.emit_op(Opcode::StrEq, cmp_result, tag, case_val);
+                    } else {
+                        func.emit_op(Opcode::EqI, cmp_result, tag, case_val);
+                    }
+                } else {
+                    // No tag - case_expr should be boolean
+                    func.emit_op(Opcode::Copy, cmp_result, case_val, 0);
+                }
+                
+                case_jumps.push(func.emit_jump(Opcode::JumpIf, cmp_result));
+            }
+        }
+    }
+    
+    // Jump to default or end if no case matched
+    let no_match_jump = if default_jump.is_some() {
+        None
+    } else {
+        Some(func.emit_jump(Opcode::Jump, 0))
+    };
+    
+    // Compile case bodies
+    let mut case_body_starts: Vec<usize> = Vec::new();
+    for case in &switch_stmt.cases {
+        case_body_starts.push(func.current_pc());
+        for stmt in &case.body {
+            compile_stmt(stmt, ctx, func, info)?;
+        }
+        // Jump to end (unless fallthrough - TODO)
+        end_jumps.push(func.emit_jump(Opcode::Jump, 0));
+    }
+    
+    let end_pc = func.current_pc();
+    
+    // Patch jumps
+    let mut case_idx = 0;
+    let mut jump_idx = 0;
+    for case in &switch_stmt.cases {
+        if case.exprs.is_empty() {
+            // Default case
+            if let Some(jump_pc) = default_jump {
+                func.patch_jump(jump_pc, case_body_starts[case_idx]);
+            }
+        } else {
+            // Regular case - patch all expression jumps
+            for _ in &case.exprs {
+                if jump_idx < case_jumps.len() {
+                    func.patch_jump(case_jumps[jump_idx], case_body_starts[case_idx]);
+                    jump_idx += 1;
+                }
+            }
+        }
+        case_idx += 1;
+    }
+    
+    // Patch no match jump
+    if let Some(jump_pc) = no_match_jump {
+        func.patch_jump(jump_pc, end_pc);
+    }
+    
+    // Patch end jumps
+    for jump_pc in end_jumps {
+        func.patch_jump(jump_pc, end_pc);
     }
     
     Ok(())

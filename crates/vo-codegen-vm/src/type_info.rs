@@ -277,8 +277,11 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     /// Get interface meta ID (for IfaceAssign)
+    /// Note: This needs the CodegenContext to lookup registered metas
+    /// For now, return None - the actual lookup happens in context.rs
     pub fn get_interface_meta_id(&self, _type_key: TypeKey) -> Option<u16> {
-        // TODO: look up from registered interface metas
+        // Interface meta ID lookup is done via CodegenContext::get_interface_meta_id
+        // This method is kept for API compatibility but actual lookup should use ctx
         None
     }
 
@@ -309,5 +312,103 @@ impl<'a> TypeInfoWrapper<'a> {
             }
         }
         None
+    }
+
+    /// Get channel element slot count
+    pub fn chan_elem_slots(&self, type_key: TypeKey) -> Option<u16> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Chan(c) = &self.tc_objs().types[underlying] {
+            Some(self.type_slot_count(c.elem()))
+        } else {
+            None
+        }
+    }
+
+    /// Get channel element type
+    pub fn chan_elem_type(&self, type_key: TypeKey) -> Option<TypeKey> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Chan(c) = &self.tc_objs().types[underlying] {
+            Some(c.elem())
+        } else {
+            None
+        }
+    }
+
+    /// Check if type is a function/signature type
+    pub fn is_func(&self, type_key: TypeKey) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        self.tc_objs().types[underlying].try_as_signature().is_some()
+    }
+
+    /// Get function signature return slot count
+    pub fn func_ret_slots(&self, type_key: TypeKey) -> Option<u16> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Signature(sig) = &self.tc_objs().types[underlying] {
+            let results = sig.results();
+            if let Some(tuple) = self.tc_objs().types[results].try_as_tuple() {
+                let mut total = 0u16;
+                for &var in tuple.vars() {
+                    if let Some(t) = self.tc_objs().lobjs[var].typ() {
+                        total += self.type_slot_count(t);
+                    }
+                }
+                return Some(total);
+            }
+        }
+        None
+    }
+
+    /// Check if type is an integer type
+    pub fn is_int(&self, type_key: TypeKey) -> bool {
+        use vo_analysis::typ::BasicType;
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
+            matches!(b.typ(),
+                BasicType::Int | BasicType::Int8 | BasicType::Int16 | BasicType::Int32 | BasicType::Int64 |
+                BasicType::Uint | BasicType::Uint8 | BasicType::Uint16 | BasicType::Uint32 | BasicType::Uint64 |
+                BasicType::UntypedInt | BasicType::UntypedRune)
+        } else {
+            false
+        }
+    }
+
+    /// Check if type is a float type
+    pub fn is_float(&self, type_key: TypeKey) -> bool {
+        use vo_analysis::typ::BasicType;
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
+            matches!(b.typ(), BasicType::Float32 | BasicType::Float64 | BasicType::UntypedFloat)
+        } else {
+            false
+        }
+    }
+
+    /// Get integer bit size
+    pub fn int_bits(&self, type_key: TypeKey) -> u8 {
+        use vo_analysis::typ::BasicType;
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
+            match b.typ() {
+                BasicType::Int8 | BasicType::Uint8 => 8,
+                BasicType::Int16 | BasicType::Uint16 => 16,
+                BasicType::Int32 | BasicType::Uint32 | BasicType::UntypedRune => 32,
+                BasicType::Int64 | BasicType::Uint64 => 64,
+                BasicType::Int | BasicType::Uint | BasicType::UntypedInt => 64, // assume 64-bit platform
+                _ => 64,
+            }
+        } else {
+            64
+        }
+    }
+
+    /// Check if type is a bool type
+    pub fn is_bool(&self, type_key: TypeKey) -> bool {
+        use vo_analysis::typ::BasicType;
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
+            matches!(b.typ(), BasicType::Bool | BasicType::UntypedBool)
+        } else {
+            false
+        }
     }
 }
