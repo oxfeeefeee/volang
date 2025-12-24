@@ -71,6 +71,9 @@ pub struct TypeInfo {
 
     /// Variables that escape to heap (set by escape analysis pass).
     pub escaped_vars: HashSet<ObjKey>,
+
+    /// Closure captures: FuncLit ExprId -> captured variables (set by escape analysis pass).
+    pub closure_captures: HashMap<ExprId, Vec<ObjKey>>,
 }
 
 impl TypeInfo {
@@ -177,27 +180,27 @@ impl TypeInfo {
     }
 
     /// Looks up the type of an expression.
-    pub(crate) fn expr_type(&self, expr_id: ExprId) -> Option<TypeKey> {
+    pub fn expr_type(&self, expr_id: ExprId) -> Option<TypeKey> {
         self.types.get(&expr_id).map(|tv| tv.typ)
     }
 
     /// Looks up the mode of an expression.
-    pub(crate) fn expr_mode(&self, expr_id: ExprId) -> Option<&OperandMode> {
+    pub fn expr_mode(&self, expr_id: ExprId) -> Option<&OperandMode> {
         self.types.get(&expr_id).map(|tv| &tv.mode)
     }
 
     /// Looks up the object for a definition.
-    pub(crate) fn get_def(&self, ident: &Ident) -> Option<ObjKey> {
+    pub fn get_def(&self, ident: &Ident) -> Option<ObjKey> {
         self.defs.get(ident).and_then(|o| *o)
     }
 
     /// Looks up the object for a use.
-    pub(crate) fn get_use(&self, ident: &Ident) -> Option<ObjKey> {
+    pub fn get_use(&self, ident: &Ident) -> Option<ObjKey> {
         self.uses.get(ident).copied()
     }
 
     /// Returns true if the identifier is a definition.
-    pub(crate) fn is_def(&self, ident: &Ident) -> bool {
+    pub fn is_def(&self, ident: &Ident) -> bool {
         self.defs.contains_key(ident)
     }
 

@@ -1,0 +1,254 @@
+//! Codegen context - manages module-level state.
+
+use std::collections::HashMap;
+use vo_analysis::objects::{ObjKey, TypeKey};
+use vo_common::symbol::Symbol;
+use vo_vm::bytecode::{
+    Constant, ExternDef, FunctionDef, GlobalDef, InterfaceMeta, Module, StructMeta,
+};
+
+/// Package-level codegen context.
+pub struct CodegenContext {
+    module: Module,
+
+    /// Function index: (receiver_type, name) -> func_id
+    func_indices: HashMap<(Option<TypeKey>, Symbol), u32>,
+
+    /// Extern function index: name -> extern_id
+    extern_indices: HashMap<Symbol, u32>,
+
+    /// Global variable index: name -> global_idx
+    global_indices: HashMap<Symbol, u32>,
+
+    /// Constant pool: int value -> const_idx
+    const_int: HashMap<i64, u16>,
+
+    /// Constant pool: float bits -> const_idx
+    const_float: HashMap<u64, u16>,
+
+    /// Constant pool: string -> const_idx
+    const_string: HashMap<String, u16>,
+
+    /// Type meta_id: TypeKey -> struct_meta_id
+    struct_meta_ids: HashMap<TypeKey, u16>,
+
+    /// Type meta_id: TypeKey -> interface_meta_id
+    interface_meta_ids: HashMap<TypeKey, u16>,
+
+    /// ObjKey -> func_id (for StructMeta.methods)
+    objkey_to_func: HashMap<ObjKey, u32>,
+
+    /// init functions (in declaration order)
+    init_functions: Vec<u32>,
+}
+
+impl CodegenContext {
+    pub fn new(name: &str) -> Self {
+        Self {
+            module: Module {
+                name: name.to_string(),
+                struct_metas: Vec::new(),
+                interface_metas: Vec::new(),
+                constants: Vec::new(),
+                globals: Vec::new(),
+                functions: Vec::new(),
+                externs: Vec::new(),
+                entry_func: 0,
+            },
+            func_indices: HashMap::new(),
+            extern_indices: HashMap::new(),
+            global_indices: HashMap::new(),
+            const_int: HashMap::new(),
+            const_float: HashMap::new(),
+            const_string: HashMap::new(),
+            struct_meta_ids: HashMap::new(),
+            interface_meta_ids: HashMap::new(),
+            objkey_to_func: HashMap::new(),
+            init_functions: Vec::new(),
+        }
+    }
+
+    // === Type meta_id registration ===
+
+    pub fn register_struct_meta(&mut self, type_key: TypeKey, meta: StructMeta) -> u16 {
+        let id = self.module.struct_metas.len() as u16;
+        self.module.struct_metas.push(meta);
+        self.struct_meta_ids.insert(type_key, id);
+        id
+    }
+
+    pub fn register_interface_meta(&mut self, type_key: TypeKey, meta: InterfaceMeta) -> u16 {
+        let id = self.module.interface_metas.len() as u16;
+        self.module.interface_metas.push(meta);
+        self.interface_meta_ids.insert(type_key, id);
+        id
+    }
+
+    pub fn get_struct_meta_id(&self, type_key: TypeKey) -> Option<u16> {
+        self.struct_meta_ids.get(&type_key).copied()
+    }
+
+    pub fn get_interface_meta_id(&self, type_key: TypeKey) -> Option<u16> {
+        self.interface_meta_ids.get(&type_key).copied()
+    }
+
+    /// Get or default interface meta ID (for assignment)
+    pub fn get_interface_meta_id_or_default(&self, type_key: TypeKey) -> u16 {
+        self.interface_meta_ids.get(&type_key).copied().unwrap_or(0)
+    }
+
+    // === Function registration ===
+
+    pub fn register_func(&mut self, recv: Option<TypeKey>, name: Symbol) -> u32 {
+        let id = self.module.functions.len() as u32;
+        self.func_indices.insert((recv, name), id);
+        id
+    }
+
+    pub fn get_func_index(&self, recv: Option<TypeKey>, name: Symbol) -> Option<u32> {
+        self.func_indices.get(&(recv, name)).copied()
+    }
+
+    /// Get function index by name (for non-method functions)
+    pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
+        self.func_indices.get(&(None, name)).copied()
+    }
+
+    pub fn add_function(&mut self, func: FunctionDef) -> u32 {
+        let id = self.module.functions.len() as u32;
+        self.module.functions.push(func);
+        id
+    }
+
+    // === Extern registration ===
+
+    pub fn register_extern(&mut self, name: Symbol, def: ExternDef) -> u32 {
+        let id = self.module.externs.len() as u32;
+        self.module.externs.push(def);
+        self.extern_indices.insert(name, id);
+        id
+    }
+
+    pub fn get_extern_index(&self, name: Symbol) -> Option<u32> {
+        self.extern_indices.get(&name).copied()
+    }
+
+    // === Global registration ===
+
+    pub fn register_global(&mut self, name: Symbol, def: GlobalDef) -> u32 {
+        let id = self.module.globals.len() as u32;
+        self.module.globals.push(def);
+        self.global_indices.insert(name, id);
+        id
+    }
+
+    pub fn get_global_index(&self, name: Symbol) -> Option<u32> {
+        self.global_indices.get(&name).copied()
+    }
+
+    // === Constant pool ===
+
+    pub fn const_int(&mut self, val: i64) -> u16 {
+        if let Some(&idx) = self.const_int.get(&val) {
+            return idx;
+        }
+        let idx = self.module.constants.len() as u16;
+        self.module.constants.push(Constant::Int(val));
+        self.const_int.insert(val, idx);
+        idx
+    }
+
+    pub fn const_float(&mut self, val: f64) -> u16 {
+        let bits = val.to_bits();
+        if let Some(&idx) = self.const_float.get(&bits) {
+            return idx;
+        }
+        let idx = self.module.constants.len() as u16;
+        self.module.constants.push(Constant::Float(val));
+        self.const_float.insert(bits, idx);
+        idx
+    }
+
+    pub fn const_string(&mut self, val: &str) -> u16 {
+        if let Some(&idx) = self.const_string.get(val) {
+            return idx;
+        }
+        let idx = self.module.constants.len() as u16;
+        self.module.constants.push(Constant::String(val.to_string()));
+        self.const_string.insert(val.to_string(), idx);
+        idx
+    }
+
+    /// Add a raw constant (e.g., ValueMeta)
+    pub fn add_const(&mut self, c: Constant) -> u16 {
+        let idx = self.module.constants.len() as u16;
+        self.module.constants.push(c);
+        idx
+    }
+
+    /// Get or create ValueMeta constant for PtrNew
+    /// Returns the constant pool index
+    pub fn get_or_create_value_meta(
+        &mut self,
+        _type_key: Option<TypeKey>,
+        slots: u16,
+        slot_types: &[vo_common_core::types::SlotType],
+    ) -> u16 {
+        // Create ValueMeta constant
+        // ValueMeta format: meta_id:24 | value_kind:8
+        // For now, use a simple encoding: slots as meta_id, first slot_type as kind
+        use vo_common_core::types::SlotType;
+        
+        let kind = slot_types.first().copied().unwrap_or(SlotType::Value);
+        let kind_byte = match kind {
+            SlotType::Value => 0,
+            SlotType::GcRef => 1,
+            SlotType::Interface0 => 2,
+            SlotType::Interface1 => 3,
+        };
+        
+        // Simple ValueMeta: just encode slots and kind
+        // In full implementation, would use proper meta_id from type registration
+        let value_meta = ((slots as u64) << 8) | (kind_byte as u64);
+        
+        // Add as Int constant (VM will interpret as ValueMeta)
+        self.add_const(Constant::Int(value_meta as i64))
+    }
+
+    // === Closure ID ===
+    
+    pub fn next_closure_id(&mut self) -> u32 {
+        let id = self.module.functions.len() as u32;
+        id
+    }
+
+    // === ObjKey mapping ===
+
+    pub fn register_objkey_func(&mut self, obj: ObjKey, func_id: u32) {
+        self.objkey_to_func.insert(obj, func_id);
+    }
+
+    pub fn get_func_by_objkey(&self, obj: ObjKey) -> Option<u32> {
+        self.objkey_to_func.get(&obj).copied()
+    }
+
+    // === Init functions ===
+
+    pub fn register_init_function(&mut self, func_id: u32) {
+        self.init_functions.push(func_id);
+    }
+
+    pub fn init_functions(&self) -> &[u32] {
+        &self.init_functions
+    }
+
+    // === Finish ===
+
+    pub fn set_entry_func(&mut self, func_id: u32) {
+        self.module.entry_func = func_id;
+    }
+
+    pub fn finish(self) -> Module {
+        self.module
+    }
+}

@@ -417,7 +417,9 @@ impl Checker {
         self.record_untyped();
         
         // Escape analysis pass
-        self.result.escaped_vars = super::escape::analyze(files, &self.result, &self.tc_objs);
+        let escape_result = super::escape::analyze(files, &self.result, &self.tc_objs);
+        self.result.escaped_vars = escape_result.escaped;
+        self.result.closure_captures = escape_result.closure_captures;
         
         if self.has_errors() {
             Err(())
@@ -441,7 +443,9 @@ impl Checker {
         self.record_untyped();
         
         // Escape analysis pass
-        self.result.escaped_vars = super::escape::analyze(files, &self.result, &self.tc_objs);
+        let escape_result = super::escape::analyze(files, &self.result, &self.tc_objs);
+        self.result.escaped_vars = escape_result.escaped;
+        self.result.closure_captures = escape_result.closure_captures;
         
         if self.has_errors() {
             Err(())

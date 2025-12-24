@@ -10,8 +10,8 @@ members = [
   "crates/vo-analysis",
   "crates/vo-module",
   
-  # Code Generation (backup - pending rewrite)
-  # "crates/vo-codegen-vm",
+  # Code Generation
+  "crates/vo-codegen-vm",
   # "crates/vo-codegen-cranelift",
   
   # VM (backup - pending rewrite)

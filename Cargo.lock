@@ -503,6 +503,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vo-codegen-vm"
+version = "0.1.0"
+dependencies = [
+ "vo-analysis",
+ "vo-common",
+ "vo-common-core",
+ "vo-syntax",
+ "vo-vm",
+]
+
+[[package]]
 name = "vo-common"
 version = "0.1.0"
 dependencies = [

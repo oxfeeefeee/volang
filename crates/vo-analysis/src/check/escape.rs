@@ -9,19 +9,32 @@ use super::type_info::TypeInfo;
 use vo_syntax::ast::{
     AssignOp, Block, Decl, Expr, ExprKind, File, FuncDecl, Stmt, StmtKind, UnaryOp,
 };
-use std::collections::HashSet;
+use crate::selection::SelectionKind;
+use std::collections::{HashMap, HashSet};
+use vo_common_core::ExprId;
 
-/// Analyze escape for all files and return the set of escaped variables.
+/// Escape analysis result.
+pub struct EscapeResult {
+    /// Variables that escape to heap.
+    pub escaped: HashSet<ObjKey>,
+    /// Closure captures: FuncLit ExprId -> captured variables.
+    pub closure_captures: HashMap<ExprId, Vec<ObjKey>>,
+}
+
+/// Analyze escape for all files and return escaped variables and closure captures.
 pub fn analyze(
     files: &[File],
     type_info: &TypeInfo,
     tc_objs: &TCObjects,
-) -> HashSet<ObjKey> {
+) -> EscapeResult {
     let mut analyzer = EscapeAnalyzer::new(type_info, tc_objs);
     for file in files {
         analyzer.visit_file(file);
     }
-    analyzer.escaped
+    EscapeResult {
+        escaped: analyzer.escaped,
+        closure_captures: analyzer.closure_captures,
+    }
 }
 
 /// The escape analyzer.
@@ -29,8 +42,12 @@ struct EscapeAnalyzer<'a> {
     type_info: &'a TypeInfo,
     tc_objs: &'a TCObjects,
     escaped: HashSet<ObjKey>,
+    /// Closure captures: FuncLit ExprId -> captured variables.
+    closure_captures: HashMap<ExprId, Vec<ObjKey>>,
     /// Current function scope (None for package-level code)
     func_scope: Option<ScopeKey>,
+    /// Current closure ExprId being analyzed (for recording captures)
+    current_closure: Option<ExprId>,
 }
 
 impl<'a> EscapeAnalyzer<'a> {
@@ -39,7 +56,9 @@ impl<'a> EscapeAnalyzer<'a> {
             type_info,
             tc_objs,
             escaped: HashSet::new(),
+            closure_captures: HashMap::new(),
             func_scope: None,
+            current_closure: None,
         }
     }
 
@@ -256,13 +275,20 @@ impl<'a> EscapeAnalyzer<'a> {
                 }
             }
 
-            // 3. FuncLit → enter new func_scope, check captures
+            // 3. FuncLit → enter new func_scope, track captures
             ExprKind::FuncLit(func) => {
                 let closure_scope = self.type_info.scopes.get(&func.sig.span).copied();
-                let saved = self.func_scope;
+                let saved_scope = self.func_scope;
+                let saved_closure = self.current_closure;
+                
                 self.func_scope = closure_scope;
+                self.current_closure = Some(expr.id);
+                self.closure_captures.insert(expr.id, Vec::new());
+                
                 self.visit_block(&func.body);
-                self.func_scope = saved;
+                
+                self.func_scope = saved_scope;
+                self.current_closure = saved_closure;
             }
 
             // 4. Variable reference → check if captured by closure
@@ -271,6 +297,14 @@ impl<'a> EscapeAnalyzer<'a> {
                     if let Some(&obj) = self.type_info.uses.get(ident) {
                         if self.is_captured(obj, func_scope) {
                             self.escaped.insert(obj);
+                            // Record capture for current closure
+                            if let Some(closure_id) = self.current_closure {
+                                if let Some(captures) = self.closure_captures.get_mut(&closure_id) {
+                                    if !captures.contains(&obj) {
+                                        captures.push(obj);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -283,6 +317,26 @@ impl<'a> EscapeAnalyzer<'a> {
             }
             ExprKind::Unary(u) => self.visit_expr(&u.operand),
             ExprKind::Call(c) => {
+                // 5. Method call with pointer receiver on value type → receiver escapes
+                if let ExprKind::Selector(sel) = &c.func.kind {
+                    // Check if this is a method call with pointer receiver
+                    if let Some(selection) = self.type_info.selections.get(&c.func.id) {
+                        if matches!(selection.kind(), SelectionKind::MethodVal) {
+                            // Check if method has pointer receiver
+                            if self.method_has_pointer_receiver(selection.obj()) {
+                                // Check if caller is value type (not already pointer)
+                                if let Some(recv_type) = self.type_info.types.get(&sel.expr.id) {
+                                    if !self.is_pointer_type(recv_type.typ) {
+                                        // Value type calling pointer receiver method → escapes
+                                        if let Some(root) = self.find_root_var(&sel.expr) {
+                                            self.escaped.insert(root);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 self.visit_expr(&c.func);
                 for arg in &c.args {
                     self.visit_expr(arg);
@@ -379,6 +433,26 @@ impl<'a> EscapeAnalyzer<'a> {
         } else {
             false
         }
+    }
+
+    /// Check if a method has pointer receiver.
+    fn method_has_pointer_receiver(&self, method_obj: ObjKey) -> bool {
+        if let Some(typ) = self.tc_objs.lobjs[method_obj].typ() {
+            if let Some(sig) = self.tc_objs.types[typ].try_as_signature() {
+                if let Some(recv_obj) = sig.recv() {
+                    if let Some(recv_typ) = self.tc_objs.lobjs[*recv_obj].typ() {
+                        return self.tc_objs.types[recv_typ].try_as_pointer().is_some();
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a type is a pointer type.
+    fn is_pointer_type(&self, type_key: crate::objects::TypeKey) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs);
+        self.tc_objs.types[underlying].try_as_pointer().is_some()
     }
 }
 
