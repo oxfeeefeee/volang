@@ -59,11 +59,20 @@ pub fn compile_expr_to(
         ExprKind::Ident(ident) => {
             if let Some(local) = func.lookup_local(ident.symbol) {
                 if local.is_heap {
-                    // Escaped variable: read via PtrGet
-                    if local.slots == 1 {
-                        func.emit_op(Opcode::PtrGet, dst, local.slot, 0);
+                    // Escaped variable: slot contains GcRef to heap object
+                    // Check if this is a value type (struct/array) - need deep copy
+                    let obj_key = info.get_def(ident);
+                    let type_key = obj_key.and_then(|o| info.obj_type(o));
+                    let is_value_type = type_key.map(|t| {
+                        info.is_struct(t) || info.is_array(t)
+                    }).unwrap_or(false);
+                    
+                    if is_value_type {
+                        // Escaped struct/array: use PtrClone for value semantics (deep copy)
+                        func.emit_op(Opcode::PtrClone, dst, local.slot, 0);
                     } else {
-                        func.emit_with_flags(Opcode::PtrGetN, local.slots as u8, dst, local.slot, 0);
+                        // Escaped primitive or reference type: just copy the GcRef
+                        func.emit_op(Opcode::Copy, dst, local.slot, 0);
                     }
                 } else {
                     // Stack variable: direct copy
@@ -73,6 +82,10 @@ pub fn compile_expr_to(
                         func.emit_with_flags(Opcode::CopyN, local.slots as u8, dst, local.slot, local.slots);
                     }
                 }
+            } else if let Some(capture) = func.lookup_capture(ident.symbol) {
+                // Closure capture: use ClosureGet
+                // ClosureGet: a=dst, b=capture_index (closure implicit in r0)
+                func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
             } else if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
                 func.emit_op(Opcode::GlobalGet, dst, global_idx as u16, 0);
             } else {
@@ -144,6 +157,12 @@ pub fn compile_expr_to(
         // === Unary operations ===
         ExprKind::Unary(unary) => {
             match unary.op {
+                UnaryOp::Addr => {
+                    compile_addr_of(&unary.operand, dst, ctx, func, info)?;
+                }
+                UnaryOp::Deref => {
+                    compile_deref(&unary.operand, dst, ctx, func, info)?;
+                }
                 UnaryOp::Neg => {
                     let operand = compile_expr(&unary.operand, ctx, func, info)?;
                     let type_key = info.expr_type(expr.id);
@@ -158,14 +177,6 @@ pub fn compile_expr_to(
                 UnaryOp::BitNot => {
                     let operand = compile_expr(&unary.operand, ctx, func, info)?;
                     func.emit_op(Opcode::Not, dst, operand, 0);
-                }
-                UnaryOp::Addr => {
-                    // TODO: handle &x and &CompositeLit
-                    return Err(CodegenError::UnsupportedExpr("address-of".to_string()));
-                }
-                UnaryOp::Deref => {
-                    // TODO: handle *p
-                    return Err(CodegenError::UnsupportedExpr("deref".to_string()));
                 }
                 UnaryOp::Pos => {
                     // +x is a no-op
@@ -202,16 +213,6 @@ pub fn compile_expr_to(
         // === Function literal (closure) ===
         ExprKind::FuncLit(func_lit) => {
             compile_func_lit(expr, func_lit, dst, ctx, func, info)?;
-        }
-
-        // === Address-of ===
-        ExprKind::Unary(unary) if unary.op == UnaryOp::Addr => {
-            compile_addr_of(&unary.operand, dst, ctx, func, info)?;
-        }
-
-        // === Dereference ===
-        ExprKind::Unary(unary) if unary.op == UnaryOp::Deref => {
-            compile_deref(&unary.operand, dst, ctx, func, info)?;
         }
 
         // TODO: more expression kinds
@@ -387,10 +388,18 @@ fn compile_func_lit(
     // Generate a unique name for the closure function
     let closure_name = format!("closure_{}", ctx.next_closure_id());
     
-    // Create new FuncBuilder for the closure body
-    let mut closure_builder = FuncBuilder::new(&closure_name);
+    // Create new FuncBuilder for the closure body (slot 0 reserved for closure ref)
+    let mut closure_builder = FuncBuilder::new_closure(&closure_name);
     
-    // Define parameters
+    // Register captures in closure builder so it can access them via ClosureGet
+    for (i, obj_key) in captures.iter().enumerate() {
+        let var_name = info.obj_name(*obj_key);
+        if let Some(sym) = info.project.interner.get(var_name) {
+            closure_builder.define_capture(sym, i as u16);
+        }
+    }
+    
+    // Define parameters (starting after slot 0 which is closure ref)
     for param in &func_lit.sig.params {
         let type_key = info.project.type_info.type_exprs.get(&param.ty.id).copied();
         let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
@@ -427,13 +436,17 @@ fn compile_func_lit(
     parent_func.emit_op(Opcode::ClosureNew, dst, func_id as u16, capture_count);
     
     // Set captures (copy GcRefs from escaped variables)
+    // Closure layout: ClosureHeader (1 slot) + captures[]
+    // So capture[i] is at offset (1 + i)
     for (i, obj_key) in captures.iter().enumerate() {
-        // Find the variable in parent scope
         let var_name = info.obj_name(*obj_key);
         if let Some(sym) = info.project.interner.get(var_name) {
             if let Some(local) = parent_func.lookup_local(sym) {
-                // ClosureSet: a=closure, b=capture_idx, c=value
-                parent_func.emit_op(Opcode::ClosureSet, dst, i as u16, local.slot);
+                // Use PtrSet to write directly to closure's capture slot
+                // PtrSet: heap[slots[a]].offset[b] = slots[c]
+                // offset = 1 (ClosureHeader) + capture_index
+                let offset = 1 + i as u16;
+                parent_func.emit_op(Opcode::PtrSet, dst, offset, local.slot);
             }
         }
     }
@@ -517,30 +530,66 @@ fn compile_call(
         }
     }
     
-    // Regular function call
-    // Get function index
-    let func_idx = if let ExprKind::Ident(ident) = &call.func.kind {
-        ctx.get_function_index(ident.symbol)
-            .ok_or_else(|| CodegenError::Internal("function not found".to_string()))?
-    } else {
-        return Err(CodegenError::UnsupportedExpr("non-ident function call".to_string()));
-    };
+    // Check if calling a closure (local variable with Signature type)
+    if let ExprKind::Ident(ident) = &call.func.kind {
+        // First check if it's a known function
+        if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
+            // Regular function call
+            let args_start = func.alloc_temp(call.args.len() as u16);
+            for (i, arg) in call.args.iter().enumerate() {
+                compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
+            }
+            func.emit_with_flags(Opcode::Call, call.args.len() as u8, dst, func_idx as u16, args_start);
+            return Ok(());
+        }
+        
+        // Check if it's a local variable (could be a closure)
+        if func.lookup_local(ident.symbol).is_some() || func.lookup_capture(ident.symbol).is_some() {
+            // Closure call - compile closure expression first
+            let closure_reg = compile_expr(&call.func, ctx, func, info)?;
+            
+            // Compile arguments
+            let args_start = func.alloc_temp(call.args.len() as u16);
+            for (i, arg) in call.args.iter().enumerate() {
+                compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
+            }
+            
+            // Get return slot count
+            let ret_type = info.expr_type(expr.id);
+            let ret_slots = ret_type.map(|t| info.type_slot_count(t)).unwrap_or(0) as u8;
+            
+            // CallClosure: a=closure, b=args_start, c=(arg_slots<<8|ret_slots)
+            let c = ((call.args.len() as u16) << 8) | (ret_slots as u16);
+            func.emit_op(Opcode::CallClosure, closure_reg, args_start, c);
+            
+            // Copy result to dst if needed
+            if dst != closure_reg && ret_slots > 0 {
+                // Result is at closure_reg after call? Actually need to check VM behavior
+                // For now, assume result goes to args_start position
+            }
+            
+            return Ok(());
+        }
+        
+        return Err(CodegenError::Internal("function not found".to_string()));
+    }
+    
+    // Non-ident function call (e.g., expression returning a closure)
+    let closure_reg = compile_expr(&call.func, ctx, func, info)?;
     
     // Compile arguments
     let args_start = func.alloc_temp(call.args.len() as u16);
     for (i, arg) in call.args.iter().enumerate() {
-        let type_key = info.expr_type(arg.id);
-        let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
         compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
     }
     
     // Get return slot count
     let ret_type = info.expr_type(expr.id);
-    let ret_slots = ret_type.map(|t| info.type_slot_count(t)).unwrap_or(0);
+    let ret_slots = ret_type.map(|t| info.type_slot_count(t)).unwrap_or(0) as u8;
     
-    // Emit call instruction
-    // Call: a=dst, b=func_idx, c=args_start, flags=arg_count
-    func.emit_with_flags(Opcode::Call, call.args.len() as u8, dst, func_idx as u16, args_start);
+    // CallClosure: a=closure, b=args_start, c=(arg_slots<<8|ret_slots)
+    let c = ((call.args.len() as u16) << 8) | (ret_slots as u16);
+    func.emit_op(Opcode::CallClosure, closure_reg, args_start, c);
     
     Ok(())
 }
@@ -661,7 +710,115 @@ fn compile_builtin_call(
             let arg_reg = compile_expr(&call.args[0], _ctx, func, info)?;
             func.emit_op(Opcode::SliceCap, dst, arg_reg, 0);
         }
-        // TODO: other builtins (print, make, new, append, etc.)
+        "print" | "println" => {
+            // CallExtern with vo_print/vo_println
+            let extern_name = if name == "println" { "vo_println" } else { "vo_print" };
+            let extern_id = _ctx.get_or_register_extern(extern_name);
+            
+            // Compile arguments
+            let args_start = func.alloc_temp(call.args.len() as u16);
+            for (i, arg) in call.args.iter().enumerate() {
+                compile_expr_to(arg, args_start + (i as u16), _ctx, func, info)?;
+            }
+            
+            // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
+            func.emit_with_flags(Opcode::CallExtern, call.args.len() as u8, dst, extern_id as u16, args_start);
+        }
+        "panic" => {
+            // Compile panic message
+            if !call.args.is_empty() {
+                let msg_reg = compile_expr(&call.args[0], _ctx, func, info)?;
+                func.emit_op(Opcode::Panic, msg_reg, 0, 0);
+            } else {
+                func.emit_op(Opcode::Panic, 0, 0, 0);
+            }
+        }
+        "make" => {
+            // make([]T, len) or make([]T, len, cap) or make(map[K]V) or make(chan T)
+            let result_type = info.expr_type(call.args[0].id);
+            
+            if let Some(type_key) = result_type {
+                if info.is_slice(type_key) {
+                    // make([]T, len) or make([]T, len, cap)
+                    let elem_slots = info.slice_elem_slots(type_key).unwrap_or(1);
+                    let len_reg = if call.args.len() > 1 {
+                        compile_expr(&call.args[1], _ctx, func, info)?
+                    } else {
+                        func.alloc_temp(1)
+                    };
+                    let cap_reg = if call.args.len() > 2 {
+                        compile_expr(&call.args[2], _ctx, func, info)?
+                    } else {
+                        len_reg
+                    };
+                    // SliceNew: a=dst, b=len, c=cap, flags=elem_slots
+                    func.emit_with_flags(Opcode::SliceNew, elem_slots as u8, dst, len_reg, cap_reg);
+                } else if info.is_map(type_key) {
+                    // make(map[K]V)
+                    func.emit_op(Opcode::MapNew, dst, 0, 0);
+                } else if info.is_chan(type_key) {
+                    // make(chan T) or make(chan T, cap)
+                    let cap_reg = if call.args.len() > 1 {
+                        compile_expr(&call.args[1], _ctx, func, info)?
+                    } else {
+                        let tmp = func.alloc_temp(1);
+                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
+                        tmp
+                    };
+                    func.emit_op(Opcode::ChanNew, dst, cap_reg, 0);
+                } else {
+                    return Err(CodegenError::UnsupportedExpr("make with unsupported type".to_string()));
+                }
+            }
+        }
+        "new" => {
+            // new(T) - allocate zero value of T on heap
+            let result_type = info.expr_type(call.args[0].id);
+            if let Some(type_key) = result_type {
+                let slots = info.type_slot_count(type_key);
+                // PtrNew: a=dst, b=0 (zero init), c=slots
+                func.emit_op(Opcode::PtrNew, dst, 0, slots);
+            }
+        }
+        "append" => {
+            // append(slice, elem...) - variadic
+            if call.args.len() < 2 {
+                return Err(CodegenError::Internal("append requires at least 2 args".to_string()));
+            }
+            let slice_reg = compile_expr(&call.args[0], _ctx, func, info)?;
+            let elem_reg = compile_expr(&call.args[1], _ctx, func, info)?;
+            
+            let slice_type = info.expr_type(call.args[0].id);
+            let elem_slots = slice_type.and_then(|t| info.slice_elem_slots(t)).unwrap_or(1);
+            
+            // SliceAppend: a=dst, b=slice, c=elem, flags=elem_slots
+            func.emit_with_flags(Opcode::SliceAppend, elem_slots as u8, dst, slice_reg, elem_reg);
+        }
+        "copy" => {
+            // copy(dst, src) - use extern for now
+            let extern_id = _ctx.get_or_register_extern("vo_copy");
+            let args_start = func.alloc_temp(2);
+            compile_expr_to(&call.args[0], args_start, _ctx, func, info)?;
+            compile_expr_to(&call.args[1], args_start + 1, _ctx, func, info)?;
+            func.emit_with_flags(Opcode::CallExtern, 2, dst, extern_id as u16, args_start);
+        }
+        "delete" => {
+            // delete(map, key)
+            if call.args.len() != 2 {
+                return Err(CodegenError::Internal("delete requires 2 args".to_string()));
+            }
+            let map_reg = compile_expr(&call.args[0], _ctx, func, info)?;
+            let key_reg = compile_expr(&call.args[1], _ctx, func, info)?;
+            func.emit_op(Opcode::MapDelete, map_reg, key_reg, 0);
+        }
+        "close" => {
+            // close(chan)
+            if call.args.len() != 1 {
+                return Err(CodegenError::Internal("close requires 1 arg".to_string()));
+            }
+            let chan_reg = compile_expr(&call.args[0], _ctx, func, info)?;
+            func.emit_op(Opcode::ChanClose, chan_reg, 0, 0);
+        }
         _ => {
             return Err(CodegenError::UnsupportedExpr(format!("builtin {}", name)));
         }

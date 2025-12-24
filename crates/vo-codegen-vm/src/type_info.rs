@@ -28,7 +28,11 @@ impl<'a> TypeInfoWrapper<'a> {
     // === Expression type queries ===
 
     pub fn expr_type(&self, expr_id: ExprId) -> Option<TypeKey> {
-        self.type_info().expr_type(expr_id)
+        self.project.type_info.types.get(&expr_id).map(|tv| tv.typ)
+    }
+
+    pub fn type_expr_type(&self, type_expr_id: vo_common_core::TypeExprId) -> Option<TypeKey> {
+        self.project.type_info.type_exprs.get(&type_expr_id).copied()
     }
 
     pub fn expr_mode(&self, expr_id: ExprId) -> Option<&vo_analysis::operand::OperandMode> {
@@ -170,6 +174,34 @@ impl<'a> TypeInfoWrapper<'a> {
         self.tc_objs().types[underlying].try_as_array().is_some()
     }
 
+    pub fn is_slice(&self, type_key: TypeKey) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        self.tc_objs().types[underlying].try_as_slice().is_some()
+    }
+
+    pub fn is_map(&self, type_key: TypeKey) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        self.tc_objs().types[underlying].try_as_map().is_some()
+    }
+
+    pub fn is_string(&self, type_key: TypeKey) -> bool {
+        typ::is_string(type_key, self.tc_objs())
+    }
+
+    pub fn is_chan(&self, type_key: TypeKey) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        self.tc_objs().types[underlying].try_as_chan().is_some()
+    }
+
+    /// Get map key and value slot counts
+    pub fn map_key_val_slots(&self, type_key: TypeKey) -> Option<(u16, u16)> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        let map_type = self.tc_objs().types[underlying].try_as_map()?;
+        let key_slots = self.type_slot_count(map_type.key());
+        let val_slots = self.type_slot_count(map_type.elem());
+        Some((key_slots, val_slots))
+    }
+
     /// Get object's type
     pub fn obj_type(&self, obj: ObjKey) -> Option<TypeKey> {
         self.tc_objs().lobjs[obj].typ()
@@ -219,6 +251,16 @@ impl<'a> TypeInfoWrapper<'a> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
         if let Type::Array(a) = &self.tc_objs().types[underlying] {
             a.len()
+        } else {
+            None
+        }
+    }
+
+    /// Get array element type
+    pub fn array_elem_type(&self, type_key: TypeKey) -> Option<TypeKey> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Array(a) = &self.tc_objs().types[underlying] {
+            Some(a.elem())
         } else {
             None
         }

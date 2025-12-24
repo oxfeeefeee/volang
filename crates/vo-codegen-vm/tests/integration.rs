@@ -337,3 +337,374 @@ func main() int {
         }
     }
 }
+
+// =====================================================
+// === Escape / Pointer / Value Type Tests ===
+// =====================================================
+
+/// Test 1: Escaped struct keeps value semantics
+/// p is declared as value type, but escapes due to &p
+/// Internal state: GcRef (same as pointer)
+/// Behavior: value semantics (assignment = deep copy)
+#[test]
+fn test_escaped_struct_value_semantics() {
+    let source = r#"
+package main
+
+type Point struct {
+    x int
+    y int
+}
+
+func main() int {
+    p := Point{x: 10, y: 20}
+    ptr := &p
+    
+    // p2 is also escaped (assigned from escaped p)
+    // Key test: p2 = p should deep copy (value semantics)
+    p2 := p
+    p2.x = 100
+    
+    // p.x should still be 10 (not 100) because p2 is a copy
+    return p.x
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled escaped struct with value semantics");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // p escapes because &p is taken
+    // p2 = p should use PtrClone (deep copy), not Copy (shallow)
+    // This ensures value semantics for escaped struct
+}
+
+/// Test 2: Closure capture - primitive should escape
+#[test]
+fn test_escaped_int_closure_capture() {
+    let source = r#"
+package main
+
+func main() int {
+    x := 10
+    f := func() int {
+        return x
+    }
+    return f()
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled escaped int (closure capture)");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // x should escape because it's captured by closure
+}
+
+/// Test 3: Pointer has reference semantics (contrast with Test 1)
+/// ptr is declared as *T (pointer type)
+/// Assignment copies the pointer, both point to same data
+#[test]
+fn test_pointer_reference_semantics() {
+    let source = r#"
+package main
+
+type Point struct {
+    x int
+    y int
+}
+
+func main() int {
+    p := Point{x: 10, y: 20}
+    ptr := &p
+    
+    // ptr2 = ptr copies the pointer (reference semantics)
+    // Both ptr and ptr2 point to same p
+    ptr2 := ptr
+    ptr2.x = 100
+    
+    // ptr.x should be 100 (same data)
+    return ptr.x
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled pointer with reference semantics");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // ptr2 = ptr should use Copy (shallow), not PtrClone
+    // Both pointers reference the same heap object
+}
+
+/// Test 4: Value semantics - struct assignment should copy
+#[test]
+fn test_struct_value_copy() {
+    let source = r#"
+package main
+
+type Point struct {
+    x int
+    y int
+}
+
+func main() int {
+    p1 := Point{x: 10, y: 20}
+    p2 := p1
+    p2.x = 100
+    return p1.x
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled struct value copy");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // p1.x should still be 10 (value semantics)
+}
+
+/// Test 5: Empty interface assignment with struct
+#[test]
+fn test_empty_interface_assign_struct() {
+    let source = r#"
+package main
+
+type Box struct {
+    val int
+}
+
+func main() int {
+    b := Box{val: 42}
+    var a interface{}
+    a = b
+    return 0
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled empty interface assign struct");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // Should see IfaceAssign instruction
+}
+
+/// Test 6: Interface method call
+#[test]
+fn test_interface_method_call() {
+    let source = r#"
+package main
+
+type Adder interface {
+    Add() int
+}
+
+type MyNum struct {
+    value int
+}
+
+func (m MyNum) Add() int {
+    return m.value + 100
+}
+
+func main() int {
+    n := MyNum{value: 42}
+    var a Adder
+    a = n
+    return a.Add()
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled interface method call");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // Should see:
+    // 1. IfaceAssign to assign struct to interface
+    // 2. CallIface to call interface method
+}
+
+/// Test 7: Stack array iteration (for-range)
+#[test]
+fn test_stack_array_iteration() {
+    let source = r#"
+package main
+
+func main() int {
+    arr := [5]int{1, 2, 3, 4, 5}
+    sum := 0
+    for i, v := range arr {
+        sum = sum + v
+    }
+    return sum
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled stack array iteration");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // Should see:
+    // 1. IterNew (StackArray) to create iterator
+    // 2. IterNext to get next element
+    // 3. Loop body with sum += v
+}
+
+/// Test 8: Stack array index assignment
+#[test]
+fn test_stack_array_index_assign() {
+    let source = r#"
+package main
+
+func main() int {
+    arr := [5]int{1, 2, 3, 4, 5}
+    arr[2] = 100
+    return arr[2]
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled stack array index assignment");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // Should see SlotSet for arr[2] = 100
+}
+
+/// Test 9: Empty interface with int (no escape needed)
+#[test]
+fn test_empty_interface_int() {
+    let source = r#"
+package main
+
+func main() int {
+    var a interface{}
+    a = 42
+    return 0
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled empty interface with int");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // int -> interface{} should NOT allocate (inline in data slot)
+}
+
+/// Test 7: Nested struct field access (escaped)
+#[test]
+fn test_nested_struct_escaped() {
+    let source = r#"
+package main
+
+type Inner struct {
+    val int
+}
+
+type Outer struct {
+    inner Inner
+}
+
+func main() int {
+    o := Outer{inner: Inner{val: 42}}
+    ptr := &o
+    return ptr.inner.val
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled nested struct (escaped)");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+}
+
+/// Test 8: Multi-slot struct on stack (no escape)
+#[test]
+fn test_multi_slot_stack_struct() {
+    let source = r#"
+package main
+
+type Rect struct {
+    x int
+    y int
+    w int
+    h int
+}
+
+func main() int {
+    r := Rect{x: 1, y: 2, w: 10, h: 20}
+    return r.x + r.y + r.w + r.h
+}
+"#;
+    
+    let module = compile_source(source);
+    
+    println!("✓ Compiled multi-slot stack struct");
+    for (i, f) in module.functions.iter().enumerate() {
+        println!("  [{i}] {}: {} instructions", f.name, f.code.len());
+        for (j, inst) in f.code.iter().enumerate() {
+            println!("    [{j}] {:?}", inst);
+        }
+    }
+    
+    // Should use CopyN for struct copy, not PtrNew
+    let main_fn = module.functions.iter().find(|f| f.name == "main").unwrap();
+    let has_ptr_new = main_fn.code.iter().any(|i| i.op == 18); // PtrNew opcode
+    assert!(!has_ptr_new, "non-escaped multi-slot struct should NOT use PtrNew");
+}

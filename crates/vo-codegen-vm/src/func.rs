@@ -15,6 +15,14 @@ pub struct LocalVar {
     pub is_heap: bool,
 }
 
+/// Capture info for closure.
+#[derive(Debug, Clone)]
+pub struct CaptureVar {
+    pub symbol: Symbol,
+    pub index: u16,  // capture index in closure
+    pub slots: u16,  // always 1 (GcRef to escaped var)
+}
+
 /// Loop context for break/continue.
 struct LoopContext {
     continue_pc: usize,
@@ -30,6 +38,7 @@ pub struct FuncBuilder {
     ret_slots: u16,
     next_slot: u16,
     locals: HashMap<Symbol, LocalVar>,
+    captures: HashMap<Symbol, CaptureVar>,  // closure captures
     slot_types: Vec<SlotType>,
     code: Vec<Instruction>,
     loop_stack: Vec<LoopContext>,
@@ -44,10 +53,34 @@ impl FuncBuilder {
             ret_slots: 0,
             next_slot: 0,
             locals: HashMap::new(),
+            captures: HashMap::new(),
             slot_types: Vec::new(),
             code: Vec::new(),
             loop_stack: Vec::new(),
         }
+    }
+
+    /// Create a closure function builder (slot 0 reserved for closure ref)
+    pub fn new_closure(name: &str) -> Self {
+        let mut builder = Self::new(name);
+        // Reserve slot 0 for closure reference
+        builder.slot_types.push(SlotType::GcRef);
+        builder.next_slot = 1;
+        builder
+    }
+
+    /// Define a capture variable (for closure)
+    pub fn define_capture(&mut self, sym: Symbol, index: u16) {
+        self.captures.insert(sym, CaptureVar {
+            symbol: sym,
+            index,
+            slots: 1,  // captures are always GcRef
+        });
+    }
+
+    /// Look up a capture variable
+    pub fn lookup_capture(&self, sym: Symbol) -> Option<&CaptureVar> {
+        self.captures.get(&sym)
     }
 
     // === Parameter definition ===

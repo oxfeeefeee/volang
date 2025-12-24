@@ -17,6 +17,9 @@ pub struct CodegenContext {
     /// Extern function index: name -> extern_id
     extern_indices: HashMap<Symbol, u32>,
 
+    /// Extern function by string name (for builtins)
+    extern_names: HashMap<String, u32>,
+
     /// Global variable index: name -> global_idx
     global_indices: HashMap<Symbol, u32>,
 
@@ -57,6 +60,7 @@ impl CodegenContext {
             },
             func_indices: HashMap::new(),
             extern_indices: HashMap::new(),
+            extern_names: HashMap::new(),
             global_indices: HashMap::new(),
             const_int: HashMap::new(),
             const_float: HashMap::new(),
@@ -131,6 +135,23 @@ impl CodegenContext {
 
     pub fn get_extern_index(&self, name: Symbol) -> Option<u32> {
         self.extern_indices.get(&name).copied()
+    }
+
+    /// Get or register an extern function by string name (for builtins)
+    pub fn get_or_register_extern(&mut self, name: &str) -> u32 {
+        // Check if already registered in extern_names
+        if let Some(&id) = self.extern_names.get(name) {
+            return id;
+        }
+        // Register new extern
+        let id = self.module.externs.len() as u32;
+        self.module.externs.push(vo_vm::bytecode::ExternDef {
+            name: name.to_string(),
+            param_slots: 0,  // variadic
+            ret_slots: 0,
+        });
+        self.extern_names.insert(name.to_string(), id);
+        id
     }
 
     // === Global registration ===

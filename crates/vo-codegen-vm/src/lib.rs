@@ -40,25 +40,103 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
 }
 
 fn register_types(
-    _project: &Project,
-    _ctx: &mut CodegenContext,
-    _info: &TypeInfoWrapper,
+    project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // TODO: iterate all types, register StructMeta and InterfaceMeta
+    use vo_syntax::ast::{Decl, TypeExprKind};
+    use vo_vm::bytecode::{StructMeta, InterfaceMeta};
+    use std::collections::HashMap;
+    
+    // Iterate all type declarations
+    for file in &project.files {
+        for decl in &file.decls {
+            if let Decl::Type(type_decl) = decl {
+                let type_name = project.interner.resolve(type_decl.name.symbol)
+                    .unwrap_or("?");
+                
+                // Get the TypeKey from type checker using the type expression
+                if let Some(type_key) = info.type_expr_type(type_decl.ty.id) {
+                    match &type_decl.ty.kind {
+                        TypeExprKind::Struct(struct_type) => {
+                            // Build StructMeta
+                            let mut field_names = Vec::new();
+                            let mut field_offsets = Vec::new();
+                            let mut slot_types = Vec::new();
+                            let mut offset = 0u16;
+                            
+                            for field in &struct_type.fields {
+                                // Field may have multiple names sharing same type
+                                for name in &field.names {
+                                    let field_name = project.interner.resolve(name.symbol)
+                                        .unwrap_or("?");
+                                    field_names.push(field_name.to_string());
+                                    field_offsets.push(offset);
+                                    
+                                    // Get field type and slot count
+                                    if let Some(field_type) = info.type_expr_type(field.ty.id) {
+                                        let slots = info.type_slot_count(field_type);
+                                        let slot_type_list = info.type_slot_types(field_type);
+                                        slot_types.extend(slot_type_list);
+                                        offset += slots;
+                                    }
+                                }
+                            }
+                            
+                            let meta = StructMeta {
+                                name: type_name.to_string(),
+                                field_names,
+                                field_offsets,
+                                slot_types,
+                                methods: HashMap::new(), // Methods added later
+                            };
+                            ctx.register_struct_meta(type_key, meta);
+                        }
+                        TypeExprKind::Interface(iface_type) => {
+                            // Build InterfaceMeta
+                            let mut method_names = Vec::new();
+                            for elem in &iface_type.elems {
+                                if let vo_syntax::ast::InterfaceElem::Method(method) = elem {
+                                    let method_name = project.interner.resolve(method.name.symbol)
+                                        .unwrap_or("?");
+                                    method_names.push(method_name.to_string());
+                                }
+                            }
+                            
+                            let meta = InterfaceMeta {
+                                name: type_name.to_string(),
+                                method_names,
+                            };
+                            ctx.register_interface_meta(type_key, meta);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
 fn collect_declarations(
     project: &Project,
     ctx: &mut CodegenContext,
-    _info: &TypeInfoWrapper,
+    info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
     // Register all function names first (so calls can find them)
     for file in &project.files {
         for decl in &file.decls {
             if let Decl::Func(func_decl) = decl {
-                // Register function (None = no receiver)
-                ctx.register_func(None, func_decl.name.symbol);
+                // Check if this is a method (has receiver)
+                // For methods, we need the base type (not pointer)
+                let recv_type = if let Some(recv) = &func_decl.receiver {
+                    // Look up the type definition by name
+                    info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj))
+                } else {
+                    None
+                };
+                
+                ctx.register_func(recv_type, func_decl.name.symbol);
             }
         }
     }
@@ -90,6 +168,19 @@ fn compile_func_decl(
         .unwrap_or("unknown");
     
     let mut builder = FuncBuilder::new(name);
+    
+    // Define receiver as first parameter (if method)
+    if let Some(recv) = &func_decl.receiver {
+        // Look up receiver type by name
+        let type_key = info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj));
+        let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+        let slot_types = type_key
+            .map(|t| info.type_slot_types(t))
+            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+        
+        // Receiver name
+        builder.define_param(recv.name.symbol, slots, &slot_types);
+    }
     
     // Define parameters
     for param in &func_decl.sig.params {

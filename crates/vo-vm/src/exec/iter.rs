@@ -57,6 +57,19 @@ pub fn exec_iter_begin(fiber: &mut Fiber, inst: &Instruction) {
             }
         }
         5 => Iterator::Channel { ch: container },
+        6 => {
+            // StackArray: a=meta(key_slots:8|val_slots:8), a+1=base_slot, a+2=len
+            let base_slot = fiber.read_reg(inst.a + 1) as u16;
+            let len = fiber.read_reg(inst.a + 2) as u32;
+            let frame = fiber.frames.last().expect("no active frame");
+            Iterator::StackArray {
+                bp: frame.bp,
+                base_slot,
+                len,
+                elem_slots: val_slots,
+                pos: 0,
+            }
+        }
         _ => Iterator::IntRange {
             cur: 0,
             end: 0,
