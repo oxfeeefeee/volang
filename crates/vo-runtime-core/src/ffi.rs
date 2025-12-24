@@ -5,13 +5,15 @@
 use crate::gc::GcRef;
 use crate::objects::string;
 
+/// # Safety
+/// val must be valid for the given value_kind.
 #[cfg(feature = "std")]
 #[no_mangle]
 pub unsafe extern "C" fn vo_print(val: u64, value_kind: u8) {
     use vo_common_core::types::ValueKind;
     
     match ValueKind::from_u8(value_kind) {
-        ValueKind::Nil => println!("nil"),
+        ValueKind::Void => println!("nil"),
         ValueKind::Bool => println!("{}", val != 0),
         ValueKind::Int | ValueKind::Int64 => println!("{}", val as i64),
         ValueKind::Uint | ValueKind::Uint64 => println!("{}", val),

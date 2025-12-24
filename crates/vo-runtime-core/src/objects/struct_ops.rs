@@ -8,31 +8,18 @@ use vo_common_core::types::{ValueKind, ValueMeta};
 
 /// Compute hash for a struct value (based on field values, not pointer).
 /// Uses FxHash algorithm - fast polynomial hash for integers.
-pub fn hash(obj: GcRef, field_count: usize) -> u64 {
+/// # Safety
+/// obj must be a valid GcRef.
+pub unsafe fn hash(obj: GcRef, field_count: usize) -> u64 {
     const K: u64 = 0xf1357aea2e62a9c5;
     const SEED: u64 = 0x517cc1b727220a95;
 
     let mut h = SEED;
     for i in 0..field_count {
-        let val = Gc::read_slot(obj, i);
+        let val = unsafe { Gc::read_slot(obj, i) };
         h = h.wrapping_add(val).wrapping_mul(K);
     }
     h.rotate_left(5)
-}
-
-/// Deep copy a struct: allocate new object with same type and copy all slots.
-pub fn clone(gc: &mut Gc, src: GcRef, size_slots: usize) -> GcRef {
-    let header = Gc::header(src);
-    let value_meta = header.value_meta();
-
-    let dst = gc.alloc(value_meta, size_slots as u16);
-
-    for i in 0..size_slots {
-        let val = Gc::read_slot(src, i);
-        Gc::write_slot(dst, i, val);
-    }
-
-    dst
 }
 
 /// Create a new struct with zero-initialized fields.
@@ -41,27 +28,35 @@ pub fn create(gc: &mut Gc, meta_id: u32, size_slots: usize) -> GcRef {
 }
 
 /// Get field value.
+/// # Safety
+/// obj must be a valid GcRef and idx must be within bounds.
 #[inline]
-pub fn get_field(obj: GcRef, idx: usize) -> u64 {
-    Gc::read_slot(obj, idx)
+pub unsafe fn get_field(obj: GcRef, idx: usize) -> u64 {
+    unsafe { Gc::read_slot(obj, idx) }
 }
 
 /// Set field value.
+/// # Safety
+/// obj must be a valid GcRef and idx must be within bounds.
 #[inline]
-pub fn set_field(obj: GcRef, idx: usize, val: u64) {
-    Gc::write_slot(obj, idx, val);
+pub unsafe fn set_field(obj: GcRef, idx: usize, val: u64) {
+    unsafe { Gc::write_slot(obj, idx, val) }
 }
 
 /// Get multiple fields (for nested struct).
-pub fn get_fields(obj: GcRef, start: usize, dest: &mut [u64]) {
+/// # Safety
+/// obj must be a valid GcRef and range must be within bounds.
+pub unsafe fn get_fields(obj: GcRef, start: usize, dest: &mut [u64]) {
     for (i, d) in dest.iter_mut().enumerate() {
-        *d = Gc::read_slot(obj, start + i);
+        *d = unsafe { Gc::read_slot(obj, start + i) };
     }
 }
 
 /// Set multiple fields (for nested struct).
-pub fn set_fields(obj: GcRef, start: usize, src: &[u64]) {
+/// # Safety
+/// obj must be a valid GcRef and range must be within bounds.
+pub unsafe fn set_fields(obj: GcRef, start: usize, src: &[u64]) {
     for (i, &s) in src.iter().enumerate() {
-        Gc::write_slot(obj, start + i, s);
+        unsafe { Gc::write_slot(obj, start + i, s) };
     }
 }

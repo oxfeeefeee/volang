@@ -65,10 +65,9 @@ pub struct GcHeader {
 }
 
 /// meta_id 含义随 value_kind 变化:
-/// - Array, Slice, Channel: elem_meta_id（元素的 meta_id）
-/// - Struct, Pointer: 指向对象的 meta_id
-/// - Interface: 接口类型的 meta_id
-/// - Map: 0（key/val 类型信息存在 Container 数据里）
+/// - Struct, Pointer: struct_metas[] 索引
+/// - Interface: interface_metas[] 索引
+/// - Array, Slice, Channel, Map: 0（类型信息存在对象 header/data 里）
 /// - 其他: 0
 
 /// GC 引用 - 指向堆对象数据区（GcHeader 之后）的指针
@@ -98,17 +97,17 @@ impl Gc {
 // String
 struct StringData { array: GcRef, start: usize, len: usize }
 
-// Array (动态大小)
-struct ArrayHeader { len: usize, elem_size: u16 }  // data: [u8; len * elem_size] 紧跟其后
+// Array (动态大小, 2 slots header)
+struct ArrayHeader { len: usize, elem_meta: ValueMeta, elem_bytes: u32 }  // data 紧跟其后
 
 // Slice
 struct SliceData { array: GcRef, start: usize, len: usize, cap: usize }
 
-// Map
-struct MapData { inner: *mut HashMap, key_kind: u8, key_meta_id: u32, val_kind: u8, val_meta_id: u32 }
+// Map (3 slots)
+struct MapData { inner: *mut MapInner, key_meta: ValueMeta, val_meta: ValueMeta, key_slots: u16, val_slots: u16 }
 
-// Channel
-struct ChannelData { state: *mut ChannelState, elem_kind: u8, elem_meta_id: u32, cap: usize }
+// Channel (3 slots)
+struct ChannelData { state: *mut ChannelState, cap: usize, elem_meta: ValueMeta, elem_slots: u16 }
 
 // Closure (动态大小)
 struct ClosureHeader { func_id: u32, upval_count: u32 }  // upvalues 紧跟其后
@@ -122,8 +121,11 @@ struct StructData { fields: [u64; N] }
 
 **Interface** (栈上 2 slots):
 ```
-slot[0]: header = pack(iface_meta_id:24, reserved:8, value_meta_id:24, value_kind:8)
-slot[1]: data   = 值或 GcRef
+slot[0]: [itab_id:32 | value_meta:32]  (value_meta = meta_id:24 | value_kind:8)
+slot[1]: data = 值或 GcRef
+
+itab_id: VM itab 表索引，0 = nil interface
+value_meta: 具体类型的 ValueMeta，用于快速访问
 ```
 
 ### 对象操作接口
@@ -140,14 +142,16 @@ string::len(s) -> usize
 string::concat(gc, a, b) -> GcRef
 string::slice_of(gc, s, start, end) -> GcRef
 
-// Array - elem_size (字节数) 由调用者从 struct_metas 查询后传入
-array::create(gc, elem_kind, elem_meta_id, elem_size, len) -> GcRef
-array::get(arr, idx) -> u64
-array::set(arr, idx, val)
+// Array
+array::create(gc, elem_meta, elem_slots, len) -> GcRef
+array::get(arr, offset) -> u64
+array::set(arr, offset, val)
 array::len(arr) -> usize
+array::elem_meta(arr) -> ValueMeta
+array::elem_bytes(arr) -> usize
 
-// Slice - elem_size (字节数) 由调用者从 struct_metas 查询后传入
-slice::create(gc, elem_kind, elem_meta_id, elem_size, len, cap) -> GcRef
+// Slice
+slice::create(gc, elem_meta, elem_slots, len, cap) -> GcRef
 slice::from_array_range(gc, arr, start, len, cap) -> GcRef
 slice::from_array(gc, arr) -> GcRef
 slice::get(s, idx) -> u64

@@ -53,7 +53,7 @@ pub const META_ID_MASK: MetaId = 0xFF_FFFF;    // 24-bit mask
 pub struct ValueMeta(u32);
 
 impl ValueMeta {
-    pub const NIL: ValueMeta = ValueMeta(ValueKind::Nil as u32);
+    pub const VOID: ValueMeta = ValueMeta(ValueKind::Void as u32);
 
     #[inline]
     pub fn new(meta_id: u32, value_kind: ValueKind) -> Self {
@@ -91,7 +91,7 @@ impl ValueMeta {
 #[repr(u8)]
 pub enum ValueKind {
     // === Primitive Types (1 slot, no GC) ===
-    Nil = 0,
+    Void = 0,  // No type (distinct from semantic nil like nil pointer/slice/map)
     Bool = 1,
     Int = 2,
     Int8 = 3,
@@ -124,25 +124,7 @@ pub enum ValueKind {
 impl ValueKind {
     #[inline]
     pub fn from_u8(v: u8) -> Self {
-        Self::try_from(v).unwrap_or(ValueKind::Nil)
-    }
-
-    #[inline]
-    pub fn is_ref_type(&self) -> bool {
-        matches!(
-            self,
-            Self::String
-                | Self::Slice
-                | Self::Map
-                | Self::Channel
-                | Self::Closure
-                | Self::Pointer
-        )
-    }
-
-    #[inline]
-    pub fn is_value_type(&self) -> bool {
-        !self.is_ref_type()
+        Self::try_from(v).unwrap_or(ValueKind::Void)
     }
 
     #[inline]

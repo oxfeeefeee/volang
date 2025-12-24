@@ -7,45 +7,45 @@
 
 ## Overview
 
-定义 bytecode 格式和 VM 解释器。这是 Vo 的核心执行引擎。
+Defines bytecode format and VM interpreter. This is Vo's core execution engine.
 
-**核心原则**：
-- 8 字节固定指令格式
-- 寄存器式 VM（slot = 栈上 8 字节）
-- 协作式调度（Fiber）
+**Core Principles**:
+- 8-byte fixed instruction format
+- Register-based VM (slot = 8 bytes on stack)
+- Cooperative scheduling (Fiber)
 
-## 模块清单
+## Module List
 
-### 1. 指令格式 (instruction.rs)
+### 1. Instruction Format (instruction.rs)
 
 ```rust
-/// 8 字节固定格式
+/// 8-byte fixed format
 #[repr(C)]
 pub struct Instruction {
     pub op: u8,      // Opcode
-    pub flags: u8,   // 标志/变体
-    pub a: u16,      // 目标寄存器 或 操作数
-    pub b: u16,      // 源操作数 0
-    pub c: u16,      // 源操作数 1
+    pub flags: u8,   // flags/variant
+    pub a: u16,      // dst register or operand
+    pub b: u16,      // src operand 0
+    pub c: u16,      // src operand 1
 }
 
 impl Instruction {
     pub const fn new(op: Opcode, a: u16, b: u16, c: u16) -> Self;
     pub const fn with_flags(op: Opcode, flags: u8, a: u16, b: u16, c: u16) -> Self;
     
-    /// 从 b, c 组合 32 位立即数
+    /// Combine b, c into 32-bit immediate
     pub fn imm32(&self) -> i32 {
         ((self.b as u32) | ((self.c as u32) << 16)) as i32
     }
 }
 ```
 
-### 2. Opcode 枚举 (instruction.rs)
+### 2. Opcode Enum (instruction.rs)
 
 ```rust
 #[repr(u8)]
 pub enum Opcode {
-    // === LOAD: 加载立即数/常量 ===
+    // === LOAD: Load immediate/constant ===
     Nop = 0,
     LoadNil,      // slots[a] = nil
     LoadTrue,     // slots[a] = true
@@ -53,189 +53,200 @@ pub enum Opcode {
     LoadInt,      // slots[a] = sign_extend(b | (c << 16))
     LoadConst,    // slots[a] = constants[b]
     
-    // === COPY: 栈 slot 复制 ===
+    // === COPY: Stack slot copy ===
     Copy,         // slots[a] = slots[b]
     CopyN,        // slots[a..a+c] = slots[b..b+c]
     
-    // === SLOT: 栈动态索引 (栈上数组用) ===
+    // === SLOT: Stack dynamic indexing (for stack arrays) ===
     SlotGet,      // slots[a] = slots[b + slots[c]]
     SlotSet,      // slots[a + slots[b]] = slots[c]
     SlotGetN,     // slots[a..a+flags] = slots[b + slots[c]*flags..]
     SlotSetN,     // slots[a + slots[b]*flags..] = slots[c..c+flags]
     
-    // === GLOBAL: 全局变量 ===
+    // === GLOBAL: Global variables ===
     GlobalGet,    // slots[a] = globals[b]
+    GlobalGetN,   // slots[a..a+flags] = globals[b..], flags=n
     GlobalSet,    // globals[a] = slots[b]
+    GlobalSetN,   // globals[a..] = slots[b..b+flags], flags=n
     
-    // === PTR: 堆指针操作 ===
-    PtrNew,       // slots[a] = alloc(vk=flags, meta_id=b|(c<<16)), size 从 struct_metas 查询
-    PtrClone,     // slots[a] = clone(slots[b])
+    // === PTR: Heap pointer operations ===
+    PtrNew,       // slots[a] = alloc(slots[b]), b=meta_reg, flags=slots
+    PtrClone,     // slots[a] = clone(slots[b]), slots from src header
     PtrGet,       // slots[a] = heap[slots[b]].offset[c]
     PtrSet,       // heap[slots[a]].offset[b] = slots[c]
     PtrGetN,      // slots[a..a+flags] = heap[slots[b]].offset[c..]
     PtrSetN,      // heap[slots[a]].offset[b..] = slots[c..c+flags]
     
-    // === ARITH: 整数算术 ===
+    // === ARITH: Integer arithmetic ===
     AddI, SubI, MulI, DivI, ModI, NegI,
     
-    // === ARITH: 浮点算术 ===
+    // === ARITH: Float arithmetic ===
     AddF, SubF, MulF, DivF, NegF,
     
-    // === CMP: 整数比较 ===
+    // === CMP: Integer comparison ===
     EqI, NeI, LtI, LeI, GtI, GeI,
     
-    // === CMP: 浮点比较 ===
+    // === CMP: Float comparison ===
     EqF, NeF, LtF, LeF, GtF, GeF,
     
-    // === CMP: 引用比较 ===
+    // === CMP: Reference comparison ===
     EqRef, NeRef, IsNil,
     
-    // === BIT: 位运算 ===
+    // === BIT: Bitwise operations ===
     And, Or, Xor, Not, Shl, ShrS, ShrU,
     
-    // === LOGIC: 逻辑运算 ===
+    // === LOGIC: Logical operations ===
     BoolNot,
     
-    // === JUMP: 控制流 ===
+    // === JUMP: Control flow ===
     Jump,         // pc += sign_extend(b | (c << 16))
     JumpIf,       // if slots[a]: pc += sign_extend(b | (c << 16))
     JumpIfNot,    // if !slots[a]: pc += sign_extend(b | (c << 16))
     
-    // === CALL: 函数调用 ===
-    Call,         // call functions[a], args at b, arg_slots=c, ret_slots=flags
-    CallExtern,   // call extern[a], args at b, arg_slots=c, ret_slots=flags
-    CallClosure,  // call slots[a], args at b, arg_slots=c, ret_slots=flags
+    // === CALL: Function calls ===
+    Call,         // call functions[a|(flags<<16)], args at b, c=(arg_slots<<8|ret_slots)
+    CallExtern,   // call externs[a|(flags<<16)], args at b, c=(arg_slots<<8|ret_slots)
+    CallClosure,  // call slots[a], args at b, c=(arg_slots<<8|ret_slots)
     CallIface,    // call iface at a, args at b, c=(arg_slots<<8|ret_slots), flags=method_idx
     Return,       // return values at a, ret_slots=b
     
-    // === STR: 字符串操作 ===
+    // === STR: String operations ===
+    StrNew,       // slots[a] = constants[b] (string constant)
     StrLen,       // slots[a] = len(slots[b])
     StrIndex,     // slots[a] = slots[b][slots[c]]
     StrConcat,    // slots[a] = slots[b] + slots[c]
-    StrSlice,     // slots[a] = slots[b][slots[c]:slots[flags]]
+    StrSlice,     // slots[a] = str[lo:hi], b=str, c=params_start, lo=slots[c], hi=slots[c+1]
     StrEq, StrNe, StrLt, StrLe, StrGt, StrGe,
-    // 注: StrNew 用 CallExtern
     
-    // === ARRAY: 堆数组操作 ===
-    ArrayGet,     // slots[a] = slots[b][slots[c]]
-    ArraySet,     // slots[a][slots[b]] = slots[c]
-    ArrayGetN,    // slots[a..a+flags] = slots[b][slots[c]], flags=elem_slots
-    ArraySetN,    // slots[a][slots[b]] = slots[c..c+flags], flags=elem_slots
+    // === ARRAY: Heap array operations ===
+    ArrayNew,     // slots[a] = new array, b=meta_reg, c=len_reg, flags=elem_slots
+    ArrayGet,     // slots[a..a+flags] = arr[idx], b=arr, c=idx, flags=elem_slots
+    ArraySet,     // arr[idx] = slots[c..c+flags], a=arr, b=idx, flags=elem_slots
     ArrayLen,     // slots[a] = len(slots[b])
-    // 注: ArrayNew 用 CallExtern
     
-    // === SLICE: 切片操作 ===
-    SliceGet,     // slots[a] = slots[b][slots[c]]
-    SliceSet,     // slots[a][slots[b]] = slots[c]
-    SliceGetN,    // slots[a..a+flags] = slots[b][slots[c]], flags=elem_slots
-    SliceSetN,    // slots[a][slots[b]] = slots[c..c+flags], flags=elem_slots
+    // === SLICE: Slice operations ===
+    SliceNew,     // slots[a] = make([]T, len, cap), b=meta_reg, c=params_start, flags=elem_slots
+    SliceGet,     // slots[a..a+flags] = slice[idx], b=slice, c=idx, flags=elem_slots
+    SliceSet,     // slice[idx] = slots[c..c+flags], a=slice, b=idx, flags=elem_slots
     SliceLen,     // slots[a] = len(slots[b])
     SliceCap,     // slots[a] = cap(slots[b])
-    SliceSlice,   // slots[a] = slots[b][slots[c]:slots[flags]]
-    SliceAppend,  // slots[a] = append(slots[b], slots[c])
-    // 注: SliceNew 用 CallExtern
+    SliceSlice,   // slots[a] = slice[lo:hi:max], b=slice, c=params_start, flags: bit0=has_max
+                  // lo=slots[c], hi=slots[c+1], max=slots[c+2] if has_max else cap
+    SliceAppend,  // slots[a] = append(slice, slots[c..c+flags]), b=slice, flags=elem_slots
     
-    // === MAP: Map 操作 ===
-    MapGet,       // slots[a] = slots[b][slots[c]], flags=1 时 ok 写到 slots[a+1]
-    MapSet,       // slots[a][slots[b]] = slots[c]
-    MapDelete,    // delete(slots[a], slots[b])
+    // === MAP: Map operations (uses meta slot for key/val slots) ===
+    // Meta slot format: slots[x] = (key_slots << 16) | (val_slots << 1) | has_ok
+    // Key starts at slots[x+1..x+1+key_slots]
+    MapNew,       // slots[a] = make(map), b=type_info_reg, c=(key_slots<<8)|val_slots
+    MapGet,       // slots[a..] = map[key], b=map, c=meta_and_key
+                  // slots[c] = (key_slots<<16)|(val_slots<<1)|has_ok, key=slots[c+1..]
+    MapSet,       // map[key] = val, a=map, b=meta_and_key, c=val_start
+                  // slots[b] = (key_slots<<8)|val_slots, key=slots[b+1..]
+    MapDelete,    // delete(map, key), a=map, b=meta_and_key
+                  // slots[b] = key_slots, key=slots[b+1..]
     MapLen,       // slots[a] = len(slots[b])
-    // 注: MapNew 用 CallExtern
     
-    // === CHAN: Channel 操作 ===
-    ChanSend,     // slots[a] <- slots[b]
-    ChanRecv,     // slots[a] = <-slots[b], flags=1 时 ok 写到 slots[c]
+    // === CHAN: Channel operations ===
+    ChanNew,      // slots[a] = make(chan T, cap), b=meta_reg, c=cap_reg, flags=elem_slots
+    ChanSend,     // chan <- slots[b..b+flags], a=chan, flags=elem_slots
+    ChanRecv,     // slots[a..] = <-chan, b=chan, flags=(elem_slots<<1)|has_ok
     ChanClose,    // close(slots[a])
-    // 注: ChanNew 用 CallExtern
     
-    // === SELECT: Select 语句 ===
-    SelectBegin,  // begin select, case_count=a, has_default=b
-    SelectSend,   // add send case: chan=a, val=b
-    SelectRecv,   // add recv case: dst=a, chan=b, ok=c
-    SelectEnd,    // execute select, chosen index → slots[a]
+    // === SELECT: Select statement ===
+    SelectBegin,  // a=case_count, flags: bit0=has_default
+    SelectSend,   // a=chan_reg, b=val_reg, flags=elem_slots
+    SelectRecv,   // a=dst_reg, b=chan_reg, flags=(elem_slots<<1)|has_ok
+    SelectExec,   // slots[a] = chosen_index (-1=default)
     
-    // === ITER: 迭代器 (for-range) ===
-    IterBegin,    // 开始迭代 slots[a], type=b (Slice/Map/String/IntRange/Channel)
-    IterNext,     // slots[a], slots[b] = next; 失败跳 pc+=c
-                  // Channel: slots[a]=value, slots[b]=unused, ok=false 时跳转
-    IterEnd,      // 结束迭代，弹出 iter_stack
+    // === ITER: Iterator (for-range, uses meta slot) ===
+    // Meta slot format: slots[a] = (key_slots << 8) | val_slots
+    // Container at slots[a+1]
+    IterBegin,    // a=meta_and_container, b=type
+                  // slots[a] = (key_slots<<8)|val_slots, container=slots[a+1]
+    IterNext,     // a=key_dst, b=val_dst, c=done_offset; slots count from IterState
+    IterEnd,      // end iteration, pop iter_stack
     
-    // === CLOSURE: 闭包操作 ===
-    ClosureGet,   // slots[a] = slots[0].captures[b]  (closure 隐式在 r0)
-    ClosureSet,   // slots[0].captures[a] = slots[b]  (closure 隐式在 r0)
-    // 注: ClosureNew 用 CallExtern，无 Upval 指令
+    // === CLOSURE: Closure operations ===
+    ClosureNew,   // slots[a] = new_closure(func_id=b|(flags<<16), capture_count=c)
+    ClosureGet,   // slots[a] = slots[0].captures[b] (closure implicit in r0)
+    ClosureSet,   // slots[0].captures[a] = slots[b] (closure implicit in r0)
     
     // === GO: Goroutine ===
-    GoCall,       // go slots[a]()  (0 参数 closure，与 defer 一致)
+    GoCall,       // go slots[a]() (0-arg closure, same as defer)
     Yield,
     
-    // === DEFER: Defer 和错误处理 ===
+    // === DEFER: Defer and error handling ===
     DeferPush,    // push defer: closure=slots[a]
     ErrDeferPush, // push errdefer: closure=slots[a]
     Panic,        // panic(slots[a])
     Recover,      // slots[a] = recover()
-    // 注: defer 统一用 0 参数 closure，Return 时自动执行
+    // Note: defer uses 0-arg closure, executed automatically on Return
     
-    // === IFACE: Interface 操作 (interface 占 slots[a] 和 slots[a+1]) ===
-    IfaceInit,    // slots[a..a+2] = nil interface, iface_meta_id=b | (c << 16)
-    IfaceAssign,  // dst=slots[a..a+2], src=slots[b], vk=flags
-                  // value_meta_id 从 src 的 GcHeader 运行时读取
-                  // 处理所有情况: 值→iface, iface→iface, Struct/Array 深拷贝
-    IfaceAssert,  // slots[a..], ok = slots[b..b+2].(type c), ok_reg=flags
+    // === IFACE: Interface operations (interface uses slots[a] and slots[a+1]) ===
+    // slot0 format: [itab_id:32 | value_meta:32]  (value_meta = meta_id:24 | value_kind:8)
+    // slot1: data (immediate value or GcRef)
+    // nil check: value_kind == Void (same as Go: typed nil is NOT nil interface)
+    IfaceAssign,  // dst=slots[a..a+2], src=slots[b], iface_meta_id=c, vk=flags
+                  // - Computes itab_id from (src_meta_id, iface_meta_id)
+                  // - Struct/Array: deep copy (ptr_clone)
+                  // - Interface: copy value_meta, deep copy slot1 if Struct/Array
+                  // - Others: direct copy
+    IfaceAssert,  // a=dst, b=src_iface, c=target_meta_id
+                  // flags=0: no ok, panic on fail
+                  // flags>0: ok→slots[a+flags]
     
-    // === CONV: 类型转换 ===
+    // === CONV: Type conversion ===
     ConvI2F,      // slots[a] = float64(slots[b])
     ConvF2I,      // slots[a] = int64(slots[b])
     ConvI32I64,   // slots[a] = int64(int32(slots[b]))
     ConvI64I32,   // slots[a] = int32(slots[b])
     
-    // === DEBUG: 调试操作 ===
-    // 注: Print 用 CallExtern
-    // 注: assert 用 JumpIf + CallExtern(print) + Panic 组合实现
+    // === DEBUG: Debug operations ===
+    // Note: Print uses CallExtern
+    // Note: assert uses JumpIf + CallExtern(print) + Panic
 }
 ```
 
-**⚠️ 注意**：
-- Opcode 值经过精心安排，同类指令连续
-- flags 字段用途因指令而异（返回值数量、slot 数量等）
-- imm32 用于跳转偏移，由 b 和 c 组合
 
-### 2.1 Container 创建指令
+### 2.1 Container Creation Instructions
 
-Container 创建使用专用 opcode（VM 可访问 `Module.struct_metas` 查询 `elem_slots`）：
+All container creation instructions use registers to pass `ValueMeta` (via `LoadConst`), and `flags`/`c` to pass `elem_slots`:
 
-| 指令 | 编码 | 说明 |
-|------|------|------|
-| `ArrayNew` | `a=dst, b=elem_meta_id, c=len_reg, flags=elem_kind` | 创建数组 |
-| `SliceNew` | `a=dst, b=elem_meta_id, c=len_reg, flags=elem_kind` | 创建切片（cap 从下一 slot 读取） |
-| `ChanNew` | `a=dst, b=elem_meta_id, c=cap_reg, flags=elem_kind` | 创建通道 |
-| `MapNew` | `a=dst, b=type_info_reg` | 创建映射（类型信息打包在寄存器） |
+| Instruction | Encoding | Description |
+|-------------|----------|-------------|
+| `PtrNew` | `a=dst, b=meta_reg, flags=slots` | `slots[b]` = ValueMeta, `flags` = object size in slots |
+| `ArrayNew` | `a=dst, b=meta_reg, c=len_reg, flags=elem_slots` | `slots[b]` = elem ValueMeta, `slots[c]` = length |
+| `SliceNew` | `a=dst, b=meta_reg, c=params, flags=elem_slots` | `slots[b]` = elem ValueMeta, `slots[c]` = len, `slots[c+1]` = cap |
+| `ChanNew` | `a=dst, b=meta_reg, c=cap_reg, flags=elem_slots` | `slots[b]` = elem ValueMeta, `slots[c]` = capacity |
+| `MapNew` | `a=dst, b=type_info_reg, c=(key_slots<<8)\|val_slots` | `slots[b]` = packed type info |
+| `StrNew` | `a=dst, b=const_idx` | Load string from constants pool |
+| `ClosureNew` | `a=dst, b=func_id, c=capture_count` | Create closure |
 
-**MapNew 用两条指令**：
+**Codegen examples**:
 ```
-LoadConst r, <packed_u64>   // packed: [key_kind:8|key_meta_id:24|val_kind:8|val_meta_id:24]
-MapNew    dst, r
+// make([]int, 10, 20)
+LoadConst r1, <int_value_meta>   // ValueMeta for int
+LoadInt   r2, 10                 // len
+LoadInt   r3, 20                 // cap (must be r2+1)
+SliceNew  r0, r1, r2, flags=1    // elem_slots=1
+
+// make(map[string]Point)  where Point is 2 slots
+LoadConst r1, <packed_u64>       // [key_meta:32 | val_meta:32]
+MapNew    r0, r1, c=0x0102       // key_slots=1, val_slots=2
 ```
 
-### 2.2 内置 CallExtern 函数
+### 2.2 Built-in CallExtern Functions
 
-以下操作通过 `CallExtern` 调用 runtime-core 函数实现：
-
-| 类别 | 函数 | 签名 |
+| Function | Signature | Description |
 |------|------|------|
-| **String** | `vo_string_create` | `(bytes_ptr, len) -> GcRef` |
-| **Closure** | `vo_closure_create` | `(func_id, capture_count) -> GcRef` |
-| **Debug** | `vo_print` | `(value, type_kind) -> ()` |
+| `vo_print` | `(value, value_kind) -> ()` | debug output |
 
-**设计原则**：
-- **Container 创建** → Opcode（VM 需要访问 Module.struct_metas 查询 elem_slots）
-- **读取操作** → 保留指令（高频、轻量）
-- **VM 状态操作** → 保留指令（需要内部状态）
+Other operations (container creation, string, closure, etc.) use dedicated Opcodes.
 
-### 3. Bytecode 模块 (bytecode.rs)
+### 3. Bytecode Module (bytecode.rs)
 
 ```rust
-/// 常量
+/// Constant
 pub enum Constant {
     Nil,
     Bool(bool),
@@ -244,117 +255,146 @@ pub enum Constant {
     String(String),
 }
 
-/// 函数定义
+/// Function definition
 pub struct FunctionDef {
     pub name: String,
-    pub param_count: u16,    // 参数个数
-    pub param_slots: u16,    // 参数占用的 slot 数
-    pub local_slots: u16,    // 局部变量 slot 数
-    pub ret_slots: u16,      // 返回值 slot 数
+    pub param_count: u16,    // parameter count
+    pub param_slots: u16,    // slots used by parameters
+    pub local_slots: u16,    // local variable slots
+    pub ret_slots: u16,      // return value slots
     pub code: Vec<Instruction>,
-    pub slot_types: Vec<SlotType>,  // GC 扫描用
+    pub slot_types: Vec<SlotType>,  // for GC scanning
 }
 
-/// 外部函数
+/// External function
 pub struct ExternDef {
     pub name: String,
     pub param_slots: u16,
     pub ret_slots: u16,
 }
 
-/// 全局变量
+/// Global variable
 pub struct GlobalDef {
     pub name: String,
     pub slots: u16,
     pub value_kind: u8,
-    pub meta_id: u16,
+    pub meta_id: u32,  // 24-bit meta_id
 }
 
-/// Interface 方法分派
-pub struct IfaceDispatchEntry {
-    pub concrete_meta_id: u16,
-    pub iface_meta_id: u16,
-    pub method_funcs: Vec<u32>,  // 每个方法的 func_id
-}
-
-/// Bytecode 模块
+/// Bytecode module
 pub struct Module {
     pub name: String,
-    pub struct_metas: Vec<TypeMeta>,
-    pub interface_metas: Vec<TypeMeta>,
+    pub struct_metas: Vec<StructMeta>,
+    pub interface_metas: Vec<InterfaceMeta>,
     pub constants: Vec<Constant>,
     pub globals: Vec<GlobalDef>,
     pub functions: Vec<FunctionDef>,
     pub externs: Vec<ExternDef>,
-    pub iface_dispatch: Vec<IfaceDispatchEntry>,
     pub entry_func: u32,
+}
+
+/// Struct metadata (includes methods for itab building)
+pub struct StructMeta {
+    pub name: String,
+    pub size_slots: u16,
+    pub slot_types: Vec<SlotType>,
+    pub field_names: Vec<String>,
+    pub field_offsets: Vec<u16>,
+    pub methods: HashMap<String, u32>,  // method_name -> func_id
+}
+
+/// Interface metadata
+pub struct InterfaceMeta {
+    pub name: String,
+    pub method_names: Vec<String>,  // ordered method names
 }
 ```
 
-**⚠️ 关键**：
-- `slot_types` 必须与 `local_slots` 长度一致
-- `iface_dispatch` 在 codegen 时填充，VM 执行时查询
+**Key Points**:
+- `slot_types` must match `local_slots` length
+- `StructMeta.methods` used by VM to build itab at runtime
 
-### 4. 序列化 (bytecode.rs 续)
+### 4. Serialization (bytecode.rs cont.)
 
 ```rust
 impl Module {
-    /// 序列化为字节
+    /// Serialize to bytes
     pub fn serialize(&self) -> Vec<u8>;
     
-    /// 从字节反序列化
+    /// Deserialize from bytes
     pub fn deserialize(bytes: &[u8]) -> Result<Self, BytecodeError>;
 }
 
-/// 文件格式
-/// Magic: "VOB" (4 bytes)
+/// File format
+/// Magic: "VOB" (3 bytes)
 /// Version: u32
-/// struct_types: [TypeMeta]
-/// interface_types: [TypeMeta]
+/// struct_metas: [StructMeta]
+/// interface_metas: [InterfaceMeta]
 /// constants: [Constant]
 /// globals: [GlobalDef]
 /// functions: [FunctionDef]
 /// externs: [ExternDef]
-/// iface_dispatch: [IfaceDispatchEntry]
 /// entry_func: u32
+/// Note: iface_dispatch removed, itab built lazily at runtime
 ```
 
-### 5. VM 结构 (vm.rs)
+### 5. VM Structure (vm.rs)
 
 ```rust
-/// 调用帧
+/// Call frame
 pub struct CallFrame {
     pub func_id: u32,
     pub pc: usize,
-    pub bp: usize,       // base pointer (栈底)
-    pub ret_reg: u16,    // 返回值存放位置
+    pub bp: usize,       // base pointer (stack bottom)
+    pub ret_reg: u16,    // return value destination
     pub ret_count: u16,
 }
 
-/// Defer 条目 - 统一用 closure
+/// Defer entry - uses closure uniformly
 pub struct DeferEntry {
     pub frame_depth: usize,
-    pub closure: GcRef,      // 0 参数 closure
+    pub closure: GcRef,      // 0-arg closure
     pub is_errdefer: bool,
 }
 
-/// 迭代器
+/// Iterator
 pub enum Iterator {
-    Slice { arr: GcRef, pos: usize, len: usize },
+    /// Heap array/slice: arr=underlying array GcRef
+    HeapArray { arr: GcRef, len: u32, elem_slots: u8, pos: u32 },
+    /// Stack array: base_slot relative to frame bp
+    StackArray { bp: usize, base_slot: u16, len: u32, elem_slots: u8, pos: u32 },
     Map { map: GcRef, pos: usize },
     String { s: GcRef, byte_pos: usize },
     IntRange { cur: i64, end: i64, step: i64 },
     Channel { ch: GcRef },  // for v := range ch
 }
 
-/// Fiber (协程)
+/// Defer entry - uses closure uniformly
+pub struct DeferEntry {
+    pub frame_depth: usize,    // associated call frame depth
+    pub closure: GcRef,        // 0-arg closure
+    pub is_errdefer: bool,
+}
+
+/// Defer execution state (stored during Return)
+/// Go semantics: return value is determined before defer executes,
+/// so we must store ret_vals before running defer closures.
+pub struct DeferState {
+    pub pending: Vec<DeferEntry>,  // pending defers (LIFO)
+    pub ret_vals: Vec<u64>,        // stored return values
+    pub caller_ret_reg: u16,
+    pub caller_ret_count: usize,
+    pub is_error_return: bool,     // for errdefer decision
+}
+
+/// Fiber (coroutine)
 pub struct Fiber {
     pub id: u32,
     pub status: FiberStatus,
     pub stack: Vec<u64>,
     pub frames: Vec<CallFrame>,
     pub defer_stack: Vec<DeferEntry>,
-    pub defer_state: Option<DeferState>,  // Return 时暂存
+    pub defer_state: Option<DeferState>,  // active during Return with pending defers
     pub iter_stack: Vec<Iterator>,
     pub panic_value: Option<GcRef>,
 }
@@ -365,38 +405,47 @@ pub enum FiberStatus {
     Dead,
 }
 
-/// 调度器
+/// Scheduler
 pub struct Scheduler {
     pub fibers: Vec<Fiber>,
     pub ready_queue: VecDeque<u32>,
     pub current: Option<u32>,
 }
 
-/// VM 主结构
+/// Itab - interface method table (lazy built)
+pub struct Itab {
+    pub methods: Vec<u32>,  // method_idx -> func_id
+}
+// No need to store meta_id - use slot0.value_meta.meta_id() directly
+
+/// VM main structure
 pub struct Vm {
     pub module: Option<Module>,
     pub gc: Gc,
     pub scheduler: Scheduler,
     pub globals: Vec<u64>,
+    // Itab cache (lazy built)
+    pub itab_cache: HashMap<(u32, u32), u32>,  // (meta_id, iface_meta_id) -> itab_id
+    pub itabs: Vec<Itab>,                       // itab_id -> Itab
 }
 ```
 
-### 6. VM 执行 (vm.rs 续)
+### 6. VM Execution (vm.rs cont.)
 
 ```rust
 impl Vm {
     pub fn new() -> Self;
     
-    /// 加载模块
+    /// Load module
     pub fn load(&mut self, module: Module);
     
-    /// 运行入口函数
+    /// Run entry function
     pub fn run(&mut self) -> Result<(), VmError>;
     
-    /// 执行单条指令
+    /// Execute single instruction
     fn exec_instruction(&mut self, fiber_id: u32) -> ExecResult;
     
-    /// 读写寄存器
+    /// Read/write registers
     fn read_reg(&self, fiber_id: u32, reg: u16) -> u64;
     fn write_reg(&mut self, fiber_id: u32, reg: u16, val: u64);
 }
@@ -409,29 +458,29 @@ enum ExecResult {
 }
 ```
 
-### 7. 指令执行详解
+### 7. Instruction Execution Details
 
-#### 7.1 函数调用 (Call)
+#### 7.1 Function Call (Call)
 
 ```rust
 Opcode::Call => {
     // a=func_id, b=arg_start, c=arg_slots, flags=ret_slots
     let func = &module.functions[a as usize];
     
-    // 复制参数（避免帧切换后覆盖）
+    // Copy args (avoid overwrite after frame switch)
     let args: Vec<u64> = (0..c).map(|i| self.read_reg(fiber_id, b + i)).collect();
     
-    // 推入新帧
+    // Push new frame
     fiber.push_frame(a, func.local_slots, b, flags);
     
-    // 写入参数到新帧
+    // Write args to new frame
     for (i, arg) in args.into_iter().enumerate() {
         fiber.write_reg(i as u16, arg);
     }
 }
 ```
 
-#### 7.2 Closure 调用 (CallClosure)
+#### 7.2 Closure Call (CallClosure)
 
 ```rust
 Opcode::CallClosure => {
@@ -440,23 +489,22 @@ Opcode::CallClosure => {
     let func_id = closure::func_id(closure);
     let func = &module.functions[func_id as usize];
     
-    // 复制参数
+    // Copy args
     let args: Vec<u64> = (0..c).map(|i| self.read_reg(fiber_id, b + i)).collect();
     
-    // 推入新帧
+    // Push new frame
     fiber.push_frame(func_id, func.local_slots, b, flags);
     
-    // ⚠️ 关键：closure 作为 r0
+    // Key: closure as r0
     fiber.write_reg(0, closure as u64);
     
-    // 参数从 r1 开始
+    // Parameters start from r1
     for (i, arg) in args.into_iter().enumerate() {
         fiber.write_reg((i + 1) as u16, arg);
     }
 }
-```
 
-#### 7.3 Interface 调用 (CallIface)
+#### 7.3 Interface Call (CallIface)
 
 ```rust
 Opcode::CallIface => {
@@ -465,19 +513,56 @@ Opcode::CallIface => {
     let ret_slots = (inst.c & 0xFF) as usize;
     let method_idx = inst.flags as usize;
     
-    let (slot0, slot1) = self.read_interface(fiber_id, inst.a);
-    let concrete_meta_id = extract_concrete_meta(slot0);
-    let iface_meta_id = extract_iface_meta(slot0);
+    let slot0 = self.read_reg(fiber_id, inst.a);
+    let slot1 = self.read_reg(fiber_id, inst.a + 1);
     
-    // 查 dispatch table
-    let entry = module.find_dispatch(concrete_meta_id, iface_meta_id);
-    let func_id = entry.method_funcs[method_idx];
+    // Extract itab_id from slot0 high 32 bits
+    let itab_id = (slot0 >> 32) as u32;
     
-    // 像普通函数一样调用，但 receiver 是 slot1
+    // Direct lookup, O(1)
+    let func_id = self.itabs[itab_id as usize].methods[method_idx];
+    
+    // Call like regular function, receiver is slot1
     // ...
 ```
 
-#### 7.4 Return 实现
+#### 7.3.1 Itab Cache Management
+
+```rust
+impl Vm {
+    /// Get or create itab for (meta_id, iface_meta_id) pair
+    fn get_or_create_itab(&mut self, meta_id: u32, iface_meta_id: u32) -> u32 {
+        let key = (meta_id, iface_meta_id);
+        
+        // Check cache
+        if let Some(&itab_id) = self.itab_cache.get(&key) {
+            return itab_id;
+        }
+        
+        // Build new itab
+        let itab = self.build_itab(meta_id, iface_meta_id);
+        let itab_id = self.itabs.len() as u32;
+        self.itabs.push(itab);
+        self.itab_cache.insert(key, itab_id);
+        
+        itab_id
+    }
+    
+    fn build_itab(&self, meta_id: u32, iface_meta_id: u32) -> Itab {
+        let module = self.module.as_ref().unwrap();
+        let struct_meta = &module.struct_metas[meta_id as usize];
+        let iface_meta = &module.interface_metas[iface_meta_id as usize];
+        
+        let methods: Vec<u32> = iface_meta.method_names.iter()
+            .map(|name| *struct_meta.methods.get(name).expect("method not found"))
+            .collect();
+        
+        Itab { methods }
+    }
+}
+```
+
+#### 7.4 Return Implementation
 
 ```rust
 Opcode::Return => {
@@ -485,33 +570,35 @@ Opcode::Return => {
     let ret_start = inst.a as usize;
     let ret_count = inst.b as usize;
     
-    // 1. 暂存返回值
+    // 1. Store return values temporarily
     let ret_vals: Vec<u64> = (0..ret_count)
         .map(|i| self.read_reg(fiber_id, (ret_start + i) as u16))
         .collect();
     
-    // 2. 收集当前帧的 defer（LIFO 顺序）
+    // 2. Collect current frame's defers (LIFO order)
     let frame_depth = fiber.frames.len();
     let mut pending: Vec<DeferEntry> = fiber.defer_stack
         .drain_filter(|d| d.frame_depth == frame_depth)
         .collect();
     pending.reverse();  // LIFO
     
-    // 3. 检查是否有 errdefer，若有则运行时判断 error return
-    // 注: 编译器保证有 errdefer 的函数必有 error 返回值
+    // 3. Check for errdefer, if present determine error return at runtime
+    // Note: compiler ensures functions with errdefer have error return value (interface, 2 slots)
     let has_errdefer = pending.iter().any(|d| d.is_errdefer);
-    let is_error = if has_errdefer && ret_count > 0 {
-        ret_vals[ret_count - 1] != 0
+    let is_error = if has_errdefer && ret_count >= 2 {
+        // error is interface, check value_kind != Void
+        let err_header = ret_vals[ret_count - 2];
+        (err_header & 0xFF) != 0  // value_kind != Void
     } else {
         false
     };
     
-    // 4. 过滤 errdefer
+    // 4. Filter errdefer
     if !is_error {
         pending.retain(|d| !d.is_errdefer);
     }
     
-    // 5. 如果有 defer，进入 defer 执行模式
+    // 5. If has defer, enter defer execution mode
     if !pending.is_empty() {
         let caller_frame = &fiber.frames[fiber.frames.len() - 2];
         fiber.defer_state = Some(DeferState {
@@ -522,12 +609,12 @@ Opcode::Return => {
             is_error_return: is_error,
         });
         
-        // 执行第一个 defer closure
+        // Execute first defer closure
         let first = fiber.defer_state.as_mut().unwrap().pending.pop().unwrap();
         // CallClosure(first.closure, no args)
         // ...
     } else {
-        // 6. 无 defer，直接返回
+        // 6. No defer, return directly
         let caller_frame = fiber.frames.pop().unwrap();
         for (i, val) in ret_vals.into_iter().enumerate() {
             self.write_reg(fiber_id, caller_frame.ret_reg + i as u16, val);
@@ -536,52 +623,34 @@ Opcode::Return => {
 }
 ```
 
-#### 7.5 Defer 数据结构
+#### 7.5 Defer Execution Flow
 
-```rust
-/// Defer 条目 - 统一用 closure
-pub struct DeferEntry {
-    pub frame_depth: usize,    // 关联的调用帧深度
-    pub closure: GcRef,        // 0 参数 closure
-    pub is_errdefer: bool,     // 是否是 errdefer
-}
+**Execution Flow**:
+1. `DeferPush` / `ErrDeferPush`: save closure to `defer_stack`
+2. On `Return`:
+   - Collect current frame's defers (LIFO)
+   - If errdefer exists, check if last return value is non-nil -> is_error
+   - errdefer only executes when is_error=true
+   - Execute each via CallClosure
+3. After defer closure returns, continue with next
+4. All done, write stored return values to caller
 
-/// Defer 执行状态 (return 时暂存)
-pub struct DeferState {
-    pub pending: Vec<DeferEntry>,  // 待执行的 defer (LIFO)
-    pub ret_vals: Vec<u64>,        // 暂存的返回值
-    pub caller_ret_reg: u16,
-    pub caller_ret_count: usize,
-    pub is_error_return: bool,     // errdefer 判定用
-}
-```
+**Codegen Constraint**: `errdefer` can only be used in functions with error return value, otherwise compile error.
 
-**执行流程**：
-1. `DeferPush` / `ErrDeferPush`: 保存 closure 到 `defer_stack`
-2. `Return` 时:
-   - 收集当前帧的 defers（LIFO）
-   - 若存在 errdefer，检查最后一个返回值是否非 nil → is_error
-   - errdefer 只在 is_error=true 时执行
-   - 逐个 CallClosure 执行
-3. defer closure 返回后继续执行下一个
-4. 全部执行完，写入暂存的返回值给 caller
-
-**Codegen 约束**：`errdefer` 只能在有 error 返回值的函数中使用，否则编译错误。
-
-**Codegen 注意**：`defer foo(x, y)` 需包装为：
+**Codegen Note**: `defer foo(x, y)` should be wrapped as:
 ```vo
-// 生成一个 0 参数 closure，捕获 x, y
+// Generate a 0-arg closure, capturing x, y
 closure := func() { foo(x, y) }
 DeferPush closure
 ```
 
-#### 7.6 GC 根扫描
+#### 7.6 GC Root Scanning
 
 ```rust
 impl Vm {
-    /// 扫描所有 GC 根
+    /// Scan all GC roots
     pub fn scan_roots(&self, gc: &mut Gc) {
-        // 1. 扫描全局变量
+        // 1. Scan global variables
         for (i, &val) in self.globals.iter().enumerate() {
             let def = &self.module.as_ref().unwrap().globals[i];
             if needs_gc(def.value_kind) && val != 0 {
@@ -589,7 +658,7 @@ impl Vm {
             }
         }
         
-        // 2. 扫描所有 Fiber 的栈
+        // 2. Scan all Fiber stacks
         for fiber in &self.scheduler.fibers {
             for frame in &fiber.frames {
                 let func = &module.functions[frame.func_id as usize];
@@ -601,7 +670,7 @@ impl Vm {
                             if val != 0 { gc.mark_gray(val as GcRef); }
                         }
                         SlotType::Interface1 => {
-                            // 动态检查前一个 slot
+                            // Dynamically check previous slot
                             let header = fiber.stack[slot_idx - 1];
                             if needs_gc(extract_value_kind(header)) {
                                 let val = fiber.stack[slot_idx];
@@ -613,17 +682,17 @@ impl Vm {
                 }
             }
             
-            // 3. 扫描 defer_stack
+            // 3. Scan defer_stack
             for entry in &fiber.defer_stack {
                 gc.mark_gray(entry.closure);
             }
             
-            // 4. 扫描 defer_state
+            // 4. Scan defer_state
             if let Some(state) = &fiber.defer_state {
                 for entry in &state.pending {
                     gc.mark_gray(entry.closure);
                 }
-                // 扫描暂存的返回值 - 类型从 FunctionDef.slot_types 查询
+                // Scan stored return values - types from FunctionDef.slot_types
                 let func_id = fiber.frames.last().unwrap().func_id;
                 let func_def = &module.functions[func_id as usize];
                 let ret_start = func_def.slot_types.len() - func_def.ret_slots as usize;
@@ -634,10 +703,11 @@ impl Vm {
                 }
             }
             
-            // 5. 扫描 iter_stack
+            // 5. Scan iter_stack
             for iter in &fiber.iter_stack {
                 match iter {
-                    Iterator::Slice { arr, .. } => gc.mark_gray(*arr),
+                    Iterator::HeapArray { arr, .. } => gc.mark_gray(*arr),
+                    Iterator::StackArray { .. } => {} // no GcRef, scanned via stack slots
                     Iterator::Map { map, .. } => gc.mark_gray(*map),
                     Iterator::String { s, .. } => gc.mark_gray(*s),
                     Iterator::Channel { ch, .. } => gc.mark_gray(*ch),
@@ -649,90 +719,204 @@ impl Vm {
 }
 ```
 
-## Tasks Checklist
-
-### instruction.rs
-- [ ] Instruction 结构
-- [ ] Opcode 枚举（完整 ~100 个）
-- [ ] 辅助方法 (imm32, opcode)
-
-### bytecode.rs
-- [ ] Constant 枚举
-- [ ] FunctionDef
-- [ ] ExternDef
-- [ ] GlobalDef
-- [ ] IfaceDispatchEntry
-- [ ] TypeMeta (从 runtime-core 引入或重定义)
-- [ ] Module
-- [ ] Module::serialize
-- [ ] Module::deserialize
-
-### vm.rs - 结构
-- [ ] CallFrame
-- [ ] DeferEntry
-- [ ] Iterator 枚举
-- [ ] Fiber
-- [ ] FiberStatus
-- [ ] Scheduler
-- [ ] Vm
-
-### vm.rs - 执行
-- [ ] exec 加载/存储 (Nop..CopyN)
-- [ ] exec 全局变量 (GlobalGet, GlobalSet)
-- [ ] exec 算术 i64
-- [ ] exec 算术 f64
-- [ ] exec 比较
-- [ ] exec 位运算
-- [ ] exec 控制流 (Jump, JumpIf, JumpIfNot)
-- [ ] exec 函数调用 (Call, CallExtern, Return)
-- [ ] exec CallClosure
-- [ ] exec CallIface
-- [ ] exec 堆内存 (PtrNew, PtrGet, PtrSet, ...)
-- [ ] exec 栈动态索引 (SlotGet, SlotSet, SlotGetN, SlotSetN)
-- [ ] exec Array/Slice
-- [ ] exec String
-- [ ] exec Map
-- [ ] exec Interface (IfaceInit, IfaceAssign, IfaceAssert)
-- [ ] exec Closure (ClosureGet, ClosureSet) — ClosureNew 用 CallExtern
-- [ ] exec Goroutine (GoCall, Yield)
-- [ ] exec Channel
-- [ ] exec Select
-- [ ] exec Defer/Panic/Recover (含 ErrDeferPush)
-- [ ] exec Iterator
-- [ ] exec 类型转换
-- [ ] exec Debug (Print, AssertBegin, AssertArg, AssertEnd)
-
-### vm.rs - 调度
-- [ ] Scheduler 实现
-- [ ] Fiber 切换
-- [ ] Channel 阻塞/唤醒
-
-### vm.rs - GC 集成
-- [ ] scan_roots 实现
-- [ ] 调用 gc.collect 的时机
-
-## 单元测试
+#### 7.7 Channel Operations Implementation
 
 ```rust
-#[test]
-fn test_arithmetic() {
-    let mut vm = Vm::new();
-    // 构造简单的加法 bytecode
-    // 执行并验证结果
+Opcode::ChanSend => {
+    // chan <- slots[b..b+elem_slots], a=chan, flags=elem_slots
+    let chan = slots[a] as GcRef;
+    let elem_slots = flags as usize;
+    let value: Box<[u64]> = slots[b..b+elem_slots].into();
+    let cap = channel::capacity(chan);
+    
+    match channel::get_state(chan).try_send(value.clone(), cap) {
+        SendResult::DirectSend(receiver_id) => {
+            scheduler.wake(receiver_id);
+        }
+        SendResult::Buffered => {}
+        SendResult::WouldBlock => {
+            channel::get_state(chan).register_sender(fiber_id, value);
+            return ExecResult::Yield;
+        }
+        SendResult::Closed => return ExecResult::Panic("send on closed channel"),
+    }
 }
 
-#[test]
-fn test_function_call() {
-    // 测试函数调用和返回
+Opcode::ChanRecv => {
+    // slots[a..] = <-chan, b=chan, flags=(elem_slots<<1)|has_ok
+    let chan = slots[b] as GcRef;
+    let elem_slots = (flags >> 1) as usize;
+    let has_ok = (flags & 1) != 0;
+    
+    let (result, value) = channel::get_state(chan).try_recv();
+    match result {
+        RecvResult::Success(woke_sender) => {
+            let val = value.unwrap();
+            for (i, &v) in val.iter().enumerate() { slots[a + i] = v; }
+            if has_ok { slots[a + elem_slots] = 1; }
+            if let Some(id) = woke_sender { scheduler.wake(id); }
+        }
+        RecvResult::WouldBlock => {
+            channel::get_state(chan).register_receiver(fiber_id);
+            return ExecResult::Yield;
+        }
+        RecvResult::Closed => {
+            for i in 0..elem_slots { slots[a + i] = 0; }
+            if has_ok { slots[a + elem_slots] = 0; }
+        }
+    }
 }
 
-#[test]
-fn test_closure_call() {
-    // 测试闭包调用，验证 closure 作为 r0
+Opcode::ChanClose => {
+    let state = channel::get_state(slots[a] as GcRef);
+    state.close();
+    for id in state.take_waiting_receivers() { scheduler.wake(id); }
+    for (id, _) in state.take_waiting_senders() { scheduler.wake(id); }
+}
+```
+
+#### 7.8 GoCall Implementation
+
+```rust
+Opcode::GoCall => {
+    // go slots[a]()  (0-arg closure)
+    let closure = slots[a] as GcRef;
+    let func_id = closure::func_id(closure);
+    let func = &module.functions[func_id as usize];
+    
+    let mut new_fiber = Fiber::new(scheduler.next_fiber_id());
+    new_fiber.push_frame(func_id, func.local_slots, 0, 0);
+    new_fiber.write_reg(0, closure as u64);  // closure as r0
+    scheduler.spawn(new_fiber);
 }
 
-#[test]
-fn test_gc_roots() {
-    // 测试 GC 根扫描正确性
+Opcode::Yield => {
+    return ExecResult::Yield;
+}
+```
+
+#### 7.9 Panic Unwinding
+
+```rust
+Opcode::Panic => {
+    fiber.panic_value = Some(slots[a] as GcRef);
+    return ExecResult::Panic(fiber.panic_value.unwrap());
+}
+
+Opcode::Recover => {
+    // Only valid in defer function
+    slots[a] = fiber.panic_value.take().map(|v| v as u64).unwrap_or(0);
+}
+```
+
+**Panic Unwinding**:
+1. Set `panic_value`, execute all defers in current frame (LIFO)
+2. `Recover` called in defer -> take `panic_value` and clear it, stop unwinding
+3. All defers done but still have `panic_value` -> pop frame, continue unwinding
+4. Stack empty but still have `panic_value` -> Fiber terminates
+
+#### 7.10 Select Implementation
+
+**Data Structures**:
+
+```rust
+enum SelectCase {
+    Send { chan_reg: u16, val_reg: u16, elem_slots: u8 },
+    Recv { dst_reg: u16, chan_reg: u16, elem_slots: u8, has_ok: bool },
+}
+
+struct SelectState {
+    cases: Vec<SelectCase>,
+    has_default: bool,
+    woken_index: Option<usize>,  // which case woke us
+}
+```
+
+**Execution Flow**:
+
+```rust
+Opcode::SelectBegin => {
+    fiber.select_state = Some(SelectState {
+        cases: Vec::with_capacity(a as usize),
+        has_default: (flags & 1) != 0,
+        woken_index: None,
+    });
+}
+
+Opcode::SelectSend => {
+    let state = fiber.select_state.as_mut().unwrap();
+    state.cases.push(SelectCase::Send {
+        chan_reg: a, val_reg: b,
+        elem_slots: if flags == 0 { 1 } else { flags as u8 },
+    });
+}
+
+Opcode::SelectRecv => {
+    let state = fiber.select_state.as_mut().unwrap();
+    state.cases.push(SelectCase::Recv {
+        dst_reg: a, chan_reg: b,
+        elem_slots: if (flags >> 1) == 0 { 1 } else { (flags >> 1) as u8 },
+        has_ok: (flags & 1) != 0,
+    });
+}
+
+Opcode::SelectExec => {
+    let state = fiber.select_state.as_mut().unwrap();
+    
+    // 1. After wakeup, execute selected case
+    if let Some(idx) = state.woken_index.take() {
+        execute_case(fiber, &state.cases[idx], slots);
+        slots[a] = idx as u64;
+        fiber.select_state = None;
+        return ExecResult::Continue;
+    }
+    
+    // 2. Try all cases (random order), collect ready ones
+    let ready: Vec<usize> = state.cases.iter().enumerate()
+        .filter(|(_, c)| case_is_ready(c, slots))
+        .map(|(i, _)| i).collect();
+    
+    // 3. If any ready, randomly pick one to execute
+    if !ready.is_empty() {
+        let idx = ready[random() % ready.len()];
+        execute_case(fiber, &state.cases[idx], slots);
+        slots[a] = idx as u64;
+        fiber.select_state = None;
+        return ExecResult::Continue;
+    }
+    
+    // 4. Has default, return -1
+    if state.has_default {
+        slots[a] = -1i64 as u64;
+        fiber.select_state = None;
+        return ExecResult::Continue;
+    }
+    
+    // 5. All blocked, register on all channel wait queues
+    for (i, case) in state.cases.iter().enumerate() {
+        register_select_wait(fiber.id, i, case, slots);
+    }
+    return ExecResult::Yield;
+}
+```
+
+**Wakeup Handling**:
+
+```rust
+fn wake_select(fiber_id: FiberId, case_index: usize) {
+    let fiber = scheduler.get_fiber(fiber_id);
+    let state = fiber.select_state.as_mut().unwrap();
+    
+    // Mark wakeup source
+    state.woken_index = Some(case_index);
+    
+    // Unregister from other channels
+    for (i, case) in state.cases.iter().enumerate() {
+        if i != case_index {
+            unregister_select_wait(fiber_id, case);
+        }
+    }
+    
+    scheduler.wake(fiber_id);
 }
 ```

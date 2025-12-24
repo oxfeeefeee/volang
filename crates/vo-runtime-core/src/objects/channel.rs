@@ -1,6 +1,9 @@
 //! Channel object operations.
 //!
 //! Layout: GcHeader + ChannelData
+//!
+//! Supports multi-slot elements. Buffer stores elements consecutively,
+//! each element occupies `elem_slots` slots.
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
@@ -14,11 +17,13 @@ use vo_common_core::types::{ValueKind, ValueMeta};
 #[repr(C)]
 pub struct ChannelData {
     pub state: *mut ChannelState,
+    pub cap: usize,
     pub elem_meta: ValueMeta,
-    pub cap: u32,
+    pub elem_slots: u16,
+    _pad: u16,
 }
 
-const DATA_SLOTS: u16 = 2;
+const DATA_SLOTS: u16 = 3;
 const _: () = assert!(core::mem::size_of::<ChannelData>() == DATA_SLOTS as usize * 8);
 
 impl ChannelData {
@@ -35,7 +40,7 @@ impl ChannelData {
 
 pub type GoId = u64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendResult {
     DirectSend(GoId),
     Buffered,
@@ -43,18 +48,17 @@ pub enum SendResult {
     Closed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecvResult {
-    Success(u64, Option<GoId>),
+    Success(Option<GoId>),
     WouldBlock,
     Closed,
 }
 
-#[derive(Default)]
 pub struct ChannelState {
-    pub buffer: VecDeque<u64>,
+    pub buffer: VecDeque<Box<[u64]>>,
     pub closed: bool,
-    pub waiting_senders: VecDeque<(GoId, u64)>,
+    pub waiting_senders: VecDeque<(GoId, Box<[u64]>)>,
     pub waiting_receivers: VecDeque<GoId>,
 }
 
@@ -68,7 +72,7 @@ impl ChannelState {
         }
     }
 
-    pub fn try_send(&mut self, value: u64, cap: usize) -> SendResult {
+    pub fn try_send(&mut self, value: Box<[u64]>, cap: usize) -> SendResult {
         if self.closed {
             return SendResult::Closed;
         }
@@ -83,7 +87,7 @@ impl ChannelState {
         SendResult::WouldBlock
     }
 
-    pub fn try_recv(&mut self) -> RecvResult {
+    pub fn try_recv(&mut self) -> (RecvResult, Option<Box<[u64]>>) {
         if let Some(value) = self.buffer.pop_front() {
             let woke_sender = if let Some((sender_id, sender_value)) = self.waiting_senders.pop_front() {
                 self.buffer.push_back(sender_value);
@@ -91,15 +95,19 @@ impl ChannelState {
             } else {
                 None
             };
-            return RecvResult::Success(value, woke_sender);
+            return (RecvResult::Success(woke_sender), Some(value));
         }
         if let Some((sender_id, value)) = self.waiting_senders.pop_front() {
-            return RecvResult::Success(value, Some(sender_id));
+            return (RecvResult::Success(Some(sender_id)), Some(value));
         }
-        if self.closed { RecvResult::Closed } else { RecvResult::WouldBlock }
+        if self.closed {
+            (RecvResult::Closed, None)
+        } else {
+            (RecvResult::WouldBlock, None)
+        }
     }
 
-    pub fn register_sender(&mut self, go_id: GoId, value: u64) {
+    pub fn register_sender(&mut self, go_id: GoId, value: Box<[u64]>) {
         self.waiting_senders.push_back((go_id, value));
     }
 
@@ -116,18 +124,27 @@ impl ChannelState {
         self.waiting_receivers.drain(..).collect()
     }
 
-    pub fn take_waiting_senders(&mut self) -> Vec<(GoId, u64)> {
+    pub fn take_waiting_senders(&mut self) -> Vec<(GoId, Box<[u64]>)> {
         self.waiting_senders.drain(..).collect()
+    }
+
+    pub fn iter_buffer(&self) -> impl Iterator<Item = &[u64]> {
+        self.buffer.iter().map(|b| b.as_ref())
+    }
+
+    pub fn iter_waiting_values(&self) -> impl Iterator<Item = &[u64]> {
+        self.waiting_senders.iter().map(|(_, v)| v.as_ref())
     }
 }
 
-pub fn create(gc: &mut Gc, elem_meta: ValueMeta, cap: usize) -> GcRef {
+pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: u16, cap: usize) -> GcRef {
     let chan = gc.alloc(ValueMeta::new(0, ValueKind::Channel), DATA_SLOTS);
     let state = Box::new(ChannelState::new(cap));
     let data = ChannelData::as_mut(chan);
     data.state = Box::into_raw(state);
+    data.cap = cap;
     data.elem_meta = elem_meta;
-    data.cap = cap as u32;
+    data.elem_slots = elem_slots;
     chan
 }
 
@@ -136,7 +153,9 @@ pub fn elem_meta(chan: GcRef) -> ValueMeta { ChannelData::as_ref(chan).elem_meta
 #[inline]
 pub fn elem_kind(chan: GcRef) -> ValueKind { elem_meta(chan).value_kind() }
 #[inline]
-pub fn capacity(chan: GcRef) -> usize { ChannelData::as_ref(chan).cap as usize }
+pub fn elem_slots(chan: GcRef) -> u16 { ChannelData::as_ref(chan).elem_slots }
+#[inline]
+pub fn capacity(chan: GcRef) -> usize { ChannelData::as_ref(chan).cap }
 #[inline]
 pub fn get_state(chan: GcRef) -> &'static mut ChannelState {
     unsafe { &mut *ChannelData::as_ref(chan).state }
@@ -146,6 +165,8 @@ pub fn len(chan: GcRef) -> usize { get_state(chan).len() }
 pub fn is_closed(chan: GcRef) -> bool { get_state(chan).is_closed() }
 pub fn close(chan: GcRef) { get_state(chan).close(); }
 
+/// # Safety
+/// chan must be a valid Channel GcRef.
 pub unsafe fn drop_inner(chan: GcRef) {
     let data = ChannelData::as_mut(chan);
     if !data.state.is_null() {

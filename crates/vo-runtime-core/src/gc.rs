@@ -15,12 +15,12 @@ use vo_common_core::types::{ValueKind, ValueMeta};
 ///
 /// ValueMeta contains:
 /// - meta_id (24 bits): meaning depends on value_kind
-/// - value_kind (8 bits): ValueKind enum, high bit is is_array flag
+/// - value_kind (8 bits): ValueKind enum
 ///
 /// meta_id meaning depends on kind:
-/// - Struct: struct_metas[] index
+/// - Struct, Pointer: struct_metas[] index
+/// - Array: element's meta_id
 /// - Interface: interface_metas[] index
-/// - Array (is_array=1): element's meta_id
 /// - Others: 0
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -31,8 +31,6 @@ pub struct GcHeader {
     pub value_meta: ValueMeta,
 }
 
-pub const IS_ARRAY_FLAG: u8 = 0x80;
-pub const VALUE_KIND_MASK: u8 = 0x7F;
 
 impl GcHeader {
     pub const SIZE: usize = 8;
@@ -57,13 +55,8 @@ impl GcHeader {
     }
 
     #[inline]
-    pub fn is_array(&self) -> bool {
-        (self.value_meta.to_raw() as u8 & IS_ARRAY_FLAG) != 0
-    }
-
-    #[inline]
     pub fn kind(&self) -> ValueKind {
-        ValueKind::from_u8(self.value_meta.to_raw() as u8 & VALUE_KIND_MASK)
+        self.value_meta.value_kind()
     }
 
     #[inline]
@@ -152,15 +145,19 @@ impl Gc {
     }
 
     /// Read a slot from a GC object.
+    /// # Safety
+    /// obj must be a valid GcRef and idx must be within bounds.
     #[inline]
-    pub fn read_slot(obj: GcRef, idx: usize) -> u64 {
-        unsafe { *obj.add(idx) }
+    pub unsafe fn read_slot(obj: GcRef, idx: usize) -> u64 {
+        *obj.add(idx)
     }
 
     /// Write a slot to a GC object.
+    /// # Safety
+    /// obj must be a valid GcRef and idx must be within bounds.
     #[inline]
-    pub fn write_slot(obj: GcRef, idx: usize, val: u64) {
-        unsafe { *obj.add(idx) = val }
+    pub unsafe fn write_slot(obj: GcRef, idx: usize, val: u64) {
+        *obj.add(idx) = val
     }
 
     /// Get the header of a GC object.
@@ -198,9 +195,12 @@ impl Gc {
     }
 
     /// Run garbage collection.
-    pub fn collect<F>(&mut self, mut scan_object: F)
+    /// - `scan_object`: marks children of an object (mark phase)
+    /// - `finalize_object`: releases native resources before dealloc (sweep phase)
+    pub fn collect<S, F>(&mut self, mut scan_object: S, mut finalize_object: F)
     where
-        F: FnMut(&mut Gc, GcRef),
+        S: FnMut(&mut Gc, GcRef),
+        F: FnMut(GcRef),
     {
         while let Some(obj) = self.gray_queue.pop() {
             let header = Self::header_mut(obj);
@@ -219,6 +219,7 @@ impl Gc {
                 Self::header_mut(entry.ptr).mark = GcColor::White as u8;
                 new_objects.push(entry);
             } else {
+                finalize_object(entry.ptr);
                 freed_bytes += entry.size_bytes;
                 let raw_ptr = unsafe { (entry.ptr as *mut u8).sub(GcHeader::SIZE) };
                 let layout =
@@ -241,6 +242,29 @@ impl Gc {
 
     pub fn object_count(&self) -> usize {
         self.all_objects.len()
+    }
+
+    /// Deep copy (clone) a heap object.
+    /// Allocates new object with same value_meta and copies all slots.
+    /// Used by PtrClone instruction and interface assignment (value semantics).
+    /// # Safety
+    /// src must be a valid GcRef or null.
+    pub unsafe fn ptr_clone(&mut self, src: GcRef) -> GcRef {
+        if src.is_null() {
+            return src;
+        }
+        let header = Self::header(src);
+        let slots = header.slots;
+        let value_meta = header.value_meta;
+
+        let dst = self.alloc(value_meta, slots);
+
+        for i in 0..slots as usize {
+            let val = unsafe { Self::read_slot(src, i) };
+            unsafe { Self::write_slot(dst, i, val) };
+        }
+
+        dst
     }
 }
 

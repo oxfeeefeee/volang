@@ -38,7 +38,7 @@ This document specifies the Vo memory model and instruction set architecture. Th
 ```rust
 pub enum ValueKind {
     // === Primitive Types (1 slot, no GC) ===
-    Nil = 0,
+    Void = 0,  // No type (distinct from semantic nil like nil pointer/slice/map)
     Bool = 1,
     Int = 2,
     Int8 = 3,
@@ -190,8 +190,15 @@ var arr [3]int  // slot 0: arr[0], slot 1: arr[1], slot 2: arr[2]
 **Interface**: 2 slots
 ```vo
 var i interface{}
-// slot 0: header (iface_meta_id:24 | reserved:8 | value_meta_id:24 | value_kind:8)
+// slot 0: [itab_id:32 | value_meta:32]  (value_meta = meta_id:24 | value_kind:8)
 // slot 1: data (immediate value or GcRef)
+//
+// itab_id: index into VM's itab table (for method dispatch)
+// value_meta: concrete type's ValueMeta
+//
+// nil check (same as Go):
+//   i == nil  ⟺  value_kind == Void
+//   Note: value_kind != Void but data == 0 means typed nil (e.g. (*T)(nil)), NOT nil interface
 ```
 
 ### 3.2 Heap Layout
@@ -228,10 +235,9 @@ impl ValueMeta {
 }
 
 // meta_id meaning varies by value_kind:
-// - Array, Slice, Channel: elem_meta_id (element's meta_id)
-// - Struct, Pointer: meta_id of the pointed object
-// - Interface: meta_id of the interface type
-// - Map: 0 (key/val type info stored in Container data)
+// - Struct, Pointer: struct_metas[] index
+// - Interface: interface_metas[] index
+// - Array, Slice, Channel, Map: 0 (type info stored in object header/data)
 // - Others: 0
 ```
 
@@ -259,7 +265,7 @@ pub struct GcHeader {
 └─────────────────────────────┘
 ```
 
-**Escaped Struct**:
+**Escaped Struct** (fields flattened, same as stack layout):
 ```
 ┌─────────────────────────────┐
 │ GcHeader (value_kind=Struct)│
@@ -268,14 +274,20 @@ pub struct GcHeader {
 │ field 1 (8 bytes)           │
 │ ...                         │
 └─────────────────────────────┘
+
+// Nested structs are flattened inline, not separate heap objects.
+// Only reference-type fields (string/slice/map/chan/closure/pointer) are GcRef.
+// Therefore, PtrClone (memcpy all slots) achieves correct value semantics:
+// - Primitive/nested-struct fields: copied by value
+// - Reference-type fields: shared (reference semantics, as expected)
 ```
 
 **Escaped Array**:
 ```
 ┌─────────────────────────────────────────────────┐
-│ GcHeader (value_kind=Array)               │
+│ GcHeader (value_kind=Array, meta_id=0)    │
 ├─────────────────────────────────────────────────┤
-│ Array header: [len:48 | elem_slots:16]    │
+│ Array header: len (usize), elem_meta (u32)│  2 slots
 ├─────────────────────────────────────────────────┤
 │ element 0                                 │
 │ element 1                                 │
@@ -283,8 +295,21 @@ pub struct GcHeader {
 └─────────────────────────────────────────────────┘
 
 // GcHeader.value_kind = ValueKind::Array
-// GcHeader.meta_id = elem_meta_id (when element is Struct and needs GC scanning)
-// Array header slot 0: [len:48 | elem_slots:16]
+// GcHeader.meta_id = 0 (Array doesn't need meta_id, elem info in ArrayHeader)
+// ArrayHeader.elem_meta = element's ValueMeta (for GC scanning)
+// elem_slots provided by instruction flags, not stored in object
+```
+
+**Slice** (reference type, 4 slots):
+```
+┌─────────────────────────────────────────────────┐
+│ GcHeader (value_kind=Slice)               │
+├─────────────────────────────────────────────────┤
+│ array: GcRef (underlying array)           │
+│ start: usize (offset into array)          │
+│ len: usize                                │
+│ cap: usize                                │
+└─────────────────────────────────────────────────┘
 ```
 
 ### 3.3 Global Variables
@@ -397,9 +422,43 @@ pub struct Instruction {
 }
 ```
 
-### 6.2 Opcode Categories
+### 6.2 Design Philosophy
 
-#### 6.2.1 LOAD: Load Immediate/Constant
+#### 6.2.1 Fixed-Length Instructions
+- **64-bit fixed size**: Simple decoding, cache-friendly
+- Trade-off: Limited parameter space → use other mechanisms to extend
+
+#### 6.2.2 Compile-Time Over Runtime
+- **elem_slots encoded in instruction**, not inferred at runtime from objects
+- Cranelift can unroll directly, no loops/branches
+- Performance priority: Single-slot is the hot path
+
+#### 6.2.3 Unification Over Fragmentation
+- **Remove single-slot variants**: `ArrayGet` uses `flags=elem_slots` uniformly
+- Fewer opcodes, simpler VM and JIT implementation
+- When flags=1, compiler constant-folds, zero overhead
+
+#### 6.2.4 Meta Slot for Unlimited Size
+- **When 8-bit flags insufficient**, use adjacent slot to store metadata
+- Map/Iter: `slots[x]` = meta, `slots[x+1..]` = data
+- Consistent rule: meta first, data after
+
+#### 6.2.5 Static vs Dynamic Indexing
+
+| Index Type | Approach | Examples |
+|------------|----------|----------|
+| Static | Keep N-version | `GlobalGetN`, `PtrGetN` |
+| Dynamic | Unified version | `ArrayGet`, `SliceGet` |
+| Unlimited | Meta slot | `MapGet`, `IterBegin` |
+
+#### 6.2.6 Simplicity Over Extreme Performance
+- Fewer instructions → fewer VM dispatch branches
+- Simpler maintenance → fewer bugs
+- Minor performance differences are acceptable
+
+### 6.3 Opcode Categories
+
+#### 6.3.1 LOAD: Load Immediate/Constant
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -410,14 +469,14 @@ pub struct Instruction {
 | `LoadInt` | a, b, c | `slots[a] = sign_extend(b \| (c << 16))` |
 | `LoadConst` | a, b | `slots[a] = constants[b]` |
 
-#### 6.2.2 COPY: Stack Slot Copy
+#### 6.3.2 COPY: Stack Slot Copy
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
 | `Copy` | a, b | `slots[a] = slots[b]` (single slot) |
 | `CopyN` | a, b, c | `slots[a..a+c] = slots[b..b+c]` (multi-slot) |
 
-#### 6.2.3 SLOT: Stack Dynamic Indexing
+#### 6.3.3 SLOT: Stack Dynamic Indexing
 
 For stack-allocated arrays with dynamic indices.
 
@@ -428,25 +487,27 @@ For stack-allocated arrays with dynamic indices.
 | `SlotGetN` | a, b, c, flags | `slots[a..a+flags] = slots[b + slots[c]*flags..]` |
 | `SlotSetN` | a, b, c, flags | `slots[a + slots[b]*flags..] = slots[c..c+flags]` |
 
-#### 6.2.4 GLOBAL: Global Variable Access
+#### 6.3.4 GLOBAL: Global Variable Access
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
 | `GlobalGet` | a, b | `slots[a] = globals[b]` |
+| `GlobalGetN` | a, b, flags | `slots[a..a+flags] = globals[b..]`, flags=n |
 | `GlobalSet` | a, b | `globals[a] = slots[b]` |
+| `GlobalSetN` | a, b, flags | `globals[a..] = slots[b..b+flags]`, flags=n |
 
-#### 6.2.5 PTR: Heap Pointer Operations
+#### 6.3.5 PTR: Heap Pointer Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `PtrNew` | a, b, c, flags | `slots[a] = alloc(value_kind=flags, meta_id=b\|(c<<16))` size 从 struct_metas 查询 |
+| `PtrNew` | a, b, flags | `slots[a] = alloc(slots[b])`, b=meta_reg containing ValueMeta, flags=slots |
 | `PtrClone` | a, b | `slots[a] = clone(slots[b])` - allocate + memcpy |
 | `PtrGet` | a, b, c | `slots[a] = heap[slots[b]].offset[c]` (single slot) |
 | `PtrSet` | a, b, c | `heap[slots[a]].offset[b] = slots[c]` (single slot) |
 | `PtrGetN` | a, b, c, flags | `slots[a..a+flags] = heap[slots[b]].offset[c..]` |
 | `PtrSetN` | a, b, c, flags | `heap[slots[a]].offset[b..] = slots[c..c+flags]` |
 
-#### 6.2.6 ARITH: Integer Arithmetic
+#### 6.3.6 ARITH: Integer Arithmetic
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -457,7 +518,7 @@ For stack-allocated arrays with dynamic indices.
 | `ModI` | a, b, c | `slots[a] = slots[b] % slots[c]` |
 | `NegI` | a, b | `slots[a] = -slots[b]` |
 
-#### 6.2.7 ARITH: Float Arithmetic
+#### 6.3.7 ARITH: Float Arithmetic
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -467,7 +528,7 @@ For stack-allocated arrays with dynamic indices.
 | `DivF` | a, b, c | `slots[a] = slots[b] / slots[c]` |
 | `NegF` | a, b | `slots[a] = -slots[b]` |
 
-#### 6.2.8 CMP: Integer Comparison
+#### 6.3.8 CMP: Integer Comparison
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -478,7 +539,7 @@ For stack-allocated arrays with dynamic indices.
 | `GtI` | a, b, c | `slots[a] = slots[b] > slots[c]` |
 | `GeI` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
 
-#### 6.2.9 CMP: Float Comparison
+#### 6.3.9 CMP: Float Comparison
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -489,7 +550,7 @@ For stack-allocated arrays with dynamic indices.
 | `GtF` | a, b, c | `slots[a] = slots[b] > slots[c]` |
 | `GeF` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
 
-#### 6.2.10 CMP: Reference Comparison
+#### 6.3.10 CMP: Reference Comparison
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -497,7 +558,7 @@ For stack-allocated arrays with dynamic indices.
 | `NeRef` | a, b, c | `slots[a] = slots[b] != slots[c]` |
 | `IsNil` | a, b | `slots[a] = slots[b] == nil` |
 
-#### 6.2.11 BIT: Bitwise Operations
+#### 6.3.11 BIT: Bitwise Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -509,13 +570,13 @@ For stack-allocated arrays with dynamic indices.
 | `ShrS` | a, b, c | `slots[a] = slots[b] >> slots[c]` (arithmetic) |
 | `ShrU` | a, b, c | `slots[a] = slots[b] >>> slots[c]` (logical) |
 
-#### 6.2.12 LOGIC: Logical Operations
+#### 6.3.12 LOGIC: Logical Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
 | `BoolNot` | a, b | `slots[a] = !slots[b]` |
 
-#### 6.2.13 JUMP: Control Flow
+#### 6.3.13 JUMP: Control Flow
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -523,25 +584,27 @@ For stack-allocated arrays with dynamic indices.
 | `JumpIf` | a, b, c | `if slots[a]: pc += sign_extend(b \| (c << 16))` |
 | `JumpIfNot` | a, b, c | `if !slots[a]: pc += sign_extend(b \| (c << 16))` |
 
-#### 6.2.14 CALL: Function Calls
+#### 6.3.14 CALL: Function Calls
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `Call` | a, b, c, flags | Call `functions[a]`, args at `b`, arg_slots=`c`, ret_slots=`flags` |
-| `CallExtern` | a, b, c, flags | Call extern function, arg_slots=`c`, ret_slots=`flags` |
-| `CallClosure` | a, b, c, flags | Call closure at `slots[a]`, args at `b`, arg_slots=`c`, ret_slots=`flags` |
+| `Call` | a, b, c, flags | Call `functions[a\|(flags<<16)]`, args at `b`, `c`=(arg_slots<<8\|ret_slots) |
+| `CallExtern` | a, b, c, flags | Call `externs[a\|(flags<<16)]`, args at `b`, `c`=(arg_slots<<8\|ret_slots) |
+| `CallClosure` | a, b, c | Call closure at `slots[a]`, args at `b`, `c`=(arg_slots<<8\|ret_slots) |
 | `CallIface` | a, b, c, flags | Call interface method: iface at `a`, args at `b`, `c`=(arg_slots<<8\|ret_slots), `flags`=method_idx |
 | `Return` | a, b | Return values starting at `a`, ret_slots=`b` |
 
-#### 6.2.15 STR: String Operations
+`Call`/`CallExtern` encoding: func_id = `a | (flags << 16)` → 24 bits (max 16M functions)
+
+#### 6.3.15 STR: String Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `StrNew` | a, b | `slots[a] = string_constants[b]` |
+| `StrNew` | a, b | `slots[a] = constants[b]` (string constant) |
 | `StrLen` | a, b | `slots[a] = len(slots[b])` |
 | `StrIndex` | a, b, c | `slots[a] = slots[b][slots[c]]` |
 | `StrConcat` | a, b, c | `slots[a] = slots[b] + slots[c]` |
-| `StrSlice` | a, b, c, flags | `slots[a] = slots[b][slots[c]:slots[flags]]` |
+| `StrSlice` | a, b, c | `slots[a] = str[lo:hi]`, b=str, c=params_start, lo=slots[c], hi=slots[c+1] |
 | `StrEq` | a, b, c | `slots[a] = slots[b] == slots[c]` |
 | `StrNe` | a, b, c | `slots[a] = slots[b] != slots[c]` |
 | `StrLt` | a, b, c | `slots[a] = slots[b] < slots[c]` |
@@ -549,147 +612,169 @@ For stack-allocated arrays with dynamic indices.
 | `StrGt` | a, b, c | `slots[a] = slots[b] > slots[c]` |
 | `StrGe` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
 
-#### 6.2.16 ARRAY: Heap Array Operations
+#### 6.3.16 ARRAY: Heap Array Operations
 
 For escaped arrays allocated on the heap.
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `ArrayNew` | a, b, c, flags | `slots[a] = new [elem_kind]T`, b=elem_meta_id, c=len_reg, flags=elem_kind |
-| `ArrayGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
-| `ArraySet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
-| `ArrayGetN` | a, b, c, flags | `slots[a..a+flags] = slots[b][slots[c]]`, flags=elem_slots |
-| `ArraySetN` | a, b, c, flags | `slots[a][slots[b]] = slots[c..c+flags]`, flags=elem_slots |
+| `ArrayNew` | a, b, c, flags | `slots[a] = new array`, b=meta_reg, c=len_reg, flags=elem_slots |
+| `ArrayGet` | a, b, c, flags | `slots[a..a+flags] = arr[idx]`, b=arr, c=idx, flags=elem_slots |
+| `ArraySet` | a, b, c, flags | `arr[idx] = slots[c..c+flags]`, a=arr, b=idx, flags=elem_slots |
 | `ArrayLen` | a, b | `slots[a] = len(slots[b])` |
 
-`ArrayNew` 编码: a=dst, b=elem_meta_id_low16, c=len_reg, flags=elem_kind。elem_slots 从 struct_metas 查询。
+`ArrayNew` encoding: `slots[b]` contains elem's `ValueMeta` (loaded via `LoadConst`), `slots[c]` contains length, `flags` contains elem_slots.
 
-#### 6.2.17 SLICE: Slice Operations
+#### 6.3.17 SLICE: Slice Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `SliceGet` | a, b, c | `slots[a] = slots[b][slots[c]]` |
-| `SliceSet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
-| `SliceGetN` | a, b, c, flags | `slots[a..a+flags] = slots[b][slots[c]]`, flags=elem_slots |
-| `SliceSetN` | a, b, c, flags | `slots[a][slots[b]] = slots[c..c+flags]`, flags=elem_slots |
-| `SliceNew` | a, b, c, flags | `slots[a] = make([]T, len, cap)`, 见下方编码 |
+| `SliceNew` | a, b, c, flags | `slots[a] = make([]T, len, cap)`, b=meta_reg, c=params_start, flags=elem_slots |
+| `SliceGet` | a, b, c, flags | `slots[a..a+flags] = slice[idx]`, b=slice, c=idx, flags=elem_slots |
+| `SliceSet` | a, b, c, flags | `slice[idx] = slots[c..c+flags]`, a=slice, b=idx, flags=elem_slots |
 | `SliceLen` | a, b | `slots[a] = len(slots[b])` |
 | `SliceCap` | a, b | `slots[a] = cap(slots[b])` |
-| `SliceSlice` | a, b, c, flags | `slots[a] = slots[b][slots[c]:slots[flags]]` |
-| `SliceAppend` | a, b, c | `slots[a] = append(slots[b], slots[c])` |
+| `SliceSlice` | a, b, c, flags | `slots[a] = slice[lo:hi:max]`, b=slice, c=params_start, flags: bit0=has_max. lo=slots[c], hi=slots[c+1], max=slots[c+2] if has_max else cap |
+| `SliceAppend` | a, b, c, flags | `slots[a] = append(slice, slots[c..c+flags])`, b=slice, flags=elem_slots |
 
-`SliceNew` 编码: a=dst, b=elem_meta_id_low16, c=len_reg, flags=elem_kind。cap 从下一个 slot 读取。
+`SliceNew` encoding: `slots[b]` contains elem's `ValueMeta`, `slots[c]` contains length, `slots[c+1]` contains capacity, `flags` contains elem_slots.
 
-#### 6.2.18 MAP: Map Operations
+#### 6.3.18 MAP: Map Operations
+
+Uses meta slot for key/val slots encoding (no size limit).
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `MapNew` | a, b | `slots[a] = make(map[K]V)`, b=type_info_reg |
-| `MapGet` | a, b, c, flags | `slots[a] = slots[b][slots[c]]`, flags=1 时 ok 写到 `slots[a+1]` |
-| `MapSet` | a, b, c | `slots[a][slots[b]] = slots[c]` |
-| `MapDelete` | a, b | `delete(slots[a], slots[b])` |
+| `MapNew` | a, b, c | `slots[a] = make(map[K]V)`, b=type_info_reg, c=(key_slots<<8)\|val_slots |
+| `MapGet` | a, b, c | `slots[a..] = map[key]`, b=map, c=meta_and_key |
+| `MapSet` | a, b, c | `map[key] = val`, a=map, b=meta_and_key, c=val_start |
+| `MapDelete` | a, b | `delete(map, key)`, a=map, b=meta_and_key |
 | `MapLen` | a, b | `slots[a] = len(slots[b])` |
 
-`MapNew` 用两条指令: `LoadConst r, <packed_u64>` + `MapNew dst, r`。
-packed_u64 格式: `[key_kind:8 | key_meta_id:24 | val_kind:8 | val_meta_id:24]`
+**Meta slot encoding**:
+- `MapGet`: `slots[c] = (key_slots << 16) | (val_slots << 1) | has_ok`, key=`slots[c+1..]`
+- `MapSet`: `slots[b] = (key_slots << 8) | val_slots`, key=`slots[b+1..]`
+- `MapDelete`: `slots[b] = key_slots`, key=`slots[b+1..]`
 
-#### 6.2.19 CHAN: Channel Operations
+`MapNew` encoding: `LoadConst r, <packed_u64>` + `MapNew dst, r, slots_packed`.
+- `slots[b]` (packed_u64): `[key_meta:32 | val_meta:32]`, each meta = `[meta_id:24 | kind:8]` (same as `ValueMeta`)
+- `c`: `(key_slots << 8) | val_slots`
+
+#### 6.3.19 CHAN: Channel Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `ChanNew` | a, b, c, flags | `slots[a] = make(chan T, cap)`, b=elem_meta_id, c=cap_reg, flags=elem_kind |
-| `ChanSend` | a, b | `slots[a] <- slots[b]` |
-| `ChanRecv` | a, b, c, flags | `slots[a] = <-slots[b]`, flags=1 时 ok 写到 `slots[c]` |
+| `ChanNew` | a, b, c, flags | `slots[a] = make(chan T, cap)`, b=meta_reg, c=cap_reg, flags=elem_slots |
+| `ChanSend` | a, b, flags | `chan <- slots[b..b+flags]`, a=chan, flags=elem_slots |
+| `ChanRecv` | a, b, flags | `slots[a..] = <-chan`, b=chan, flags=(elem_slots<<1)\|has_ok |
 | `ChanClose` | a | `close(slots[a])` |
 
-`ChanNew` 编码: a=dst, b=elem_meta_id_low16, c=cap_reg, flags=elem_kind。
+`ChanNew` encoding: `slots[b]` contains elem's `ValueMeta`, `slots[c]` contains capacity, `flags` contains elem_slots.
 
-#### 6.2.20 SELECT: Select Statement
-
-| Opcode | Operands | Description |
-|--------|----------|-------------|
-| `SelectBegin` | a, b | Begin select, case_count=`a`, has_default=`b` |
-| `SelectSend` | a, b | Add send case: chan=`a`, val=`b` |
-| `SelectRecv` | a, b, c | Add recv case: dst=`a`, chan=`b`, ok=`c` |
-| `SelectEnd` | a | Execute select, chosen index → `a` |
-
-#### 6.2.21 ITER: Iterator (for-range)
+#### 6.3.20 SELECT: Select Statement
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `IterBegin` | a, b | Begin iteration over `slots[a]`, type=`b` |
-| `IterNext` | a, b, c | `slots[a], slots[b] = next`, done_offset=`c` |
+| `SelectBegin` | a, flags | Begin select, a=case_count, flags: bit0=has_default |
+| `SelectSend` | a, b, flags | Add send case: a=chan_reg, b=val_reg, flags=elem_slots |
+| `SelectRecv` | a, b, flags | Add recv case: a=dst_reg, b=chan_reg, flags=(elem_slots<<1)\|has_ok |
+| `SelectExec` | a | Execute select, chosen index → `slots[a]` (-1=default) |
+
+#### 6.3.21 ITER: Iterator (for-range)
+
+Uses meta slot for key/val slots encoding (no size limit).
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `IterBegin` | a, b | Begin iteration, a=meta_and_container, b=type |
+| `IterNext` | a, b, c | `slots[a..], slots[b..] = next`, done_offset=`c`; slots count from IterState |
 | `IterEnd` | - | End iteration |
 
-#### 6.2.22 CLOSURE: Closure Operations
+**Meta slot encoding**:
+- `slots[a] = (key_slots << 8) | val_slots`, container=`slots[a+1]`
+
+#### 6.3.22 CLOSURE: Closure Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-----------|
-| `ClosureNew` | a, b, c | `slots[a] = new_closure(func_id=b, upval_count=c)` |
-| `ClosureGet` | a, b | `slots[a] = slots[0].captures[b]` (closure 隐式在 r0) |
-| `ClosureSet` | a, b | `slots[0].captures[a] = slots[b]` (closure 隐式在 r0) |
+| `ClosureNew` | a, b, c, flags | `slots[a] = new_closure(func_id=b\|(flags<<16), capture_count=c)` |
+| `ClosureGet` | a, b | `slots[a] = slots[0].captures[b]` (closure implicit in r0) |
+| `ClosureSet` | a, b | `slots[0].captures[a] = slots[b]` (closure implicit in r0) |
 
-Note: Escaped variables are heap-allocated directly, and closures capture GcRefs.
+Note: Escaped variables are heap-allocated directly, and closures store GcRefs to them (no indirection).
 
-#### 6.2.23 GO: Goroutine
+#### 6.3.23 GO: Goroutine
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `GoCall` | a | `go slots[a]()` (0 参数 closure，与 defer 一致) |
+| `GoCall` | a | `go slots[a]()` (0-arg closure, same as defer) |
 | `Yield` | - | Yield current goroutine |
 
-#### 6.2.24 DEFER: Defer and Error Handling
+#### 6.3.24 DEFER: Defer and Error Handling
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `DeferPush` | a | Push defer: closure=`slots[a]` (0 参数 closure) |
-| `ErrDeferPush` | a | Push errdefer: closure=`slots[a]` (只在 error return 时执行) |
+| `DeferPush` | a | Push defer: closure=`slots[a]` (0-arg closure) |
+| `ErrDeferPush` | a | Push errdefer: closure=`slots[a]` (executed only on error return) |
 | `Panic` | a | `panic(slots[a])` |
 | `Recover` | a | `slots[a] = recover()` |
 
 Note: `DeferPop` removed. Defers are executed automatically by `Return`.
 
-#### 6.2.25 IFACE: Interface Operations
+#### 6.3.25 IFACE: Interface Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `IfaceInit` | a, b, c | Init nil interface at `slots[a..a+2]`, iface_meta_id=`b \| (c << 16)` |
-| `IfaceAssign` | a, b, flags | Assign value to interface: dst=`slots[a..a+2]`, src=`slots[b]`, vk=`flags`. See below. |
-| `IfaceAssert` | a, b, c, flags | Type assert: `slots[a..] = slots[b..b+2].(type c)`, ok at `slots[flags]` |
+| `IfaceAssign` | a, b, c, flags | Assign to interface: dst=`slots[a..a+2]`, src=`slots[b]`, iface_meta_id=`c`, vk=`flags` |
+| `IfaceAssert` | a, b, c, flags | Type assert: dst=`a`, src_iface=`b`, target_meta_id=`c`. flags=0: panic, flags>0: ok→`slots[a+flags]` |
 
 **IfaceAssign Semantics**:
 
-The `value_meta_id` is read from the GcHeader of the source value (for Pointer/Struct/Array).
-
 ```rust
+// c = target iface_meta_id (compile-time known)
+// flags = src value_kind
+
+// Get src_meta_id from source
+let src_meta_id = match vk {
+    Struct | Array | Pointer => gc.get_header(slots[b]).meta_id(),
+    Interface => unpack_value_meta(slots[b]).meta_id(),
+    _ => 0,  // primitives/refs don't need meta_id
+};
+
+// Get or create itab (lazy, cached)
+let itab_id = vm.get_or_create_itab(src_meta_id, iface_meta_id);
+
+// Build value_meta
+let value_meta = ValueMeta::new(src_meta_id, vk);
+
+// Write slot0: [itab_id:32 | value_meta:32]
+slots[a] = ((itab_id as u64) << 32) | (value_meta.to_raw() as u64);
+
+// Write slot1: deep copy if Struct/Array
 match vk {
-    Struct | Array => {
-        // Boxed value type → deep copy (value semantics)
-        let src_ref = slots[b] as GcRef;
-        let new_ref = gc.ptr_clone(src_ref);
-        let meta_id = gc.get_header(src_ref).meta_id;
-        slots[a] = (iface_meta_id << 32) | (meta_id << 8) | vk;
-        slots[a+1] = new_ref;
-    }
+    Struct | Array => slots[a+1] = gc.ptr_clone(slots[b]),
     Interface => {
-        // Interface → Interface: copy slot0's value info, deep copy slot1 if needed
         let src_vk = slots[b] & 0xFF;
-        slots[a] = (iface_meta_id << 32) | (slots[b] & 0xFFFFFFFF);
         slots[a+1] = if src_vk == Struct || src_vk == Array {
             gc.ptr_clone(slots[b+1])
         } else {
             slots[b+1]
         };
     }
-    _ => {
-        // Primitive, reference types, Pointer → direct copy
-        slots[a] = (iface_meta_id << 32) | vk;
-        slots[a+1] = slots[b];
-    }
+    _ => slots[a+1] = slots[b],
 }
 ```
 
-#### 6.2.26 CONV: Type Conversion
+**Itab Structure** (runtime, lazy built):
+```rust
+struct Itab {
+    methods: Vec<u32>,  // method_idx -> func_id
+}
+// itab_cache: HashMap<(meta_id, iface_meta_id), itab_id>
+// No need to store meta_id in Itab - use slot0.value_meta.meta_id() directly
+```
+
+#### 6.3.26 CONV: Type Conversion
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
@@ -698,7 +783,7 @@ match vk {
 | `ConvI32I64` | a, b | `slots[a] = int64(int32(slots[b]))` |
 | `ConvI64I32` | a, b | `slots[a] = int32(slots[b])` |
 
-#### 6.2.27 DEBUG: Debug Operations
+#### 6.3.27 DEBUG: Debug Operations
 
 Note: `Print` uses CallExtern (`vo_print`). Assert is implemented using `JumpIf` + `CallExtern(print)` + `Panic`.
 
@@ -719,24 +804,29 @@ pub enum SlotType {
 }
 ```
 
-### 7.2 TypeMeta
+### 7.2 StructMeta
 
 Runtime type metadata for struct types:
 
 ```rust
-pub struct TypeMeta {
+pub struct StructMeta {
     pub name: String,
     pub size_slots: u16,
     pub slot_types: Vec<SlotType>,  // For GC scanning
+    pub field_names: Vec<String>,
+    pub field_offsets: Vec<u16>,
+    pub methods: HashMap<String, u32>,  // method_name -> func_id (for itab building)
 }
 ```
 
 ### 7.3 Closure Structure
 
 ```rust
-pub struct Closure {
+/// Closure layout: GcHeader + ClosureHeader + [captures...]
+pub struct ClosureHeader {
     pub func_id: u32,
-    pub captures: Vec<GcRef>,  // Captured variables (already on heap)
+    pub capture_count: u32,
 }
+// Followed by capture_count GcRef slots (direct pointers to escaped variables on heap)
 ```
 

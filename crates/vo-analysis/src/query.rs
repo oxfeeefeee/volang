@@ -243,7 +243,7 @@ impl<'a> TypeQuery<'a> {
                 let u = n.try_underlying().expect("Named type must have underlying in codegen");
                 self.value_kind(&self.objs.types[u])
             }
-            Type::Tuple(_) => ValueKind::Nil,
+            Type::Tuple(_) => ValueKind::Void,
         }
     }
 
@@ -471,7 +471,7 @@ fn basic_to_value_kind(b: BasicType) -> ValueKind {
         BasicType::Float32 => ValueKind::Float32,
         BasicType::Float64 => ValueKind::Float64,
         BasicType::Str => ValueKind::String,
-        BasicType::UntypedNil => ValueKind::Nil,
+        BasicType::UntypedNil => ValueKind::Void,
         BasicType::UntypedBool => ValueKind::Bool,
         BasicType::UntypedInt | BasicType::UntypedRune => ValueKind::Int,
         BasicType::UntypedFloat => ValueKind::Float64,

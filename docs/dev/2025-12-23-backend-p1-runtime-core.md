@@ -1,5 +1,7 @@
 # Backend P1: vo-runtime-core
 
+!!! 本文档已过期，仅作存档参考，一切以代码为准
+
 **Parent**: [2025-12-23-backend-rewrite-plan.md](2025-12-23-backend-rewrite-plan.md)  
 **Status**: Not Started  
 **Est. Modules**: 28
@@ -90,10 +92,9 @@ pub struct GcHeader {
 }
 
 /// ValueMeta.meta_id 含义随 value_kind 变化:
-/// - Array, Slice, Channel: elem_meta_id（元素的 meta_id）
-/// - Struct, Pointer: 指向对象的 meta_id
-/// - Interface: 接口类型的 meta_id
-/// - Map: 0（key/val 类型信息存在 Container 数据里）
+/// - Struct, Pointer: struct_metas[] 索引
+/// - Interface: interface_metas[] 索引
+/// - Array, Slice, Channel, Map: 0（类型信息存在对象 header/data 里）
 /// - 其他: 0
 ///
 /// 注：不含 GcRef 的 Struct 元素，meta_id = 0（codegen 知道不需要扫描）
@@ -198,23 +199,25 @@ pub fn cmp(a: GcRef, b: GcRef) -> i32;
 ```rust
 /// Array 布局 (Rust struct + 动态数据)
 /// GcHeader.value_kind = ValueKind::Array
-/// GcHeader.meta_id = elem_meta_id（元素需要 GC 扫描时）
+/// GcHeader.meta_id = 0（Array 不需要自己的 meta_id，元素信息存在 ArrayHeader）
 #[repr(C)]
 pub struct ArrayHeader {
-    pub len: usize,
-    pub elem_size: u16,  // 字节数，不是 slot 数
-    // data: [u8; len * elem_size] 紧跟其后
+    pub len: usize,           // 元素个数
+    pub elem_meta: ValueMeta, // 元素的 ValueMeta (meta_id:24 | kind:8)
+    pub elem_bytes: u32,      // 每个元素的字节数 (= elem_slots * 8)
+    // data: [u64; len * elem_slots] 紧跟其后
 }
 
-pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_size: u16, len: usize) -> GcRef;
+pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: usize, len: usize) -> GcRef;
 pub fn len(arr: GcRef) -> usize;
-pub fn get(arr: GcRef, idx: usize) -> u64;           // 简单类型 (<= 8 bytes)
-pub fn set(arr: GcRef, idx: usize, val: u64);
-pub fn get_n(arr: GcRef, idx: usize, dest: &mut [u8]); // 复合类型
-pub fn set_n(arr: GcRef, idx: usize, src: &[u8]);
+pub fn elem_meta(arr: GcRef) -> ValueMeta;
+pub fn elem_kind(arr: GcRef) -> ValueKind;
+pub fn elem_bytes(arr: GcRef) -> usize;
+pub fn get(arr: GcRef, offset: usize) -> u64;
+pub fn set(arr: GcRef, offset: usize, val: u64);
+pub fn get_n(arr: GcRef, offset: usize, dest: &mut [u64]);
+pub fn set_n(arr: GcRef, offset: usize, src: &[u64]);
 ```
-
-**⚠️ 注意**：`elem_size` 由调用者（VM）从 `struct_metas` 查询后传入（字节数）
 
 #### 4.3 Slice (objects/slice.rs)
 
