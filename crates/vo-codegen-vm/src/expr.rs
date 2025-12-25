@@ -74,9 +74,13 @@ pub fn compile_expr_to(
                     func.emit_copy(dst, local.slot, local.slots);
                 }
             } else if let Some(capture) = func.lookup_capture(ident.symbol) {
-                // Closure capture: use ClosureGet
+                // Closure capture: use ClosureGet to get the GcRef, then dereference
                 // ClosureGet: a=dst, b=capture_index (closure implicit in r0)
                 func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
+                // The capture slot holds a GcRef to the escaped variable's heap storage
+                // Need to dereference it to get the actual value
+                // PtrGet: a=dst, b=ptr_reg, c=offset (offset 0 for the value)
+                func.emit_op(Opcode::PtrGet, dst, dst, 0);
             } else if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
                 func.emit_op(Opcode::GlobalGet, dst, global_idx as u16, 0);
             } else {
