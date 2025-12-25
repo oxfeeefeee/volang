@@ -154,6 +154,8 @@ tests:
     mode: [vm]
   - file: stack_vs_escaped_array.vo
     mode: [vm]
+  - file: slice_ops.vo
+    mode: [vm]
 
   # JIT-only tests (all skipped - JIT not ready)
   - file: jit/bitwise_ops.vo

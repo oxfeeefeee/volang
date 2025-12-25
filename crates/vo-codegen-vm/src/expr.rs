@@ -1346,12 +1346,24 @@ fn compile_composite_lit(
         // Create slice with make, then set elements
         let elem_slots = info.slice_elem_slots(type_key)
             .expect("slice must have elem_slots");
-        let len = lit.elems.len() as u16;
+        let len = lit.elems.len();
         
-        // SliceNew: a=dst, b=len, c=cap (use len as cap)
-        let len_reg = func.alloc_temp(1);
-        func.emit_op(Opcode::LoadInt, len_reg, len, 0);
-        func.emit_with_flags(Opcode::SliceNew, elem_slots as u8, dst, len_reg, len_reg);
+        // Get element meta
+        let elem_slot_types = info.slice_elem_slot_types(type_key)
+            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+        let elem_meta_idx = ctx.get_or_create_value_meta(None, elem_slots, &elem_slot_types);
+        
+        // Load elem_meta into register
+        let meta_reg = func.alloc_temp(1);
+        func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
+        
+        // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_slots
+        // c and c+1 hold len and cap
+        let len_cap_reg = func.alloc_temp(2);
+        let (b, c) = crate::type_info::encode_i32(len as i32);
+        func.emit_op(Opcode::LoadInt, len_cap_reg, b, c);      // len
+        func.emit_op(Opcode::LoadInt, len_cap_reg + 1, b, c);  // cap = len
+        func.emit_with_flags(Opcode::SliceNew, elem_slots as u8, dst, meta_reg, len_cap_reg);
         
         // Set each element
         for (i, elem) in lit.elems.iter().enumerate() {
