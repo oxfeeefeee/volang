@@ -1330,7 +1330,8 @@ fn compile_composite_lit(
         }
         
         // Initialize specified fields
-        for elem in &lit.elems {
+        let mut positional_offset = 0u16;
+        for (i, elem) in lit.elems.iter().enumerate() {
             if let Some(key) = &elem.key {
                 // Named field: key is field name
                 if let vo_syntax::ast::CompositeLitKey::Ident(field_ident) = key {
@@ -1342,8 +1343,15 @@ fn compile_composite_lit(
                     
                     compile_expr_to(&elem.value, dst + offset, ctx, func, info)?;
                 }
+            } else {
+                // Positional field: use field index
+                let (offset, field_slots) = info.struct_field_offset_by_index(type_key, i)
+                    .ok_or_else(|| CodegenError::Internal(format!("field index {} not found", i)))?;
+                compile_expr_to(&elem.value, dst + offset, ctx, func, info)?;
+                positional_offset = offset + field_slots;
             }
         }
+        let _ = positional_offset; // suppress unused warning
     } else if info.is_array(type_key) {
         // Array literal
         let elem_slots = info.array_elem_slots(type_key)

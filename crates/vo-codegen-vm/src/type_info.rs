@@ -186,6 +186,28 @@ impl<'a> TypeInfoWrapper<'a> {
         None
     }
 
+    /// Get struct field offset by index (for positional struct literals)
+    pub fn struct_field_offset_by_index(
+        &self,
+        type_key: TypeKey,
+        field_index: usize,
+    ) -> Option<(u16, u16)> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Struct(s) = &self.tc_objs().types[underlying] {
+            let mut offset = 0u16;
+            for (i, &field_obj) in s.fields().iter().enumerate() {
+                let obj = &self.tc_objs().lobjs[field_obj];
+                let field_type = obj.typ()?;
+                let field_slots = self.type_slot_count(field_type);
+                if i == field_index {
+                    return Some((offset, field_slots));
+                }
+                offset += field_slots;
+            }
+        }
+        None
+    }
+
     // === Type queries ===
 
     pub fn is_interface(&self, type_key: TypeKey) -> bool {
