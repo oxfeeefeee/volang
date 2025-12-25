@@ -1285,7 +1285,7 @@ fn compile_assign(
                     let iface_meta_id = lhs_type.and_then(|t| ctx.get_interface_meta_id(t)).unwrap_or(0);
                     
                     // Get source value kind for flags
-                    let vk = src_type.map(|t| info.value_kind(t)).unwrap_or(0);
+                    let vk = src_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0);
                     
                     // IfaceAssign: a=dst, b=src, c=iface_meta_id, flags=vk
                     func.emit_with_flags(Opcode::IfaceAssign, vk, slot, src_reg, iface_meta_id);

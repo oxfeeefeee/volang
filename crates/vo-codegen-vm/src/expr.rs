@@ -1054,7 +1054,7 @@ fn compile_call_args(
             let slot = args_start + (i * 2) as u16;
             compile_expr_to(arg, slot, ctx, func, info)?;
             let arg_type = info.expr_type(arg.id);
-            let vk = arg_type.map(|t| info.value_kind(t)).unwrap_or(0) as i32;
+            let vk = arg_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0) as i32;
             let (b, c) = encode_i32(vk);
             func.emit_op(Opcode::LoadInt, slot + 1, b, c);
         }
@@ -1156,7 +1156,7 @@ fn compile_builtin_call(
                 compile_expr_to(arg, slot, _ctx, func, info)?;
                 // Store value_kind in next slot
                 let arg_type = info.expr_type(arg.id);
-                let vk = arg_type.map(|t| info.value_kind(t)).unwrap_or(0) as i32;
+                let vk = arg_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0) as i32;
                 let (b, c) = encode_i32(vk);
                 func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }
@@ -1293,7 +1293,7 @@ fn compile_builtin_call(
                 compile_expr_to(arg, slot, _ctx, func, info)?;
                 // Store value_kind in next slot
                 let arg_type = info.expr_type(arg.id);
-                let vk = arg_type.map(|t| info.value_kind(t)).unwrap_or(0) as i32;
+                let vk = arg_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0) as i32;
                 let (b, c) = encode_i32(vk);
                 func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }

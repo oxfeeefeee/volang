@@ -404,43 +404,6 @@ impl<'a> TypeInfoWrapper<'a> {
         None
     }
 
-    /// Get value kind for a type (returns ValueKind enum value)
-    pub fn value_kind(&self, type_key: TypeKey) -> u8 {
-        use vo_analysis::typ::BasicType;
-        use vo_common_core::types::ValueKind;
-        
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        let vk = match &self.tc_objs().types[underlying] {
-            Type::Basic(b) => match b.typ() {
-                BasicType::Bool | BasicType::UntypedBool => ValueKind::Bool,
-                BasicType::Int | BasicType::UntypedInt => ValueKind::Int,
-                BasicType::Int8 => ValueKind::Int8,
-                BasicType::Int16 => ValueKind::Int16,
-                BasicType::Int32 | BasicType::Rune | BasicType::UntypedRune => ValueKind::Int32,
-                BasicType::Int64 => ValueKind::Int64,
-                BasicType::Uint => ValueKind::Uint,
-                BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,
-                BasicType::Uint16 => ValueKind::Uint16,
-                BasicType::Uint32 => ValueKind::Uint32,
-                BasicType::Uint64 | BasicType::Uintptr => ValueKind::Uint64,
-                BasicType::Float32 => ValueKind::Float32,
-                BasicType::Float64 | BasicType::UntypedFloat => ValueKind::Float64,
-                BasicType::Str | BasicType::UntypedString => ValueKind::String,
-                _ => ValueKind::Void,
-            },
-            Type::Pointer(_) => ValueKind::Pointer,
-            Type::Struct(_) => ValueKind::Struct,
-            Type::Array(_) => ValueKind::Array,
-            Type::Slice(_) => ValueKind::Slice,
-            Type::Map(_) => ValueKind::Map,
-            Type::Chan(_) => ValueKind::Channel,
-            Type::Interface(_) => ValueKind::Interface,
-            Type::Signature(_) => ValueKind::Closure,
-            _ => ValueKind::Void,
-        };
-        vk as u8
-    }
-
     /// Get method index in interface
     pub fn get_interface_method_index(&self, iface_type: TypeKey, method_name: &str) -> Option<u16> {
         let underlying = typ::underlying_type(iface_type, self.tc_objs());

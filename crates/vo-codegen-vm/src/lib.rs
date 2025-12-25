@@ -151,7 +151,7 @@ fn collect_declarations(
                             };
                             
                             let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-                            let value_kind = type_key.map(|t| info.value_kind(t)).unwrap_or(0);
+                            let value_kind = type_key.map(|t| info.type_value_kind(t) as u8).unwrap_or(0);
                             ctx.register_global(
                                 name.symbol,
                                 vo_vm::bytecode::GlobalDef {
