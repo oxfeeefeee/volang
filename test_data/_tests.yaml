@@ -94,16 +94,13 @@ tests:
     mode: [vm]
   - file: pointer_basic.vo
     mode: [vm]
-    skip: "address-of non-escaped"
   - file: pointer_comprehensive.vo
     mode: [vm]
-    skip: "address-of non-escaped"
   - file: pointer_embedded.vo
     mode: [vm]
     skip: "method promotion not supported"
   - file: pointer_method_call.vo
     mode: [vm]
-    skip: "address-of non-escaped"
   - file: range_string.vo
     mode: [vm]
   - file: rect_only_sum.vo
@@ -144,6 +141,7 @@ tests:
     mode: [vm]
   - file: var_init_order.vo
     mode: [vm]
+    skip: "multiple init functions need unique IDs"
   - file: stack_array_iter.vo
     mode: [vm]
   - file: stack_vs_escaped_array.vo

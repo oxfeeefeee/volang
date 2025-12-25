@@ -129,8 +129,11 @@ pub fn compile_stmt(
                     // New variable
                     let obj_key = info.get_def(name);
                     let escapes = obj_key.map(|k| info.is_escaped(k)).unwrap_or(false);
+                    
+                    // Pointer types are already GcRef, no need for heap wrapper
+                    let is_pointer = type_key.map(|t| info.is_pointer(t)).unwrap_or(false);
 
-                    if escapes {
+                    if escapes && !is_pointer {
                         // Heap allocation for escaped variable
                         let slot = func.define_local_heap(name.symbol);
                         
@@ -1339,7 +1342,7 @@ fn compile_assign(
             let field_name = info.project.interner.resolve(sel.sel.symbol)
                 .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
             
-            // Check if receiver is pointer
+            // Check if receiver is pointer type
             let is_ptr = info.is_pointer(recv_type);
             
             // Get base type for field lookup (deref pointer if needed)
@@ -1355,22 +1358,29 @@ fn compile_assign(
                 .or_else(|| info.struct_field_offset(base_type, field_name))
                 .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
             
-            // Resolve selector target and emit assignment
-            let (base, inner_offset) = resolve_selector_slot(&sel.expr, info, func, ctx)?;
-            let total_offset = inner_offset + field_offset;
-            
-            match base {
-                SelectorBase::Stack(slot) => {
-                    let target_slot = slot + total_offset;
-                    compile_expr_to(rhs, target_slot, ctx, func, info)?;
-                }
-                SelectorBase::Heap(slot) => {
-                    let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                    func.emit_ptr_set(slot, total_offset, tmp, slots);
-                }
-                SelectorBase::Ptr(ptr_reg) => {
-                    let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                    func.emit_ptr_set(ptr_reg, total_offset, tmp, slots);
+            // If receiver is pointer type, use Ptr path directly
+            if is_ptr {
+                let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
+                let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
+                func.emit_ptr_set(ptr_reg, field_offset, tmp, slots);
+            } else {
+                // Resolve selector target and emit assignment
+                let (base, inner_offset) = resolve_selector_slot(&sel.expr, info, func, ctx)?;
+                let total_offset = inner_offset + field_offset;
+                
+                match base {
+                    SelectorBase::Stack(slot) => {
+                        let target_slot = slot + total_offset;
+                        compile_expr_to(rhs, target_slot, ctx, func, info)?;
+                    }
+                    SelectorBase::Heap(slot) => {
+                        let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
+                        func.emit_ptr_set(slot, total_offset, tmp, slots);
+                    }
+                    SelectorBase::Ptr(ptr_reg) => {
+                        let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
+                        func.emit_ptr_set(ptr_reg, total_offset, tmp, slots);
+                    }
                 }
             }
         }

@@ -110,30 +110,37 @@ impl CodegenContext {
 
     // === Function registration ===
 
-    /// Pre-register a function name for forward references (ID not yet assigned).
+    /// Pre-register a function name for forward references.
+    /// Allocates a placeholder FunctionDef so the ID is valid immediately.
     pub fn declare_func(&mut self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) {
-        self.func_indices.insert((recv, is_pointer_recv, name), u32::MAX);
-    }
-
-    /// Check if function ID is valid (not a placeholder).
-    fn is_valid_func_id(id: u32) -> bool {
-        id != u32::MAX
+        let id = self.module.functions.len() as u32;
+        // Push a placeholder that will be replaced by define_func
+        self.module.functions.push(FunctionDef {
+            name: String::new(),
+            param_count: 0,
+            param_slots: 0,
+            local_slots: 0,
+            ret_slots: 0,
+            code: Vec::new(),
+            slot_types: Vec::new(),
+        });
+        self.func_indices.insert((recv, is_pointer_recv, name), id);
     }
 
     pub fn get_func_index(&self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(recv, is_pointer_recv, name)).copied().filter(|&id| Self::is_valid_func_id(id))
+        self.func_indices.get(&(recv, is_pointer_recv, name)).copied()
     }
 
     /// Get function index by name (for non-method functions).
     pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(None, false, name)).copied().filter(|&id| Self::is_valid_func_id(id))
+        self.func_indices.get(&(None, false, name)).copied()
     }
 
-    /// Define a function: add to module and assign real ID.
+    /// Define a function: replace placeholder with real definition.
     pub fn define_func(&mut self, func: FunctionDef, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) -> u32 {
-        let id = self.module.functions.len() as u32;
-        self.module.functions.push(func);
-        self.func_indices.insert((recv, is_pointer_recv, name), id);
+        let id = *self.func_indices.get(&(recv, is_pointer_recv, name))
+            .expect("function must be declared before defined");
+        self.module.functions[id as usize] = func;
         id
     }
 

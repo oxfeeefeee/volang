@@ -55,7 +55,7 @@ pub fn compile_expr_to(
             if let Some(local) = func.lookup_local(ident.symbol) {
                 if local.is_heap {
                     // Escaped variable: slot contains GcRef to heap object
-                    // Check if this is a value type (struct/array) - need deep copy
+                    // Check if this is a value type (struct/array) - need to copy value from heap
                     let obj_key = info.get_def(ident);
                     let type_key = obj_key.and_then(|o| info.obj_type(o));
                     let is_value_type = type_key.map(|t| {
@@ -63,8 +63,10 @@ pub fn compile_expr_to(
                     }).unwrap_or(false);
                     
                     if is_value_type {
-                        // Escaped struct/array: use PtrClone for value semantics (deep copy)
-                        func.emit_op(Opcode::PtrClone, dst, local.slot, 0);
+                        // Escaped struct/array: use PtrGetN to copy value from heap
+                        // This gives value semantics - the caller gets a copy of the data
+                        let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                        func.emit_ptr_get(dst, local.slot, 0, value_slots);
                     } else {
                         // Escaped primitive or reference type: just copy the GcRef
                         func.emit_op(Opcode::Copy, dst, local.slot, 0);
@@ -759,7 +761,49 @@ fn compile_addr_of(
         }
     }
     
-    // TODO: handle &stack_var (need to allocate on heap)
+    // &CompositeLit{...} -> heap alloc + initialize
+    if let ExprKind::CompositeLit(lit) = &operand.kind {
+        let type_key = info.expr_type(operand.id)
+            .ok_or_else(|| CodegenError::Internal("composite lit has no type".to_string()))?;
+        
+        let slots = info.type_slot_count(type_key);
+        let slot_types = info.type_slot_types(type_key);
+        let meta_idx = ctx.get_or_create_value_meta(Some(type_key), slots, &slot_types);
+        
+        // PtrNew: dst=dst, meta_reg=temp, flags=slots
+        let meta_reg = func.alloc_temp(1);
+        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+        func.emit_with_flags(Opcode::PtrNew, slots as u8, dst, meta_reg, 0);
+        
+        // Initialize fields via PtrSet
+        for (i, elem) in lit.elems.iter().enumerate() {
+            if let Some(key) = &elem.key {
+                // Named field
+                if let vo_syntax::ast::CompositeLitKey::Ident(field_ident) = key {
+                    let field_name = info.project.interner.resolve(field_ident.symbol)
+                        .ok_or_else(|| CodegenError::Internal("cannot resolve field name".to_string()))?;
+                    
+                    let (offset, field_slots) = info.struct_field_offset(type_key, field_name)
+                        .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
+                    
+                    let tmp = func.alloc_temp(field_slots);
+                    compile_expr_to(&elem.value, tmp, ctx, func, info)?;
+                    func.emit_ptr_set(dst, offset, tmp, field_slots);
+                }
+            } else {
+                // Positional field
+                let (offset, field_slots) = info.struct_field_offset_by_index(type_key, i)
+                    .ok_or_else(|| CodegenError::Internal(format!("field index {} not found", i)))?;
+                
+                let tmp = func.alloc_temp(field_slots);
+                compile_expr_to(&elem.value, tmp, ctx, func, info)?;
+                func.emit_ptr_set(dst, offset, tmp, field_slots);
+            }
+        }
+        
+        return Ok(());
+    }
+    
     Err(CodegenError::UnsupportedExpr("address-of non-escaped".to_string()))
 }
 
@@ -1089,7 +1133,9 @@ fn compile_method_call(
         } else {
             // Method expects value: compile receiver and extract embedded field if needed
             let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-            if recv_is_heap {
+            let recv_is_ptr = info.is_pointer(recv_type);
+            if recv_is_heap || recv_is_ptr {
+                // Heap variable or pointer type: use PtrGetN to copy value from heap
                 let value_slots = info.type_slot_count(actual_recv_type);
                 func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
             } else {
