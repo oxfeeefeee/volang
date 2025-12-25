@@ -429,7 +429,7 @@ fn compile_index(
             .expect("array must have elem_slots");
         
         // Check if this is a stack array (non-escaped local variable)
-        if let Some(base_slot) = get_stack_array_base(&idx.expr, func, info) {
+        if let Some(base_slot) = get_stack_array_base(&idx.expr, ctx, func, info) {
             // Stack array: use SlotGetN
             // SlotGetN: a=dst, b=base_slot, c=index_reg, flags=elem_slots
             func.emit_with_flags(Opcode::SlotGetN, elem_slots as u8, dst, base_slot, index_reg);
@@ -471,20 +471,14 @@ fn compile_index(
 /// Returns None if the array is escaped (heap-allocated) or not a simple variable.
 fn get_stack_array_base(
     expr: &Expr,
+    ctx: &CodegenContext,
     func: &FuncBuilder,
-    _info: &TypeInfoWrapper,
+    info: &TypeInfoWrapper,
 ) -> Option<u16> {
-    // Only handle simple identifier case for now
-    if let ExprKind::Ident(ident) = &expr.kind {
-        // Check if it's a local variable
-        if let Some(local) = func.lookup_local(ident.symbol) {
-            // Only use SlotGetN for non-escaped (stack) arrays
-            if !local.is_heap {
-                return Some(local.slot);
-            }
-        }
+    match get_expr_source(expr, ctx, func, info) {
+        ExprSource::Location(ValueLocation::Stack { slot, .. }) => Some(slot),
+        _ => None,
     }
-    None
 }
 
 /// Get the GcRef slot of an escaped variable without copying.
@@ -492,16 +486,14 @@ fn get_stack_array_base(
 /// Returns None if not an escaped local variable.
 fn get_escaped_var_gcref(
     expr: &Expr,
+    ctx: &CodegenContext,
     func: &FuncBuilder,
+    info: &TypeInfoWrapper,
 ) -> Option<u16> {
-    if let ExprKind::Ident(ident) = &expr.kind {
-        if let Some(local) = func.lookup_local(ident.symbol) {
-            if local.is_heap {
-                return Some(local.slot);
-            }
-        }
+    match get_expr_source(expr, ctx, func, info) {
+        ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => Some(slot),
+        _ => None,
     }
-    None
 }
 
 // === Slice expression (arr[lo:hi]) ===
@@ -563,7 +555,7 @@ fn compile_slice_expr(
         // Array slicing creates a slice - the array MUST be escaped
         // For escaped arrays, we need the GcRef directly (not PtrClone copy)
         // SliceSlice flags: bit0=1 means input is array
-        if let Some(gcref_slot) = get_escaped_var_gcref(&slice_expr.expr, func) {
+        if let Some(gcref_slot) = get_escaped_var_gcref(&slice_expr.expr, ctx, func, info) {
             // Use the GcRef directly without copying
             func.emit_with_flags(Opcode::SliceSlice, 1, dst, gcref_slot, params_start);
         } else {
