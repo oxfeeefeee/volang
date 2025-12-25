@@ -1355,21 +1355,22 @@ fn compile_assign(
                 .or_else(|| info.struct_field_offset(base_type, field_name))
                 .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
             
-            if is_ptr {
-                // Pointer receiver: compile receiver to get pointer, then PtrSet
-                let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
-                let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                func.emit_ptr_set(ptr_reg, field_offset, tmp, slots);
-            } else {
-                // Value receiver: find root variable and compute total offset
-                let (base_slot, total_offset, is_heap) = resolve_selector_target(&sel.expr, field_offset, info, func)?;
-                
-                if is_heap {
-                    let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                    func.emit_ptr_set(base_slot, total_offset, tmp, slots);
-                } else {
-                    let target_slot = base_slot + total_offset;
+            // Resolve selector target and emit assignment
+            let (base, inner_offset) = resolve_selector_slot(&sel.expr, info, func, ctx)?;
+            let total_offset = inner_offset + field_offset;
+            
+            match base {
+                SelectorBase::Stack(slot) => {
+                    let target_slot = slot + total_offset;
                     compile_expr_to(rhs, target_slot, ctx, func, info)?;
+                }
+                SelectorBase::Heap(slot) => {
+                    let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
+                    func.emit_ptr_set(slot, total_offset, tmp, slots);
+                }
+                SelectorBase::Ptr(ptr_reg) => {
+                    let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
+                    func.emit_ptr_set(ptr_reg, total_offset, tmp, slots);
                 }
             }
         }
@@ -1697,36 +1698,4 @@ fn is_rhs_escaped_struct(
         }
     }
     None
-}
-
-/// Resolve selector target for assignment: find root variable and compute total offset
-/// Returns (base_slot, total_offset, is_heap)
-fn resolve_selector_target(
-    expr: &Expr,
-    current_offset: u16,
-    info: &TypeInfoWrapper,
-    func: &FuncBuilder,
-) -> Result<(u16, u16, bool), CodegenError> {
-    match &expr.kind {
-        ExprKind::Ident(ident) => {
-            // Base case: found root variable
-            let local = func.lookup_local(ident.symbol)
-                .ok_or_else(|| CodegenError::VariableNotFound(format!("{:?}", ident.symbol)))?;
-            Ok((local.slot, current_offset, local.is_heap))
-        }
-        ExprKind::Selector(sel) => {
-            // Nested selector: compute inner offset and recurse
-            let recv_type = info.expr_type(sel.expr.id)
-                .ok_or_else(|| CodegenError::Internal("selector recv has no type".to_string()))?;
-            
-            let field_name = info.project.interner.resolve(sel.sel.symbol)
-                .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
-            
-            let (field_offset, _) = info.struct_field_offset(recv_type, field_name)
-                .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
-            
-            resolve_selector_target(&sel.expr, current_offset + field_offset, info, func)
-        }
-        _ => Err(CodegenError::InvalidLHS),
-    }
 }
