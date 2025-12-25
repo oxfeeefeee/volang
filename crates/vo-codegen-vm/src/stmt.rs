@@ -1342,18 +1342,33 @@ fn compile_assign(
             // Check if receiver is pointer
             let is_ptr = info.is_pointer(recv_type);
             
+            // Get base type for field lookup (deref pointer if needed)
+            let base_type = if is_ptr {
+                info.pointer_base(recv_type).unwrap_or(recv_type)
+            } else {
+                recv_type
+            };
+            
+            // Get field offset: try direct lookup first, fallback to selection indices for promoted fields
+            // Note: selection is recorded on the entire selector expression (lhs.id), not the receiver
+            let (field_offset, slots) = info.struct_field_offset(base_type, field_name)
+                .or_else(|| {
+                    info.get_selection(lhs.id).and_then(|sel_info| {
+                        if sel_info.indices().len() > 1 {
+                            compute_promoted_field_offset_assign(base_type, sel_info.indices(), info).ok()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
+            
             if is_ptr {
-                // Pointer receiver: get field offset from pointee type
-                let (offset, slots) = info.struct_field_offset_from_ptr(recv_type, field_name)
-                    .ok_or_else(|| CodegenError::Internal(format!("field {} not found in ptr", field_name)))?;
-                
+                // Pointer receiver
                 let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
                 let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                func.emit_ptr_set(ptr_reg, offset, tmp, slots);
+                func.emit_ptr_set(ptr_reg, field_offset, tmp, slots);
             } else {
-                // Value receiver: get field offset directly
-                let (field_offset, slots) = info.struct_field_offset(recv_type, field_name)
-                    .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
                 
                 // Check for nested selector (e.g., o.Inner.value = x)
                 if let ExprKind::Selector(_) = &sel.expr.kind {
@@ -1754,4 +1769,32 @@ fn compute_selector_chain_offset<'a>(
         }
         _ => Err(CodegenError::Internal("expected selector expression".to_string())),
     }
+}
+
+/// Compute field offset from selection indices (for promoted fields in assignment)
+fn compute_promoted_field_offset_assign(
+    base_type: vo_analysis::objects::TypeKey,
+    indices: &[usize],
+    info: &TypeInfoWrapper,
+) -> Result<(u16, u16), CodegenError> {
+    let mut offset = 0u16;
+    let mut current_type = base_type;
+    let mut final_slots = 1u16;
+    
+    for (i, &idx) in indices.iter().enumerate() {
+        let (field_offset, field_slots) = info.struct_field_offset_by_index(current_type, idx)
+            .ok_or_else(|| CodegenError::Internal(format!("field index {} not found", idx)))?;
+        
+        offset += field_offset;
+        
+        if i == indices.len() - 1 {
+            final_slots = field_slots;
+        } else {
+            if let Some(field_type) = info.struct_field_type_by_index(current_type, idx) {
+                current_type = field_type;
+            }
+        }
+    }
+    
+    Ok((offset, final_slots))
 }

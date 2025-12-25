@@ -1092,7 +1092,7 @@ impl Checker {
                 }
             }
             ExprKind::Selector(sel) => {
-                self.selector(x, sel);
+                self.selector(x, sel, e.id);
             }
             ExprKind::TypeAssert(ta) => {
                 self.expr(x, &ta.expr);
@@ -1440,10 +1440,12 @@ impl Checker {
     }
 
     /// Type-checks a selector expression (e.g., x.f).
+    /// `expr_id` is the id of the entire selector expression (for recording selection).
     pub fn selector(
         &mut self,
         x: &mut Operand,
         sel: &vo_syntax::ast::SelectorExpr,
+        expr_id: vo_common_core::ExprId,
     ) {
         // If the identifier refers to a package, handle everything here
         // so we don't need a "package" mode for operands: package names
@@ -1569,7 +1571,7 @@ impl Checker {
                     indirect,
                     self.objs(),
                 );
-                self.result.record_selection(sel.expr.id, selection);
+                self.result.record_selection(expr_id, selection);
 
                 // the receiver type becomes the type of the first function
                 // argument of the method expression's function type
@@ -1612,7 +1614,7 @@ impl Checker {
                     indirect,
                     self.objs(),
                 );
-                self.result.record_selection(sel.expr.id, selection);
+                self.result.record_selection(expr_id, selection);
                 x.mode = if x.mode == OperandMode::Variable || indirect {
                     OperandMode::Variable
                 } else {
@@ -1628,7 +1630,7 @@ impl Checker {
                     indirect,
                     self.objs(),
                 );
-                self.result.record_selection(sel.expr.id, selection);
+                self.result.record_selection(expr_id, selection);
 
                 x.mode = OperandMode::Value;
 

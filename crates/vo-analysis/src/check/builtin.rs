@@ -685,7 +685,7 @@ impl Checker {
             // Selector could be qualified type (pkg.Type)
             ExprKind::Selector(sel) => {
                 let mut x = Operand::new();
-                self.selector(&mut x, sel);
+                self.selector(&mut x, sel, e.id);
                 if let OperandMode::TypeExpr = x.mode {
                     x.typ.unwrap_or(self.invalid_type())
                 } else {

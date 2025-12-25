@@ -306,12 +306,31 @@ fn compile_selector(
     // Check if receiver is pointer - need to dereference
     let is_ptr = info.is_pointer(recv_type);
     
+    // Get base type for field lookup (deref pointer if needed)
+    let base_type = if is_ptr {
+        info.pointer_base(recv_type).unwrap_or(recv_type)
+    } else {
+        recv_type
+    };
+    
+    // Get field offset: try direct lookup first, fallback to selection indices for promoted fields
+    // Note: selection is recorded on the entire selector expression (expr.id), not the receiver
+    let (offset, slots) = info.struct_field_offset(base_type, field_name)
+        .or_else(|| {
+            // Direct lookup failed - check for field promotion via selection
+            info.get_selection(expr.id).and_then(|sel_info| {
+                if sel_info.indices().len() > 1 {
+                    compute_promoted_field_offset(base_type, sel_info.indices(), info).ok()
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
+    
     if is_ptr {
         // Pointer receiver: load ptr, then PtrGetN
         let ptr_reg = compile_expr(&sel.expr, ctx, func, info)?;
-        let (offset, slots) = info.struct_field_offset_from_ptr(recv_type, field_name)
-            .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
-        
         if slots == 1 {
             func.emit_op(Opcode::PtrGet, dst, ptr_reg, offset);
         } else {
@@ -324,9 +343,6 @@ fn compile_selector(
         if let Some((local_slot, is_heap)) = root_var {
             if is_heap {
                 // Heap variable: load GcRef, then PtrGetN
-                let (offset, slots) = info.struct_field_offset(recv_type, field_name)
-                    .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
-                
                 if slots == 1 {
                     func.emit_op(Opcode::PtrGet, dst, local_slot, offset);
                 } else {
@@ -334,24 +350,46 @@ fn compile_selector(
                 }
             } else {
                 // Stack variable: direct slot access
-                let (offset, slots) = info.struct_field_offset(recv_type, field_name)
-                    .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
-                
                 let src_slot = local_slot + offset;
                 func.emit_copy(dst, src_slot, slots);
             }
         } else {
             // Temporary value - compile receiver first
             let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-            let (offset, slots) = info.struct_field_offset(recv_type, field_name)
-                .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
-            
             let src_slot = recv_reg + offset;
             func.emit_copy(dst, src_slot, slots);
         }
     }
     
     Ok(())
+}
+
+/// Compute field offset from selection indices (for promoted fields)
+fn compute_promoted_field_offset(
+    base_type: vo_analysis::objects::TypeKey,
+    indices: &[usize],
+    info: &TypeInfoWrapper,
+) -> Result<(u16, u16), CodegenError> {
+    let mut offset = 0u16;
+    let mut current_type = base_type;
+    let mut final_slots = 1u16;
+    
+    for (i, &idx) in indices.iter().enumerate() {
+        let (field_offset, field_slots) = info.struct_field_offset_by_index(current_type, idx)
+            .ok_or_else(|| CodegenError::Internal(format!("field index {} not found", idx)))?;
+        
+        offset += field_offset;
+        
+        if i == indices.len() - 1 {
+            final_slots = field_slots;
+        } else {
+            if let Some(field_type) = info.struct_field_type_by_index(current_type, idx) {
+                current_type = field_type;
+            }
+        }
+    }
+    
+    Ok((offset, final_slots))
 }
 
 /// Find root variable for selector chain (only for direct field access, not nested)
@@ -963,8 +1001,8 @@ fn compile_method_call(
         };
         
         // Try to find method using selection info (handles promoted methods)
-        // Selection is recorded on sel.expr.id (the receiver), not call.func.id
-        let selection = info.get_selection(sel.expr.id);
+        // Selection is recorded on the entire selector expression (call.func.id)
+        let selection = info.get_selection(call.func.id);
         
         let (func_idx, method_expects_ptr, promoted_type) = {
             // Try direct method first
