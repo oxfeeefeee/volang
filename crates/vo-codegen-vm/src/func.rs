@@ -6,6 +6,17 @@ use vo_common_core::types::SlotType;
 use vo_vm::bytecode::FunctionDef;
 use vo_vm::instruction::{Instruction, Opcode};
 
+/// Value storage location - unified abstraction for variable access.
+#[derive(Debug, Clone, Copy)]
+pub enum ValueLocation {
+    /// Stack-allocated value (slot holds actual data, N slots)
+    Stack { slot: u16, slots: u16 },
+    /// Heap-boxed value type (slot holds GcRef pointing to value_slots of data)
+    HeapBoxed { slot: u16, value_slots: u16 },
+    /// Reference type (slot holds GcRef which IS the value, 1 slot)
+    Reference { slot: u16 },
+}
+
 /// Local variable info.
 #[derive(Debug, Clone)]
 pub struct LocalVar {
@@ -212,6 +223,38 @@ impl FuncBuilder {
             self.emit_op(Opcode::PtrSet, ptr, offset, src);
         } else {
             self.emit_with_flags(Opcode::PtrSetN, slots as u8, ptr, offset, src);
+        }
+    }
+
+    // === ValueLocation helpers ===
+
+    /// Load value from location to dst
+    pub fn emit_load_value(&mut self, loc: ValueLocation, dst: u16) {
+        match loc {
+            ValueLocation::Stack { slot, slots } => {
+                self.emit_copy(dst, slot, slots);
+            }
+            ValueLocation::HeapBoxed { slot, value_slots } => {
+                self.emit_ptr_get(dst, slot, 0, value_slots);
+            }
+            ValueLocation::Reference { slot } => {
+                self.emit_op(Opcode::Copy, dst, slot, 0);
+            }
+        }
+    }
+
+    /// Store value from src to location
+    pub fn emit_store_value(&mut self, loc: ValueLocation, src: u16, src_slots: u16) {
+        match loc {
+            ValueLocation::Stack { slot, slots } => {
+                self.emit_copy(slot, src, slots.min(src_slots));
+            }
+            ValueLocation::HeapBoxed { slot, value_slots } => {
+                self.emit_ptr_set(slot, 0, src, value_slots.min(src_slots));
+            }
+            ValueLocation::Reference { slot } => {
+                self.emit_op(Opcode::Copy, slot, src, 0);
+            }
         }
     }
 

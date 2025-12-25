@@ -5,8 +5,23 @@ use vo_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
-use crate::func::FuncBuilder;
+use crate::func::{FuncBuilder, LocalVar, ValueLocation};
 use crate::type_info::TypeInfoWrapper;
+
+/// Get ValueLocation for a local variable based on its storage and type.
+fn get_local_location(local: &LocalVar, type_key: Option<vo_analysis::objects::TypeKey>, info: &TypeInfoWrapper) -> ValueLocation {
+    if local.is_heap {
+        let is_value_type = type_key.map(|t| info.is_value_type(t)).unwrap_or(false);
+        if is_value_type {
+            let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+            ValueLocation::HeapBoxed { slot: local.slot, value_slots }
+        } else {
+            ValueLocation::Reference { slot: local.slot }
+        }
+    } else {
+        ValueLocation::Stack { slot: local.slot, slots: local.slots }
+    }
+}
 
 /// Compile expression, return result slot.
 pub fn compile_expr(
@@ -53,28 +68,10 @@ pub fn compile_expr_to(
             }
             
             if let Some(local) = func.lookup_local(ident.symbol) {
-                if local.is_heap {
-                    // Escaped variable: slot contains GcRef to heap object
-                    // Check if this is a value type (struct/array) - need to copy value from heap
-                    let obj_key = info.get_def(ident);
-                    let type_key = obj_key.and_then(|o| info.obj_type(o));
-                    let is_value_type = type_key.map(|t| {
-                        info.is_struct(t) || info.is_array(t)
-                    }).unwrap_or(false);
-                    
-                    if is_value_type {
-                        // Escaped struct/array: use PtrGetN to copy value from heap
-                        // This gives value semantics - the caller gets a copy of the data
-                        let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-                        func.emit_ptr_get(dst, local.slot, 0, value_slots);
-                    } else {
-                        // Escaped primitive or reference type: just copy the GcRef
-                        func.emit_op(Opcode::Copy, dst, local.slot, 0);
-                    }
-                } else {
-                    // Stack variable: direct copy
-                    func.emit_copy(dst, local.slot, local.slots);
-                }
+                let obj_key = info.get_def(ident);
+                let type_key = obj_key.and_then(|o| info.obj_type(o));
+                let loc = get_local_location(local, type_key, info);
+                func.emit_load_value(loc, dst);
             } else if let Some(capture) = func.lookup_capture(ident.symbol) {
                 // Closure capture: use ClosureGet to get the GcRef, then dereference
                 // ClosureGet: a=dst, b=capture_index (closure implicit in r0)

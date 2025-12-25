@@ -293,6 +293,11 @@ impl<'a> TypeInfoWrapper<'a> {
         self.tc_objs().types[underlying].try_as_chan().is_some()
     }
 
+    /// Check if type has value semantics (struct or array - copied by value, not reference)
+    pub fn is_value_type(&self, type_key: TypeKey) -> bool {
+        self.is_struct(type_key) || self.is_array(type_key)
+    }
+
     /// Get map key and value slot counts
     pub fn map_key_val_slots(&self, type_key: TypeKey) -> Option<(u16, u16)> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
