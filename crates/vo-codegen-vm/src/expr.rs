@@ -1670,7 +1670,7 @@ fn compile_const_value(
             let idx = ctx.const_float(*f);
             func.emit_op(Opcode::LoadConst, dst, idx, 0);
         }
-        Value::Rat(r) => {
+        Value::Rat(_r) => {
             let f = vo_analysis::constant::float64_val(val).0;
             let idx = ctx.const_float(f);
             func.emit_op(Opcode::LoadConst, dst, idx, 0);

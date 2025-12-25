@@ -50,6 +50,7 @@ struct LoopContext {
     continue_pc: usize,
     continue_patches: Vec<usize>,  // for patching continue jumps later
     break_patches: Vec<usize>,
+    #[allow(dead_code)]  // Reserved for labeled break/continue (future)
     label: Option<Symbol>,
 }
 
