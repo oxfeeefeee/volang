@@ -344,13 +344,14 @@ fn compile_selector(
     Ok(())
 }
 
-/// Find root variable for selector chain
+/// Find root variable for selector chain (only for direct field access, not nested)
 fn find_root_var(expr: &Expr, func: &FuncBuilder) -> Option<(u16, bool)> {
     match &expr.kind {
         ExprKind::Ident(ident) => {
             func.lookup_local(ident.symbol).map(|l| (l.slot, l.is_heap))
         }
-        ExprKind::Selector(sel) => find_root_var(&sel.expr, func),
+        // Don't recurse into nested selectors - let them compile their receiver
+        // This ensures correct offset accumulation for chains like r.bottomRight.x
         ExprKind::Paren(inner) => find_root_var(inner, func),
         _ => None,
     }
