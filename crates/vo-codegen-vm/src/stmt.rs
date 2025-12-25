@@ -1365,19 +1365,20 @@ fn compile_assign(
                 func.emit_ptr_set(ptr_reg, field_offset, tmp, slots);
             } else {
                 // Resolve selector target and emit assignment
-                let (base, inner_offset) = resolve_selector_slot(&sel.expr, info, func, ctx)?;
+                let (target, inner_offset) = resolve_selector_target(&sel.expr, info, func, ctx)?;
                 let total_offset = inner_offset + field_offset;
                 
-                match base {
-                    SelectorBase::Stack(slot) => {
+                match target {
+                    SelectorTarget::Location(ValueLocation::Stack { slot, .. }) => {
                         let target_slot = slot + total_offset;
                         compile_expr_to(rhs, target_slot, ctx, func, info)?;
                     }
-                    SelectorBase::Heap(slot) => {
+                    SelectorTarget::Location(ValueLocation::HeapBoxed { slot, .. }) |
+                    SelectorTarget::Location(ValueLocation::Reference { slot }) => {
                         let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
                         func.emit_ptr_set(slot, total_offset, tmp, slots);
                     }
-                    SelectorBase::Ptr(ptr_reg) => {
+                    SelectorTarget::CompiledPtr(ptr_reg) => {
                         let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
                         func.emit_ptr_set(ptr_reg, total_offset, tmp, slots);
                     }
@@ -1535,25 +1536,26 @@ fn compile_compound_assign(
                 func.emit_op(Opcode::PtrSet, ptr_reg, offset, tmp);
             } else {
                 // Value receiver - need to handle nested selectors
-                let (base_slot, field_offset) = resolve_selector_slot(&sel.expr, info, func, ctx)?;
+                let (target, inner_offset) = resolve_selector_target(&sel.expr, info, func, ctx)?;
                 let (offset, _slots) = info.struct_field_offset(recv_type, field_name)
                     .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
                 
-                let total_offset = field_offset + offset;
+                let total_offset = inner_offset + offset;
                 let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
                 
-                match base_slot {
-                    SelectorBase::Stack(slot) => {
-                        let target = slot + total_offset;
-                        func.emit_op(opcode, target, target, rhs_reg);
+                match target {
+                    SelectorTarget::Location(ValueLocation::Stack { slot, .. }) => {
+                        let target_slot = slot + total_offset;
+                        func.emit_op(opcode, target_slot, target_slot, rhs_reg);
                     }
-                    SelectorBase::Heap(slot) => {
+                    SelectorTarget::Location(ValueLocation::HeapBoxed { slot, .. }) |
+                    SelectorTarget::Location(ValueLocation::Reference { slot }) => {
                         let tmp = func.alloc_temp(1);
                         func.emit_op(Opcode::PtrGet, tmp, slot, total_offset);
                         func.emit_op(opcode, tmp, tmp, rhs_reg);
                         func.emit_op(Opcode::PtrSet, slot, total_offset, tmp);
                     }
-                    SelectorBase::Ptr(reg) => {
+                    SelectorTarget::CompiledPtr(reg) => {
                         let tmp = func.alloc_temp(1);
                         func.emit_op(Opcode::PtrGet, tmp, reg, total_offset);
                         func.emit_op(opcode, tmp, tmp, rhs_reg);
@@ -1630,29 +1632,39 @@ fn compile_compound_assign(
     Ok(())
 }
 
-enum SelectorBase {
-    Stack(u16),
-    Heap(u16),
-    Ptr(u16),
+use crate::func::ValueLocation;
+
+/// Selector target for assignment - either a ValueLocation or a compiled pointer register
+enum SelectorTarget {
+    Location(ValueLocation),
+    CompiledPtr(u16),  // Compiled expression result holding GcRef
 }
 
-/// Resolve a selector expression to its base slot and accumulated offset.
-fn resolve_selector_slot(
+/// Resolve a selector expression to its target and accumulated offset.
+fn resolve_selector_target(
     expr: &vo_syntax::ast::Expr,
     info: &TypeInfoWrapper,
     func: &mut FuncBuilder,
     ctx: &mut CodegenContext,
-) -> Result<(SelectorBase, u16), CodegenError> {
+) -> Result<(SelectorTarget, u16), CodegenError> {
     use vo_syntax::ast::ExprKind;
     
     match &expr.kind {
         ExprKind::Ident(ident) => {
             if let Some(local) = func.lookup_local(ident.symbol) {
-                if local.is_heap {
-                    Ok((SelectorBase::Heap(local.slot), 0))
+                let type_key = info.get_def(ident).and_then(|o| info.obj_type(o));
+                let loc = if local.is_heap {
+                    let is_value_type = type_key.map(|t| info.is_value_type(t)).unwrap_or(false);
+                    if is_value_type {
+                        let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                        ValueLocation::HeapBoxed { slot: local.slot, value_slots }
+                    } else {
+                        ValueLocation::Reference { slot: local.slot }
+                    }
                 } else {
-                    Ok((SelectorBase::Stack(local.slot), 0))
-                }
+                    ValueLocation::Stack { slot: local.slot, slots: local.slots }
+                };
+                Ok((SelectorTarget::Location(loc), 0))
             } else {
                 Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)))
             }
@@ -1669,9 +1681,9 @@ fn resolve_selector_slot(
                 let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
                 let (offset, _) = info.struct_field_offset_from_ptr(recv_type, field_name)
                     .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
-                Ok((SelectorBase::Ptr(ptr_reg), offset))
+                Ok((SelectorTarget::CompiledPtr(ptr_reg), offset))
             } else {
-                let (base, parent_offset) = resolve_selector_slot(&sel.expr, info, func, ctx)?;
+                let (base, parent_offset) = resolve_selector_target(&sel.expr, info, func, ctx)?;
                 let (offset, _) = info.struct_field_offset(recv_type, field_name)
                     .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
                 Ok((base, parent_offset + offset))

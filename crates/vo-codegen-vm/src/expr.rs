@@ -86,10 +86,14 @@ pub fn compile_expr_to(
                 // Closure capture: use ClosureGet to get the GcRef, then dereference
                 // ClosureGet: a=dst, b=capture_index (closure implicit in r0)
                 func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
+                
                 // The capture slot holds a GcRef to the escaped variable's heap storage
                 // Need to dereference it to get the actual value
-                // PtrGet: a=dst, b=ptr_reg, c=offset (offset 0 for the value)
-                func.emit_op(Opcode::PtrGet, dst, dst, 0);
+                // Get captured variable's type to determine slot count
+                let obj_key = info.get_def(ident);
+                let type_key = obj_key.and_then(|o| info.obj_type(o));
+                let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                func.emit_ptr_get(dst, dst, 0, value_slots);
             } else if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
                 func.emit_op(Opcode::GlobalGet, dst, global_idx as u16, 0);
             } else {
