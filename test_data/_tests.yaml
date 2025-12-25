@@ -35,6 +35,8 @@ tests:
   - file: embed_interface_impl.vo
     mode: [vm]
     skip: "closure calls not yet supported"
+  - file: escape_struct_assign.vo
+    mode: [vm]
   - file: embed_interface.vo
     mode: [vm]
   - file: embed_method.vo

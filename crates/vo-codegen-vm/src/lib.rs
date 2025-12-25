@@ -137,7 +137,7 @@ fn collect_declarations(
                         None
                     };
                     
-                    ctx.register_func(recv_type, func_decl.name.symbol);
+                    ctx.declare_func(recv_type, func_decl.name.symbol);
                 }
                 Decl::Var(var_decl) => {
                     // Register global variables (so functions can reference them)
@@ -261,9 +261,12 @@ fn compile_func_decl(
     // Add return if not present at end
     builder.emit_op(vo_vm::instruction::Opcode::Return, 0, 0, 0);
     
-    // Build and add to module
+    // Build and add to module with proper name registration
     let func_def = builder.build();
-    let func_id = ctx.add_function(func_def);
+    let recv_type = func_decl.receiver.as_ref()
+        .and_then(|recv| info.get_def(&recv.ty))
+        .and_then(|obj| info.obj_type(obj));
+    let func_id = ctx.define_func(func_def, recv_type, func_decl.name.symbol);
     
     Ok(func_id)
 }

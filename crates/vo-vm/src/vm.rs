@@ -120,6 +120,7 @@ impl Vm {
                 }
                 ExecResult::Panic => {
                     self.scheduler.kill_current();
+                    return Err(VmError::PanicUnwound);
                 }
             }
             

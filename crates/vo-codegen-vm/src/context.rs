@@ -110,21 +110,34 @@ impl CodegenContext {
 
     // === Function registration ===
 
-    pub fn register_func(&mut self, recv: Option<TypeKey>, name: Symbol) -> u32 {
+    /// Pre-register a function name for forward references (ID not yet assigned).
+    pub fn declare_func(&mut self, recv: Option<TypeKey>, name: Symbol) {
+        self.func_indices.insert((recv, name), u32::MAX);
+    }
+
+    /// Check if function ID is valid (not a placeholder).
+    fn is_valid_func_id(id: u32) -> bool {
+        id != u32::MAX
+    }
+
+    pub fn get_func_index(&self, recv: Option<TypeKey>, name: Symbol) -> Option<u32> {
+        self.func_indices.get(&(recv, name)).copied().filter(|&id| Self::is_valid_func_id(id))
+    }
+
+    /// Get function index by name (for non-method functions).
+    pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
+        self.func_indices.get(&(None, name)).copied().filter(|&id| Self::is_valid_func_id(id))
+    }
+
+    /// Define a function: add to module and assign real ID.
+    pub fn define_func(&mut self, func: FunctionDef, recv: Option<TypeKey>, name: Symbol) -> u32 {
         let id = self.module.functions.len() as u32;
+        self.module.functions.push(func);
         self.func_indices.insert((recv, name), id);
         id
     }
 
-    pub fn get_func_index(&self, recv: Option<TypeKey>, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(recv, name)).copied()
-    }
-
-    /// Get function index by name (for non-method functions)
-    pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(None, name)).copied()
-    }
-
+    /// Add anonymous function (for generated functions like __init__, __entry__).
     pub fn add_function(&mut self, func: FunctionDef) -> u32 {
         let id = self.module.functions.len() as u32;
         self.module.functions.push(func);

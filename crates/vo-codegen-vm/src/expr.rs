@@ -1051,8 +1051,8 @@ fn compile_builtin_call(
                 func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }
             
-            // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
-            func.emit_with_flags(Opcode::CallExtern, call.args.len() as u8, dst, extern_id as u16, args_start);
+            // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_slots (each arg is 2 slots)
+            func.emit_with_flags(Opcode::CallExtern, (call.args.len() * 2) as u8, dst, extern_id as u16, args_start);
         }
         "panic" => {
             // Compile panic message
@@ -1158,28 +1158,28 @@ fn compile_builtin_call(
             func.emit_op(Opcode::Recover, dst, 0, 0);
         }
         "assert" => {
-            // assert(cond) or assert(cond, msg)
+            // assert(cond, msg...) - call vo_assert extern
+            // Args: [cond, cond_kind, msg_values...]
+            let extern_id = _ctx.get_or_register_extern("vo_assert");
+            
             if call.args.is_empty() {
                 return Err(CodegenError::Internal("assert requires at least 1 argument".to_string()));
             }
-            let cond_reg = compile_expr(&call.args[0], _ctx, func, info)?;
             
-            // JumpIf cond -> skip panic
-            let skip_jump = func.emit_jump(Opcode::JumpIf, cond_reg);
-            
-            // Panic with message if provided
-            if call.args.len() > 1 {
-                let msg_reg = compile_expr(&call.args[1], _ctx, func, info)?;
-                func.emit_op(Opcode::Panic, msg_reg, 0, 0);
-            } else {
-                // Default assert message
-                let msg_reg = func.alloc_temp(1);
-                func.emit_op(Opcode::StrNew, msg_reg, 0, 0); // empty string for now
-                func.emit_op(Opcode::Panic, msg_reg, 0, 0);
+            // Compile all arguments as (value, value_kind) pairs
+            let args_start = func.alloc_temp((call.args.len() * 2) as u16);
+            for (i, arg) in call.args.iter().enumerate() {
+                let slot = args_start + (i * 2) as u16;
+                compile_expr_to(arg, slot, _ctx, func, info)?;
+                // Store value_kind in next slot
+                let arg_type = info.expr_type(arg.id);
+                let vk = arg_type.map(|t| info.value_kind(t)).unwrap_or(0) as i32;
+                let (b, c) = encode_i32(vk);
+                func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }
             
-            // Patch skip jump to after panic
-            func.patch_jump(skip_jump, func.current_pc());
+            // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count*2
+            func.emit_with_flags(Opcode::CallExtern, (call.args.len() * 2) as u8, dst, extern_id as u16, args_start);
         }
         _ => {
             return Err(CodegenError::UnsupportedExpr(format!("builtin {}", name)));

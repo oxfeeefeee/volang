@@ -29,6 +29,7 @@ fn get_extern_fn(name: &str) -> Option<ExternFn> {
     match name {
         "vo_print" => Some(vo_print),
         "vo_println" => Some(vo_println),
+        "vo_assert" => Some(vo_assert),
         "vo_copy" => Some(vo_copy),
         // fmt package functions (variadic)
         "fmt_Print" => Some(vo_print),
@@ -93,6 +94,47 @@ fn vo_println(ret: &mut [u64], args: &[u64]) -> ExternCallResult {
         ret[0] = total_len as u64;
     }
     ExternCallResult::Ok
+}
+
+/// Assert condition with message.
+/// Args: [cond, cond_kind, msg_values...]
+/// First pair is the condition, rest are message values.
+fn vo_assert(_ret: &mut [u64], args: &[u64]) -> ExternCallResult {
+    use vo_runtime_core::builtins::format_value;
+    use vo_common_core::types::ValueKind;
+    
+    if args.len() < 2 {
+        eprintln!("assert: missing condition");
+        return ExternCallResult::Panic;
+    }
+    
+    let cond = args[0];
+    // condition is bool, non-zero = true
+    if cond != 0 {
+        return ExternCallResult::Ok;
+    }
+    
+    // Condition is false - format and print message
+    eprint!("assertion failed");
+    
+    // Print message arguments if any
+    let mut i = 2;
+    if i < args.len() {
+        eprint!(": ");
+    }
+    while i + 1 < args.len() {
+        let val = args[i];
+        let kind = ValueKind::from_u8(args[i + 1] as u8);
+        let s = format_value(val, kind);
+        if i > 2 {
+            eprint!(" ");
+        }
+        eprint!("{}", s);
+        i += 2;
+    }
+    eprintln!();
+    
+    ExternCallResult::Panic
 }
 
 /// Copy slice.

@@ -1256,12 +1256,34 @@ fn compile_assign(
                     // IfaceAssign: a=dst, b=src, c=iface_meta_id, flags=vk
                     func.emit_with_flags(Opcode::IfaceAssign, vk, slot, src_reg, iface_meta_id);
                 } else if is_heap {
-                    // Escaped variable: write via PtrSet
-                    let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                    func.emit_ptr_set(slot, 0, tmp, slots);
+                    // Escaped variable (lhs is heap): write via PtrSet
+                    // Get actual struct slots from lhs type (not local.slots which is 1 for GcRef)
+                    let struct_slots = lhs_type.map(|t| info.type_slot_count(t)).unwrap_or(slots);
+                    
+                    // Check if rhs is escaped struct - need PtrClone (deep copy)
+                    let rhs_escaped = is_rhs_escaped_struct(rhs, func, info);
+                    if let Some(rhs_slot) = rhs_escaped {
+                        // Both are escaped: use PtrClone for deep copy, then copy GcRef
+                        let tmp = func.alloc_temp(1);
+                        func.emit_op(Opcode::PtrClone, tmp, rhs_slot, 0);
+                        func.emit_op(Opcode::Copy, slot, tmp, 0);
+                    } else {
+                        // rhs is stack: compile to temp, then PtrSetN
+                        let tmp = func.alloc_temp(struct_slots);
+                        compile_expr_to(rhs, tmp, ctx, func, info)?;
+                        func.emit_ptr_set(slot, 0, tmp, struct_slots);
+                    }
                 } else {
-                    // Stack variable: direct write
-                    compile_expr_to(rhs, slot, ctx, func, info)?;
+                    // Stack variable (lhs is stack): check if rhs is escaped struct
+                    // If so, need to copy from heap to stack using PtrGetN
+                    let rhs_escaped = is_rhs_escaped_struct(rhs, func, info);
+                    if let Some(rhs_slot) = rhs_escaped {
+                        // rhs is escaped struct: use PtrGetN to copy heap -> stack
+                        func.emit_ptr_get(slot, rhs_slot, 0, slots);
+                    } else {
+                        // Normal case: direct write
+                        compile_expr_to(rhs, slot, ctx, func, info)?;
+                    }
                 }
             } else if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
                 let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
@@ -1588,4 +1610,33 @@ fn resolve_selector_slot(
         }
         _ => Err(CodegenError::InvalidLHS),
     }
+}
+
+/// Check if rhs is an escaped struct variable.
+/// Returns the slot of the escaped variable if so.
+fn is_rhs_escaped_struct(
+    rhs: &vo_syntax::ast::Expr,
+    func: &FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Option<u16> {
+    use vo_syntax::ast::ExprKind;
+    
+    if let ExprKind::Ident(ident) = &rhs.kind {
+        // Check if it's a local variable that is escaped
+        if let Some(local) = func.lookup_local(ident.symbol) {
+            if local.is_heap {
+                // Check if it's a struct or array (value type)
+                let obj_key = info.get_def(ident);
+                let type_key = obj_key.and_then(|o| info.obj_type(o));
+                let is_value_type = type_key.map(|t| {
+                    info.is_struct(t) || info.is_array(t)
+                }).unwrap_or(false);
+                
+                if is_value_type {
+                    return Some(local.slot);
+                }
+            }
+        }
+    }
+    None
 }
