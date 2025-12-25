@@ -1,6 +1,5 @@
 use vo_common_core::types::{SlotType, ValueKind, ValueMeta};
 use vo_vm::bytecode::{Constant, ExternDef, FunctionDef, GlobalDef, InterfaceMeta, Module, StructMeta};
-use vo_vm::exec::ExternCallResult;
 use vo_vm::instruction::{Instruction, Opcode};
 use vo_vm::vm::Vm;
 
@@ -306,10 +305,7 @@ fn test_slice_append_len_get() {
     assert_eq!(vm.state.globals[1], 1);
 }
 
-fn extern_add(ret: &mut [u64], args: &[u64]) -> ExternCallResult {
-    ret[0] = args[0].wrapping_add(args[1]);
-    ExternCallResult::Ok
-}
+// Note: extern_add test removed - extern functions now use ExternCall API from vo-runtime-core
 
 #[test]
 fn test_go_chan_send_then_recv_after_yield() {

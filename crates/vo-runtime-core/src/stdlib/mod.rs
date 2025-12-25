@@ -4,6 +4,7 @@
 //! 
 //! Native functions are implemented using `#[vo_extern_std]` macro which:
 //! - Validates signature against .vo file declaration
-//! - Generates `#[no_mangle] extern "C"` wrapper for dynamic library export
+//! - Auto-registers to EXTERN_TABLE via linkme for runtime lookup
 
 pub mod fmt;
+pub mod builtin;

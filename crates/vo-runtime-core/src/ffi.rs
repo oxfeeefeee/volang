@@ -21,6 +21,8 @@ use alloc::string::String;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
+use linkme::distributed_slice;
+
 use crate::gc::{Gc, GcRef};
 use crate::objects::string;
 
@@ -40,6 +42,52 @@ pub type ExternFn = fn(&mut ExternCall) -> ExternResult;
 
 /// Extern function with GC access.
 pub type ExternFnWithGc = fn(&mut ExternCallWithGc) -> ExternResult;
+
+// ==================== Auto-registration via linkme ====================
+
+/// Entry for auto-registered extern functions.
+pub struct ExternEntry {
+    /// Function name in format "pkg_FuncName" (e.g., "fmt_Println").
+    pub name: &'static str,
+    /// The extern function.
+    pub func: ExternFn,
+}
+
+/// Entry for auto-registered extern functions with GC access.
+pub struct ExternEntryWithGc {
+    /// Function name in format "pkg_FuncName" (e.g., "fmt_Sprint").
+    pub name: &'static str,
+    /// The extern function with GC access.
+    pub func: ExternFnWithGc,
+}
+
+/// Distributed slice for auto-registered extern functions.
+#[distributed_slice]
+pub static EXTERN_TABLE: [ExternEntry] = [..];
+
+/// Distributed slice for auto-registered extern functions with GC access.
+#[distributed_slice]
+pub static EXTERN_TABLE_WITH_GC: [ExternEntryWithGc] = [..];
+
+/// Lookup an extern function by name.
+pub fn lookup_extern(name: &str) -> Option<ExternFn> {
+    for entry in EXTERN_TABLE {
+        if entry.name == name {
+            return Some(entry.func);
+        }
+    }
+    None
+}
+
+/// Lookup an extern function with GC access by name.
+pub fn lookup_extern_with_gc(name: &str) -> Option<ExternFnWithGc> {
+    for entry in EXTERN_TABLE_WITH_GC {
+        if entry.name == name {
+            return Some(entry.func);
+        }
+    }
+    None
+}
 
 /// External function call context - provides type-safe stack access.
 ///

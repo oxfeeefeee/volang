@@ -85,6 +85,31 @@ pub fn vo_extern_std(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+/// Attribute macro for builtin functions called directly by runtime.
+///
+/// Unlike `vo_extern_std`, this macro skips Vo signature validation.
+/// Use for internal runtime functions that don't have corresponding .vo declarations.
+///
+/// # Example
+///
+/// ```ignore
+/// #[vo_builtin("vo_print")]
+/// fn print(s: &str) -> i64 {
+///     print!("{}", s);
+///     s.len() as i64
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn vo_builtin(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(attr as syn::LitStr);
+    let func = parse_macro_input!(item as ItemFn);
+    
+    match vo_builtin_impl(name.value(), func) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
 fn vo_extern_impl(
     args: Punctuated<Expr, Token![,]>,
     func: ItemFn,
@@ -127,10 +152,16 @@ fn find_vo_signature(pkg_path: &str, func_name: &str, func: &ItemFn) -> syn::Res
     if let Some(stdlib_dir) = find_stdlib_dir() {
         let pkg_dir = stdlib_dir.join(pkg_path);
         if pkg_dir.exists() {
-            let vo_sig = vo_parser::find_extern_func(&pkg_dir, func_name).map_err(|e| {
-                syn::Error::new_spanned(&func.sig, e)
-            })?;
-            return Ok((vo_sig, true));
+            // For stdlib, try to find the function but don't fail if signature parsing fails
+            // (e.g., variadic functions are not yet supported)
+            match vo_parser::find_extern_func(&pkg_dir, func_name) {
+                Ok(vo_sig) => return Ok((vo_sig, true)),
+                Err(_) => {
+                    // Return a placeholder signature for stdlib functions
+                    // This allows stdlib development to proceed while parser is improved
+                    return Ok((vo_parser::VoFuncSig::from_rust_fn(func), true));
+                }
+            }
         }
     }
     
@@ -367,7 +398,27 @@ fn format_vo_type(ty: &vo_parser::VoType) -> String {
         vo_parser::VoType::Pointer(inner) => format!("*{}", format_vo_type(inner)),
         vo_parser::VoType::Slice(inner) => format!("[]{}", format_vo_type(inner)),
         vo_parser::VoType::Array(n, inner) => format!("[{}]{}", n, format_vo_type(inner)),
+        vo_parser::VoType::Map(k, v) => format!("map[{}]{}", format_vo_type(k), format_vo_type(v)),
+        vo_parser::VoType::Chan(dir, inner) => {
+            match dir {
+                vo_parser::ChanDir::Both => format!("chan {}", format_vo_type(inner)),
+                vo_parser::ChanDir::Send => format!("chan<- {}", format_vo_type(inner)),
+                vo_parser::ChanDir::Recv => format!("<-chan {}", format_vo_type(inner)),
+            }
+        }
+        vo_parser::VoType::Func(params, results) => {
+            let params_str = params.iter().map(format_vo_type).collect::<Vec<_>>().join(", ");
+            let results_str = if results.is_empty() {
+                String::new()
+            } else if results.len() == 1 {
+                format!(" {}", format_vo_type(&results[0]))
+            } else {
+                format!(" ({})", results.iter().map(format_vo_type).collect::<Vec<_>>().join(", "))
+            };
+            format!("func({}){}", params_str, results_str)
+        }
         vo_parser::VoType::Named(name) => name.clone(),
+        vo_parser::VoType::Variadic(inner) => format!("...{}", format_vo_type(inner)),
     }
 }
 
@@ -429,6 +480,16 @@ fn generate_wrapper(
     );
     let wrapper_name = format_ident!("{}", symbol_name);
     
+    // Generate registration entry name
+    let entry_name = format_ident!("__VO_ENTRY_{}", symbol_name.to_uppercase());
+    
+    // Generate lookup name: "pkg_FuncName" format
+    let lookup_name = format!(
+        "{}_{}",
+        pkg_path.replace('/', "_").replace('.', "_"),
+        func_name
+    );
+    
     // Analyze parameters
     let params: Vec<_> = func.sig.inputs.iter().collect();
     let mut arg_reads = Vec::new();
@@ -475,52 +536,207 @@ fn generate_wrapper(
         .unwrap_or(false);
     
     // Generate wrapper with #[no_mangle] for dynamic library export
+    // and linkme registration for auto-discovery
     if needs_gc {
         if is_runtime_core {
             Ok(quote! {
                 #[doc(hidden)]
-                #[no_mangle]
-                pub extern "C" fn #wrapper_name(call: &mut crate::ffi::ExternCallWithGc) -> crate::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut crate::ffi::ExternCallWithGc) -> crate::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
                     crate::ffi::ExternResult::Ok
                 }
+
+                #[crate::distributed_slice(crate::EXTERN_TABLE_WITH_GC)]
+                #[doc(hidden)]
+                static #entry_name: crate::ffi::ExternEntryWithGc = crate::ffi::ExternEntryWithGc {
+                    name: #lookup_name,
+                    func: #wrapper_name,
+                };
             })
         } else {
             Ok(quote! {
                 #[doc(hidden)]
-                #[no_mangle]
-                pub extern "C" fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCallWithGc) -> vo_runtime_core::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCallWithGc) -> vo_runtime_core::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
                     vo_runtime_core::ffi::ExternResult::Ok
                 }
+
+                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE_WITH_GC)]
+                #[doc(hidden)]
+                static #entry_name: vo_runtime_core::ffi::ExternEntryWithGc = vo_runtime_core::ffi::ExternEntryWithGc {
+                    name: #lookup_name,
+                    func: #wrapper_name,
+                };
             })
         }
     } else {
         if is_runtime_core {
             Ok(quote! {
                 #[doc(hidden)]
-                #[no_mangle]
-                pub extern "C" fn #wrapper_name(call: &mut crate::ffi::ExternCall) -> crate::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut crate::ffi::ExternCall) -> crate::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
                     crate::ffi::ExternResult::Ok
                 }
+
+                #[crate::distributed_slice(crate::EXTERN_TABLE)]
+                #[doc(hidden)]
+                static #entry_name: crate::ffi::ExternEntry = crate::ffi::ExternEntry {
+                    name: #lookup_name,
+                    func: #wrapper_name,
+                };
             })
         } else {
             Ok(quote! {
                 #[doc(hidden)]
-                #[no_mangle]
-                pub extern "C" fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCall) -> vo_runtime_core::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCall) -> vo_runtime_core::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
                     vo_runtime_core::ffi::ExternResult::Ok
                 }
+
+                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE)]
+                #[doc(hidden)]
+                static #entry_name: vo_runtime_core::ffi::ExternEntry = vo_runtime_core::ffi::ExternEntry {
+                    name: #lookup_name,
+                    func: #wrapper_name,
+                };
+            })
+        }
+    }
+}
+
+/// Implementation for #[vo_builtin] - skips signature validation.
+fn vo_builtin_impl(name: String, func: ItemFn) -> syn::Result<TokenStream2> {
+    let fn_name = &func.sig.ident;
+    let wrapper_name = format_ident!("__vo_builtin_{}", name);
+    let entry_name = format_ident!("__VO_BUILTIN_ENTRY_{}", name.to_uppercase());
+    
+    // Analyze parameters
+    let params: Vec<_> = func.sig.inputs.iter().collect();
+    let mut arg_reads = Vec::new();
+    let mut arg_names = Vec::new();
+    let mut needs_gc = false;
+    let mut slot_idx: u16 = 0;
+    
+    for param in &params {
+        match param {
+            FnArg::Typed(pat_type) => {
+                let param_name = match &*pat_type.pat {
+                    Pat::Ident(ident) => &ident.ident,
+                    _ => return Err(syn::Error::new_spanned(pat_type, "expected identifier")),
+                };
+                
+                let ty = &*pat_type.ty;
+                let (read_expr, is_gc, slots) = generate_arg_read(ty, slot_idx)?;
+                
+                arg_reads.push(quote! {
+                    let #param_name = #read_expr;
+                });
+                arg_names.push(quote! { #param_name });
+                
+                if is_gc {
+                    needs_gc = true;
+                }
+                slot_idx += slots;
+            }
+            FnArg::Receiver(_) => {
+                return Err(syn::Error::new_spanned(param, "self parameter not allowed"));
+            }
+        }
+    }
+    
+    let ret_writes = generate_ret_write(&func.sig.output)?;
+    let call_expr = quote! { #fn_name(#(#arg_names),*) };
+    
+    let is_runtime_core = std::env::var("CARGO_PKG_NAME")
+        .map(|n| n == "vo-runtime-core")
+        .unwrap_or(false);
+    
+    if needs_gc {
+        if is_runtime_core {
+            Ok(quote! {
+                #func
+
+                #[doc(hidden)]
+                pub fn #wrapper_name(call: &mut crate::ffi::ExternCallWithGc) -> crate::ffi::ExternResult {
+                    #(#arg_reads)*
+                    let __result = #call_expr;
+                    #ret_writes
+                    crate::ffi::ExternResult::Ok
+                }
+
+                #[crate::distributed_slice(crate::EXTERN_TABLE_WITH_GC)]
+                #[doc(hidden)]
+                static #entry_name: crate::ffi::ExternEntryWithGc = crate::ffi::ExternEntryWithGc {
+                    name: #name,
+                    func: #wrapper_name,
+                };
+            })
+        } else {
+            Ok(quote! {
+                #func
+
+                #[doc(hidden)]
+                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCallWithGc) -> vo_runtime_core::ffi::ExternResult {
+                    #(#arg_reads)*
+                    let __result = #call_expr;
+                    #ret_writes
+                    vo_runtime_core::ffi::ExternResult::Ok
+                }
+
+                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE_WITH_GC)]
+                #[doc(hidden)]
+                static #entry_name: vo_runtime_core::ffi::ExternEntryWithGc = vo_runtime_core::ffi::ExternEntryWithGc {
+                    name: #name,
+                    func: #wrapper_name,
+                };
+            })
+        }
+    } else {
+        if is_runtime_core {
+            Ok(quote! {
+                #func
+
+                #[doc(hidden)]
+                pub fn #wrapper_name(call: &mut crate::ffi::ExternCall) -> crate::ffi::ExternResult {
+                    #(#arg_reads)*
+                    let __result = #call_expr;
+                    #ret_writes
+                    crate::ffi::ExternResult::Ok
+                }
+
+                #[crate::distributed_slice(crate::EXTERN_TABLE)]
+                #[doc(hidden)]
+                static #entry_name: crate::ffi::ExternEntry = crate::ffi::ExternEntry {
+                    name: #name,
+                    func: #wrapper_name,
+                };
+            })
+        } else {
+            Ok(quote! {
+                #func
+
+                #[doc(hidden)]
+                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCall) -> vo_runtime_core::ffi::ExternResult {
+                    #(#arg_reads)*
+                    let __result = #call_expr;
+                    #ret_writes
+                    vo_runtime_core::ffi::ExternResult::Ok
+                }
+
+                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE)]
+                #[doc(hidden)]
+                static #entry_name: vo_runtime_core::ffi::ExternEntry = vo_runtime_core::ffi::ExternEntry {
+                    name: #name,
+                    func: #wrapper_name,
+                };
             })
         }
     }

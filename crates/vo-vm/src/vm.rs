@@ -490,7 +490,7 @@ impl Vm {
                 exec::exec_call(fiber, inst, module)
             }
             Opcode::CallExtern => {
-                exec::exec_call_extern(fiber, inst, &module.externs, &state.extern_registry)
+                exec::exec_call_extern(fiber, inst, &module.externs, &state.extern_registry, &mut state.gc)
             }
             Opcode::CallClosure => {
                 exec::exec_call_closure(fiber, inst, module)

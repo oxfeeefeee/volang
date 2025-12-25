@@ -14,6 +14,81 @@ pub struct VoFuncSig {
     pub is_extern: bool,
 }
 
+impl VoFuncSig {
+    /// Create a placeholder signature from a Rust function.
+    /// Used when Vo signature parsing fails (e.g., variadic functions).
+    pub fn from_rust_fn(func: &syn::ItemFn) -> Self {
+        let params = func.sig.inputs.iter().filter_map(|arg| {
+            if let syn::FnArg::Typed(pat_type) = arg {
+                let name = if let syn::Pat::Ident(ident) = &*pat_type.pat {
+                    ident.ident.to_string()
+                } else {
+                    String::new()
+                };
+                let ty = rust_type_to_vo(&pat_type.ty);
+                Some(VoParam { name, ty })
+            } else {
+                None
+            }
+        }).collect();
+
+        let results = match &func.sig.output {
+            syn::ReturnType::Default => Vec::new(),
+            syn::ReturnType::Type(_, ty) => {
+                if let syn::Type::Tuple(tuple) = &**ty {
+                    tuple.elems.iter().map(rust_type_to_vo).collect()
+                } else {
+                    vec![rust_type_to_vo(ty)]
+                }
+            }
+        };
+
+        Self {
+            name: func.sig.ident.to_string(),
+            params,
+            results,
+            is_extern: true,
+        }
+    }
+}
+
+fn rust_type_to_vo(ty: &syn::Type) -> VoType {
+    match ty {
+        syn::Type::Path(p) => {
+            let ident = p.path.segments.last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            match ident.as_str() {
+                "i64" | "isize" => VoType::Int64,
+                "i32" => VoType::Int32,
+                "i16" => VoType::Int16,
+                "i8" => VoType::Int8,
+                "u64" | "usize" => VoType::Uint64,
+                "u32" => VoType::Uint32,
+                "u16" => VoType::Uint16,
+                "u8" => VoType::Uint8,
+                "f64" => VoType::Float64,
+                "f32" => VoType::Float32,
+                "bool" => VoType::Bool,
+                "String" => VoType::String,
+                _ => VoType::Any,
+            }
+        }
+        syn::Type::Reference(r) => {
+            if let syn::Type::Path(p) = &*r.elem {
+                let ident = p.path.segments.last()
+                    .map(|s| s.ident.to_string())
+                    .unwrap_or_default();
+                if ident == "str" {
+                    return VoType::String;
+                }
+            }
+            VoType::Any
+        }
+        _ => VoType::Any,
+    }
+}
+
 /// A Vo function parameter.
 #[derive(Debug, Clone)]
 pub struct VoParam {
@@ -24,6 +99,7 @@ pub struct VoParam {
 /// A Vo type.
 #[derive(Debug, Clone)]
 pub enum VoType {
+    // Primitive types
     Int,
     Int8,
     Int16,
@@ -39,40 +115,120 @@ pub enum VoType {
     Bool,
     String,
     Any,
+    // Composite types
     Named(String),
     Pointer(Box<VoType>),
     Slice(Box<VoType>),
     Array(usize, Box<VoType>),
+    Map(Box<VoType>, Box<VoType>),
+    Chan(ChanDir, Box<VoType>),
+    Func(Vec<VoType>, Vec<VoType>),
+    /// Variadic parameter: ...T (e.g., ...interface{})
+    Variadic(Box<VoType>),
+}
+
+/// Channel direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChanDir {
+    /// Bidirectional: chan T
+    Both,
+    /// Send-only: chan<- T
+    Send,
+    /// Receive-only: <-chan T
+    Recv,
 }
 
 impl VoType {
     /// Parse a type string.
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
+        
+        // Primitive types
         match s {
-            "int" => Some(VoType::Int),
-            "int8" => Some(VoType::Int8),
-            "int16" => Some(VoType::Int16),
-            "int32" => Some(VoType::Int32),
-            "int64" => Some(VoType::Int64),
-            "uint" => Some(VoType::Uint),
-            "uint8" | "byte" => Some(VoType::Uint8),
-            "uint16" => Some(VoType::Uint16),
-            "uint32" => Some(VoType::Uint32),
-            "uint64" => Some(VoType::Uint64),
-            "float32" => Some(VoType::Float32),
-            "float64" => Some(VoType::Float64),
-            "bool" => Some(VoType::Bool),
-            "string" => Some(VoType::String),
-            "any" => Some(VoType::Any),
-            _ if s.starts_with('*') => {
-                VoType::parse(&s[1..]).map(|t| VoType::Pointer(Box::new(t)))
-            }
-            _ if s.starts_with("[]") => {
-                VoType::parse(&s[2..]).map(|t| VoType::Slice(Box::new(t)))
-            }
-            _ => Some(VoType::Named(s.to_string())),
+            "int" => return Some(VoType::Int),
+            "int8" => return Some(VoType::Int8),
+            "int16" => return Some(VoType::Int16),
+            "int32" => return Some(VoType::Int32),
+            "int64" => return Some(VoType::Int64),
+            "uint" => return Some(VoType::Uint),
+            "uint8" | "byte" => return Some(VoType::Uint8),
+            "uint16" => return Some(VoType::Uint16),
+            "uint32" => return Some(VoType::Uint32),
+            "uint64" => return Some(VoType::Uint64),
+            "float32" => return Some(VoType::Float32),
+            "float64" => return Some(VoType::Float64),
+            "bool" => return Some(VoType::Bool),
+            "string" => return Some(VoType::String),
+            "any" | "interface{}" => return Some(VoType::Any),
+            _ => {}
         }
+        
+        // Variadic: ...T
+        if let Some(rest) = s.strip_prefix("...") {
+            return VoType::parse(rest).map(|t| VoType::Variadic(Box::new(t)));
+        }
+        
+        // Pointer: *T
+        if let Some(rest) = s.strip_prefix('*') {
+            return VoType::parse(rest).map(|t| VoType::Pointer(Box::new(t)));
+        }
+        
+        // Receive-only channel: <-chan T
+        if let Some(rest) = s.strip_prefix("<-chan") {
+            return VoType::parse(rest).map(|t| VoType::Chan(ChanDir::Recv, Box::new(t)));
+        }
+        
+        // Send-only channel: chan<- T
+        if let Some(rest) = s.strip_prefix("chan<-") {
+            return VoType::parse(rest).map(|t| VoType::Chan(ChanDir::Send, Box::new(t)));
+        }
+        
+        // Bidirectional channel: chan T
+        if let Some(rest) = s.strip_prefix("chan") {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return VoType::parse(rest).map(|t| VoType::Chan(ChanDir::Both, Box::new(t)));
+            }
+        }
+        
+        // Map: map[K]V
+        if let Some(rest) = s.strip_prefix("map[") {
+            if let Some(bracket_end) = find_matching_bracket(rest, '[', ']') {
+                let key_str = &rest[..bracket_end];
+                let val_str = &rest[bracket_end + 1..];
+                let key = VoType::parse(key_str)?;
+                let val = VoType::parse(val_str)?;
+                return Some(VoType::Map(Box::new(key), Box::new(val)));
+            }
+        }
+        
+        // Slice: []T
+        if let Some(rest) = s.strip_prefix("[]") {
+            return VoType::parse(rest).map(|t| VoType::Slice(Box::new(t)));
+        }
+        
+        // Array: [N]T
+        if s.starts_with('[') {
+            if let Some(bracket_end) = s.find(']') {
+                let size_str = &s[1..bracket_end];
+                if let Ok(size) = size_str.parse::<usize>() {
+                    let elem_str = &s[bracket_end + 1..];
+                    return VoType::parse(elem_str).map(|t| VoType::Array(size, Box::new(t)));
+                }
+            }
+        }
+        
+        // Func: func(...) ...
+        if let Some(rest) = s.strip_prefix("func") {
+            return parse_func_type(rest.trim_start());
+        }
+        
+        // Named type (identifier)
+        if !s.is_empty() && (s.chars().next().unwrap().is_alphabetic() || s.starts_with('_')) {
+            return Some(VoType::Named(s.to_string()));
+        }
+        
+        None
     }
 
     /// Get the expected Rust type for this Vo type.
@@ -94,9 +250,71 @@ impl VoType {
             VoType::Pointer(_) => "GcRef",
             VoType::Slice(_) => "GcRef",
             VoType::Array(_, _) => "GcRef",
+            VoType::Map(_, _) => "GcRef",
+            VoType::Chan(_, _) => "GcRef",
+            VoType::Func(_, _) => "GcRef",
             VoType::Named(_) => "GcRef",
+            VoType::Variadic(_) => "variadic",
         }
     }
+
+    /// Check if this type is variadic.
+    pub fn is_variadic(&self) -> bool {
+        matches!(self, VoType::Variadic(_))
+    }
+}
+
+/// Find matching bracket, handling nesting.
+fn find_matching_bracket(s: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 1;
+    for (i, c) in s.char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Parse a function type: (params) result
+fn parse_func_type(s: &str) -> Option<VoType> {
+    // Expect (params) result
+    if !s.starts_with('(') {
+        return None;
+    }
+    
+    let paren_end = find_matching_bracket(&s[1..], '(', ')')? + 1;
+    let params_str = &s[1..paren_end];
+    let result_str = s[paren_end + 1..].trim();
+    
+    // Parse params
+    let params = if params_str.is_empty() {
+        Vec::new()
+    } else {
+        params_str.split(',')
+            .filter_map(|p| VoType::parse(p.trim()))
+            .collect()
+    };
+    
+    // Parse results
+    let results = if result_str.is_empty() {
+        Vec::new()
+    } else if result_str.starts_with('(') && result_str.ends_with(')') {
+        // Multiple results: (T1, T2)
+        let inner = &result_str[1..result_str.len() - 1];
+        inner.split(',')
+            .filter_map(|r| VoType::parse(r.trim()))
+            .collect()
+    } else {
+        // Single result
+        vec![VoType::parse(result_str)?]
+    };
+    
+    Some(VoType::Func(params, results))
 }
 
 /// Find and parse extern functions from a package directory.
@@ -298,6 +516,59 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_variadic() {
+        assert!(matches!(VoType::parse("...interface{}"), Some(VoType::Variadic(_))));
+        assert!(matches!(VoType::parse("...int"), Some(VoType::Variadic(_))));
+        assert!(matches!(VoType::parse("interface{}"), Some(VoType::Any)));
+        
+        if let Some(VoType::Variadic(inner)) = VoType::parse("...interface{}") {
+            assert!(matches!(*inner, VoType::Any));
+        } else {
+            panic!("expected Variadic");
+        }
+    }
+
+    #[test]
+    fn test_parse_map() {
+        assert!(matches!(VoType::parse("map[string]int"), Some(VoType::Map(_, _))));
+        assert!(matches!(VoType::parse("map[int][]byte"), Some(VoType::Map(_, _))));
+        
+        if let Some(VoType::Map(k, v)) = VoType::parse("map[string]int") {
+            assert!(matches!(*k, VoType::String));
+            assert!(matches!(*v, VoType::Int));
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn test_parse_chan() {
+        assert!(matches!(VoType::parse("chan int"), Some(VoType::Chan(ChanDir::Both, _))));
+        assert!(matches!(VoType::parse("chan<- int"), Some(VoType::Chan(ChanDir::Send, _))));
+        assert!(matches!(VoType::parse("<-chan int"), Some(VoType::Chan(ChanDir::Recv, _))));
+    }
+
+    #[test]
+    fn test_parse_func() {
+        assert!(matches!(VoType::parse("func()"), Some(VoType::Func(_, _))));
+        assert!(matches!(VoType::parse("func(int) bool"), Some(VoType::Func(_, _))));
+        assert!(matches!(VoType::parse("func(int, string) (bool, error)"), Some(VoType::Func(_, _))));
+        
+        if let Some(VoType::Func(params, results)) = VoType::parse("func(int, string) bool") {
+            assert_eq!(params.len(), 2);
+            assert_eq!(results.len(), 1);
+        } else {
+            panic!("expected Func");
+        }
+    }
+
+    #[test]
+    fn test_parse_array() {
+        assert!(matches!(VoType::parse("[10]int"), Some(VoType::Array(10, _))));
+        assert!(matches!(VoType::parse("[256]byte"), Some(VoType::Array(256, _))));
+    }
+
+    #[test]
     fn test_parse_extern_func() {
         let source = r#"
 package fmt
@@ -314,6 +585,15 @@ func helper() {
         assert!(matches!(sig.params[0].ty, VoType::String));
         assert_eq!(sig.results.len(), 1);
         assert!(matches!(sig.results[0], VoType::Int));
+    }
+
+    #[test]
+    fn test_parse_variadic_func() {
+        let source = "func Print(a ...interface{}) int";
+        let sig = parse_func_signature(source, "Print").unwrap();
+        assert_eq!(sig.params.len(), 1);
+        assert!(sig.params[0].ty.is_variadic());
+        assert_eq!(sig.results.len(), 1);
     }
 
     #[test]

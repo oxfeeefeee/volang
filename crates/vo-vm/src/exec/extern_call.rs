@@ -1,84 +1,48 @@
 //! External function call: CallExtern
-
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+//!
+//! Uses ExternRegistry from vo-runtime-core for extern function dispatch.
 
 use crate::bytecode::ExternDef;
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;
 use crate::vm::ExecResult;
 
-pub type ExternFn = fn(&mut [u64], &[u64]) -> ExternCallResult;
-
-pub enum ExternCallResult {
-    Ok,
-    Yield,
-    Panic,
-}
-
-pub struct ExternRegistry {
-    funcs: Vec<Option<ExternFn>>,
-}
-
-impl ExternRegistry {
-    pub fn new() -> Self {
-        Self { funcs: Vec::new() }
-    }
-
-    pub fn register(&mut self, extern_id: u32, func: ExternFn) {
-        let id = extern_id as usize;
-        if id >= self.funcs.len() {
-            self.funcs.resize(id + 1, None);
-        }
-        self.funcs[id] = Some(func);
-    }
-
-    pub fn get(&self, extern_id: u32) -> Option<ExternFn> {
-        self.funcs.get(extern_id as usize).copied().flatten()
-    }
-}
-
-impl Default for ExternRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use vo_runtime_core::ffi::ExternRegistry;
+use vo_runtime_core::ffi::ExternResult;
+use vo_runtime_core::gc::Gc;
 
 pub fn exec_call_extern(
     fiber: &mut Fiber,
     inst: &Instruction,
     externs: &[ExternDef],
     registry: &ExternRegistry,
+    gc: &mut Gc,
 ) -> ExecResult {
     // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
-    let _dst = inst.a;
     let extern_id = inst.b as u32;
     let arg_start = inst.c;
-    let arg_slots = inst.flags as usize;
 
     if extern_id as usize >= externs.len() {
         return ExecResult::Panic;
     }
-    let extern_def = &externs[extern_id as usize];
-    let func = match registry.get(extern_id) {
-        Some(f) => f,
-        None => return ExecResult::Panic,
-    };
+    let _extern_def = &externs[extern_id as usize];
 
     let frame = fiber.frames.last().expect("no active frame");
     let bp = frame.bp;
 
-    let args: Vec<u64> = (0..arg_slots)
-        .map(|i| fiber.stack[bp + arg_start as usize + i])
-        .collect();
+    // Call through ExternRegistry using ExternCall API
+    let result = registry.call(
+        extern_id,
+        &mut fiber.stack,
+        bp,
+        arg_start,
+        arg_start, // ret_start same as arg_start (reuses argument slots)
+        gc,
+    );
 
-    let ret_start = bp + arg_start as usize;
-    let ret_slots = extern_def.ret_slots as usize;
-    let ret_slice = &mut fiber.stack[ret_start..ret_start + ret_slots.max(1)];
-
-    match func(ret_slice, &args) {
-        ExternCallResult::Ok => ExecResult::Continue,
-        ExternCallResult::Yield => ExecResult::Yield,
-        ExternCallResult::Panic => ExecResult::Panic,
+    match result {
+        ExternResult::Ok => ExecResult::Continue,
+        ExternResult::Yield => ExecResult::Yield,
+        ExternResult::Panic(_) => ExecResult::Panic,
     }
 }

@@ -13,3 +13,4 @@ std = []
 vo-common-core = { path = "../vo-common-core" }
 vo-ffi-macro = { path = "../vo-ffi-macro" }
 hashbrown = "0.15"
+linkme = "0.3"
