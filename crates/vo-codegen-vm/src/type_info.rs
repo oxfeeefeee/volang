@@ -152,6 +152,17 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
+    /// Get slots and slot_types for a type expression (used for params/results).
+    /// Returns (slots, slot_types) with default fallback if type is unknown.
+    pub fn type_expr_layout(&self, type_expr_id: vo_common_core::TypeExprId) -> (u16, Vec<SlotType>) {
+        let type_key = self.project.type_info.type_exprs.get(&type_expr_id).copied();
+        let slots = type_key.map(|t| self.type_slot_count(t)).unwrap_or(1);
+        let slot_types = type_key
+            .map(|t| self.type_slot_types(t))
+            .unwrap_or_else(|| vec![SlotType::Value]);
+        (slots, slot_types)
+    }
+
     // === Struct layout ===
 
     pub fn struct_field_offset(

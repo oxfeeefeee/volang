@@ -619,23 +619,16 @@ fn compile_func_lit(
     
     // Define parameters (starting after slot 0 which is closure ref)
     for param in &func_lit.sig.params {
-        let type_key = info.project.type_info.type_exprs.get(&param.ty.id).copied();
-        let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-        let slot_types = type_key
-            .map(|t| info.type_slot_types(t))
-            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+        let (slots, slot_types) = info.type_expr_layout(param.ty.id);
         for name in &param.names {
             closure_builder.define_param(name.symbol, slots, &slot_types);
         }
     }
     
     // Set return slots
-    let mut ret_slots = 0u16;
-    for result in &func_lit.sig.results {
-        let type_key = info.project.type_info.type_exprs.get(&result.ty.id).copied();
-        let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-        ret_slots += slots;
-    }
+    let ret_slots: u16 = func_lit.sig.results.iter()
+        .map(|r| info.type_expr_layout(r.ty.id).0)
+        .sum();
     closure_builder.set_ret_slots(ret_slots);
     
     // Compile closure body
