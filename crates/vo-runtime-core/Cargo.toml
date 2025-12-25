@@ -11,4 +11,5 @@ std = []
 
 [dependencies]
 vo-common-core = { path = "../vo-common-core" }
+vo-ffi-macro = { path = "../vo-ffi-macro" }
 hashbrown = "0.15"

@@ -154,13 +154,69 @@ impl Vm {
                 (inst, frame.func_id)
             };
 
-            // Execute - fiber and state can be borrowed independently
-            let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-            let result = Self::exec_inst(fiber, &inst, func_id, module, &mut self.state);
+            // Handle channel ops specially - they need scheduler access for wake
+            let op = inst.opcode();
+            let result = match op {
+                Opcode::ChanSend => {
+                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                    match exec::exec_chan_send(fiber, &inst) {
+                        exec::ChanResult::Continue => ExecResult::Continue,
+                        exec::ChanResult::Yield => ExecResult::Yield,
+                        exec::ChanResult::Panic => ExecResult::Panic,
+                        exec::ChanResult::Wake(id) => {
+                            self.scheduler.wake(id);
+                            ExecResult::Continue
+                        }
+                        exec::ChanResult::WakeMultiple(ids) => {
+                            for id in ids { self.scheduler.wake(id); }
+                            ExecResult::Continue
+                        }
+                    }
+                }
+                Opcode::ChanRecv => {
+                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                    match exec::exec_chan_recv(fiber, &inst) {
+                        exec::ChanResult::Continue => ExecResult::Continue,
+                        exec::ChanResult::Yield => ExecResult::Yield,
+                        exec::ChanResult::Panic => ExecResult::Panic,
+                        exec::ChanResult::Wake(id) => {
+                            self.scheduler.wake(id);
+                            ExecResult::Continue
+                        }
+                        exec::ChanResult::WakeMultiple(ids) => {
+                            for id in ids { self.scheduler.wake(id); }
+                            ExecResult::Continue
+                        }
+                    }
+                }
+                Opcode::ChanClose => {
+                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                    match exec::exec_chan_close(fiber, &inst) {
+                        exec::ChanResult::WakeMultiple(ids) => {
+                            for id in ids { self.scheduler.wake(id); }
+                        }
+                        _ => {}
+                    }
+                    ExecResult::Continue
+                }
+                Opcode::GoCall => {
+                    let functions = &module.functions;
+                    let next_id = self.scheduler.fibers.len() as u32;
+                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                    let go_result = exec::exec_go_call(fiber, &inst, functions, next_id);
+                    self.scheduler.spawn(go_result.new_fiber);
+                    ExecResult::Continue
+                }
+                _ => {
+                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                    Self::exec_inst(fiber, &inst, func_id, module, &mut self.state)
+                }
+            };
 
             match result {
                 ExecResult::Continue => continue,
                 ExecResult::Return => {
+                    let fiber = &self.scheduler.fibers[fiber_id as usize];
                     if fiber.frames.is_empty() {
                         return ExecResult::Done;
                     }

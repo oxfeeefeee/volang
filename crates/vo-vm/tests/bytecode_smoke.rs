@@ -61,7 +61,7 @@ fn test_load_arith_global() {
     };
 
     let vm = run_single_func_module(globals, vec![], vec![], vec![], func);
-    assert_eq!(vm.globals[0], 3);
+    assert_eq!(vm.state.globals[0], 3);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn test_jump_if_else() {
     };
 
     let vm = run_single_func_module(globals, vec![], vec![], vec![], func);
-    assert_eq!(vm.globals[0], 111);
+    assert_eq!(vm.state.globals[0], 111);
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn test_ptr_new_set_get() {
     };
 
     let vm = run_single_func_module(globals, vec![], vec![], vec![], func);
-    assert_eq!(vm.globals[0], 99);
+    assert_eq!(vm.state.globals[0], 99);
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn test_string_new_concat_len() {
     };
 
     let vm = run_single_func_module(globals, constants, vec![], vec![], func);
-    assert_eq!(vm.globals[0], ("hi".len() + "there".len()) as u64);
+    assert_eq!(vm.state.globals[0], ("hi".len() + "there".len()) as u64);
 }
 
 #[test]
@@ -219,8 +219,8 @@ fn test_array_set_get_len() {
     };
 
     let vm = run_single_func_module(globals, vec![], vec![], vec![], func);
-    assert_eq!(vm.globals[0], 42);
-    assert_eq!(vm.globals[1], 3);
+    assert_eq!(vm.state.globals[0], 42);
+    assert_eq!(vm.state.globals[1], 3);
 }
 
 #[test]
@@ -257,8 +257,8 @@ fn test_channel_send_recv_buffered() {
     };
 
     let vm = run_single_func_module(globals, vec![], vec![], vec![], func);
-    assert_eq!(vm.globals[0], 7);
-    assert_eq!(vm.globals[1], 1);
+    assert_eq!(vm.state.globals[0], 7);
+    assert_eq!(vm.state.globals[1], 1);
 }
 
 #[test]
@@ -293,8 +293,8 @@ fn test_iface_assign_empty_from_int() {
     };
 
     let vm = run_single_func_module(globals, vec![], vec![], iface_metas, func);
-    let slot0 = vm.globals[0];
-    let slot1 = vm.globals[1];
+    let slot0 = vm.state.globals[0];
+    let slot1 = vm.state.globals[1];
 
     assert_eq!((slot0 >> 32) as u32, 0);
     assert_eq!((slot0 as u32) & 0xFF, ValueKind::Int as u32);

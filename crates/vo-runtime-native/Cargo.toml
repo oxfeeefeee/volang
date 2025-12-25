@@ -1,0 +1,8 @@
+[package]
+name = "vo-runtime-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runtime support for Vo JIT-compiled native code"
+
+[dependencies]

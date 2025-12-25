@@ -23,7 +23,7 @@ pub fn run(file: &str, output: Option<String>) -> Result<(), Box<dyn std::error:
         p.with_extension("vob").to_string_lossy().to_string()
     });
     
-    let bytes = module.to_bytes();
+    let bytes = module.serialize();
     std::fs::write(&out_path, &bytes)?;
     
     println!("Compiled {} -> {} ({} bytes)", file, out_path, bytes.len());

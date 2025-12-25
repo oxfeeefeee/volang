@@ -7,7 +7,8 @@ use vo_analysis::{analyze_project, AnalysisError};
 use vo_module::VfsConfig;
 use vo_codegen_vm::compile_project;
 use vo_runtime_vm::extern_fn::StdMode;
-use vo_vm::{Module, VmResult};
+use vo_runtime_vm::VmResult;
+use vo_vm::bytecode::Module;
 use vo_syntax::parser;
 use crate::printer::AstPrinter;
 use crate::bytecode_text;
@@ -126,7 +127,7 @@ fn compile_source(file: &str, std_mode: StdMode) -> Result<Option<Module>, Box<d
     } else if file.ends_with(".voc") || file.ends_with(".vob") {
         // Binary format
         let bytes = std::fs::read(file)?;
-        Ok(Some(Module::from_bytes(&bytes)?))
+        Ok(Some(Module::deserialize(&bytes).map_err(|e| format!("{:?}", e))?))
     } else if file.ends_with(".vot") {
         // Text format (.vot)
         let content = std::fs::read_to_string(file)?;
@@ -201,6 +202,8 @@ fn run_vm(module: Module, std_mode: StdMode) -> Result<(), Box<dyn std::error::E
         }
     }
 }
+
+#[allow(dead_code)]
 
 /// Run a module using the JIT compiler.
 fn run_jit(module: Module) -> Result<(), Box<dyn std::error::Error>> {

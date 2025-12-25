@@ -50,11 +50,15 @@ pub fn exec_call_extern(
     externs: &[ExternDef],
     registry: &ExternRegistry,
 ) -> ExecResult {
-    let extern_id = (inst.a as u32) | ((inst.flags as u32) << 16);
-    let arg_start = inst.b;
-    let arg_slots = (inst.c >> 8) as usize;
-    let ret_slots = (inst.c & 0xFF) as usize;
+    // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
+    let _dst = inst.a;
+    let extern_id = inst.b as u32;
+    let arg_start = inst.c;
+    let arg_slots = inst.flags as usize;
 
+    if extern_id as usize >= externs.len() {
+        return ExecResult::Panic;
+    }
     let extern_def = &externs[extern_id as usize];
     let func = match registry.get(extern_id) {
         Some(f) => f,
@@ -69,7 +73,8 @@ pub fn exec_call_extern(
         .collect();
 
     let ret_start = bp + arg_start as usize;
-    let ret_slice = &mut fiber.stack[ret_start..ret_start + ret_slots.max(extern_def.ret_slots as usize)];
+    let ret_slots = extern_def.ret_slots as usize;
+    let ret_slice = &mut fiber.stack[ret_start..ret_start + ret_slots.max(1)];
 
     match func(ret_slice, &args) {
         ExternCallResult::Ok => ExecResult::Continue,

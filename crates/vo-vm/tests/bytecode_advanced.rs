@@ -84,7 +84,7 @@ fn test_call_return_args_and_ret() {
 
     let module = build_module(globals, vec![], vec![], vec![], vec![], vec![main, add2], 0);
     let vm = run_module(Vm::new(), module);
-    assert_eq!(vm.globals[0], 42);
+    assert_eq!(vm.state.globals[0], 42);
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn test_closure_capture_and_call_closure() {
 
     let module = build_module(globals, vec![], vec![], vec![], vec![], vec![main, closure_func], 0);
     let vm = run_module(Vm::new(), module);
-    assert_eq!(vm.globals[0], 12);
+    assert_eq!(vm.state.globals[0], 12);
 }
 
 #[test]
@@ -245,10 +245,10 @@ fn test_map_set_get_delete_len_with_ok() {
     let module = build_module(globals, constants, vec![], vec![], vec![], vec![func], 0);
     let vm = run_module(Vm::new(), module);
 
-    assert_eq!(vm.globals[0], 10);
-    assert_eq!(vm.globals[1], 1);
-    assert_eq!(vm.globals[2], 2);
-    assert_eq!(vm.globals[3], 1);
+    assert_eq!(vm.state.globals[0], 10);
+    assert_eq!(vm.state.globals[1], 1);
+    assert_eq!(vm.state.globals[2], 2);
+    assert_eq!(vm.state.globals[3], 1);
 }
 
 #[test]
@@ -302,8 +302,8 @@ fn test_slice_append_len_get() {
     let module = build_module(globals, vec![], vec![], vec![], vec![], vec![func], 0);
     let vm = run_module(Vm::new(), module);
 
-    assert_eq!(vm.globals[0], 7);
-    assert_eq!(vm.globals[1], 1);
+    assert_eq!(vm.state.globals[0], 7);
+    assert_eq!(vm.state.globals[1], 1);
 }
 
 fn extern_add(ret: &mut [u64], args: &[u64]) -> ExternCallResult {
@@ -395,8 +395,8 @@ fn test_go_chan_send_then_recv_after_yield() {
     );
 
     let vm = run_module(Vm::new(), module);
-    assert_eq!(vm.globals[0], 7);
-    assert_eq!(vm.globals[1], 1);
+    assert_eq!(vm.state.globals[0], 7);
+    assert_eq!(vm.state.globals[1], 1);
 }
 
 #[test]
@@ -437,8 +437,8 @@ fn test_extern_call_add() {
     let module = build_module(globals, vec![], vec![], vec![], externs, vec![func], 0);
 
     let mut vm = Vm::new();
-    vm.extern_registry.register(0, extern_add);
+    vm.state.extern_registry.register(0, extern_add);
 
     let vm = run_module(vm, module);
-    assert_eq!(vm.globals[0], 42);
+    assert_eq!(vm.state.globals[0], 42);
 }

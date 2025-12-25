@@ -1,0 +1,9 @@
+[package]
+name = "vo-jit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JIT compiler for Vo bytecode"
+
+[dependencies]
+vo-vm = { path = "../vo-vm" }

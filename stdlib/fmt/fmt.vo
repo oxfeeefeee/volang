@@ -1,0 +1,7 @@
+package fmt
+
+func Print(s string) int
+
+func Println(s string) int
+
+func Sprint(s string) string

@@ -35,6 +35,7 @@ pub mod bytecode_text;
 
 pub use printer::AstPrinter;
 pub use commands::run::RunMode;
+pub use vo_vm::bytecode::Module;
 
 #[derive(Parser)]
 #[command(name = "vo")]

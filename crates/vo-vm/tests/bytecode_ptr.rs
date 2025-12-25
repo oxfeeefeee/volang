@@ -101,8 +101,8 @@ fn test_ptr_struct_escape() {
     let module = build_module(globals, vec![], struct_metas, vec![func]);
     let vm = run_module(module);
     
-    assert_eq!(vm.globals[0], 10);
-    assert_eq!(vm.globals[1], 20);
+    assert_eq!(vm.state.globals[0], 10);
+    assert_eq!(vm.state.globals[1], 20);
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn test_ptr_copy_reference_semantics() {
     let module = build_module(globals, vec![], vec![], vec![func]);
     let vm = run_module(module);
     
-    assert_eq!(vm.globals[0], 200);
+    assert_eq!(vm.state.globals[0], 200);
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn test_ptr_clone_value_semantics() {
     let module = build_module(globals, vec![], vec![], vec![func]);
     let vm = run_module(module);
     
-    assert_eq!(vm.globals[0], 100);
+    assert_eq!(vm.state.globals[0], 100);
 }
 
 #[test]
@@ -290,5 +290,5 @@ fn test_ptr_nested_linked_list() {
     let module = build_module(globals, vec![], struct_metas, vec![func]);
     let vm = run_module(module);
     
-    assert_eq!(vm.globals[0], 1);
+    assert_eq!(vm.state.globals[0], 1);
 }

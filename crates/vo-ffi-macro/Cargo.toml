@@ -1,0 +1,15 @@
+[package]
+name = "vo-ffi-macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Proc macro for Vo native FFI - generates type-safe extern function wrappers"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+vo-module = { path = "../vo-module" }
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
