@@ -154,6 +154,12 @@ pub fn compile_expr_to(
 
         // === Unary operations ===
         ExprKind::Unary(unary) => {
+            // Check if this is a compile-time constant expression (e.g., -100)
+            if let Some(val) = get_const_value(expr.id, info) {
+                compile_const_value(val, dst, ctx, func)?;
+                return Ok(());
+            }
+            
             match unary.op {
                 UnaryOp::Addr => {
                     compile_addr_of(&unary.operand, dst, ctx, func, info)?;
