@@ -859,15 +859,15 @@ fn compile_method_call(
     let recv_type = info.expr_type(sel.expr.id)
         .ok_or_else(|| CodegenError::Internal("method receiver has no type".to_string()))?;
     
-    // Compile receiver first
-    let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-    
     // Get method name
     let method_name = info.project.interner.resolve(sel.sel.symbol)
         .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
     
     // Check if interface method call
     if info.is_interface(recv_type) {
+        // Compile receiver for interface call
+        let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+        
         // Interface method call: use CallIface
         // Compile arguments
         let args_start = func.alloc_temp(call.args.len() as u16);
@@ -882,17 +882,31 @@ fn compile_method_call(
         func.emit_with_flags(Opcode::CallIface, call.args.len() as u8, dst, recv_reg, method_idx);
     } else {
         // Concrete method call: find function and use Call
-        // Calculate total argument slots (receiver slots + other args slots)
-        let recv_slots = info.type_slot_count(recv_type);
-        let other_args_slots: u16 = call.args.iter()
-            .map(|arg| info.expr_type(arg.id).map(|t| info.type_slot_count(t)).unwrap_or(1))
-            .sum();
-        let total_arg_slots = recv_slots + other_args_slots;
-        let args_start = func.alloc_temp(total_arg_slots);
+        // First, look up the method to determine receiver type
+        let method_sym = info.project.interner.get(method_name)
+            .ok_or_else(|| CodegenError::Internal("cannot get method symbol".to_string()))?;
         
-        // Copy receiver to args (slot 0)
-        // Check if receiver is an escaped struct/array (GcRef pointer)
-        // In that case, recv_reg contains a GcRef and we need PtrGetN to read the value
+        // Determine if method expects pointer receiver or value receiver
+        // func_indices key is (base_type, is_pointer_recv, name)
+        let base_type = if info.is_pointer(recv_type) {
+            info.pointer_base(recv_type).unwrap_or(recv_type)
+        } else {
+            recv_type
+        };
+        
+        let (func_idx, method_expects_ptr) = {
+            // Try value receiver method first
+            if let Some(idx) = ctx.get_func_index(Some(base_type), false, method_sym) {
+                (idx, false)
+            // Try pointer receiver method
+            } else if let Some(idx) = ctx.get_func_index(Some(base_type), true, method_sym) {
+                (idx, true)
+            } else {
+                return Err(CodegenError::UnsupportedExpr(format!("method {} not found on type {:?}", method_name, base_type)));
+            }
+        };
+        
+        // Check if receiver expression is an escaped struct/array (GcRef pointer)
         let recv_is_heap = if let ExprKind::Ident(ident) = &sel.expr.kind {
             func.lookup_local(ident.symbol)
                 .map(|l| l.is_heap && (info.is_struct(recv_type) || info.is_array(recv_type)))
@@ -901,15 +915,51 @@ fn compile_method_call(
             false
         };
         
-        if recv_is_heap {
-            // Receiver is escaped struct/array: use PtrGetN to read value from heap
-            func.emit_with_flags(Opcode::PtrGetN, recv_slots as u8, args_start, recv_reg, 0);
+        // Calculate receiver slots based on what method expects
+        let actual_recv_slots = if method_expects_ptr { 1u16 } else { info.type_slot_count(recv_type) };
+        
+        let other_args_slots: u16 = call.args.iter()
+            .map(|arg| info.expr_type(arg.id).map(|t| info.type_slot_count(t)).unwrap_or(1))
+            .sum();
+        let total_arg_slots = actual_recv_slots + other_args_slots;
+        let args_start = func.alloc_temp(total_arg_slots);
+        
+        // Copy receiver to args based on what method expects
+        if method_expects_ptr {
+            // Method expects pointer: pass the original GcRef directly
+            // For pointer receiver, skip PtrClone - just copy the original GcRef
+            if let ExprKind::Ident(ident) = &sel.expr.kind {
+                if let Some(local) = func.lookup_local(ident.symbol) {
+                    if local.is_heap {
+                        // Escaped variable: copy original GcRef directly (no PtrClone)
+                        func.emit_copy(args_start, local.slot, 1);
+                    } else {
+                        // Stack variable - compile normally
+                        let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+                        func.emit_copy(args_start, recv_reg, 1);
+                    }
+                } else {
+                    let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+                    func.emit_copy(args_start, recv_reg, 1);
+                }
+            } else {
+                let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+                func.emit_copy(args_start, recv_reg, 1);
+            }
         } else {
-            func.emit_copy(args_start, recv_reg, recv_slots);
+            // Method expects value: compile receiver (may PtrClone for value semantics)
+            let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+            if recv_is_heap {
+                // Receiver is escaped struct/array: use PtrGetN to read value from cloned heap
+                let value_slots = info.type_slot_count(recv_type);
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, 0);
+            } else {
+                func.emit_copy(args_start, recv_reg, actual_recv_slots);
+            }
         }
         
         // Compile other arguments
-        let mut arg_offset = recv_slots;
+        let mut arg_offset = actual_recv_slots;
         for arg in &call.args {
             compile_expr_to(arg, args_start + arg_offset, ctx, func, info)?;
             let arg_type = info.expr_type(arg.id);
@@ -921,54 +971,17 @@ fn compile_method_call(
             .map(|t| info.type_slot_count(t))
             .unwrap_or(0);
         
-        // Look up method function
-        if let Some(method_sym) = info.project.interner.get(method_name) {
-            // Helper to emit Call instruction with correct encoding
-            let emit_call = |func: &mut FuncBuilder, func_idx: usize| {
-                // Call: a=func_id_low, b=args_start, c=(arg_slots<<8)|ret_slots, flags=func_id_high
-                let c = ((arg_offset as u16) << 8) | (ret_slots as u16);
-                let func_id_low = (func_idx & 0xFFFF) as u16;
-                let func_id_high = ((func_idx >> 16) & 0xFF) as u8;
-                func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
-            };
-            
-            // Try exact type match first
-            if let Some(func_idx) = ctx.get_func_index(Some(recv_type), method_sym) {
-                emit_call(func, func_idx as usize);
-                // Copy result to dst if needed
-                if ret_slots > 0 && dst != args_start {
-                    func.emit_copy(dst, args_start, ret_slots);
-                }
-                return Ok(());
-            }
-            // If receiver is value type, try pointer type (Go allows value.PtrMethod())
-            if !info.is_pointer(recv_type) {
-                if let Some(ptr_type) = info.pointer_to(recv_type) {
-                    if let Some(func_idx) = ctx.get_func_index(Some(ptr_type), method_sym) {
-                        emit_call(func, func_idx as usize);
-                        if ret_slots > 0 && dst != args_start {
-                            func.emit_copy(dst, args_start, ret_slots);
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-            // If receiver is pointer type, try base type (Go allows ptr.ValueMethod())
-            if info.is_pointer(recv_type) {
-                if let Some(base_type) = info.pointer_base(recv_type) {
-                    if let Some(func_idx) = ctx.get_func_index(Some(base_type), method_sym) {
-                        emit_call(func, func_idx as usize);
-                        if ret_slots > 0 && dst != args_start {
-                            func.emit_copy(dst, args_start, ret_slots);
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-        }
+        // Emit Call instruction
+        let c = ((arg_offset as u16) << 8) | (ret_slots as u16);
+        let func_id_low = (func_idx & 0xFFFF) as u16;
+        let func_id_high = ((func_idx >> 16) & 0xFF) as u8;
+        func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
         
-        // Method not found
-        return Err(CodegenError::UnsupportedExpr(format!("method {} not found", method_name)));
+        // Copy result to dst if needed
+        if ret_slots > 0 && dst != args_start {
+            func.emit_copy(dst, args_start, ret_slots);
+        }
+        return Ok(());
     }
     
     Ok(())

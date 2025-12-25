@@ -6,13 +6,36 @@ type Point struct {
 }
 
 func (p Point) Sum() int {
+    p.x = 4321 
+    p.y =1234
     return p.x + p.y
 }
+
+func (p *Point) Sum2() int {
+    p.x = 1111 
+    p.y =2222
+    return p.x + p.y
+}
+
 
 func main() {
     // Test 1: Direct point
     p := Point{x: 1, y: 2}
-    println(p.x)      // 1
-    println(p.y)      // 2
-    println(p.Sum())  // 3
+    assert(p.x == 1)      // 1
+    assert(p.y == 2)      // 2
+
+    println("aaaa")
+    p.Sum()
+    p.Sum2()
+    println("bbbb")
+
+    assert(p.Sum() == 5555)  // 5555
+    println(p.Sum(), p.x, p.y)
+
+    println(p.Sum2(), p.x, p.y)
+    assert(p.Sum2() == 3333)  // 3333
+    assert(p.x == 1111)      // 1
+    assert(p.y == 2222)      // 2
+    
+    
 }

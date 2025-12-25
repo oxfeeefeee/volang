@@ -11,8 +11,8 @@ use vo_vm::bytecode::{
 pub struct CodegenContext {
     module: Module,
 
-    /// Function index: (receiver_type, name) -> func_id
-    func_indices: HashMap<(Option<TypeKey>, Symbol), u32>,
+    /// Function index: (receiver_base_type, is_pointer_recv, name) -> func_id
+    func_indices: HashMap<(Option<TypeKey>, bool, Symbol), u32>,
 
     /// Extern function index: name -> extern_id
     extern_indices: HashMap<Symbol, u32>,
@@ -111,8 +111,8 @@ impl CodegenContext {
     // === Function registration ===
 
     /// Pre-register a function name for forward references (ID not yet assigned).
-    pub fn declare_func(&mut self, recv: Option<TypeKey>, name: Symbol) {
-        self.func_indices.insert((recv, name), u32::MAX);
+    pub fn declare_func(&mut self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) {
+        self.func_indices.insert((recv, is_pointer_recv, name), u32::MAX);
     }
 
     /// Check if function ID is valid (not a placeholder).
@@ -120,20 +120,20 @@ impl CodegenContext {
         id != u32::MAX
     }
 
-    pub fn get_func_index(&self, recv: Option<TypeKey>, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(recv, name)).copied().filter(|&id| Self::is_valid_func_id(id))
+    pub fn get_func_index(&self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) -> Option<u32> {
+        self.func_indices.get(&(recv, is_pointer_recv, name)).copied().filter(|&id| Self::is_valid_func_id(id))
     }
 
     /// Get function index by name (for non-method functions).
     pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(None, name)).copied().filter(|&id| Self::is_valid_func_id(id))
+        self.func_indices.get(&(None, false, name)).copied().filter(|&id| Self::is_valid_func_id(id))
     }
 
     /// Define a function: add to module and assign real ID.
-    pub fn define_func(&mut self, func: FunctionDef, recv: Option<TypeKey>, name: Symbol) -> u32 {
+    pub fn define_func(&mut self, func: FunctionDef, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) -> u32 {
         let id = self.module.functions.len() as u32;
         self.module.functions.push(func);
-        self.func_indices.insert((recv, name), id);
+        self.func_indices.insert((recv, is_pointer_recv, name), id);
         id
     }
 

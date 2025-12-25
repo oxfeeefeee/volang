@@ -99,6 +99,8 @@ pub struct ExternCall<'a> {
     bp: usize,
     /// Argument start slot (relative to bp).
     arg_start: u16,
+    /// Argument count (number of slots).
+    arg_count: u16,
     /// Return value start slot (relative to bp).
     ret_start: u16,
 }
@@ -106,8 +108,8 @@ pub struct ExternCall<'a> {
 impl<'a> ExternCall<'a> {
     /// Create a new extern call context.
     #[inline]
-    pub fn new(stack: &'a mut [u64], bp: usize, arg_start: u16, ret_start: u16) -> Self {
-        Self { stack, bp, arg_start, ret_start }
+    pub fn new(stack: &'a mut [u64], bp: usize, arg_start: u16, arg_count: u16, ret_start: u16) -> Self {
+        Self { stack, bp, arg_start, arg_count, ret_start }
     }
 
     // ==================== Raw Slot Access ====================
@@ -118,10 +120,10 @@ impl<'a> ExternCall<'a> {
         self.stack.len().saturating_sub(self.bp)
     }
 
-    /// Get the number of available argument slots from arg_start to end of stack.
+    /// Get the number of argument slots passed to this call.
     #[inline]
-    pub fn available_arg_slots(&self) -> usize {
-        self.stack.len().saturating_sub(self.bp + self.arg_start as usize)
+    pub fn arg_count(&self) -> u16 {
+        self.arg_count
     }
 
     /// Read a raw slot value.
@@ -220,9 +222,9 @@ pub struct ExternCallWithGc<'a> {
 impl<'a> ExternCallWithGc<'a> {
     /// Create a new extern call context with GC.
     #[inline]
-    pub fn new(stack: &'a mut [u64], bp: usize, arg_start: u16, ret_start: u16, gc: &'a mut Gc) -> Self {
+    pub fn new(stack: &'a mut [u64], bp: usize, arg_start: u16, arg_count: u16, ret_start: u16, gc: &'a mut Gc) -> Self {
         Self {
-            call: ExternCall::new(stack, bp, arg_start, ret_start),
+            call: ExternCall::new(stack, bp, arg_start, arg_count, ret_start),
             gc,
         }
     }
@@ -244,7 +246,7 @@ impl<'a> ExternCallWithGc<'a> {
     #[inline]
     pub fn available_slots(&self) -> usize { self.call.available_slots() }
     #[inline]
-    pub fn available_arg_slots(&self) -> usize { self.call.available_arg_slots() }
+    pub fn arg_count(&self) -> u16 { self.call.arg_count() }
 
     // ==================== Argument Reading (delegated) ====================
 
@@ -343,16 +345,17 @@ impl ExternRegistry {
         stack: &mut [u64],
         bp: usize,
         arg_start: u16,
+        arg_count: u16,
         ret_start: u16,
         gc: &mut Gc,
     ) -> ExternResult {
         match self.funcs.get(id as usize) {
             Some(Some(ExternFnEntry::Simple(f))) => {
-                let mut call = ExternCall::new(stack, bp, arg_start, ret_start);
+                let mut call = ExternCall::new(stack, bp, arg_start, arg_count, ret_start);
                 f(&mut call)
             }
             Some(Some(ExternFnEntry::WithGc(f))) => {
-                let mut call = ExternCallWithGc::new(stack, bp, arg_start, ret_start, gc);
+                let mut call = ExternCallWithGc::new(stack, bp, arg_start, arg_count, ret_start, gc);
                 f(&mut call)
             }
             _ => ExternResult::Panic(format!("extern function {} not found", id)),

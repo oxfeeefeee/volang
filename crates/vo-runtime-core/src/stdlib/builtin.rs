@@ -47,11 +47,11 @@ fn format_value(call: &ExternCallWithGc, slot: u16) -> String {
 
 /// Format all (value, kind) pairs starting from `start_slot` into a space-separated string.
 fn format_args(call: &ExternCallWithGc, start_slot: u16) -> String {
-    let available = call.available_arg_slots();
+    let arg_count = call.arg_count();
     let mut result = String::new();
     let mut slot = start_slot;
     
-    while (slot + 2) as usize <= available && slot < 32 {
+    while slot + 2 <= arg_count && slot < 32 {
         let kind_val = call.arg_u64(slot + 1) as u8;
         if kind_val == 0 && slot > start_slot {
             break;

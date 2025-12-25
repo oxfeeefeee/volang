@@ -21,6 +21,7 @@ pub fn exec_call_extern(
     // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
     let extern_id = inst.b as u32;
     let arg_start = inst.c;
+    let arg_count = inst.flags as u16;
 
     if extern_id as usize >= externs.len() {
         return ExecResult::Panic;
@@ -36,6 +37,7 @@ pub fn exec_call_extern(
         &mut fiber.stack,
         bp,
         arg_start,
+        arg_count,
         arg_start, // ret_start same as arg_start (reuses argument slots)
         gc,
     );

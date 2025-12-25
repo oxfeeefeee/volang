@@ -129,15 +129,14 @@ fn collect_declarations(
             match decl {
                 Decl::Func(func_decl) => {
                     // Check if this is a method (has receiver)
-                    // For methods, we need the base type (not pointer)
-                    let recv_type = if let Some(recv) = &func_decl.receiver {
-                        // Look up the type definition by name
-                        info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj))
+                    let (recv_type, is_pointer_recv) = if let Some(recv) = &func_decl.receiver {
+                        let base_type = info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj));
+                        (base_type, recv.is_pointer)
                     } else {
-                        None
+                        (None, false)
                     };
                     
-                    ctx.declare_func(recv_type, func_decl.name.symbol);
+                    ctx.declare_func(recv_type, is_pointer_recv, func_decl.name.symbol);
                 }
                 Decl::Var(var_decl) => {
                     // Register global variables (so functions can reference them)
@@ -228,12 +227,18 @@ fn compile_func_decl(
     
     // Define receiver as first parameter (if method)
     if let Some(recv) = &func_decl.receiver {
-        // Look up receiver type by name
-        let type_key = info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj));
-        let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-        let slot_types = type_key
-            .map(|t| info.type_slot_types(t))
-            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+        // For pointer receiver (*T), it's 1 slot (GcRef)
+        // For value receiver (T), it's the struct's slot count
+        let (slots, slot_types) = if recv.is_pointer {
+            (1, vec![vo_common_core::types::SlotType::GcRef])
+        } else {
+            let type_key = info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj));
+            let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+            let slot_types = type_key
+                .map(|t| info.type_slot_types(t))
+                .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+            (slots, slot_types)
+        };
         
         // Receiver name
         builder.define_param(recv.name.symbol, slots, &slot_types);
@@ -263,10 +268,14 @@ fn compile_func_decl(
     
     // Build and add to module with proper name registration
     let func_def = builder.build();
-    let recv_type = func_decl.receiver.as_ref()
-        .and_then(|recv| info.get_def(&recv.ty))
-        .and_then(|obj| info.obj_type(obj));
-    let func_id = ctx.define_func(func_def, recv_type, func_decl.name.symbol);
+    // Get receiver base type and is_pointer flag
+    let (recv_base_type, is_pointer_recv) = func_decl.receiver.as_ref()
+        .map(|recv| {
+            let base_type = info.get_def(&recv.ty).and_then(|obj| info.obj_type(obj));
+            (base_type, recv.is_pointer)
+        })
+        .unwrap_or((None, false));
+    let func_id = ctx.define_func(func_def, recv_base_type, is_pointer_recv, func_decl.name.symbol);
     
     Ok(func_id)
 }
