@@ -207,6 +207,21 @@ impl<'a> TypeInfoWrapper<'a> {
         }
         None
     }
+    
+    /// Get struct field type by index (for method promotion)
+    pub fn struct_field_type_by_index(
+        &self,
+        type_key: TypeKey,
+        field_index: usize,
+    ) -> Option<TypeKey> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Struct(s) = &self.tc_objs().types[underlying] {
+            if let Some(&field_obj) = s.fields().get(field_index) {
+                return self.tc_objs().lobjs[field_obj].typ();
+            }
+        }
+        None
+    }
 
     // === Type queries ===
 
@@ -463,6 +478,12 @@ impl<'a> TypeInfoWrapper<'a> {
     pub fn is_func(&self, type_key: TypeKey) -> bool {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
         self.tc_objs().types[underlying].try_as_signature().is_some()
+    }
+    
+    /// Try to get signature details for a function type
+    pub fn try_as_signature(&self, type_key: TypeKey) -> Option<&typ::SignatureDetail> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        self.tc_objs().types[underlying].try_as_signature()
     }
 
     /// Get function signature return slot count

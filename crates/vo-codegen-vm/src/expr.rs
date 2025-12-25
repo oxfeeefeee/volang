@@ -962,17 +962,63 @@ fn compile_method_call(
             recv_type
         };
         
-        let (func_idx, method_expects_ptr) = {
-            // Try value receiver method first
+        // Try to find method using selection info (handles promoted methods)
+        // Selection is recorded on sel.expr.id (the receiver), not call.func.id
+        let selection = info.get_selection(sel.expr.id);
+        
+        let (func_idx, method_expects_ptr, promoted_type) = {
+            // Try direct method first
             if let Some(idx) = ctx.get_func_index(Some(base_type), false, method_sym) {
-                (idx, false)
-            // Try pointer receiver method
+                (idx, false, None)
             } else if let Some(idx) = ctx.get_func_index(Some(base_type), true, method_sym) {
-                (idx, true)
+                (idx, true, None)
+            } else if let Some(sel) = selection {
+                // Method not found directly - check if it's a promoted method
+                // The selection.obj() gives us the actual method's ObjKey
+                // We need to find the type that defines this method
+                let method_obj = sel.obj();
+                let method_type = info.project.tc_objs.lobjs[method_obj].typ();
+                
+                // Get the defining type from the method's signature receiver
+                if let Some(sig_type) = method_type {
+                    if let Some(sig) = info.try_as_signature(sig_type) {
+                        if let Some(recv_var) = sig.recv() {
+                            if let Some(recv_type_key) = info.project.tc_objs.lobjs[*recv_var].typ() {
+                                // Get base type (strip pointer if needed)
+                                let defining_type = if info.is_pointer(recv_type_key) {
+                                    info.pointer_base(recv_type_key).unwrap_or(recv_type_key)
+                                } else {
+                                    recv_type_key
+                                };
+                                
+                                // Try to find method on defining type
+                                if let Some(idx) = ctx.get_func_index(Some(defining_type), false, method_sym) {
+                                    (idx, false, Some(defining_type))
+                                } else if let Some(idx) = ctx.get_func_index(Some(defining_type), true, method_sym) {
+                                    (idx, true, Some(defining_type))
+                                } else {
+                                    return Err(CodegenError::UnsupportedExpr(format!("promoted method {} not found", method_name)));
+                                }
+                            } else {
+                                return Err(CodegenError::UnsupportedExpr(format!("method {} receiver has no type", method_name)));
+                            }
+                        } else {
+                            return Err(CodegenError::UnsupportedExpr(format!("method {} has no receiver", method_name)));
+                        }
+                    } else {
+                        return Err(CodegenError::UnsupportedExpr(format!("method {} is not a function", method_name)));
+                    }
+                } else {
+                    return Err(CodegenError::UnsupportedExpr(format!("method {} has no type", method_name)));
+                }
             } else {
                 return Err(CodegenError::UnsupportedExpr(format!("method {} not found on type {:?}", method_name, base_type)));
             }
         };
+        
+        // For promoted methods, we need to access the embedded field first
+        // Get the actual receiver type for slot calculation
+        let actual_recv_type = promoted_type.unwrap_or(base_type);
         
         // Check if receiver expression is an escaped struct/array (GcRef pointer)
         let recv_is_heap = if let ExprKind::Ident(ident) = &sel.expr.kind {
@@ -983,8 +1029,8 @@ fn compile_method_call(
             false
         };
         
-        // Calculate receiver slots based on what method expects
-        let actual_recv_slots = if method_expects_ptr { 1u16 } else { info.type_slot_count(recv_type) };
+        // Calculate receiver slots based on what method expects and actual receiver type
+        let actual_recv_slots = if method_expects_ptr { 1u16 } else { info.type_slot_count(actual_recv_type) };
         
         let other_args_slots: u16 = call.args.iter()
             .map(|arg| info.expr_type(arg.id).map(|t| info.type_slot_count(t)).unwrap_or(1))
@@ -993,16 +1039,37 @@ fn compile_method_call(
         let args_start = func.alloc_temp(total_arg_slots);
         
         // Copy receiver to args based on what method expects
+        // For promoted methods, we need to extract the embedded field
+        let embed_offset = if let Some(sel_info) = selection {
+            if promoted_type.is_some() && !sel_info.indices().is_empty() {
+                // Calculate offset to embedded field using selection indices
+                let mut offset = 0u16;
+                let mut current_type = base_type;
+                for &idx in sel_info.indices().iter().take(sel_info.indices().len().saturating_sub(1)) {
+                    // Get field offset at this index
+                    if let Some((field_offset, _)) = info.struct_field_offset_by_index(current_type, idx) {
+                        offset += field_offset;
+                        // Get field type for next iteration
+                        if let Some(field_type) = info.struct_field_type_by_index(current_type, idx) {
+                            current_type = field_type;
+                        }
+                    }
+                }
+                offset
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        
         if method_expects_ptr {
             // Method expects pointer: pass the original GcRef directly
-            // For pointer receiver, skip PtrClone - just copy the original GcRef
             if let ExprKind::Ident(ident) = &sel.expr.kind {
                 if let Some(local) = func.lookup_local(ident.symbol) {
                     if local.is_heap {
-                        // Escaped variable: copy original GcRef directly (no PtrClone)
                         func.emit_copy(args_start, local.slot, 1);
                     } else {
-                        // Stack variable - compile normally
                         let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
                         func.emit_copy(args_start, recv_reg, 1);
                     }
@@ -1015,14 +1082,14 @@ fn compile_method_call(
                 func.emit_copy(args_start, recv_reg, 1);
             }
         } else {
-            // Method expects value: compile receiver (may PtrClone for value semantics)
+            // Method expects value: compile receiver and extract embedded field if needed
             let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
             if recv_is_heap {
-                // Receiver is escaped struct/array: use PtrGetN to read value from cloned heap
-                let value_slots = info.type_slot_count(recv_type);
-                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, 0);
+                let value_slots = info.type_slot_count(actual_recv_type);
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
             } else {
-                func.emit_copy(args_start, recv_reg, actual_recv_slots);
+                // For promoted methods, copy from embedded field offset
+                func.emit_copy(args_start, recv_reg + embed_offset, actual_recv_slots);
             }
         }
         
