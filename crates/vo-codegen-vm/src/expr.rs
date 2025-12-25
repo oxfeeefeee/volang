@@ -313,18 +313,13 @@ fn compile_selector(
         recv_type
     };
     
-    // Get field offset: try direct lookup first, fallback to selection indices for promoted fields
-    // Note: selection is recorded on the entire selector expression (expr.id), not the receiver
-    let (offset, slots) = info.struct_field_offset(base_type, field_name)
+    // Get field offset using selection indices (unified approach)
+    // Selection is recorded on the entire selector expression (expr.id)
+    let (offset, slots) = info.get_selection(expr.id)
+        .and_then(|sel_info| info.compute_field_offset_from_indices(base_type, sel_info.indices()))
         .or_else(|| {
-            // Direct lookup failed - check for field promotion via selection
-            info.get_selection(expr.id).and_then(|sel_info| {
-                if sel_info.indices().len() > 1 {
-                    compute_promoted_field_offset(base_type, sel_info.indices(), info).ok()
-                } else {
-                    None
-                }
-            })
+            // Fallback to field_name lookup if no selection (shouldn't happen normally)
+            info.struct_field_offset(base_type, field_name)
         })
         .ok_or_else(|| CodegenError::Internal(format!("field {} not found", field_name)))?;
     
@@ -362,34 +357,6 @@ fn compile_selector(
     }
     
     Ok(())
-}
-
-/// Compute field offset from selection indices (for promoted fields)
-fn compute_promoted_field_offset(
-    base_type: vo_analysis::objects::TypeKey,
-    indices: &[usize],
-    info: &TypeInfoWrapper,
-) -> Result<(u16, u16), CodegenError> {
-    let mut offset = 0u16;
-    let mut current_type = base_type;
-    let mut final_slots = 1u16;
-    
-    for (i, &idx) in indices.iter().enumerate() {
-        let (field_offset, field_slots) = info.struct_field_offset_by_index(current_type, idx)
-            .ok_or_else(|| CodegenError::Internal(format!("field index {} not found", idx)))?;
-        
-        offset += field_offset;
-        
-        if i == indices.len() - 1 {
-            final_slots = field_slots;
-        } else {
-            if let Some(field_type) = info.struct_field_type_by_index(current_type, idx) {
-                current_type = field_type;
-            }
-        }
-    }
-    
-    Ok((offset, final_slots))
 }
 
 /// Find root variable for selector chain (only for direct field access, not nested)

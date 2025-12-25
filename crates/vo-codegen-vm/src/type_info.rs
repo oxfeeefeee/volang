@@ -223,6 +223,35 @@ impl<'a> TypeInfoWrapper<'a> {
         None
     }
 
+    /// Compute field offset using selection indices (unified approach for all field access)
+    /// This handles both direct fields (indices.len() == 1) and promoted fields (indices.len() > 1)
+    pub fn compute_field_offset_from_indices(
+        &self,
+        base_type: TypeKey,
+        indices: &[usize],
+    ) -> Option<(u16, u16)> {
+        if indices.is_empty() {
+            return None;
+        }
+        
+        let mut offset = 0u16;
+        let mut current_type = base_type;
+        let mut final_slots = 1u16;
+        
+        for (i, &idx) in indices.iter().enumerate() {
+            let (field_offset, field_slots) = self.struct_field_offset_by_index(current_type, idx)?;
+            offset += field_offset;
+            
+            if i == indices.len() - 1 {
+                final_slots = field_slots;
+            } else {
+                current_type = self.struct_field_type_by_index(current_type, idx)?;
+            }
+        }
+        
+        Some((offset, final_slots))
+    }
+
     // === Type queries ===
 
     pub fn is_interface(&self, type_key: TypeKey) -> bool {
