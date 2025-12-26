@@ -108,15 +108,14 @@ impl Checker {
 
     /// Opens a new scope for a statement.
     fn open_scope(&mut self, span: Span, comment: &str) {
-        let pos = span.start.to_usize();
         let scope = self.new_scope(
             self.octx.scope,
-            pos,
+            span.start.to_usize(),
             span.end.to_usize(),
             comment,
             false,
         );
-        self.result.record_stmt_scope(pos, scope);
+        self.result.record_scope(span, scope);
         self.octx.scope = Some(scope);
     }
 

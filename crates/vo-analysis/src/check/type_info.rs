@@ -60,10 +60,6 @@ pub struct TypeInfo {
     /// Maps AST node spans to the scopes they define.
     pub scopes: HashMap<Span, ScopeKey>,
 
-    /// Maps statement positions to the scopes they define.
-    /// Used for block, if, for, switch, etc. statements.
-    pub stmt_scopes: HashMap<usize, ScopeKey>,
-
     /// Package-level initializers in execution order.
     pub init_order: Vec<Initializer>,
 
@@ -117,11 +113,6 @@ impl TypeInfo {
     /// Records a scope for an AST node.
     pub(crate) fn record_scope(&mut self, span: Span, scope: ScopeKey) {
         self.scopes.insert(span, scope);
-    }
-
-    /// Records a scope for a statement (by position).
-    pub(crate) fn record_stmt_scope(&mut self, pos: usize, scope: ScopeKey) {
-        self.stmt_scopes.insert(pos, scope);
     }
 
     /// Records init order.
