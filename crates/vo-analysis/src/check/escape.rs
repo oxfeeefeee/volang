@@ -320,8 +320,8 @@ impl<'a> EscapeAnalyzer<'a> {
                 // 5. Method call with pointer receiver on value type → receiver escapes
                 if let ExprKind::Selector(sel) = &c.func.kind {
                     // Check if this is a method call with pointer receiver
-                    // Note: selection is recorded for sel.expr.id (receiver), not c.func.id (selector)
-                    if let Some(selection) = self.type_info.selections.get(&sel.expr.id) {
+                    // Selection is recorded on the entire selector expression (c.func.id)
+                    if let Some(selection) = self.type_info.selections.get(&c.func.id) {
                         if matches!(selection.kind(), SelectionKind::MethodVal) {
                             // Check if method has pointer receiver
                             if self.method_has_pointer_receiver(selection.obj()) {

@@ -1,5 +1,7 @@
 //! Expression compilation.
 
+use vo_analysis::objects::TypeKey;
+use vo_analysis::selection::Selection;
 use vo_syntax::ast::{BinaryOp, Expr, ExprKind, UnaryOp};
 use vo_vm::instruction::Opcode;
 
@@ -7,6 +9,20 @@ use crate::context::CodegenContext;
 use crate::error::CodegenError;
 use crate::func::{ExprSource, FuncBuilder, LocalVar, ValueLocation};
 use crate::type_info::TypeInfoWrapper;
+
+// =============================================================================
+// Method Call Types
+// =============================================================================
+
+/// Result of resolving a concrete method call.
+struct MethodResolution {
+    /// Function index in the module
+    func_idx: u32,
+    /// Whether the method expects a pointer receiver (*T)
+    expects_ptr_recv: bool,
+    /// For promoted methods: the type that defines the method (different from caller's type)
+    defining_type: Option<TypeKey>,
+}
 
 /// Get ValueLocation for a local variable based on its storage and type.
 pub fn get_local_location(local: &LocalVar, type_key: Option<vo_analysis::objects::TypeKey>, info: &TypeInfoWrapper) -> ValueLocation {
@@ -969,8 +985,156 @@ fn compile_call(
     Ok(())
 }
 
+// =============================================================================
+// Method Call - Helper Functions
+// =============================================================================
+
+/// Resolve a method on a concrete type.
+/// Returns MethodResolution with func_idx, whether it expects pointer receiver, and defining type.
+fn resolve_method(
+    base_type: TypeKey,
+    method_name: &str,
+    selection: Option<&Selection>,
+    ctx: &CodegenContext,
+    info: &TypeInfoWrapper,
+) -> Result<MethodResolution, CodegenError> {
+    let method_sym = info.project.interner.get(method_name)
+        .ok_or_else(|| CodegenError::Internal(format!("cannot get method symbol: {}", method_name)))?;
+    
+    // 1. Try direct method on base_type (value receiver)
+    if let Some(idx) = ctx.get_func_index(Some(base_type), false, method_sym) {
+        return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: false, defining_type: None });
+    }
+    
+    // 2. Try direct method on base_type (pointer receiver)
+    if let Some(idx) = ctx.get_func_index(Some(base_type), true, method_sym) {
+        return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: true, defining_type: None });
+    }
+    
+    // 3. Try promoted method via selection info
+    if let Some(sel) = selection {
+        return resolve_promoted_method(sel, method_name, method_sym, ctx, info);
+    }
+    
+    Err(CodegenError::UnsupportedExpr(format!("method {} not found on type", method_name)))
+}
+
+/// Resolve a promoted method from embedded field.
+fn resolve_promoted_method(
+    sel: &Selection,
+    method_name: &str,
+    method_sym: vo_common::symbol::Symbol,
+    ctx: &CodegenContext,
+    info: &TypeInfoWrapper,
+) -> Result<MethodResolution, CodegenError> {
+    let method_obj = sel.obj();
+    let method_type = info.project.tc_objs.lobjs[method_obj].typ()
+        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} has no type", method_name)))?;
+    
+    let sig = info.try_as_signature(method_type)
+        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} is not a function", method_name)))?;
+    
+    let recv_var = sig.recv()
+        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} has no receiver", method_name)))?;
+    
+    let recv_type_key = info.project.tc_objs.lobjs[recv_var].typ()
+        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} receiver has no type", method_name)))?;
+    
+    // Get defining type (strip pointer if needed)
+    let defining_type = if info.is_pointer(recv_type_key) {
+        info.pointer_base(recv_type_key).unwrap_or(recv_type_key)
+    } else {
+        recv_type_key
+    };
+    
+    // Find method on defining type
+    if let Some(idx) = ctx.get_func_index(Some(defining_type), false, method_sym) {
+        return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: false, defining_type: Some(defining_type) });
+    }
+    if let Some(idx) = ctx.get_func_index(Some(defining_type), true, method_sym) {
+        return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: true, defining_type: Some(defining_type) });
+    }
+    
+    Err(CodegenError::UnsupportedExpr(format!("promoted method {} not found", method_name)))
+}
+
+/// Compute field offset for promoted method (embedded field access).
+fn compute_embed_offset(
+    selection: Option<&Selection>,
+    is_promoted: bool,
+    base_type: TypeKey,
+    info: &TypeInfoWrapper,
+) -> u16 {
+    let sel = match selection {
+        Some(s) if is_promoted && !s.indices().is_empty() => s,
+        _ => return 0,
+    };
+    
+    let mut offset = 0u16;
+    let mut current_type = base_type;
+    
+    // Walk through indices except the last one (which is the method itself)
+    for &idx in sel.indices().iter().take(sel.indices().len().saturating_sub(1)) {
+        if let Some((field_offset, _)) = info.struct_field_offset_by_index(current_type, idx) {
+            offset += field_offset;
+            if let Some(field_type) = info.struct_field_type_by_index(current_type, idx) {
+                current_type = field_type;
+            }
+        }
+    }
+    offset
+}
+
+/// Emit code to pass receiver to method.
+/// 
+/// Cases:
+/// - `expects_ptr_recv=true`: pass GcRef (variable must be heap-allocated)
+/// - `expects_ptr_recv=false`: pass value (copy from stack or dereference from heap)
+fn emit_receiver(
+    sel_expr: &Expr,
+    args_start: u16,
+    recv_type: TypeKey,
+    recv_location: Option<ValueLocation>,
+    expects_ptr_recv: bool,
+    actual_recv_type: TypeKey,
+    embed_offset: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    if expects_ptr_recv {
+        // Method expects *T: pass GcRef directly
+        if let Some(gcref_slot) = recv_location.as_ref().and_then(get_gcref_slot) {
+            func.emit_copy(args_start, gcref_slot, 1);
+        } else {
+            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+            func.emit_copy(args_start, recv_reg, 1);
+        }
+    } else {
+        // Method expects T: pass value
+        let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+        let recv_is_ptr = info.is_pointer(recv_type);
+        let recv_is_heap = matches!(recv_location, Some(ValueLocation::HeapBoxed { .. }));
+        
+        if recv_is_heap || recv_is_ptr {
+            // Dereference heap/pointer to get value
+            let value_slots = info.type_slot_count(actual_recv_type);
+            func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
+        } else {
+            // Copy from stack (with embed_offset for promoted methods)
+            let value_slots = info.type_slot_count(actual_recv_type);
+            func.emit_copy(args_start, recv_reg + embed_offset, value_slots);
+        }
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Method Call - Main Entry Points
+// =============================================================================
+
 fn compile_method_call(
-    _expr: &Expr,
+    expr: &Expr,
     call: &vo_syntax::ast::CallExpr,
     sel: &vo_syntax::ast::SelectorExpr,
     dst: u16,
@@ -978,206 +1142,136 @@ fn compile_method_call(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Check if this is a package function call (e.g., fmt.Println) - which is always extern
+    // 1. Check for extern package call (e.g., fmt.Println)
     if let ExprKind::Ident(_) = &sel.expr.kind {
         if let Ok(extern_name) = get_extern_name(sel, info) {
-            let extern_id = ctx.get_or_register_extern(&extern_name);
-            let func_type = info.expr_type(call.func.id);
-            let is_variadic = func_type.map(|t| info.is_variadic(t)).unwrap_or(false);
-            let (args_start, total_slots) = compile_call_args(call, is_variadic, ctx, func, info)?;
-            func.emit_with_flags(Opcode::CallExtern, total_slots as u8, dst, extern_id as u16, args_start);
-            return Ok(());
+            return compile_extern_call(call, &extern_name, dst, ctx, func, info);
         }
     }
 
-    // Get receiver type
     let recv_type = info.expr_type(sel.expr.id)
         .ok_or_else(|| CodegenError::Internal("method receiver has no type".to_string()))?;
     
-    // Get method name
     let method_name = info.project.interner.resolve(sel.sel.symbol)
         .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
     
-    // Check if interface method call
+    // 2. Interface method call
     if info.is_interface(recv_type) {
-        // Compile receiver for interface call
-        let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-        
-        // Interface method call: use CallIface
-        // Compile arguments
-        let args_start = func.alloc_temp(call.args.len() as u16);
-        for (i, arg) in call.args.iter().enumerate() {
-            compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
-        }
-        
-        // Get method index in interface
-        let method_idx = info.get_interface_method_index(recv_type, method_name).unwrap_or(0);
-        
-        // CallIface: a=dst, b=iface_slot, c=method_idx, flags=arg_count
-        func.emit_with_flags(Opcode::CallIface, call.args.len() as u8, dst, recv_reg, method_idx);
+        return compile_interface_method(call, sel, recv_type, method_name, dst, ctx, func, info);
+    }
+    
+    // 3. Concrete method call
+    compile_concrete_method(expr, call, sel, recv_type, method_name, dst, ctx, func, info)
+}
+
+/// Compile extern package function call (e.g., fmt.Println).
+fn compile_extern_call(
+    call: &vo_syntax::ast::CallExpr,
+    extern_name: &str,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    let extern_id = ctx.get_or_register_extern(extern_name);
+    let func_type = info.expr_type(call.func.id);
+    let is_variadic = func_type.map(|t| info.is_variadic(t)).unwrap_or(false);
+    let (args_start, total_slots) = compile_call_args(call, is_variadic, ctx, func, info)?;
+    func.emit_with_flags(Opcode::CallExtern, total_slots as u8, dst, extern_id as u16, args_start);
+    Ok(())
+}
+
+/// Compile interface method call.
+fn compile_interface_method(
+    call: &vo_syntax::ast::CallExpr,
+    sel: &vo_syntax::ast::SelectorExpr,
+    recv_type: TypeKey,
+    method_name: &str,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+    
+    // Compile arguments
+    let args_start = func.alloc_temp(call.args.len() as u16);
+    for (i, arg) in call.args.iter().enumerate() {
+        compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
+    }
+    
+    let method_idx = info.get_interface_method_index(recv_type, method_name).unwrap_or(0);
+    func.emit_with_flags(Opcode::CallIface, call.args.len() as u8, dst, recv_reg, method_idx);
+    Ok(())
+}
+
+/// Compile concrete type method call.
+fn compile_concrete_method(
+    expr: &Expr,
+    call: &vo_syntax::ast::CallExpr,
+    sel: &vo_syntax::ast::SelectorExpr,
+    recv_type: TypeKey,
+    method_name: &str,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // Get base type (strip pointer if receiver is *T)
+    let base_type = if info.is_pointer(recv_type) {
+        info.pointer_base(recv_type).unwrap_or(recv_type)
     } else {
-        // Concrete method call: find function and use Call
-        // First, look up the method to determine receiver type
-        let method_sym = info.project.interner.get(method_name)
-            .ok_or_else(|| CodegenError::Internal("cannot get method symbol".to_string()))?;
-        
-        // Determine if method expects pointer receiver or value receiver
-        // func_indices key is (base_type, is_pointer_recv, name)
-        let base_type = if info.is_pointer(recv_type) {
-            info.pointer_base(recv_type).unwrap_or(recv_type)
-        } else {
-            recv_type
-        };
-        
-        // Try to find method using selection info (handles promoted methods)
-        // Selection is recorded on the entire selector expression (call.func.id)
-        let selection = info.get_selection(call.func.id);
-        
-        let (func_idx, method_expects_ptr, promoted_type) = {
-            // Try direct method first
-            if let Some(idx) = ctx.get_func_index(Some(base_type), false, method_sym) {
-                (idx, false, None)
-            } else if let Some(idx) = ctx.get_func_index(Some(base_type), true, method_sym) {
-                (idx, true, None)
-            } else if let Some(sel) = selection {
-                // Method not found directly - check if it's a promoted method
-                // The selection.obj() gives us the actual method's ObjKey
-                // We need to find the type that defines this method
-                let method_obj = sel.obj();
-                let method_type = info.project.tc_objs.lobjs[method_obj].typ();
-                
-                // Get the defining type from the method's signature receiver
-                if let Some(sig_type) = method_type {
-                    if let Some(sig) = info.try_as_signature(sig_type) {
-                        if let Some(recv_var) = sig.recv() {
-                            if let Some(recv_type_key) = info.project.tc_objs.lobjs[*recv_var].typ() {
-                                // Get base type (strip pointer if needed)
-                                let defining_type = if info.is_pointer(recv_type_key) {
-                                    info.pointer_base(recv_type_key).unwrap_or(recv_type_key)
-                                } else {
-                                    recv_type_key
-                                };
-                                
-                                // Try to find method on defining type
-                                if let Some(idx) = ctx.get_func_index(Some(defining_type), false, method_sym) {
-                                    (idx, false, Some(defining_type))
-                                } else if let Some(idx) = ctx.get_func_index(Some(defining_type), true, method_sym) {
-                                    (idx, true, Some(defining_type))
-                                } else {
-                                    return Err(CodegenError::UnsupportedExpr(format!("promoted method {} not found", method_name)));
-                                }
-                            } else {
-                                return Err(CodegenError::UnsupportedExpr(format!("method {} receiver has no type", method_name)));
-                            }
-                        } else {
-                            return Err(CodegenError::UnsupportedExpr(format!("method {} has no receiver", method_name)));
-                        }
-                    } else {
-                        return Err(CodegenError::UnsupportedExpr(format!("method {} is not a function", method_name)));
-                    }
-                } else {
-                    return Err(CodegenError::UnsupportedExpr(format!("method {} has no type", method_name)));
-                }
-            } else {
-                return Err(CodegenError::UnsupportedExpr(format!("method {} not found on type {:?}", method_name, base_type)));
-            }
-        };
-        
-        // For promoted methods, we need to access the embedded field first
-        // Get the actual receiver type for slot calculation
-        let actual_recv_type = promoted_type.unwrap_or(base_type);
-        
-        // Get receiver's ValueLocation if it's a local variable
-        let recv_location = if let ExprKind::Ident(ident) = &sel.expr.kind {
-            func.lookup_local(ident.symbol).map(|local| {
-                let type_key = info.get_def(ident).and_then(|o| info.obj_type(o));
-                get_local_location(local, type_key, info)
-            })
-        } else {
-            None
-        };
-        
-        // Calculate receiver slots based on what method expects and actual receiver type
-        let actual_recv_slots = if method_expects_ptr { 1u16 } else { info.type_slot_count(actual_recv_type) };
-        
-        let other_args_slots: u16 = call.args.iter()
-            .map(|arg| info.expr_slots(arg.id))
-            .sum();
-        let total_arg_slots = actual_recv_slots + other_args_slots;
-        let args_start = func.alloc_temp(total_arg_slots);
-        
-        // Copy receiver to args based on what method expects
-        // For promoted methods, we need to extract the embedded field
-        let embed_offset = if let Some(sel_info) = selection {
-            if promoted_type.is_some() && !sel_info.indices().is_empty() {
-                // Calculate offset to embedded field using selection indices
-                let mut offset = 0u16;
-                let mut current_type = base_type;
-                for &idx in sel_info.indices().iter().take(sel_info.indices().len().saturating_sub(1)) {
-                    // Get field offset at this index
-                    if let Some((field_offset, _)) = info.struct_field_offset_by_index(current_type, idx) {
-                        offset += field_offset;
-                        // Get field type for next iteration
-                        if let Some(field_type) = info.struct_field_type_by_index(current_type, idx) {
-                            current_type = field_type;
-                        }
-                    }
-                }
-                offset
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-        
-        if method_expects_ptr {
-            // Method expects pointer: pass the GcRef directly
-            if let Some(gcref_slot) = recv_location.as_ref().and_then(get_gcref_slot) {
-                // Local variable with GcRef: copy directly
-                func.emit_copy(args_start, gcref_slot, 1);
-            } else {
-                // Need to compile expression to get the GcRef
-                let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-                func.emit_copy(args_start, recv_reg, 1);
-            }
-        } else {
-            // Method expects value: compile receiver and extract embedded field if needed
-            let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-            let recv_is_ptr = info.is_pointer(recv_type);
-            let recv_is_heap = matches!(recv_location, Some(ValueLocation::HeapBoxed { .. }));
-            if recv_is_heap || recv_is_ptr {
-                // Heap variable or pointer type: use PtrGetN to copy value from heap
-                let value_slots = info.type_slot_count(actual_recv_type);
-                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
-            } else {
-                // For promoted methods, copy from embedded field offset
-                func.emit_copy(args_start, recv_reg + embed_offset, actual_recv_slots);
-            }
-        }
-        
-        // Compile other arguments
-        let mut arg_offset = actual_recv_slots;
-        for arg in &call.args {
-            compile_expr_to(arg, args_start + arg_offset, ctx, func, info)?;
-            arg_offset += info.expr_slots(arg.id);
-        }
-        
-        // Get method return type for ret_slots
-        let ret_slots = info.expr_type(_expr.id)
-            .map(|t| info.type_slot_count(t))
-            .unwrap_or(0);
-        
-        // Emit Call instruction
-        let c = crate::type_info::encode_call_args(arg_offset as u16, ret_slots as u16);
-        let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
-        func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
-        
-        // Copy result to dst if needed
-        if ret_slots > 0 && dst != args_start {
-            func.emit_copy(dst, args_start, ret_slots);
-        }
-        return Ok(());
+        recv_type
+    };
+    
+    // Resolve method (handles direct and promoted methods)
+    let selection = info.get_selection(call.func.id);
+    let resolution = resolve_method(base_type, method_name, selection, ctx, info)?;
+    
+    // Actual receiver type (for promoted methods, this is the embedded type)
+    let actual_recv_type = resolution.defining_type.unwrap_or(base_type);
+    let is_promoted = resolution.defining_type.is_some();
+    
+    // Get receiver location for optimization
+    let recv_location = if let ExprKind::Ident(ident) = &sel.expr.kind {
+        func.lookup_local(ident.symbol).map(|local| {
+            let type_key = info.get_def(ident).and_then(|o| info.obj_type(o));
+            get_local_location(local, type_key, info)
+        })
+    } else {
+        None
+    };
+    
+    // Calculate slots
+    let recv_slots = if resolution.expects_ptr_recv { 1 } else { info.type_slot_count(actual_recv_type) };
+    let other_args_slots: u16 = call.args.iter().map(|arg| info.expr_slots(arg.id)).sum();
+    let total_arg_slots = recv_slots + other_args_slots;
+    let args_start = func.alloc_temp(total_arg_slots);
+    
+    // Emit receiver
+    let embed_offset = compute_embed_offset(selection, is_promoted, base_type, info);
+    emit_receiver(
+        &sel.expr, args_start, recv_type, recv_location,
+        resolution.expects_ptr_recv, actual_recv_type, embed_offset,
+        ctx, func, info
+    )?;
+    
+    // Emit other arguments
+    let mut arg_offset = recv_slots;
+    for arg in &call.args {
+        compile_expr_to(arg, args_start + arg_offset, ctx, func, info)?;
+        arg_offset += info.expr_slots(arg.id);
+    }
+    
+    // Emit Call
+    let ret_slots = info.expr_type(expr.id).map(|t| info.type_slot_count(t)).unwrap_or(0);
+    let c = crate::type_info::encode_call_args(arg_offset, ret_slots);
+    let (func_id_low, func_id_high) = crate::type_info::encode_func_id(resolution.func_idx);
+    func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
+    
+    // Copy result
+    if ret_slots > 0 && dst != args_start {
+        func.emit_copy(dst, args_start, ret_slots);
     }
     
     Ok(())
