@@ -1038,48 +1038,34 @@ fn resolve_method(
     
     // 3. Try promoted method via selection info
     if let Some(sel) = selection {
-        return resolve_promoted_method(sel, method_name, method_sym, ctx, info);
+        if let Some(defining_type) = get_defining_type_from_selection(sel, info) {
+            if let Some(idx) = ctx.get_func_index(Some(defining_type), false, method_sym) {
+                return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: false, defining_type: Some(defining_type) });
+            }
+            if let Some(idx) = ctx.get_func_index(Some(defining_type), true, method_sym) {
+                return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: true, defining_type: Some(defining_type) });
+            }
+        }
     }
     
     Err(CodegenError::UnsupportedExpr(format!("method {} not found on type", method_name)))
 }
 
-/// Resolve a promoted method from embedded field.
-fn resolve_promoted_method(
-    sel: &Selection,
-    method_name: &str,
-    method_sym: vo_common::symbol::Symbol,
-    ctx: &CodegenContext,
-    info: &TypeInfoWrapper,
-) -> Result<MethodResolution, CodegenError> {
+/// Get defining type from Selection for promoted methods.
+/// Reused by both resolve_method (for method calls) and could be used elsewhere.
+fn get_defining_type_from_selection(sel: &Selection, info: &TypeInfoWrapper) -> Option<TypeKey> {
     let method_obj = sel.obj();
-    let method_type = info.project.tc_objs.lobjs[method_obj].typ()
-        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} has no type", method_name)))?;
-    
+    let method_type = info.project.tc_objs.lobjs[method_obj].typ()?;
     let sig = info.as_signature(method_type);
+    let recv_var = (*sig.recv())?;
+    let recv_type_key = info.project.tc_objs.lobjs[recv_var].typ()?;
     
-    let recv_var = sig.recv()
-        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} has no receiver", method_name)))?;
-    
-    let recv_type_key = info.project.tc_objs.lobjs[recv_var].typ()
-        .ok_or_else(|| CodegenError::UnsupportedExpr(format!("method {} receiver has no type", method_name)))?;
-    
-    // Get defining type (strip pointer if needed)
-    let defining_type = if info.is_pointer(recv_type_key) {
+    // Strip pointer if needed
+    Some(if info.is_pointer(recv_type_key) {
         info.pointer_base(recv_type_key)
     } else {
         recv_type_key
-    };
-    
-    // Find method on defining type
-    if let Some(idx) = ctx.get_func_index(Some(defining_type), false, method_sym) {
-        return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: false, defining_type: Some(defining_type) });
-    }
-    if let Some(idx) = ctx.get_func_index(Some(defining_type), true, method_sym) {
-        return Ok(MethodResolution { func_idx: idx, expects_ptr_recv: true, defining_type: Some(defining_type) });
-    }
-    
-    Err(CodegenError::UnsupportedExpr(format!("promoted method {} not found", method_name)))
+    })
 }
 
 /// Compute field offset for promoted method (embedded field access).

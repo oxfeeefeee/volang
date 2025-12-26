@@ -141,6 +141,12 @@ impl CodegenContext {
         }
     }
 
+    /// Get a specific method from a NamedTypeMeta by name
+    pub fn get_method_from_named_type(&self, named_type_id: u16, method_name: &str) -> Option<MethodInfo> {
+        self.module.named_type_metas.get(named_type_id as usize)
+            .and_then(|meta| meta.methods.get(method_name).cloned())
+    }
+
     /// Iterate over all named type keys and their IDs
     pub fn named_type_ids_iter(&self) -> impl Iterator<Item = (TypeKey, u16)> + '_ {
         self.named_type_ids.iter().map(|(&k, &v)| (k, v))
