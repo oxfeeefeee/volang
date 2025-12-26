@@ -51,13 +51,16 @@ pub fn get_expr_source(
     if let ExprKind::Ident(ident) = &expr.kind {
         // Check local variable
         if let Some(local) = func.lookup_local(ident.symbol) {
-            let type_key = info.get_use(ident).or_else(|| info.get_def(ident)).and_then(|o| info.obj_type(o));
+            let type_key = info.get_use(ident).or_else(|| info.get_def(ident))
+                .map(|o| info.obj_type(o, "local var must have type"));
             return ExprSource::Location(get_local_location(local, type_key, info));
         }
         // Check global variable
         if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
-            let type_key = info.get_use(ident).or_else(|| info.get_def(ident)).and_then(|o| info.obj_type(o));
-            let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+            let type_key = info.get_use(ident).or_else(|| info.get_def(ident))
+                .map(|o| info.obj_type(o, "global var must have type"))
+                .expect("global var ident must resolve");
+            let slots = info.type_slot_count(type_key);
             return ExprSource::Location(ValueLocation::Global { index: global_idx as u16, slots });
         }
     }
@@ -130,9 +133,10 @@ pub fn compile_expr_to(
                         
                         // Get captured variable's type - try get_use first (for references),
                         // then get_def (for definitions in outer scope)
-                        let obj_key = info.get_use(ident).or_else(|| info.get_def(ident));
-                        let type_key = obj_key.and_then(|o| info.obj_type(o));
-                        let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                        let type_key = info.get_use(ident).or_else(|| info.get_def(ident))
+                            .map(|o| info.obj_type(o, "captured var must have type"))
+                            .expect("captured var ident must resolve");
+                        let value_slots = info.type_slot_count(type_key);
                         func.emit_ptr_get(dst, dst, 0, value_slots);
                     } else {
                         // Could be a function name, package, etc. - handle later
@@ -416,7 +420,8 @@ fn find_root_location(expr: &Expr, func: &FuncBuilder, info: &TypeInfoWrapper) -
     match &expr.kind {
         ExprKind::Ident(ident) => {
             func.lookup_local(ident.symbol).map(|local| {
-                let type_key = info.get_def(ident).and_then(|o| info.obj_type(o));
+                let type_key = info.get_def(ident)
+                    .map(|o| info.obj_type(o, "local var must have type"));
                 get_local_location(local, type_key, info)
             })
         }
@@ -1269,7 +1274,8 @@ fn compile_concrete_method(
     // Get receiver location for optimization
     let recv_location = if let ExprKind::Ident(ident) = &sel.expr.kind {
         func.lookup_local(ident.symbol).map(|local| {
-            let type_key = info.get_def(ident).and_then(|o| info.obj_type(o));
+            let type_key = info.get_def(ident)
+                .map(|o| info.obj_type(o, "method receiver must have type"));
             get_local_location(local, type_key, info)
         })
     } else {

@@ -55,23 +55,23 @@ impl<'a> TypeInfoWrapper<'a> {
         self.type_info().get_use(ident)
     }
 
+    /// Check if object is a package name
+    pub fn obj_is_pkg(&self, obj: ObjKey) -> bool {
+        self.tc_objs().lobjs[obj].entity_type().is_pkg_name()
+    }
+
     /// Check if an identifier refers to a package
     pub fn is_package(&self, ident: &Ident) -> bool {
-        if let Some(obj) = self.get_use(ident) {
-            self.tc_objs().lobjs[obj].entity_type().is_pkg_name()
-        } else if let Some(obj) = self.get_def(ident) {
-            self.tc_objs().lobjs[obj].entity_type().is_pkg_name()
-        } else {
-            false
-        }
+        self.get_use(ident).or_else(|| self.get_def(ident))
+            .map(|obj| self.obj_is_pkg(obj))
+            .unwrap_or(false)
     }
 
     /// Get the package path for a package identifier
     pub fn package_path(&self, ident: &Ident) -> Option<String> {
         let obj = self.get_use(ident).or_else(|| self.get_def(ident))?;
-        let lobj = &self.tc_objs().lobjs[obj];
-        if lobj.entity_type().is_pkg_name() {
-            let pkg_key = lobj.pkg_name_imported();
+        if self.obj_is_pkg(obj) {
+            let pkg_key = self.tc_objs().lobjs[obj].pkg_name_imported();
             Some(self.tc_objs().pkgs[pkg_key].path().to_string())
         } else {
             None
@@ -111,15 +111,14 @@ impl<'a> TypeInfoWrapper<'a> {
             Type::Struct(s) => {
                 let mut total = 0u16;
                 for &field_obj in s.fields() {
-                    if let Some(field_type) = self.tc_objs().lobjs[field_obj].typ() {
-                        total += self.type_slot_count(field_type);
-                    }
+                    let field_type = self.obj_type(field_obj, "struct field must have type");
+                    total += self.type_slot_count(field_type);
                 }
                 total
             }
             Type::Array(a) => {
                 let elem_slots = self.type_slot_count(a.elem());
-                let len = a.len().unwrap_or(0) as u16;
+                let len = a.len().expect("array must have length") as u16;
                 elem_slots * len
             }
             Type::Named(n) => {
@@ -143,9 +142,8 @@ impl<'a> TypeInfoWrapper<'a> {
             Type::Struct(s) => {
                 let mut types = Vec::new();
                 for &field_obj in s.fields() {
-                    if let Some(field_type) = self.tc_objs().lobjs[field_obj].typ() {
-                        types.extend(self.type_slot_types(field_type));
-                    }
+                    let field_type = self.obj_type(field_obj, "struct field must have type");
+                    types.extend(self.type_slot_types(field_type));
                 }
                 types
             }
@@ -226,7 +224,7 @@ impl<'a> TypeInfoWrapper<'a> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
         if let Type::Struct(s) = &self.tc_objs().types[underlying] {
             if let Some(&field_obj) = s.fields().get(field_index) {
-                return self.tc_objs().lobjs[field_obj].typ();
+                return Some(self.obj_type(field_obj, "struct field must have type"));
             }
         }
         None
@@ -370,7 +368,8 @@ impl<'a> TypeInfoWrapper<'a> {
                     BasicType::Float32 => ValueKind::Float32,
                     BasicType::Float64 | BasicType::UntypedFloat => ValueKind::Float64,
                     BasicType::Str | BasicType::UntypedString => ValueKind::String,
-                    _ => ValueKind::Int,
+                    BasicType::UntypedNil => ValueKind::Void,
+                    other => panic!("type_value_kind: unhandled BasicType {:?}", other),
                 }
             }
             Type::Pointer(_) => ValueKind::Pointer,
@@ -381,13 +380,14 @@ impl<'a> TypeInfoWrapper<'a> {
             Type::Interface(_) => ValueKind::Interface,
             Type::Chan(_) => ValueKind::Channel,
             Type::Signature(_) => ValueKind::Closure,
-            _ => ValueKind::Int,
+            Type::Named(n) => self.type_value_kind(n.underlying()),
+            other => panic!("type_value_kind: unhandled type {:?}", other),
         }
     }
 
-    /// Get object's type
-    pub fn obj_type(&self, obj: ObjKey) -> Option<TypeKey> {
-        self.tc_objs().lobjs[obj].typ()
+    /// Get object's type. Panics with the given message if object has no type.
+    pub fn obj_type(&self, obj: ObjKey, msg: &str) -> TypeKey {
+        self.tc_objs().lobjs[obj].typ().expect(msg)
     }
 
     /// Get object's name
@@ -489,21 +489,12 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
-    /// Get interface meta ID (for IfaceAssign)
-    /// Note: This needs the CodegenContext to lookup registered metas
-    /// For now, return None - the actual lookup happens in context.rs
-    pub fn get_interface_meta_id(&self, _type_key: TypeKey) -> Option<u16> {
-        // Interface meta ID lookup is done via CodegenContext::get_interface_meta_id
-        // This method is kept for API compatibility but actual lookup should use ctx
-        None
-    }
-
     /// Get method index in interface
     pub fn get_interface_method_index(&self, iface_type: TypeKey, method_name: &str) -> Option<u16> {
         let underlying = typ::underlying_type(iface_type, self.tc_objs());
         if let Type::Interface(iface) = &self.tc_objs().types[underlying] {
             for (idx, method) in iface.methods().iter().enumerate() {
-                if self.tc_objs().lobjs[*method].name() == method_name {
+                if self.obj_name(*method) == method_name {
                     return Some(idx as u16);
                 }
             }
@@ -551,9 +542,8 @@ impl<'a> TypeInfoWrapper<'a> {
             if let Some(tuple) = self.tc_objs().types[results].try_as_tuple() {
                 let mut total = 0u16;
                 for &var in tuple.vars() {
-                    if let Some(t) = self.tc_objs().lobjs[var].typ() {
-                        total += self.type_slot_count(t);
-                    }
+                    let t = self.obj_type(var, "result var must have type");
+                    total += self.type_slot_count(t);
                 }
                 return Some(total);
             }
@@ -580,12 +570,11 @@ impl<'a> TypeInfoWrapper<'a> {
                 if let Some(tuple) = self.tc_objs().types[params].try_as_tuple() {
                     let vars = tuple.vars();
                     if let Some(&last_var) = vars.last() {
-                        if let Some(param_type) = self.tc_objs().lobjs[last_var].typ() {
-                            // The last param is []T, get element type
-                            let underlying_param = typ::underlying_type(param_type, self.tc_objs());
-                            if let Type::Slice(s) = &self.tc_objs().types[underlying_param] {
-                                return Some(s.elem());
-                            }
+                        let param_type = self.obj_type(last_var, "variadic param must have type");
+                        // The last param is []T, get element type
+                        let underlying_param = typ::underlying_type(param_type, self.tc_objs());
+                        if let Type::Slice(s) = &self.tc_objs().types[underlying_param] {
+                            return Some(s.elem());
                         }
                     }
                 }
@@ -636,7 +625,7 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
-    /// Get integer bit size
+    /// Get integer bit size. Panics if type is not an integer type.
     pub fn int_bits(&self, type_key: TypeKey) -> u8 {
         use vo_analysis::typ::BasicType;
         let underlying = typ::underlying_type(type_key, self.tc_objs());
@@ -647,10 +636,10 @@ impl<'a> TypeInfoWrapper<'a> {
                 BasicType::Int32 | BasicType::Uint32 | BasicType::UntypedRune => 32,
                 BasicType::Int64 | BasicType::Uint64 => 64,
                 BasicType::Int | BasicType::Uint | BasicType::UntypedInt => 64, // assume 64-bit platform
-                _ => 64,
+                other => panic!("int_bits: not an integer type {:?}", other),
             }
         } else {
-            64
+            panic!("int_bits: not a Basic type")
         }
     }
 

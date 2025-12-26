@@ -1277,12 +1277,14 @@ fn compile_assign(
             // Get lhs and rhs sources
             let lhs_source = crate::expr::get_expr_source(lhs, ctx, func, info);
             let rhs_source = crate::expr::get_expr_source(rhs, ctx, func, info);
-            let lhs_type = info.get_use(ident).or_else(|| info.get_def(ident)).and_then(|o| info.obj_type(o));
+            let lhs_type = info.get_use(ident).or_else(|| info.get_def(ident))
+                .map(|o| info.obj_type(o, "assignment lhs must have type"))
+                .expect("assignment lhs ident must resolve");
             
             match lhs_source {
                 ExprSource::Location(lhs_loc) => {
                     // Check if assigning to interface variable
-                    let is_iface = lhs_type.map(|t| info.is_interface(t)).unwrap_or(false);
+                    let is_iface = info.is_interface(lhs_type);
                     if is_iface {
                         // For HeapBoxed interface, we need to use temp slots for IfaceAssign
                         // then PtrSetN to write to heap
@@ -1298,9 +1300,7 @@ fn compile_assign(
                         };
                         let src_type = info.expr_type(rhs.id);
                         let src_vk = info.type_value_kind(src_type);
-                        let iface_meta_id = lhs_type
-                            .map(|t| ctx.get_or_create_interface_meta_id(t, &info.project.tc_objs))
-                            .unwrap_or(0); // 0 = empty interface if no type info
+                        let iface_meta_id = ctx.get_or_create_interface_meta_id(lhs_type, &info.project.tc_objs);
                         
                         // Determine constant for IfaceAssign based on source type
                         let const_idx = if src_vk == vo_common_core::ValueKind::Interface {
@@ -1391,7 +1391,7 @@ fn compile_assign(
                         }
                         (ValueLocation::Global { .. }, _) => {
                             let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                            let slots = lhs_type.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                            let slots = info.type_slot_count(lhs_type);
                             func.emit_store_value(lhs_loc, tmp, slots);
                         }
                         (ValueLocation::Reference { slot }, _) => {
@@ -1729,7 +1729,8 @@ fn resolve_selector_target(
     match &expr.kind {
         ExprKind::Ident(ident) => {
             if let Some(local) = func.lookup_local(ident.symbol) {
-                let type_key = info.get_def(ident).and_then(|o| info.obj_type(o));
+                let type_key = info.get_def(ident)
+                    .map(|o| info.obj_type(o, "local var must have type"));
                 let loc = crate::expr::get_local_location(local, type_key, info);
                 Ok((SelectorTarget::Location(loc), 0))
             } else {
