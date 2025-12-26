@@ -308,31 +308,35 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     /// Get map key slot types
-    pub fn map_key_slot_types(&self, type_key: TypeKey) -> Option<Vec<vo_common_core::types::SlotType>> {
+    pub fn map_key_slot_types(&self, type_key: TypeKey) -> Vec<vo_common_core::types::SlotType> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
-        let map_type = self.tc_objs().types[underlying].try_as_map()?;
-        Some(self.type_slot_types(map_type.key()))
+        let map_type = self.tc_objs().types[underlying].try_as_map()
+            .expect("map_key_slot_types: not a map type");
+        self.type_slot_types(map_type.key())
     }
 
     /// Get map value slot types
-    pub fn map_val_slot_types(&self, type_key: TypeKey) -> Option<Vec<vo_common_core::types::SlotType>> {
+    pub fn map_val_slot_types(&self, type_key: TypeKey) -> Vec<vo_common_core::types::SlotType> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
-        let map_type = self.tc_objs().types[underlying].try_as_map()?;
-        Some(self.type_slot_types(map_type.elem()))
+        let map_type = self.tc_objs().types[underlying].try_as_map()
+            .expect("map_val_slot_types: not a map type");
+        self.type_slot_types(map_type.elem())
     }
 
     /// Get map key ValueKind
-    pub fn map_key_value_kind(&self, type_key: TypeKey) -> Option<vo_common_core::types::ValueKind> {
+    pub fn map_key_value_kind(&self, type_key: TypeKey) -> vo_common_core::types::ValueKind {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
-        let map_type = self.tc_objs().types[underlying].try_as_map()?;
-        Some(self.type_value_kind(map_type.key()))
+        let map_type = self.tc_objs().types[underlying].try_as_map()
+            .expect("map_key_value_kind: not a map type");
+        self.type_value_kind(map_type.key())
     }
 
     /// Get map value ValueKind
-    pub fn map_val_value_kind(&self, type_key: TypeKey) -> Option<vo_common_core::types::ValueKind> {
+    pub fn map_val_value_kind(&self, type_key: TypeKey) -> vo_common_core::types::ValueKind {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
-        let map_type = self.tc_objs().types[underlying].try_as_map()?;
-        Some(self.type_value_kind(map_type.elem()))
+        let map_type = self.tc_objs().types[underlying].try_as_map()
+            .expect("map_val_value_kind: not a map type");
+        self.type_value_kind(map_type.elem())
     }
 
     /// Get ValueKind for a type

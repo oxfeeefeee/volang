@@ -1638,14 +1638,12 @@ fn compile_composite_lit(
         let (key_slots, val_slots) = info.map_key_val_slots(type_key);
         
         // Get key/val meta with correct ValueKind
-        let key_slot_types = info.map_key_slot_types(type_key)
-            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
-        let val_slot_types = info.map_val_slot_types(type_key)
-            .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+        let key_slot_types = info.map_key_slot_types(type_key);
+        let val_slot_types = info.map_val_slot_types(type_key);
         let key_kind = info.map_key_value_kind(type_key);
         let val_kind = info.map_val_value_kind(type_key);
-        let key_meta_idx = ctx.get_or_create_value_meta_with_kind(None, key_slots, &key_slot_types, key_kind);
-        let val_meta_idx = ctx.get_or_create_value_meta_with_kind(None, val_slots, &val_slot_types, val_kind);
+        let key_meta_idx = ctx.get_or_create_value_meta_with_kind(None, key_slots, &key_slot_types, Some(key_kind));
+        let val_meta_idx = ctx.get_or_create_value_meta_with_kind(None, val_slots, &val_slot_types, Some(val_kind));
         
         // MapNew: a=dst, b=packed_meta, c=(key_slots<<8)|val_slots
         // packed_meta = (key_meta << 32) | val_meta
