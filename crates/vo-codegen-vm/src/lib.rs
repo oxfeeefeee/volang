@@ -212,7 +212,17 @@ fn compile_functions(
                     if let Some(recv_type) = info.get_use(&recv.ty).or_else(|| info.get_def(&recv.ty)).and_then(|obj| info.obj_type(obj)) {
                         let method_name = project.interner.resolve(func_decl.name.symbol)
                             .unwrap_or("?").to_string();
-                        method_mappings.push((recv_type, method_name, func_id, recv.is_pointer));
+                        
+                        // For value receiver methods, generate a wrapper that accepts GcRef
+                        // and dereferences it before calling the original method
+                        let iface_func_id = if !recv.is_pointer {
+                            generate_value_receiver_wrapper(ctx, info, func_decl, func_id, recv_type)?
+                        } else {
+                            func_id
+                        };
+                        
+                        // Register the wrapper (or original for pointer receiver) for interface dispatch
+                        method_mappings.push((recv_type, method_name, iface_func_id, recv.is_pointer));
                     }
                 }
             }
@@ -265,6 +275,9 @@ fn compile_func_decl(
             (slots, slot_types)
         };
         
+        // Set recv_slots for interface method calls
+        builder.set_recv_slots(slots);
+        
         // Receiver name
         builder.define_param(recv.name.symbol, slots, &slot_types);
     }
@@ -303,6 +316,82 @@ fn compile_func_decl(
     let func_id = ctx.define_func(func_def, recv_base_type, is_pointer_recv, func_decl.name.symbol);
     
     Ok(func_id)
+}
+
+/// Generate a wrapper function for value receiver methods.
+/// The wrapper accepts a GcRef (pointer to the value), dereferences it,
+/// and calls the original method with the value.
+fn generate_value_receiver_wrapper(
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+    func_decl: &vo_syntax::ast::FuncDecl,
+    original_func_id: u32,
+    recv_type: vo_analysis::objects::TypeKey,
+) -> Result<u32, CodegenError> {
+    let name = info.project.interner.resolve(func_decl.name.symbol)
+        .unwrap_or("unknown");
+    let wrapper_name = format!("{}$iface", name);
+    
+    let mut builder = FuncBuilder::new(&wrapper_name);
+    
+    // Wrapper receives GcRef as first parameter (1 slot)
+    let ptr_slot = builder.define_param(vo_common::symbol::Symbol::DUMMY, 1, &[vo_common_core::types::SlotType::GcRef]);
+    
+    // Define other parameters (forwarded from original function)
+    let mut wrapper_param_slots = Vec::new();
+    for param in &func_decl.sig.params {
+        let (slots, slot_types) = info.type_expr_layout(param.ty.id);
+        for name in &param.names {
+            let slot = builder.define_param(name.symbol, slots, &slot_types);
+            wrapper_param_slots.push((slot, slots));
+        }
+    }
+    
+    // Get receiver value slots
+    let recv_slots = info.type_slot_count(recv_type);
+    let recv_slot_types = info.type_slot_types(recv_type);
+    
+    let ret_slots: u16 = func_decl.sig.results.iter()
+        .map(|r| info.type_expr_layout(r.ty.id).0)
+        .sum();
+    
+    // Allocate args area for call: recv_value + params
+    let args_start = builder.alloc_temp_typed(&recv_slot_types);
+    
+    // Dereference GcRef to get value: PtrGetN(recv_slots, args_start, ptr_slot, 0)
+    builder.emit_with_flags(
+        vo_vm::instruction::Opcode::PtrGetN,
+        recv_slots as u8,
+        args_start,
+        ptr_slot,
+        0,
+    );
+    
+    // Copy other parameters after receiver value
+    let mut dest_offset = args_start + recv_slots;
+    for (src_slot, slots) in &wrapper_param_slots {
+        if *slots > 0 {
+            builder.alloc_temp(*slots);
+            builder.emit_copy(dest_offset, *src_slot, *slots);
+            dest_offset += *slots;
+        }
+    }
+    
+    // Call original function
+    let forwarded_param_slots: u16 = wrapper_param_slots.iter().map(|(_, s)| *s).sum();
+    let total_arg_slots = recv_slots + forwarded_param_slots;
+    let c = crate::type_info::encode_call_args(total_arg_slots, ret_slots);
+    let (func_id_low, func_id_high) = crate::type_info::encode_func_id(original_func_id);
+    builder.emit_with_flags(vo_vm::instruction::Opcode::Call, func_id_high, func_id_low, args_start, c);
+    
+    // Return (result is already at args_start)
+    builder.set_ret_slots(ret_slots);
+    builder.emit_op(vo_vm::instruction::Opcode::Return, args_start, ret_slots, 0);
+    
+    let func_def = builder.build();
+    let wrapper_id = ctx.add_function(func_def);
+    
+    Ok(wrapper_id)
 }
 
 fn compile_init_and_entry(

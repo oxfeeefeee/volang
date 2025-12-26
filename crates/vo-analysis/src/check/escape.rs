@@ -152,13 +152,20 @@ impl<'a> EscapeAnalyzer<'a> {
                     self.visit_expr(l);
                     self.visit_expr(r);
                     
-                    // If LHS is interface type and RHS is not basic type, RHS escapes
+                    // If LHS is interface type and RHS is struct/array, RHS escapes
+                    // But if RHS is also interface, it doesn't escape (interface-to-interface copy)
                     if assign.op == AssignOp::Assign {
                         if let Some(tv) = self.type_info.types.get(&l.id) {
                             if typ::is_interface(tv.typ, self.tc_objs) {
-                                if let Some(root) = self.find_root_var(r) {
-                                    if !self.is_basic_type(root) {
-                                        self.escaped.insert(root);
+                                // Check if RHS is also interface - if so, don't escape
+                                let rhs_is_interface = self.type_info.types.get(&r.id)
+                                    .map(|t| typ::is_interface(t.typ, self.tc_objs))
+                                    .unwrap_or(false);
+                                if !rhs_is_interface {
+                                    if let Some(root) = self.find_root_var(r) {
+                                        if !self.is_basic_type(root) {
+                                            self.escaped.insert(root);
+                                        }
                                     }
                                 }
                             }

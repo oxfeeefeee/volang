@@ -63,6 +63,8 @@ pub fn exec_call_iface(
     module: &Module,
     itab_cache: &ItabCache,
 ) -> ExecResult {
+    use vo_runtime_core::gc::Gc;
+    
     let arg_slots = (inst.c >> 8) as usize;
     let ret_slots = (inst.c & 0xFF) as u16;
     let method_idx = inst.flags as usize;
@@ -74,6 +76,7 @@ pub fn exec_call_iface(
     let func_id = itab_cache.lookup_method(itab_id, method_idx);
 
     let func = &module.functions[func_id as usize];
+    let recv_slots = func.recv_slots as usize;
 
     let args: Vec<u64> = (0..arg_slots)
         .map(|i| fiber.read_reg(inst.b + i as u16))
@@ -81,10 +84,12 @@ pub fn exec_call_iface(
 
     fiber.push_frame(func_id, func.local_slots, inst.b, ret_slots);
 
+    // Pass slot1 directly as receiver (1 slot: GcRef or primitive)
+    // For value receiver methods, itab points to wrapper that dereferences
     fiber.write_reg(0, slot1);
 
     for (i, arg) in args.into_iter().enumerate() {
-        fiber.write_reg((i + 1) as u16, arg);
+        fiber.write_reg((recv_slots + i) as u16, arg);
     }
 
     ExecResult::Continue

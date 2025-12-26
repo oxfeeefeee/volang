@@ -21,19 +21,19 @@ pub fn compile_stmt(
         StmtKind::Var(var_decl) => {
             for spec in &var_decl.specs {
                 for (i, name) in spec.names.iter().enumerate() {
-                    // Get type
+                    // Get type - must exist for valid code
                     let type_key = if let Some(ty) = &spec.ty {
-                        info.project.type_info.type_exprs.get(&ty.id).copied()
+                        *info.project.type_info.type_exprs.get(&ty.id)
+                            .expect("type annotation must have type in type_exprs")
                     } else if i < spec.values.len() {
                         info.expr_type(spec.values[i].id)
+                            .expect("variable initializer must have type")
                     } else {
-                        None
+                        panic!("variable declaration must have type annotation or initializer")
                     };
 
-                    let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-                    let slot_types = type_key
-                        .map(|t| info.type_slot_types(t))
-                        .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+                    let slots = info.type_slot_count(type_key);
+                    let slot_types = info.type_slot_types(type_key);
 
                     // Check escape
                     let obj_key = info.get_def(name);
@@ -44,13 +44,13 @@ pub fn compile_stmt(
                         let slot = func.define_local_heap(name.symbol);
                         
                         // Check if this is an array type
-                        let is_array = type_key.map(|t| info.is_array(t)).unwrap_or(false);
+                        let is_array = info.is_array(type_key);
                         
                         if is_array {
                             // Array: use ArrayNew (different memory layout with ArrayHeader)
-                            let arr_len = type_key.and_then(|t| info.array_len(t)).unwrap_or(0);
-                            let elem_slots = type_key.and_then(|t| info.array_elem_slots(t)).unwrap_or(1);
-                            let elem_meta_idx = ctx.get_or_create_array_elem_meta(type_key.unwrap(), info);
+                            let arr_len = info.array_len(type_key).expect("array must have length");
+                            let elem_slots = info.array_elem_slots(type_key).expect("array must have elem slots");
+                            let elem_meta_idx = ctx.get_or_create_array_elem_meta(type_key, info);
                             
                             // ArrayNew: a=dst, b=elem_meta_idx, c=len, flags=elem_slots
                             // Load elem_meta into a register
@@ -71,7 +71,7 @@ pub fn compile_stmt(
                             // else: ArrayNew already zero-initializes
                         } else {
                             // Struct/primitive: use PtrNew
-                            let meta_idx = ctx.get_or_create_value_meta(type_key, slots, &slot_types);
+                            let meta_idx = ctx.get_or_create_value_meta(Some(type_key), slots, &slot_types);
                             
                             // PtrNew: dst=slot, meta_reg=temp (loaded from const pool), flags=slots
                             let meta_reg = func.alloc_temp(1);
@@ -381,7 +381,9 @@ pub fn compile_stmt(
                         } else {
                             // Heap array iteration
                             let arr_slot = if let vo_syntax::ast::ExprKind::Ident(ident) = &expr.kind {
-                                func.lookup_local(ident.symbol).map(|l| l.slot).unwrap_or(0)
+                                func.lookup_local(ident.symbol)
+                                    .expect("heap array local not found - codegen bug")
+                                    .slot
                             } else {
                                 crate::expr::compile_expr(expr, ctx, func, info)?
                             };
@@ -1291,22 +1293,23 @@ fn compile_assign(
                     // Check if assigning to interface variable
                     let is_iface = lhs_type.map(|t| info.is_interface(t)).unwrap_or(false);
                     if is_iface {
-                        let dst_slot = match lhs_loc {
-                            ValueLocation::Stack { slot, .. } => slot,
-                            ValueLocation::HeapBoxed { slot, .. } => slot,
-                            ValueLocation::Reference { slot } => slot,
-                            ValueLocation::Global { index, .. } => index,
+                        // For HeapBoxed interface, we need to use temp slots for IfaceAssign
+                        // then PtrSetN to write to heap
+                        let (dst_slot, is_heap_boxed, heap_gcref) = match lhs_loc {
+                            ValueLocation::Stack { slot, .. } => (slot, false, 0),
+                            ValueLocation::HeapBoxed { slot, .. } => {
+                                // Allocate temp 2 slots for IfaceAssign result
+                                let tmp = func.alloc_temp(2);
+                                (tmp, true, slot)
+                            }
+                            ValueLocation::Reference { slot } => (slot, false, 0),
+                            ValueLocation::Global { index, .. } => (index, false, 0),
                         };
                         let src_type = info.expr_type(rhs.id);
                         let src_vk = src_type.map(|t| info.type_value_kind(t)).unwrap_or(vo_common_core::ValueKind::Void);
-                        let iface_meta_id = lhs_type.and_then(|t| {
-                            // Try named type first, then underlying type
-                            ctx.get_interface_meta_id(t)
-                                .or_else(|| {
-                                    let underlying = info.underlying_type(t);
-                                    ctx.get_interface_meta_id(underlying)
-                                })
-                        }).unwrap_or(0);
+                        let iface_meta_id = lhs_type
+                            .map(|t| ctx.get_or_create_interface_meta_id(t, &info.project.tc_objs))
+                            .unwrap_or(0); // 0 = empty interface if no type info
                         
                         // Determine constant for IfaceAssign based on source type
                         let const_idx = if src_vk == vo_common_core::ValueKind::Interface {
@@ -1355,6 +1358,11 @@ fn compile_assign(
                             // Non-value type (primitives, etc.): compile and assign directly
                             let src_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
                             func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, src_reg, const_idx);
+                        }
+                        
+                        // For HeapBoxed interface, write temp slots to heap
+                        if is_heap_boxed {
+                            func.emit_ptr_set(heap_gcref, 0, dst_slot, 2);
                         }
                         return Ok(());
                     }

@@ -1,0 +1,31 @@
+// Test: interface captured by closure
+package main
+
+type Adder interface {
+	Add() int
+}
+
+type MyNum struct {
+	value int
+}
+
+func (n MyNum) Add() int {
+	return n.value + 100
+}
+
+func main() {
+	var a Adder
+	n := MyNum{value: 42}
+	a = n
+	
+	// Capture interface in closure
+	f := func() int {
+		return a.Add()
+	}
+	
+	result := f()
+	println("closure result:", result)
+	assert(result == 142, "closure should return 142")
+	
+	println("interface_closure: PASSED")
+}

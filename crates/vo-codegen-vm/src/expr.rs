@@ -28,7 +28,9 @@ struct MethodResolution {
 pub fn get_local_location(local: &LocalVar, type_key: Option<vo_analysis::objects::TypeKey>, info: &TypeInfoWrapper) -> ValueLocation {
     if local.is_heap {
         let is_value_type = type_key.map(|t| info.is_value_type(t)).unwrap_or(false);
-        if is_value_type {
+        let is_interface = type_key.map(|t| info.is_interface(t)).unwrap_or(false);
+        // Interface is also HeapBoxed when escaped (2 slots on heap)
+        if is_value_type || is_interface {
             let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
             ValueLocation::HeapBoxed { slot: local.slot, value_slots }
         } else {
@@ -126,8 +128,9 @@ pub fn compile_expr_to(
                         // Closure capture: use ClosureGet to get the GcRef, then dereference
                         func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
                         
-                        // Get captured variable's type to determine slot count
-                        let obj_key = info.get_def(ident);
+                        // Get captured variable's type - try get_use first (for references),
+                        // then get_def (for definitions in outer scope)
+                        let obj_key = info.get_use(ident).or_else(|| info.get_def(ident));
                         let type_key = obj_key.and_then(|o| info.obj_type(o));
                         let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
                         func.emit_ptr_get(dst, dst, 0, value_slots);
@@ -887,12 +890,27 @@ fn compile_call(
         return compile_method_call(expr, call, sel, dst, ctx, func, info);
     }
     
-    // Check if builtin
+    // Check if builtin or type conversion
     if let ExprKind::Ident(ident) = &call.func.kind {
         let name = info.project.interner.resolve(ident.symbol);
         if let Some(name) = name {
             if is_builtin(name) {
                 return compile_builtin_call(name, call, dst, ctx, func, info);
+            }
+        }
+        
+        // Check if this is a type conversion (ident refers to a type, not a function)
+        // Type conversions look like function calls: T(x)
+        if let Some(obj_key) = info.get_use(ident) {
+            let obj = &info.project.tc_objs.lobjs[obj_key];
+            if obj.entity_type().is_type_name() {
+                // This is a type conversion, compile the argument
+                if call.args.len() == 1 {
+                    return compile_expr_to(&call.args[0], dst, ctx, func, info);
+                } else if call.args.is_empty() {
+                    // Zero value - already handled by default initialization
+                    return Ok(());
+                }
             }
         }
     }
@@ -1157,7 +1175,7 @@ fn compile_method_call(
     
     // 2. Interface method call
     if info.is_interface(recv_type) {
-        return compile_interface_method(call, sel, recv_type, method_name, dst, ctx, func, info);
+        return compile_interface_method(expr, call, sel, recv_type, method_name, dst, ctx, func, info);
     }
     
     // 3. Concrete method call
@@ -1182,7 +1200,16 @@ fn compile_extern_call(
 }
 
 /// Compile interface method call.
+/// 
+/// CallIface instruction format (matching VM exec_call_iface):
+/// - a = iface_slot (interface value, 2 slots: slot0=metadata, slot1=data)
+/// - b = args_start (arguments)
+/// - c = (arg_slots << 8) | ret_slots
+/// - flags = method_idx
+/// 
+/// Result is written back to args_start, then copied to dst if needed.
 fn compile_interface_method(
+    expr: &Expr,
     call: &vo_syntax::ast::CallExpr,
     sel: &vo_syntax::ast::SelectorExpr,
     recv_type: TypeKey,
@@ -1195,13 +1222,28 @@ fn compile_interface_method(
     let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
     
     // Compile arguments
-    let args_start = func.alloc_temp(call.args.len() as u16);
-    for (i, arg) in call.args.iter().enumerate() {
-        compile_expr_to(arg, args_start + (i as u16), ctx, func, info)?;
+    let arg_slots: u16 = call.args.iter().map(|arg| info.expr_slots(arg.id)).sum();
+    let args_start = func.alloc_temp(arg_slots.max(1)); // At least 1 slot for result
+    let mut offset = 0u16;
+    for arg in &call.args {
+        let slots = info.expr_slots(arg.id);
+        compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+        offset += slots;
     }
     
-    let method_idx = info.get_interface_method_index(recv_type, method_name).unwrap_or(0);
-    func.emit_with_flags(Opcode::CallIface, call.args.len() as u8, dst, recv_reg, method_idx);
+    let ret_slots = info.expr_type(expr.id).map(|t| info.type_slot_count(t)).unwrap_or(0);
+    
+    // Use ctx.get_interface_method_index for consistent ordering with itab
+    let method_idx = ctx.get_interface_method_index(recv_type, method_name, &info.project.tc_objs);
+    
+    // CallIface: a=iface_slot, b=args_start, c=(arg_slots<<8|ret_slots), flags=method_idx
+    let c = crate::type_info::encode_call_args(arg_slots, ret_slots);
+    func.emit_with_flags(Opcode::CallIface, method_idx as u8, recv_reg, args_start, c);
+    
+    // Copy result to dst if needed
+    if ret_slots > 0 && dst != args_start {
+        func.emit_copy(dst, args_start, ret_slots);
+    }
     Ok(())
 }
 

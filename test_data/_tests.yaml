@@ -14,7 +14,6 @@ tests:
   # Runtime tests (VM only)
   - file: channel_send.vo
     mode: [vm]
-    skip: "crash"
   - file: clone_immediate_read.vo
     mode: [vm]
   - file: complex_literal.vo
@@ -34,7 +33,6 @@ tests:
     skip: "type check failed"
   - file: embed_interface_impl.vo
     mode: [vm]
-    skip: "method promotion not supported"
   - file: escape_struct_assign.vo
     mode: [vm]
   - file: embed_interface.vo
@@ -47,7 +45,6 @@ tests:
     mode: [vm]
   - file: embed_struct.vo
     mode: [vm]
-    skip: "field name not found"
   - file: fib_goroutine.vo
     mode: [vm]
     skip: "VariableNotFound"
@@ -61,16 +58,14 @@ tests:
     expect_error: true
   - file: interface_conversion.vo
     mode: [vm]
-    skip: "VariableNotFound"
   - file: interface_method_set.vo
     mode: [vm]
-    skip: "address-of non-escaped"
   - file: interface_pointer.vo
     mode: [vm]
-    skip: "address-of non-escaped"
   - file: interface.vo
     mode: [vm]
-    skip: "panic"
+  - file: interface_closure.vo
+    mode: [vm]
   - file: local_type.vo
     mode: [vm]
   - file: map.vo
@@ -98,7 +93,6 @@ tests:
     mode: [vm]
   - file: pointer_embedded.vo
     mode: [vm]
-    skip: "method promotion not supported"
   - file: pointer_method_call.vo
     mode: [vm]
   - file: range_string.vo
@@ -120,7 +114,6 @@ tests:
     mode: [vm]
   - file: slice_map.vo
     mode: [vm]
-    skip: "assertion failed"
   - file: slice.vo
     mode: [vm]
   - file: struct_method_simple.vo
@@ -141,7 +134,6 @@ tests:
     mode: [vm]
   - file: var_init_order.vo
     mode: [vm]
-    skip: "multiple init functions need unique IDs"
   - file: stack_array_iter.vo
     mode: [vm]
   - file: stack_vs_escaped_array.vo

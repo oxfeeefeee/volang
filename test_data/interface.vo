@@ -63,10 +63,11 @@ func testObjectInterface() {
     println("object interface Add():", result)
     assert(result == 11, "object Add() should return 11")
     
-    // Object mutation through interface
+    // Value semantics: each call operates on a copy, so count stays at 10
+    // and Add() always returns 11 (10 + 1)
     result2 := a.Add()
     println("object interface Add() again:", result2)
-    assert(result2 == 12, "object Add() again should return 12")
+    assert(result2 == 11, "object Add() again should return 11 (value semantics)")
     
     println("Test 3 PASSED: object implements interface")
 }

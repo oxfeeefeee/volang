@@ -129,9 +129,40 @@ impl CodegenContext {
         self.interface_meta_ids.get(&type_key).copied()
     }
 
-    /// Get or default interface meta ID (for assignment)
-    pub fn get_interface_meta_id_or_default(&self, type_key: TypeKey) -> u16 {
-        self.interface_meta_ids.get(&type_key).copied().unwrap_or(0)
+    /// Get or create interface meta ID. Dynamically registers anonymous interfaces.
+    pub fn get_or_create_interface_meta_id(&mut self, type_key: TypeKey, tc_objs: &vo_analysis::objects::TCObjects) -> u16 {
+        let underlying = vo_analysis::typ::underlying_type(type_key, tc_objs);
+        
+        // Check if already registered
+        if let Some(id) = self.interface_meta_ids.get(&underlying) {
+            return *id;
+        }
+        
+        // Build InterfaceMeta from type info
+        let method_names = if let vo_analysis::typ::Type::Interface(iface) = &tc_objs.types[underlying] {
+            iface.methods().iter()
+                .map(|m| tc_objs.lobjs[*m].name().to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        
+        let meta = InterfaceMeta {
+            name: String::new(), // Anonymous interface
+            method_names,
+        };
+        self.register_interface_meta(underlying, meta)
+    }
+
+    /// Get method index in interface meta (for CallIface)
+    /// This uses the registered InterfaceMeta's method_names order, which matches itab building.
+    pub fn get_interface_method_index(&mut self, type_key: TypeKey, method_name: &str, tc_objs: &vo_analysis::objects::TCObjects) -> u16 {
+        let underlying = vo_analysis::typ::underlying_type(type_key, tc_objs);
+        let iface_meta_id = self.get_or_create_interface_meta_id(type_key, tc_objs);
+        let iface_meta = &self.module.interface_metas[iface_meta_id as usize];
+        iface_meta.method_names.iter().position(|n| n == method_name)
+            .map(|i| i as u16)
+            .expect(&format!("method {} not found in interface - codegen bug", method_name))
     }
 
     // === Itab and IfaceAssign constant ===
@@ -212,6 +243,7 @@ impl CodegenContext {
             param_slots: 0,
             local_slots: 0,
             ret_slots: 0,
+            recv_slots: 0,
             code: Vec::new(),
             slot_types: Vec::new(),
         });

@@ -60,6 +60,7 @@ pub struct FuncBuilder {
     param_count: u16,
     param_slots: u16,
     ret_slots: u16,
+    recv_slots: u16,
     next_slot: u16,
     locals: HashMap<Symbol, LocalVar>,
     captures: HashMap<Symbol, CaptureVar>,  // closure captures
@@ -75,6 +76,7 @@ impl FuncBuilder {
             param_count: 0,
             param_slots: 0,
             ret_slots: 0,
+            recv_slots: 0,
             next_slot: 0,
             locals: HashMap::new(),
             captures: HashMap::new(),
@@ -359,6 +361,10 @@ impl FuncBuilder {
         self.ret_slots = slots;
     }
 
+    pub fn set_recv_slots(&mut self, slots: u16) {
+        self.recv_slots = slots;
+    }
+
     pub fn build(self) -> FunctionDef {
         // Ensure local_slots is at least ret_slots (for return value)
         let local_slots = self.next_slot.max(self.ret_slots);
@@ -369,6 +375,7 @@ impl FuncBuilder {
             param_slots: self.param_slots,
             local_slots,
             ret_slots: self.ret_slots,
+            recv_slots: self.recv_slots,
             code: self.code,
             slot_types: self.slot_types,
         }

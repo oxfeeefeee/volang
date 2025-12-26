@@ -28,6 +28,9 @@ pub struct FunctionDef {
     pub param_slots: u16,
     pub local_slots: u16,
     pub ret_slots: u16,
+    /// Receiver slots for methods (0 for functions, >0 for methods)
+    /// Used by CallIface to know how many slots to copy from interface data
+    pub recv_slots: u16,
     pub code: Vec<Instruction>,
     pub slot_types: Vec<SlotType>,
 }

@@ -130,7 +130,11 @@ impl<'a> TypeInfoWrapper<'a> {
                 let len = a.len().unwrap_or(0) as u16;
                 elem_slots * len
             }
-            _ => 1,
+            Type::Named(n) => {
+                // Named type - recurse with underlying
+                self.type_slot_count(n.underlying())
+            }
+            other => panic!("type_slot_count: unhandled type {:?}", other),
         }
     }
 
@@ -156,24 +160,23 @@ impl<'a> TypeInfoWrapper<'a> {
             Type::Array(a) => {
                 let elem_types = self.type_slot_types(a.elem());
                 let mut types = Vec::new();
-                let len = a.len().unwrap_or(0) as usize;
+                let len = a.len().expect("array must have length") as usize;
                 for _ in 0..len {
                     types.extend(elem_types.iter().cloned());
                 }
                 types
             }
-            _ => vec![SlotType::Value],
+            Type::Named(n) => self.type_slot_types(n.underlying()),
+            other => panic!("type_slot_types: unhandled type {:?}", other),
         }
     }
 
     /// Get slots and slot_types for a type expression (used for params/results).
-    /// Returns (slots, slot_types) with default fallback if type is unknown.
     pub fn type_expr_layout(&self, type_expr_id: vo_syntax::ast::TypeExprId) -> (u16, Vec<SlotType>) {
-        let type_key = self.project.type_info.type_exprs.get(&type_expr_id).copied();
-        let slots = type_key.map(|t| self.type_slot_count(t)).unwrap_or(1);
-        let slot_types = type_key
-            .map(|t| self.type_slot_types(t))
-            .unwrap_or_else(|| vec![SlotType::Value]);
+        let type_key = *self.project.type_info.type_exprs.get(&type_expr_id)
+            .expect("type expression must have type in type_exprs");
+        let slots = self.type_slot_count(type_key);
+        let slot_types = self.type_slot_types(type_key);
         (slots, slot_types)
     }
 
