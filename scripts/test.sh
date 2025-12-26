@@ -108,6 +108,12 @@ run_test() {
         has_error=true
     fi
     
+    # Also check for Rust panics (internal errors)
+    local has_rust_panic=false
+    if echo "$output" | grep -q "panicked at"; then
+        has_rust_panic=true
+    fi
+    
     # Handle expect_error tests (negative tests)
     if [[ "$expect_error" == "true" ]]; then
         if $has_error; then
@@ -154,6 +160,15 @@ run_test() {
         fi
         local error_msg=$(echo "$output" | grep -o "\[VO:ERROR:[^]]*\]" | head -1)
         failed_list="$failed_list  ${RED}✗${NC} $file [$mode] $error_msg\n"
+    elif $has_rust_panic; then
+        # Rust panic (internal compiler/runtime error)
+        if [[ "$mode" == "vm" ]]; then
+            vm_failed=$((vm_failed + 1))
+        else
+            jit_failed=$((jit_failed + 1))
+        fi
+        local panic_line=$(echo "$output" | grep "panicked at" | head -1 | sed 's/.*panicked at //' | cut -c1-60)
+        failed_list="$failed_list  ${RED}✗${NC} $file [$mode] [RUST PANIC: $panic_line]\n"
     else
         # No tag found - assume success if no error
         if [[ "$mode" == "vm" ]]; then

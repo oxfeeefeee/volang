@@ -1707,7 +1707,7 @@ fn resolve_selector_target(
     match &expr.kind {
         ExprKind::Ident(ident) => {
             if let Some(local) = func.lookup_local(ident.symbol) {
-                let type_key = info.obj_type(info.get_def(ident), "local var must have type");
+                let type_key = info.obj_type(info.get_use(ident), "local var must have type");
                 let loc = crate::expr::get_local_location(local, Some(type_key), info);
                 Ok((SelectorTarget::Location(loc), 0))
             } else {

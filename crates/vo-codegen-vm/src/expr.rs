@@ -411,7 +411,7 @@ fn find_root_location(expr: &Expr, func: &FuncBuilder, info: &TypeInfoWrapper) -
     match &expr.kind {
         ExprKind::Ident(ident) => {
             func.lookup_local(ident.symbol).map(|local| {
-                let type_key = info.obj_type(info.get_def(ident), "local var must have type");
+                let type_key = info.obj_type(info.get_use(ident), "local var must have type");
                 get_local_location(local, Some(type_key), info)
             })
         }
@@ -1254,7 +1254,7 @@ fn compile_concrete_method(
     // Get receiver location for optimization
     let recv_location = if let ExprKind::Ident(ident) = &sel.expr.kind {
         func.lookup_local(ident.symbol).map(|local| {
-            let type_key = info.obj_type(info.get_def(ident), "method receiver must have type");
+            let type_key = info.obj_type(info.get_use(ident), "method receiver must have type");
             get_local_location(local, Some(type_key), info)
         })
     } else {

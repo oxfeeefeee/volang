@@ -458,6 +458,7 @@ mod tests {
             param_slots: 0,
             local_slots: 2,
             ret_slots: 0,
+            recv_slots: 0,
             slot_types: vec![SlotType::Value, SlotType::Value],
             code: vec![
                 Instruction::new(Opcode::LoadInt, 0, 0x0001, 0x0000),

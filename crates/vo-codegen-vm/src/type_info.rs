@@ -47,7 +47,7 @@ impl<'a> TypeInfoWrapper<'a> {
 
     pub fn get_def(&self, ident: &Ident) -> ObjKey {
         self.type_info().get_def(ident)
-            .expect("identifier must have definition during codegen")
+            .unwrap_or_else(|| panic!("identifier {:?} (id={:?}) must have definition during codegen", ident.symbol, ident.id))
     }
 
     pub fn get_use(&self, ident: &Ident) -> ObjKey {
@@ -117,6 +117,14 @@ impl<'a> TypeInfoWrapper<'a> {
             Type::Named(n) => {
                 // Named type - recurse with underlying
                 self.type_slot_count(n.underlying())
+            }
+            Type::Tuple(t) => {
+                let mut total = 0u16;
+                for &var in t.vars() {
+                    let var_type = self.obj_type(var, "tuple element must have type");
+                    total += self.type_slot_count(var_type);
+                }
+                total
             }
             other => panic!("type_slot_count: unhandled type {:?}", other),
         }
@@ -351,7 +359,7 @@ impl<'a> TypeInfoWrapper<'a> {
                     BasicType::Int | BasicType::UntypedInt => ValueKind::Int,
                     BasicType::Int8 => ValueKind::Int8,
                     BasicType::Int16 => ValueKind::Int16,
-                    BasicType::Int32 | BasicType::UntypedRune => ValueKind::Int32,
+                    BasicType::Int32 | BasicType::UntypedRune | BasicType::Rune => ValueKind::Int32,
                     BasicType::Int64 => ValueKind::Int64,
                     BasicType::Uint => ValueKind::Uint,
                     BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,

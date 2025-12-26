@@ -474,6 +474,7 @@ impl Checker {
         let recv_name = self.resolve_ident(&r.name).to_string();
         let par = self.new_param_var(0, Some(self.pkg), recv_name, Some(recv_type));
         self.declare(scope_key, par);
+        self.result.record_def(r.name.clone(), Some(par));
 
         vec![par]
     }
@@ -515,6 +516,7 @@ impl Checker {
                     }
                     let var = self.new_param_var(0, Some(self.pkg), name_str, Some(param_type));
                     self.declare(scope_key, var);
+                    self.result.record_def(name.clone(), Some(var));
                     vars.push(var);
                 }
                 named = true;
