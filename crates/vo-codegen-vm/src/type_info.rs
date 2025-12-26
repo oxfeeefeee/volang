@@ -60,12 +60,6 @@ impl<'a> TypeInfoWrapper<'a> {
         self.tc_objs().lobjs[obj].entity_type().is_pkg_name()
     }
 
-    /// Check if an identifier refers to a package
-    pub fn is_package(&self, ident: &Ident) -> bool {
-        let obj = self.get_use(ident);
-        self.obj_is_pkg(obj)
-    }
-
     /// Get the package path for a package identifier
     pub fn package_path(&self, ident: &Ident) -> Option<String> {
         let obj = self.get_use(ident);
@@ -258,10 +252,6 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     // === Type queries ===
-
-    pub fn underlying_type(&self, type_key: TypeKey) -> TypeKey {
-        typ::underlying_type(type_key, self.tc_objs())
-    }
 
     pub fn is_interface(&self, type_key: TypeKey) -> bool {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
@@ -467,16 +457,6 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
-    /// Get pointer element type (base type of *T)
-    pub fn pointer_elem_type(&self, type_key: TypeKey) -> Option<TypeKey> {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Pointer(p) = &self.tc_objs().types[underlying] {
-            Some(p.base())
-        } else {
-            None
-        }
-    }
-
     /// Get pointer element slot count
     pub fn pointer_elem_slots(&self, type_key: TypeKey) -> Option<u16> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
@@ -510,43 +490,10 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
-    /// Get channel element type
-    pub fn chan_elem_type(&self, type_key: TypeKey) -> Option<TypeKey> {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Chan(c) = &self.tc_objs().types[underlying] {
-            Some(c.elem())
-        } else {
-            None
-        }
-    }
-
-    /// Check if type is a function/signature type
-    pub fn is_func(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_signature().is_some()
-    }
-    
     /// Try to get signature details for a function type
     pub fn try_as_signature(&self, type_key: TypeKey) -> Option<&typ::SignatureDetail> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
         self.tc_objs().types[underlying].try_as_signature()
-    }
-
-    /// Get function signature return slot count
-    pub fn func_ret_slots(&self, type_key: TypeKey) -> Option<u16> {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Signature(sig) = &self.tc_objs().types[underlying] {
-            let results = sig.results();
-            if let Some(tuple) = self.tc_objs().types[results].try_as_tuple() {
-                let mut total = 0u16;
-                for &var in tuple.vars() {
-                    let t = self.obj_type(var, "result var must have type");
-                    total += self.type_slot_count(t);
-                }
-                return Some(total);
-            }
-        }
-        None
     }
 
     /// Check if function signature is variadic
@@ -557,45 +504,6 @@ impl<'a> TypeInfoWrapper<'a> {
         } else {
             false
         }
-    }
-
-    /// Get variadic element type (the element type of the ...T parameter)
-    pub fn variadic_elem_type(&self, type_key: TypeKey) -> Option<TypeKey> {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Signature(sig) = &self.tc_objs().types[underlying] {
-            if sig.variadic() {
-                let params = sig.params();
-                if let Some(tuple) = self.tc_objs().types[params].try_as_tuple() {
-                    let vars = tuple.vars();
-                    if let Some(&last_var) = vars.last() {
-                        let param_type = self.obj_type(last_var, "variadic param must have type");
-                        // The last param is []T, get element type
-                        let underlying_param = typ::underlying_type(param_type, self.tc_objs());
-                        if let Type::Slice(s) = &self.tc_objs().types[underlying_param] {
-                            return Some(s.elem());
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// Get the number of fixed (non-variadic) parameters
-    pub fn fixed_param_count(&self, type_key: TypeKey) -> Option<usize> {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Signature(sig) = &self.tc_objs().types[underlying] {
-            let params = sig.params();
-            if let Some(tuple) = self.tc_objs().types[params].try_as_tuple() {
-                let count = tuple.vars().len();
-                if sig.variadic() {
-                    return Some(count.saturating_sub(1));
-                } else {
-                    return Some(count);
-                }
-            }
-        }
-        None
     }
 
     /// Check if type is an integer type
@@ -639,30 +547,6 @@ impl<'a> TypeInfoWrapper<'a> {
         } else {
             panic!("int_bits: not a Basic type")
         }
-    }
-
-    /// Check if type is a bool type
-    pub fn is_bool(&self, type_key: TypeKey) -> bool {
-        use vo_analysis::typ::BasicType;
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
-            matches!(b.typ(), BasicType::Bool | BasicType::UntypedBool)
-        } else {
-            false
-        }
-    }
-
-    /// Get pointer type for a given base type (for method lookup)
-    pub fn pointer_to(&self, base_type: TypeKey) -> Option<TypeKey> {
-        // Search for a pointer type that points to base_type
-        for (key, typ) in self.tc_objs().types.iter() {
-            if let Type::Pointer(p) = typ {
-                if p.base() == base_type {
-                    return Some(key);
-                }
-            }
-        }
-        None
     }
 
     /// Get base type from pointer type

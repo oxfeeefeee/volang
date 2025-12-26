@@ -155,8 +155,7 @@ fn collect_declarations(
                     for spec in &var_decl.specs {
                         for (i, name) in spec.names.iter().enumerate() {
                             let type_key = if let Some(ty) = &spec.ty {
-                                *info.project.type_info.type_exprs.get(&ty.id)
-                                    .expect("type annotation must have type")
+                                info.type_expr_type(ty.id)
                             } else if i < spec.values.len() {
                                 info.expr_type(spec.values[i].id)
                             } else {

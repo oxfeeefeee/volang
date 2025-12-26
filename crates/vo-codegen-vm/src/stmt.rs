@@ -23,8 +23,7 @@ pub fn compile_stmt(
                 for (i, name) in spec.names.iter().enumerate() {
                     // Get type - must exist for valid code
                     let type_key = if let Some(ty) = &spec.ty {
-                        *info.project.type_info.type_exprs.get(&ty.id)
-                            .expect("type annotation must have type in type_exprs")
+                        info.type_expr_type(ty.id)
                     } else if i < spec.values.len() {
                         info.expr_type(spec.values[i].id)
                     } else {
