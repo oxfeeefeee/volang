@@ -1109,17 +1109,19 @@ fn emit_receiver(
         }
     } else {
         // Method expects T: pass value
-        let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
         let recv_is_ptr = info.is_pointer(recv_type);
-        let recv_is_heap = matches!(recv_location, Some(ValueLocation::HeapBoxed { .. }));
+        let value_slots = info.type_slot_count(actual_recv_type);
         
-        if recv_is_heap || recv_is_ptr {
-            // Dereference heap/pointer to get value
-            let value_slots = info.type_slot_count(actual_recv_type);
+        if let Some(ValueLocation::HeapBoxed { slot, .. }) = recv_location {
+            // Heap variable: directly read from GcRef slot (don't use compile_expr which would dereference twice)
+            func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, slot, embed_offset);
+        } else if recv_is_ptr {
+            // Pointer receiver: compile_expr gives us the pointer, then dereference
+            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
             func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
         } else {
-            // Copy from stack (with embed_offset for promoted methods)
-            let value_slots = info.type_slot_count(actual_recv_type);
+            // Stack variable: compile_expr gives us the value, just copy
+            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
             func.emit_copy(args_start, recv_reg + embed_offset, value_slots);
         }
     }
