@@ -27,7 +27,6 @@ pub fn compile_stmt(
                             .expect("type annotation must have type in type_exprs")
                     } else if i < spec.values.len() {
                         info.expr_type(spec.values[i].id)
-                            .expect("variable initializer must have type")
                     } else {
                         panic!("variable declaration must have type annotation or initializer")
                     };
@@ -114,15 +113,15 @@ pub fn compile_stmt(
                 }
 
                 let type_key = if i < short_var.values.len() {
-                    info.expr_type(short_var.values[i].id)
+                    Some(info.expr_type(short_var.values[i].id))
                 } else {
                     None
                 };
 
-                let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                let slots = type_key.map(|t| info.type_slot_count(t)).expect("short var must have value");
                 let slot_types = type_key
                     .map(|t| info.type_slot_types(t))
-                    .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
+                    .expect("short var must have value");
 
                 // Check if this is a new definition or reassignment
                 let is_def = info.project.type_info.defs.contains_key(&name.id);
@@ -133,7 +132,7 @@ pub fn compile_stmt(
                     let escapes = obj_key.map(|k| info.is_escaped(k)).unwrap_or(false);
                     
                     // Pointer types are already GcRef, no need for heap wrapper
-                    let is_pointer = type_key.map(|t| info.is_pointer(t)).unwrap_or(false);
+                    let is_pointer = type_key.map(|t| info.is_pointer(t)).expect("short var must have value");
 
                     if escapes && !is_pointer {
                         // Heap allocation for escaped variable
@@ -316,16 +315,14 @@ pub fn compile_stmt(
                     let range_type = info.expr_type(expr.id);
                     
                     // Check if it's an array (stack or heap)
-                    let is_array = range_type.map(|t| info.is_array(t)).unwrap_or(false);
+                    let is_array = info.is_array(range_type);
                     
                     if is_array {
                         // Get array info
-                        let elem_slots = range_type
-                            .and_then(|t| info.array_elem_slots(t))
-                            .unwrap_or(1) as u8;
-                        let arr_len = range_type
-                            .and_then(|t| info.array_len(t))
-                            .unwrap_or(0) as u32;
+                        let elem_slots = info.array_elem_slots(range_type)
+                            .expect("array must have elem_slots") as u8;
+                        let arr_len = info.array_len(range_type)
+                            .expect("array must have length") as u32;
                         
                         // Check if array is on stack or heap using ValueLocation
                         let arr_source = crate::expr::get_expr_source(expr, ctx, func, info);
@@ -352,11 +349,8 @@ pub fn compile_stmt(
                             let val_slot = if let Some(v) = value {
                                 if *define {
                                     if let vo_syntax::ast::ExprKind::Ident(ident) = &v.kind {
-                                        let slot_types = range_type
-                                            .map(|t| {
-                                                let elem_type = info.array_elem_type(t);
-                                                elem_type.map(|et| info.type_slot_types(et)).unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value])
-                                            })
+                                        let slot_types = info.array_elem_type(range_type)
+                                            .map(|et| info.type_slot_types(et))
                                             .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
                                         func.define_local_stack(ident.symbol, elem_slots as u16, &slot_types)
                                     } else { func.alloc_temp(elem_slots as u16) }
@@ -424,9 +418,9 @@ pub fn compile_stmt(
                             
                             emit_iter_loop(key_slot, val_slot, &for_stmt.body, ctx, func, info)?;
                         }
-                    } else if info.is_slice(range_type.unwrap()) {
+                    } else if info.is_slice(range_type) {
                         // Slice iteration
-                        let elem_slots = info.slice_elem_slots(range_type.unwrap())
+                        let elem_slots = info.slice_elem_slots(range_type)
                             .expect("slice must have elem_slots") as u8;
                         
                         // Compile slice expression
@@ -467,7 +461,7 @@ pub fn compile_stmt(
                         func.emit_op(Opcode::IterBegin, iter_args, 1, 0);
                         
                         emit_iter_loop(key_slot, val_slot, &for_stmt.body, ctx, func, info)?;
-                    } else if info.is_string(range_type.unwrap()) {
+                    } else if info.is_string(range_type) {
                         // String iteration
                         let str_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
                         
@@ -506,12 +500,13 @@ pub fn compile_stmt(
                         func.emit_op(Opcode::IterBegin, iter_args, 3, 0);
                         
                         emit_iter_loop(key_slot, val_slot, &for_stmt.body, ctx, func, info)?;
-                    } else if info.is_map(range_type.unwrap()) {
+                    } else if info.is_map(range_type) {
                         // Map iteration
                         let map_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
                         
                         // Get key and value slot counts from map type
-                        let (key_slots, val_slots) = info.map_key_val_slots(range_type.unwrap()).unwrap_or((1, 1));
+                        let (key_slots, val_slots) = info.map_key_val_slots(range_type)
+                            .expect("map must have key/val slots");
                         
                         // Define key and value variables
                         let key_slot = if let Some(k) = key {
@@ -548,12 +543,12 @@ pub fn compile_stmt(
                         func.emit_op(Opcode::IterBegin, iter_args, 2, 0);
                         
                         emit_iter_loop(key_slot, val_slot, &for_stmt.body, ctx, func, info)?;
-                    } else if info.is_chan(range_type.unwrap()) {
+                    } else if info.is_chan(range_type) {
                         // Channel iteration: for v := range ch
                         let chan_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
                         
                         // Get element slot count from channel type
-                        let elem_slots = info.chan_elem_slots(range_type.unwrap())
+                        let elem_slots = info.chan_elem_slots(range_type)
                             .expect("channel must have elem_slots");
                         
                         // Define value variable (channels don't have key in for-range)
@@ -629,9 +624,8 @@ pub fn compile_stmt(
             let chan_reg = crate::expr::compile_expr(&send_stmt.chan, ctx, func, info)?;
             let val_reg = crate::expr::compile_expr(&send_stmt.value, ctx, func, info)?;
             let chan_type = info.expr_type(send_stmt.chan.id);
-            let elem_slots = chan_type
-                .and_then(|t| info.chan_elem_slots(t))
-                .unwrap_or(1) as u8;
+            let elem_slots = info.chan_elem_slots(chan_type)
+                .expect("channel must have elem_slots") as u8;
             func.emit_with_flags(Opcode::ChanSend, elem_slots, chan_reg, val_reg, 0);
         }
 
@@ -907,18 +901,16 @@ fn compile_select(
                 let chan_reg = crate::expr::compile_expr(&send.chan, ctx, func, info)?;
                 let val_reg = crate::expr::compile_expr(&send.value, ctx, func, info)?;
                 let chan_type = info.expr_type(send.chan.id);
-                let elem_slots = chan_type
-                    .and_then(|t| info.chan_elem_slots(t))
-                    .unwrap_or(1) as u8;
+                let elem_slots = info.chan_elem_slots(chan_type)
+                    .expect("channel must have elem_slots") as u8;
                 func.emit_with_flags(Opcode::SelectSend, elem_slots, chan_reg, val_reg, case_idx as u16);
             }
             Some(CommClause::Recv(recv)) => {
                 // SelectRecv: a=dst_reg, b=chan_reg, flags=(elem_slots<<1|has_ok)
                 let chan_reg = crate::expr::compile_expr(&recv.expr, ctx, func, info)?;
                 let chan_type = info.expr_type(recv.expr.id);
-                let elem_slots = chan_type
-                    .and_then(|t| info.chan_elem_slots(t))
-                    .unwrap_or(1);
+                let elem_slots = info.chan_elem_slots(chan_type)
+                    .expect("channel must have elem_slots");
                 
                 // Allocate destination for received value
                 let has_ok = recv.lhs.len() > 1;
@@ -972,9 +964,8 @@ fn compile_select(
             if recv.define && !recv.lhs.is_empty() {
                 // Define the received value variable(s)
                 let chan_type = info.expr_type(recv.expr.id);
-                let elem_slots = chan_type
-                    .and_then(|t| info.chan_elem_slots(t))
-                    .unwrap_or(1);
+                let elem_slots = info.chan_elem_slots(chan_type)
+                    .expect("channel must have elem_slots");
                 
                 for (i, name) in recv.lhs.iter().enumerate() {
                     if i == 0 {
@@ -1193,7 +1184,7 @@ fn compile_switch(
                 
                 if let Some(tag) = tag_reg {
                     // Compare tag with case value
-                    let tag_type = switch_stmt.tag.as_ref().and_then(|t| info.expr_type(t.id));
+                    let tag_type = switch_stmt.tag.as_ref().map(|t| info.expr_type(t.id));
                     let is_string = tag_type.map(|t| info.is_string(t)).unwrap_or(false);
                     
                     if is_string {
@@ -1306,7 +1297,7 @@ fn compile_assign(
                             ValueLocation::Global { index, .. } => (index, false, 0),
                         };
                         let src_type = info.expr_type(rhs.id);
-                        let src_vk = src_type.map(|t| info.type_value_kind(t)).unwrap_or(vo_common_core::ValueKind::Void);
+                        let src_vk = info.type_value_kind(src_type);
                         let iface_meta_id = lhs_type
                             .map(|t| ctx.get_or_create_interface_meta_id(t, &info.project.tc_objs))
                             .unwrap_or(0); // 0 = empty interface if no type info
@@ -1317,7 +1308,7 @@ fn compile_assign(
                             ctx.register_iface_assign_const_interface(iface_meta_id)
                         } else {
                             // Concrete type -> Interface: register constant (itab built later)
-                            let named_type_id = src_type.and_then(|t| ctx.get_named_type_id(t)).unwrap_or(0);
+                            let named_type_id = ctx.get_named_type_id(src_type).unwrap_or(0);
                             ctx.register_iface_assign_const_concrete(named_type_id, iface_meta_id)
                         };
                         
@@ -1327,9 +1318,9 @@ fn compile_assign(
                         
                         if is_value_type && !rhs_is_heap {
                             // Stack struct/array -> interface: allocate heap, copy, then IfaceAssign
-                            let src_slots = src_type.map(|t| info.type_slot_count(t)).unwrap_or(1);
-                            let slot_types = src_type.map(|t| info.type_slot_types(t)).unwrap_or_default();
-                            let meta_idx = src_type.map(|t| ctx.get_or_create_value_meta(Some(t), src_slots, &slot_types)).unwrap_or(0);
+                            let src_slots = info.type_slot_count(src_type);
+                            let slot_types = info.type_slot_types(src_type);
+                            let meta_idx = ctx.get_or_create_value_meta(Some(src_type), src_slots, &slot_types);
                             
                             // Compile rhs to temp slots
                             let tmp_data = func.alloc_temp(src_slots);
@@ -1417,8 +1408,7 @@ fn compile_assign(
 
         // === Selector assignment (struct field) ===
         ExprKind::Selector(sel) => {
-            let recv_type = info.expr_type(sel.expr.id)
-                .ok_or_else(|| CodegenError::Internal("selector recv has no type".to_string()))?;
+            let recv_type = info.expr_type(sel.expr.id);
             
             let field_name = info.project.interner.resolve(sel.sel.symbol)
                 .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
@@ -1473,8 +1463,7 @@ fn compile_assign(
 
         // === Index assignment (arr[i] = v) ===
         ExprKind::Index(idx) => {
-            let container_type = info.expr_type(idx.expr.id)
-                .ok_or_else(|| CodegenError::Internal("index container has no type".to_string()))?;
+            let container_type = info.expr_type(idx.expr.id);
             
             // Compile index
             let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
@@ -1551,7 +1540,7 @@ fn compile_compound_assign(
     
     // Get the operation opcode based on AssignOp and type
     let lhs_type = info.expr_type(lhs.id);
-    let is_float = lhs_type.map(|t| info.is_float(t)).unwrap_or(false);
+    let is_float = info.is_float(lhs_type);
     
     let opcode = match (op, is_float) {
         (AssignOp::Add, false) => Opcode::AddI,
@@ -1606,8 +1595,7 @@ fn compile_compound_assign(
         }
         
         ExprKind::Selector(sel) => {
-            let recv_type = info.expr_type(sel.expr.id)
-                .ok_or_else(|| CodegenError::Internal("selector recv has no type".to_string()))?;
+            let recv_type = info.expr_type(sel.expr.id);
             
             let field_name = info.project.interner.resolve(sel.sel.symbol)
                 .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
@@ -1659,8 +1647,7 @@ fn compile_compound_assign(
         }
         
         ExprKind::Index(idx) => {
-            let container_type = info.expr_type(idx.expr.id)
-                .ok_or_else(|| CodegenError::Internal("index container has no type".to_string()))?;
+            let container_type = info.expr_type(idx.expr.id);
             
             let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
             let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
@@ -1750,8 +1737,7 @@ fn resolve_selector_target(
             }
         }
         ExprKind::Selector(sel) => {
-            let recv_type = info.expr_type(sel.expr.id)
-                .ok_or_else(|| CodegenError::Internal("selector recv has no type".to_string()))?;
+            let recv_type = info.expr_type(sel.expr.id);
             
             let field_name = info.project.interner.resolve(sel.sel.symbol)
                 .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;

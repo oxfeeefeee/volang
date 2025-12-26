@@ -157,15 +157,16 @@ fn collect_declarations(
                     for spec in &var_decl.specs {
                         for (i, name) in spec.names.iter().enumerate() {
                             let type_key = if let Some(ty) = &spec.ty {
-                                info.project.type_info.type_exprs.get(&ty.id).copied()
+                                *info.project.type_info.type_exprs.get(&ty.id)
+                                    .expect("type annotation must have type")
                             } else if i < spec.values.len() {
                                 info.expr_type(spec.values[i].id)
                             } else {
-                                None
+                                panic!("global var must have type annotation or initializer")
                             };
                             
-                            let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-                            let value_kind = type_key.map(|t| info.type_value_kind(t) as u8).unwrap_or(0);
+                            let slots = info.type_slot_count(type_key);
+                            let value_kind = info.type_value_kind(type_key) as u8;
                             ctx.register_global(
                                 name.symbol,
                                 vo_vm::bytecode::GlobalDef {

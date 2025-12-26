@@ -27,22 +27,14 @@ impl<'a> TypeInfoWrapper<'a> {
 
     // === Expression type queries ===
 
-    pub fn expr_type(&self, expr_id: ExprId) -> Option<TypeKey> {
-        self.project.type_info.types.get(&expr_id).map(|tv| tv.typ)
+    pub fn expr_type(&self, expr_id: ExprId) -> TypeKey {
+        self.project.type_info.types.get(&expr_id)
+            .map(|tv| tv.typ)
+            .expect("expression must have type during codegen")
     }
 
-    /// Get slot count for an expression. Panics if expression has no type.
     pub fn expr_slots(&self, expr_id: ExprId) -> u16 {
-        let type_key = self.expr_type(expr_id)
-            .expect("expression must have type during codegen");
-        self.type_slot_count(type_key)
-    }
-
-    /// Get slot count for an expression, returns 1 if type unknown (for optional contexts).
-    pub fn expr_slots_or_1(&self, expr_id: ExprId) -> u16 {
-        self.expr_type(expr_id)
-            .map(|t| self.type_slot_count(t))
-            .unwrap_or(1)
+        self.type_slot_count(self.expr_type(expr_id))
     }
 
     pub fn type_expr_type(&self, type_expr_id: vo_syntax::ast::TypeExprId) -> Option<TypeKey> {

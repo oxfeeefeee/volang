@@ -156,8 +156,8 @@ pub fn compile_expr_to(
             // Get operand type to determine int/float/string operation
             // For comparison ops, expr type is bool, so we need operand type
             let operand_type = info.expr_type(bin.left.id);
-            let is_float = operand_type.map(|t| info.is_float(t)).unwrap_or(false);
-            let is_string = operand_type.map(|t| info.is_string(t)).unwrap_or(false);
+            let is_float = info.is_float(operand_type);
+            let is_string = info.is_string(operand_type);
 
             let opcode = match (&bin.op, is_float, is_string) {
                 (BinaryOp::Add, false, false) => Opcode::AddI,
@@ -227,7 +227,7 @@ pub fn compile_expr_to(
                 UnaryOp::Neg => {
                     let operand = compile_expr(&unary.operand, ctx, func, info)?;
                     let type_key = info.expr_type(expr.id);
-                    let is_float = type_key.map(|t| info.is_float(t)).unwrap_or(false);
+                    let is_float = info.is_float(type_key);
                     let opcode = if is_float { Opcode::NegF } else { Opcode::NegI };
                     func.emit_op(opcode, dst, operand, 0);
                 }
@@ -350,8 +350,7 @@ fn compile_selector(
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
     // Get receiver type
-    let recv_type = info.expr_type(sel.expr.id)
-        .ok_or_else(|| CodegenError::Internal("selector receiver has no type".to_string()))?;
+    let recv_type = info.expr_type(sel.expr.id);
     
     let field_name = info.project.interner.resolve(sel.sel.symbol)
         .ok_or_else(|| CodegenError::Internal("cannot resolve field name".to_string()))?;
@@ -435,8 +434,7 @@ fn compile_index(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    let container_type = info.expr_type(idx.expr.id)
-        .ok_or_else(|| CodegenError::Internal("index container has no type".to_string()))?;
+    let container_type = info.expr_type(idx.expr.id);
     
     // Compile index first (needed for all cases)
     let index_reg = compile_expr(&idx.index, ctx, func, info)?;
@@ -524,8 +522,7 @@ fn compile_slice_expr(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    let container_type = info.expr_type(slice_expr.expr.id)
-        .ok_or_else(|| CodegenError::Internal("slice expr has no type".to_string()))?;
+    let container_type = info.expr_type(slice_expr.expr.id);
     
     // Compile container
     let container_reg = compile_expr(&slice_expr.expr, ctx, func, info)?;
@@ -638,8 +635,7 @@ fn compile_receive(
     let chan_reg = compile_expr(chan_expr, ctx, func, info)?;
     
     // Get element type info
-    let chan_type = info.expr_type(chan_expr.id)
-        .expect("channel expr must have type");
+    let chan_type = info.expr_type(chan_expr.id);
     let elem_slots = info.chan_elem_slots(chan_type)
         .expect("channel must have elem_slots");
     
@@ -671,10 +667,10 @@ fn compile_conversion(
     let src_type = info.expr_type(conv.expr.id);
     let dst_type = info.expr_type(expr.id);
     
-    let src_is_int = src_type.map(|t| info.is_int(t)).unwrap_or(false);
-    let src_is_float = src_type.map(|t| info.is_float(t)).unwrap_or(false);
-    let dst_is_int = dst_type.map(|t| info.is_int(t)).unwrap_or(false);
-    let dst_is_float = dst_type.map(|t| info.is_float(t)).unwrap_or(false);
+    let src_is_int = info.is_int(src_type);
+    let src_is_float = info.is_float(src_type);
+    let dst_is_int = info.is_int(dst_type);
+    let dst_is_float = info.is_float(dst_type);
     
     if src_is_int && dst_is_float {
         // ConvI2F
@@ -684,8 +680,8 @@ fn compile_conversion(
         func.emit_op(Opcode::ConvF2I, dst, src_reg, 0);
     } else if src_is_int && dst_is_int {
         // Int to int conversion - check sizes
-        let src_bits = src_type.map(|t| info.int_bits(t)).unwrap_or(64);
-        let dst_bits = dst_type.map(|t| info.int_bits(t)).unwrap_or(64);
+        let src_bits = info.int_bits(src_type);
+        let dst_bits = info.int_bits(dst_type);
         
         if src_bits == 32 && dst_bits == 64 {
             func.emit_op(Opcode::ConvI32I64, dst, src_reg, 0);
@@ -804,8 +800,7 @@ fn compile_addr_of(
     
     // &CompositeLit{...} -> heap alloc + initialize
     if let ExprKind::CompositeLit(lit) = &operand.kind {
-        let type_key = info.expr_type(operand.id)
-            .ok_or_else(|| CodegenError::Internal("composite lit has no type".to_string()))?;
+        let type_key = info.expr_type(operand.id);
         
         let slots = info.type_slot_count(type_key);
         let slot_types = info.type_slot_types(type_key);
@@ -861,8 +856,7 @@ fn compile_deref(
     let ptr_reg = compile_expr(operand, ctx, func, info)?;
     
     // Get element type slot count
-    let ptr_type = info.expr_type(operand.id)
-        .expect("pointer expr must have type");
+    let ptr_type = info.expr_type(operand.id);
     let elem_slots = info.pointer_elem_slots(ptr_type)
         .expect("pointer must have elem_slots");
     
@@ -916,8 +910,7 @@ fn compile_call(
     }
     
     // Get return slot count for this call
-    let ret_type = info.expr_type(expr.id);
-    let ret_slots = ret_type.map(|t| info.type_slot_count(t)).unwrap_or(0);
+    let ret_slots = info.type_slot_count(info.expr_type(expr.id));
     
     // Compile arguments - need to compute total arg slots
     let mut total_arg_slots = 0u16;
@@ -1167,8 +1160,7 @@ fn compile_method_call(
         }
     }
 
-    let recv_type = info.expr_type(sel.expr.id)
-        .ok_or_else(|| CodegenError::Internal("method receiver has no type".to_string()))?;
+    let recv_type = info.expr_type(sel.expr.id);
     
     let method_name = info.project.interner.resolve(sel.sel.symbol)
         .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
@@ -1193,7 +1185,7 @@ fn compile_extern_call(
 ) -> Result<(), CodegenError> {
     let extern_id = ctx.get_or_register_extern(extern_name);
     let func_type = info.expr_type(call.func.id);
-    let is_variadic = func_type.map(|t| info.is_variadic(t)).unwrap_or(false);
+    let is_variadic = info.is_variadic(func_type);
     let (args_start, total_slots) = compile_call_args(call, is_variadic, ctx, func, info)?;
     func.emit_with_flags(Opcode::CallExtern, total_slots as u8, dst, extern_id as u16, args_start);
     Ok(())
@@ -1231,7 +1223,7 @@ fn compile_interface_method(
         offset += slots;
     }
     
-    let ret_slots = info.expr_type(expr.id).map(|t| info.type_slot_count(t)).unwrap_or(0);
+    let ret_slots = info.type_slot_count(info.expr_type(expr.id));
     
     // Use ctx.get_interface_method_index for consistent ordering with itab
     let method_idx = ctx.get_interface_method_index(recv_type, method_name, &info.project.tc_objs);
@@ -1306,7 +1298,7 @@ fn compile_concrete_method(
     }
     
     // Emit Call
-    let ret_slots = info.expr_type(expr.id).map(|t| info.type_slot_count(t)).unwrap_or(0);
+    let ret_slots = info.type_slot_count(info.expr_type(expr.id));
     let c = crate::type_info::encode_call_args(arg_offset, ret_slots);
     let (func_id_low, func_id_high) = crate::type_info::encode_func_id(resolution.func_idx);
     func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
@@ -1335,7 +1327,7 @@ fn compile_call_args(
             let slot = args_start + (i * 2) as u16;
             compile_expr_to(arg, slot, ctx, func, info)?;
             let arg_type = info.expr_type(arg.id);
-            let vk = arg_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0) as i32;
+            let vk = info.type_value_kind(arg_type) as u8 as i32;
             let (b, c) = encode_i32(vk);
             func.emit_op(Opcode::LoadInt, slot + 1, b, c);
         }
@@ -1395,23 +1387,19 @@ fn compile_builtin_call(
             let arg_type = info.expr_type(call.args[0].id);
             
             // Check type: string, array, slice, map
-            if let Some(type_key) = arg_type {
-                if info.is_array(type_key) {
-                    // Array: len is known at compile time
-                    let len = info.array_len(type_key).unwrap_or(0);
-                    let (b, c) = encode_i32(len as i32);
-                    func.emit_op(Opcode::LoadInt, dst, b, c);
-                } else if info.is_string(type_key) {
-                    func.emit_op(Opcode::StrLen, dst, arg_reg, 0);
-                } else if info.is_map(type_key) {
-                    func.emit_op(Opcode::MapLen, dst, arg_reg, 0);
-                } else if info.is_slice(type_key) {
-                    func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
-                } else {
-                    // Default to SliceLen
-                    func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
-                }
+            if info.is_array(arg_type) {
+                // Array: len is known at compile time
+                let len = info.array_len(arg_type).expect("array must have length");
+                let (b, c) = encode_i32(len as i32);
+                func.emit_op(Opcode::LoadInt, dst, b, c);
+            } else if info.is_string(arg_type) {
+                func.emit_op(Opcode::StrLen, dst, arg_reg, 0);
+            } else if info.is_map(arg_type) {
+                func.emit_op(Opcode::MapLen, dst, arg_reg, 0);
+            } else if info.is_slice(arg_type) {
+                func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
             } else {
+                // Default to SliceLen
                 func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
             }
         }
@@ -1435,7 +1423,7 @@ fn compile_builtin_call(
                 compile_expr_to(arg, slot, _ctx, func, info)?;
                 // Store value_kind in next slot
                 let arg_type = info.expr_type(arg.id);
-                let vk = arg_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0) as i32;
+                let vk = info.type_value_kind(arg_type) as u8 as i32;
                 let (b, c) = encode_i32(vk);
                 func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }
@@ -1454,10 +1442,9 @@ fn compile_builtin_call(
         }
         "make" => {
             // make([]T, len) or make([]T, len, cap) or make(map[K]V) or make(chan T)
-            let result_type = info.expr_type(call.args[0].id);
+            let type_key = info.expr_type(call.args[0].id);
             
-            if let Some(type_key) = result_type {
-                if info.is_slice(type_key) {
+            if info.is_slice(type_key) {
                     // make([]T, len) or make([]T, len, cap)
                     let elem_slots = info.slice_elem_slots(type_key)
                         .expect("slice must have elem_slots");
@@ -1486,19 +1473,16 @@ fn compile_builtin_call(
                         tmp
                     };
                     func.emit_op(Opcode::ChanNew, dst, cap_reg, 0);
-                } else {
-                    return Err(CodegenError::UnsupportedExpr("make with unsupported type".to_string()));
-                }
+            } else {
+                return Err(CodegenError::UnsupportedExpr("make with unsupported type".to_string()));
             }
         }
         "new" => {
             // new(T) - allocate zero value of T on heap
-            let result_type = info.expr_type(call.args[0].id);
-            if let Some(type_key) = result_type {
-                let slots = info.type_slot_count(type_key);
-                // PtrNew: a=dst, b=0 (zero init), flags=slots
-                func.emit_with_flags(Opcode::PtrNew, slots as u8, dst, 0, 0);
-            }
+            let type_key = info.expr_type(call.args[0].id);
+            let slots = info.type_slot_count(type_key);
+            // PtrNew: a=dst, b=0 (zero init), flags=slots
+            func.emit_with_flags(Opcode::PtrNew, slots as u8, dst, 0, 0);
         }
         "append" => {
             // append(slice, elem...) - variadic
@@ -1508,8 +1492,7 @@ fn compile_builtin_call(
             let slice_reg = compile_expr(&call.args[0], _ctx, func, info)?;
             let elem_reg = compile_expr(&call.args[1], _ctx, func, info)?;
             
-            let slice_type = info.expr_type(call.args[0].id)
-                .expect("append slice must have type");
+            let slice_type = info.expr_type(call.args[0].id);
             let elem_slots = info.slice_elem_slots(slice_type)
                 .expect("slice must have elem_slots");
             
@@ -1535,7 +1518,9 @@ fn compile_builtin_call(
             // MapDelete expects: a=map, b=meta_and_key
             // meta = key_slots, key at b+1
             let map_type = info.expr_type(call.args[0].id);
-            let key_slots = map_type.and_then(|t| info.map_key_val_slots(t)).map(|(k, _)| k).unwrap_or(1);
+            let key_slots = info.map_key_val_slots(map_type)
+                .map(|(k, _)| k)
+                .expect("map must have key/val slots");
             
             let meta_and_key_reg = func.alloc_temp(1 + key_slots);
             func.emit_op(Opcode::LoadInt, meta_and_key_reg, key_slots, 0);
@@ -1572,7 +1557,7 @@ fn compile_builtin_call(
                 compile_expr_to(arg, slot, _ctx, func, info)?;
                 // Store value_kind in next slot
                 let arg_type = info.expr_type(arg.id);
-                let vk = arg_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0) as i32;
+                let vk = info.type_value_kind(arg_type) as u8 as i32;
                 let (b, c) = encode_i32(vk);
                 func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }
@@ -1598,8 +1583,7 @@ fn compile_composite_lit(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    let type_key = info.expr_type(expr.id)
-        .ok_or_else(|| CodegenError::Internal("composite lit has no type".to_string()))?;
+    let type_key = info.expr_type(expr.id);
     
     if info.is_struct(type_key) {
         // Struct literal: initialize fields
