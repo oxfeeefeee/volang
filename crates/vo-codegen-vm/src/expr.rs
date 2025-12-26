@@ -901,10 +901,21 @@ fn compile_call(
     // Get return slot count for this call
     let ret_slots = info.type_slot_count(info.expr_type(expr.id));
     
-    // Compile arguments - need to compute total arg slots
+    // Get function type and parameter types for interface conversion
+    let func_type = info.expr_type(call.func.id);
+    let param_types = info.func_param_types(func_type);
+    
+    // Compute total arg slots using PARAMETER types (not expression types)
+    // This handles interface parameters correctly
     let mut total_arg_slots = 0u16;
-    for arg in &call.args {
-        total_arg_slots += info.expr_slots(arg.id);
+    for (i, arg) in call.args.iter().enumerate() {
+        let param_type = param_types.get(i).copied();
+        let slots = if let Some(pt) = param_type {
+            info.type_slot_count(pt)
+        } else {
+            info.expr_slots(arg.id)
+        };
+        total_arg_slots += slots;
     }
     
     // Check if calling a closure (local variable with Signature type)
@@ -915,7 +926,20 @@ fn compile_call(
             // Allocate max(arg_slots, ret_slots) to ensure space for return values
             let args_start = func.alloc_temp(total_arg_slots.max(ret_slots));
             let mut offset = 0u16;
-            for arg in &call.args {
+            for (i, arg) in call.args.iter().enumerate() {
+                let param_type = param_types.get(i).copied();
+                let arg_type = info.expr_type(arg.id);
+                
+                // Check if need interface conversion
+                if let Some(pt) = param_type {
+                    if info.is_interface(pt) && !info.is_interface(arg_type) {
+                        // Concrete -> Interface conversion
+                        crate::stmt::compile_iface_assign(args_start + offset, arg, pt, ctx, func, info)?;
+                        offset += info.type_slot_count(pt);
+                        continue;
+                    }
+                }
+                
                 let arg_slots = info.expr_slots(arg.id);
                 compile_expr_to(arg, args_start + offset, ctx, func, info)?;
                 offset += arg_slots;

@@ -247,6 +247,9 @@ fn compile_functions(
     // Update NamedTypeMeta.methods with method func_ids
     update_named_type_methods(ctx, &method_mappings);
     
+    // Propagate promoted methods from embedded fields
+    propagate_promoted_methods(ctx, info);
+    
     // Build pending itabs now that methods are registered
     ctx.finalize_itabs();
     
@@ -261,6 +264,63 @@ fn update_named_type_methods(
     for (type_key, method_name, func_id, is_pointer_receiver) in method_mappings {
         if let Some(named_type_id) = ctx.get_named_type_id(*type_key) {
             ctx.update_named_type_method(named_type_id, method_name.clone(), *func_id, *is_pointer_receiver);
+        }
+    }
+}
+
+/// Propagate promoted methods from embedded fields to outer types.
+/// For each struct type with embedded fields, copy the embedded type's methods
+/// to the outer type (if not already defined).
+fn propagate_promoted_methods(ctx: &mut CodegenContext, info: &TypeInfoWrapper) {
+    use vo_analysis::typ::Type;
+    
+    let tc_objs = &info.project.tc_objs;
+    
+    // Collect all named type keys with their IDs
+    let named_types: Vec<(vo_analysis::objects::TypeKey, u16)> = ctx.named_type_ids_iter().collect();
+    
+    for (named_type_key, outer_id) in named_types {
+        // Get underlying type
+        let underlying_key = vo_analysis::typ::underlying_type(named_type_key, tc_objs);
+        
+        // Check if underlying is a struct
+        if let Type::Struct(struct_detail) = &tc_objs.types[underlying_key] {
+            // Check each field for embedded fields
+            for &field_obj_key in struct_detail.fields() {
+                let field_obj = &tc_objs.lobjs[field_obj_key];
+                
+                // Check if this is an embedded field
+                if field_obj.entity_type().var_property().embedded {
+                    // Get the embedded field's type
+                    if let Some(field_type_key) = field_obj.typ() {
+                        // Get the named type of the embedded field (strip pointer if needed)
+                        let embed_type_key = if info.is_pointer(field_type_key) {
+                            info.pointer_base(field_type_key)
+                        } else {
+                            field_type_key
+                        };
+                        
+                        // Get embedded type's named_type_id and copy its methods
+                        if let Some(embed_id) = ctx.get_named_type_id(embed_type_key) {
+                            // Get methods from embedded type
+                            let methods_to_copy: Vec<(String, vo_vm::bytecode::MethodInfo)> = 
+                                ctx.get_named_type_methods(embed_id)
+                                    .into_iter()
+                                    .collect();
+                            
+                            // Copy methods to outer type (if not already present)
+                            for (method_name, method_info) in methods_to_copy {
+                                ctx.update_named_type_method_if_absent(
+                                    outer_id,
+                                    method_name,
+                                    method_info.func_id,
+                                    method_info.is_pointer_receiver,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -125,6 +125,27 @@ impl CodegenContext {
         }
     }
 
+    /// Update a NamedTypeMeta's methods map only if the method is not already present
+    pub fn update_named_type_method_if_absent(&mut self, named_type_id: u16, method_name: String, func_id: u32, is_pointer_receiver: bool) {
+        if let Some(meta) = self.module.named_type_metas.get_mut(named_type_id as usize) {
+            meta.methods.entry(method_name).or_insert(MethodInfo { func_id, is_pointer_receiver });
+        }
+    }
+
+    /// Get methods from a NamedTypeMeta
+    pub fn get_named_type_methods(&self, named_type_id: u16) -> Vec<(String, MethodInfo)> {
+        if let Some(meta) = self.module.named_type_metas.get(named_type_id as usize) {
+            meta.methods.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Iterate over all named type keys and their IDs
+    pub fn named_type_ids_iter(&self) -> impl Iterator<Item = (TypeKey, u16)> + '_ {
+        self.named_type_ids.iter().map(|(&k, &v)| (k, v))
+    }
+
     pub fn get_interface_meta_id(&self, type_key: TypeKey) -> Option<u16> {
         self.interface_meta_ids.get(&type_key).copied()
     }

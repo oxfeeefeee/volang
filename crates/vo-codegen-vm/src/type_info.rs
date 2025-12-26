@@ -529,6 +529,23 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
+    /// Get parameter types for a function signature
+    pub fn func_param_types(&self, type_key: TypeKey) -> Vec<TypeKey> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Signature(sig) = &self.tc_objs().types[underlying] {
+            let params_key = sig.params();
+            if let Type::Tuple(tuple) = &self.tc_objs().types[params_key] {
+                tuple.vars().iter()
+                    .filter_map(|&var_key| self.tc_objs().lobjs[var_key].typ())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Check if type is an integer type
     pub fn is_int(&self, type_key: TypeKey) -> bool {
         use vo_analysis::typ::BasicType;

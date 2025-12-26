@@ -92,7 +92,7 @@ pub fn compile_stmt(
                         // Initialize
                         if i < spec.values.len() {
                             if info.is_interface(type_key) {
-                                compile_iface_init(&spec.values[i], slot, type_key, ctx, func, info)?;
+                                compile_iface_assign(slot, &spec.values[i], type_key, ctx, func, info)?;
                             } else {
                                 compile_expr_to(&spec.values[i], slot, ctx, func, info)?;
                             }
@@ -1280,7 +1280,7 @@ fn compile_assign(
                             ValueLocation::Global { index, .. } => (index, false, 0),
                         };
                         
-                        compile_iface_init(rhs, dst_slot, lhs_type, ctx, func, info)?;
+                        compile_iface_assign(dst_slot, rhs, lhs_type, ctx, func, info)?;
                         
                         if is_heap_boxed {
                             func.emit_ptr_set(heap_gcref, 0, dst_slot, 2);
@@ -1684,9 +1684,10 @@ fn resolve_selector_target(
 
 /// Compile interface assignment: dst = src where dst is interface type
 /// Handles both concrete->interface and interface->interface
-fn compile_iface_init(
-    rhs: &vo_syntax::ast::Expr,
+/// Used for both assignment statements and function call arguments
+pub fn compile_iface_assign(
     dst_slot: u16,
+    rhs: &vo_syntax::ast::Expr,
     iface_type: vo_analysis::objects::TypeKey,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
