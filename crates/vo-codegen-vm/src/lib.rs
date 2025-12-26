@@ -103,16 +103,25 @@ fn register_types(
                             // named_type_meta uses named type key
                             ctx.register_named_type_meta(named_key, named_type_meta);
                         }
-                        TypeExprKind::Interface(iface_type) => {
-                            // Build InterfaceMeta - keyed by underlying type
-                            let mut method_names = Vec::new();
-                            for elem in &iface_type.elems {
-                                if let vo_syntax::ast::InterfaceElem::Method(method) = elem {
-                                    let method_name = project.interner.resolve(method.name.symbol)
-                                        .unwrap_or("?");
-                                    method_names.push(method_name.to_string());
+                        TypeExprKind::Interface(_iface_type) => {
+                            // Build InterfaceMeta from type info (includes embedded interfaces)
+                            let tc_objs = &info.project.tc_objs;
+                            let method_names = if let vo_analysis::typ::Type::Interface(iface) = &tc_objs.types[underlying_key] {
+                                // all_methods() returns Ref<Option<Vec<ObjKey>>>
+                                let all_methods_ref = iface.all_methods();
+                                if let Some(methods) = all_methods_ref.as_ref() {
+                                    methods.iter()
+                                        .map(|m| tc_objs.lobjs[*m].name().to_string())
+                                        .collect()
+                                } else {
+                                    // Fallback to direct methods if all_methods not computed
+                                    iface.methods().iter()
+                                        .map(|m| tc_objs.lobjs[*m].name().to_string())
+                                        .collect()
                                 }
-                            }
+                            } else {
+                                Vec::new()
+                            };
                             
                             let meta = InterfaceMeta {
                                 name: type_name.to_string(),
@@ -140,6 +149,13 @@ fn collect_declarations(
         for decl in &file.decls {
             match decl {
                 Decl::Func(func_decl) => {
+                    // Skip init() functions - they can have multiple declarations with same name
+                    // and will be handled specially during compilation
+                    let func_name = project.interner.resolve(func_decl.name.symbol).unwrap_or("");
+                    if func_decl.receiver.is_none() && func_name == "init" {
+                        continue;
+                    }
+                    
                     // Check if this is a method (has receiver)
                     let (recv_type, is_pointer_recv) = if let Some(recv) = &func_decl.receiver {
                         let base_type = info.obj_type(info.get_use(&recv.ty), "method receiver must have type");
@@ -310,7 +326,13 @@ fn compile_func_decl(
             (Some(base_type), recv.is_pointer)
         })
         .unwrap_or((None, false));
-    let func_id = ctx.define_func(func_def, recv_base_type, is_pointer_recv, func_decl.name.symbol);
+    // init() functions use add_function (they're not pre-declared since there can be multiple)
+    let func_name = info.project.interner.resolve(func_decl.name.symbol).unwrap_or("");
+    let func_id = if recv_base_type.is_none() && func_name == "init" {
+        ctx.add_function(func_def)
+    } else {
+        ctx.define_func(func_def, recv_base_type, is_pointer_recv, func_decl.name.symbol)
+    };
     
     Ok(func_id)
 }

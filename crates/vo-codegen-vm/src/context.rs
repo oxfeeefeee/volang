@@ -138,11 +138,19 @@ impl CodegenContext {
             return *id;
         }
         
-        // Build InterfaceMeta from type info
+        // Build InterfaceMeta from type info (includes embedded interfaces)
         let method_names = if let vo_analysis::typ::Type::Interface(iface) = &tc_objs.types[underlying] {
-            iface.methods().iter()
-                .map(|m| tc_objs.lobjs[*m].name().to_string())
-                .collect()
+            let all_methods_ref = iface.all_methods();
+            if let Some(methods) = all_methods_ref.as_ref() {
+                methods.iter()
+                    .map(|m| tc_objs.lobjs[*m].name().to_string())
+                    .collect()
+            } else {
+                // Fallback to direct methods
+                iface.methods().iter()
+                    .map(|m| tc_objs.lobjs[*m].name().to_string())
+                    .collect()
+            }
         } else {
             Vec::new()
         };
@@ -208,6 +216,7 @@ impl CodegenContext {
     fn build_itab(&mut self, named_type_id: u16, iface_meta_id: u16) -> u16 {
         let named_type = &self.module.named_type_metas[named_type_id as usize];
         let iface_meta = &self.module.interface_metas[iface_meta_id as usize];
+
 
         let methods: Vec<u32> = iface_meta
             .method_names
