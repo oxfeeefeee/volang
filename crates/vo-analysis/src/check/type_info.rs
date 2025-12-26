@@ -5,7 +5,7 @@ use crate::obj;
 use crate::objects::{ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
 use crate::operand::OperandMode;
 use crate::selection::Selection;
-use vo_syntax::ast::{Ident, ExprId, TypeExprId};
+use vo_syntax::ast::{Ident, IdentId, ExprId, TypeExprId};
 use vo_common::Span;
 use vo_syntax::ast::Expr;
 use std::collections::{HashMap, HashSet};
@@ -45,12 +45,11 @@ pub struct TypeInfo {
     /// Maps type expressions to their resolved types.
     pub type_exprs: HashMap<TypeExprId, TypeKey>,
 
-    /// Maps identifiers to the objects they define.
-    /// Key is the Ident (which contains span for uniqueness).
-    pub defs: HashMap<Ident, Option<ObjKey>>,
+    /// Maps identifier IDs to the objects they define.
+    pub defs: HashMap<IdentId, Option<ObjKey>>,
 
-    /// Maps identifiers to the objects they denote (use).
-    pub uses: HashMap<Ident, ObjKey>,
+    /// Maps identifier IDs to the objects they denote (use).
+    pub uses: HashMap<IdentId, ObjKey>,
 
     /// Maps AST node spans to their implicitly declared objects.
     pub implicits: HashMap<Span, ObjKey>,
@@ -97,12 +96,12 @@ impl TypeInfo {
 
     /// Records a definition.
     pub(crate) fn record_def(&mut self, ident: Ident, obj: Option<ObjKey>) {
-        self.defs.insert(ident, obj);
+        self.defs.insert(ident.id, obj);
     }
 
     /// Records a use.
     pub(crate) fn record_use(&mut self, ident: Ident, obj: ObjKey) {
-        self.uses.insert(ident, obj);
+        self.uses.insert(ident.id, obj);
     }
 
     /// Records an implicit object.
@@ -190,17 +189,17 @@ impl TypeInfo {
 
     /// Looks up the object for a definition.
     pub fn get_def(&self, ident: &Ident) -> Option<ObjKey> {
-        self.defs.get(ident).and_then(|o| *o)
+        self.defs.get(&ident.id).and_then(|o| *o)
     }
 
     /// Looks up the object for a use.
     pub fn get_use(&self, ident: &Ident) -> Option<ObjKey> {
-        self.uses.get(ident).copied()
+        self.uses.get(&ident.id).copied()
     }
 
     /// Returns true if the identifier is a definition.
     pub fn is_def(&self, ident: &Ident) -> bool {
-        self.defs.contains_key(ident)
+        self.defs.contains_key(&ident.id)
     }
 
     /// Returns true if the variable escapes to heap.

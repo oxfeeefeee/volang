@@ -73,8 +73,10 @@ pub fn compile_stmt(
                             // Struct/primitive: use PtrNew
                             let meta_idx = ctx.get_or_create_value_meta(type_key, slots, &slot_types);
                             
-                            // PtrNew: a=dst, b=meta_idx, flags=slots
-                            func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_idx, 0);
+                            // PtrNew: dst=slot, meta_reg=temp (loaded from const pool), flags=slots
+                            let meta_reg = func.alloc_temp(1);
+                            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+                            func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_reg, 0);
                             
                             // Initialize value
                             if i < spec.values.len() {
@@ -123,7 +125,7 @@ pub fn compile_stmt(
                     .unwrap_or_else(|| vec![vo_common_core::types::SlotType::Value]);
 
                 // Check if this is a new definition or reassignment
-                let is_def = info.project.type_info.defs.contains_key(name);
+                let is_def = info.project.type_info.defs.contains_key(&name.id);
 
                 if is_def {
                     // New variable
@@ -140,8 +142,10 @@ pub fn compile_stmt(
                         // Get ValueMeta index for PtrNew
                         let meta_idx = ctx.get_or_create_value_meta(type_key, slots, &slot_types);
                         
-                        // PtrNew: a=dst, b=meta_idx, flags=slots
-                        func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_idx, 0);
+                        // PtrNew: dst=slot, meta_reg=temp (loaded from const pool), flags=slots
+                        let meta_reg = func.alloc_temp(1);
+                        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+                        func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_reg, 0);
                         
                         // Initialize value
                         if i < short_var.values.len() {
@@ -1287,17 +1291,52 @@ fn compile_assign(
                     // Check if assigning to interface variable
                     let is_iface = lhs_type.map(|t| info.is_interface(t)).unwrap_or(false);
                     if is_iface {
-                        let slot = match lhs_loc {
+                        let dst_slot = match lhs_loc {
                             ValueLocation::Stack { slot, .. } => slot,
                             ValueLocation::HeapBoxed { slot, .. } => slot,
                             ValueLocation::Reference { slot } => slot,
                             ValueLocation::Global { index, .. } => index,
                         };
-                        let src_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
                         let src_type = info.expr_type(rhs.id);
-                        let iface_meta_id = lhs_type.and_then(|t| ctx.get_interface_meta_id(t)).unwrap_or(0);
-                        let vk = src_type.map(|t| info.type_value_kind(t) as u8).unwrap_or(0);
-                        func.emit_with_flags(Opcode::IfaceAssign, vk, slot, src_reg, iface_meta_id);
+                        let src_vk = src_type.map(|t| info.type_value_kind(t)).unwrap_or(vo_common_core::ValueKind::Void);
+                        let iface_meta_id = lhs_type.and_then(|t| {
+                            // Try named type first, then underlying type
+                            ctx.get_interface_meta_id(t)
+                                .or_else(|| {
+                                    let underlying = info.underlying_type(t);
+                                    ctx.get_interface_meta_id(underlying)
+                                })
+                        }).unwrap_or(0);
+                        
+                        // For struct/array value types on stack, need to allocate heap first
+                        let is_value_type = src_vk == vo_common_core::ValueKind::Struct || src_vk == vo_common_core::ValueKind::Array;
+                        let rhs_is_heap = matches!(&rhs_source, ExprSource::Location(ValueLocation::HeapBoxed { .. }));
+                        
+                        if is_value_type && !rhs_is_heap {
+                            // Stack struct/array -> interface: allocate heap, copy, then IfaceAssign
+                            let src_slots = src_type.map(|t| info.type_slot_count(t)).unwrap_or(1);
+                            let slot_types = src_type.map(|t| info.type_slot_types(t)).unwrap_or_default();
+                            let meta_idx = src_type.map(|t| ctx.get_or_create_value_meta(Some(t), src_slots, &slot_types)).unwrap_or(0);
+                            
+                            // Compile rhs to temp slots
+                            let tmp_data = func.alloc_temp(src_slots);
+                            compile_expr_to(rhs, tmp_data, ctx, func, info)?;
+                            
+                            // Allocate heap and copy
+                            let gcref_slot = func.alloc_temp(1);
+                            // PtrNew: dst=gcref_slot, meta_reg=temp (loaded from const pool), flags=slots
+                            let meta_reg = func.alloc_temp(1);
+                            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+                            func.emit_with_flags(Opcode::PtrNew, src_slots as u8, gcref_slot, meta_reg, 0);
+                            func.emit_ptr_set(gcref_slot, 0, tmp_data, src_slots);
+                            
+                            // IfaceAssign with GcRef
+                            func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, gcref_slot, iface_meta_id);
+                        } else {
+                            // Already heap or non-value type: compile and assign directly
+                            let src_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
+                            func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, src_reg, iface_meta_id);
+                        }
                         return Ok(());
                     }
                     

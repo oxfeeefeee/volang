@@ -294,7 +294,7 @@ impl<'a> EscapeAnalyzer<'a> {
             // 4. Variable reference → check if captured by closure
             ExprKind::Ident(ident) => {
                 if let Some(func_scope) = self.func_scope {
-                    if let Some(&obj) = self.type_info.uses.get(ident) {
+                    if let Some(&obj) = self.type_info.uses.get(&ident.id) {
                         if self.is_captured(obj, func_scope) {
                             self.escaped.insert(obj);
                             // Record capture for current closure
@@ -406,7 +406,7 @@ impl<'a> EscapeAnalyzer<'a> {
     /// Traverse Selector chain to find the root variable.
     fn find_root_var(&self, expr: &Expr) -> Option<ObjKey> {
         match &expr.kind {
-            ExprKind::Ident(ident) => self.type_info.uses.get(ident).copied(),
+            ExprKind::Ident(ident) => self.type_info.uses.get(&ident.id).copied(),
             ExprKind::Selector(sel) => self.find_root_var(&sel.expr),
             ExprKind::Paren(inner) => self.find_root_var(inner),
             ExprKind::Index(idx) => self.find_root_var(&idx.expr),

@@ -268,6 +268,10 @@ impl<'a> TypeInfoWrapper<'a> {
 
     // === Type queries ===
 
+    pub fn underlying_type(&self, type_key: TypeKey) -> TypeKey {
+        typ::underlying_type(type_key, self.tc_objs())
+    }
+
     pub fn is_interface(&self, type_key: TypeKey) -> bool {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
         self.tc_objs().types[underlying].try_as_interface().is_some()
@@ -465,6 +469,16 @@ impl<'a> TypeInfoWrapper<'a> {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
         if let Type::Array(a) = &self.tc_objs().types[underlying] {
             Some(a.elem())
+        } else {
+            None
+        }
+    }
+
+    /// Get pointer element type (base type of *T)
+    pub fn pointer_elem_type(&self, type_key: TypeKey) -> Option<TypeKey> {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Pointer(p) = &self.tc_objs().types[underlying] {
+            Some(p.base())
         } else {
             None
         }

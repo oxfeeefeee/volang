@@ -194,6 +194,7 @@ fn compile_functions(
                 
                 // If this is a method, record the mapping
                 if let Some(recv) = &func_decl.receiver {
+                    // recv.ty is the struct type (e.g., MyNum), recv.is_pointer indicates if it's *T
                     if let Some(recv_type) = info.get_use(&recv.ty).or_else(|| info.get_def(&recv.ty)).and_then(|obj| info.obj_type(obj)) {
                         let method_name = project.interner.resolve(func_decl.name.symbol)
                             .unwrap_or("?").to_string();

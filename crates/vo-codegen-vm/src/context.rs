@@ -51,7 +51,11 @@ impl CodegenContext {
             module: Module {
                 name: name.to_string(),
                 struct_metas: Vec::new(),
-                interface_metas: Vec::new(),
+                // Index 0 is reserved for empty interface{}
+                interface_metas: vec![vo_vm::bytecode::InterfaceMeta {
+                    name: String::new(),
+                    method_names: Vec::new(),
+                }],
                 constants: Vec::new(),
                 globals: Vec::new(),
                 functions: Vec::new(),
@@ -248,8 +252,8 @@ impl CodegenContext {
     /// Get or create ValueMeta with explicit ValueKind
     pub fn get_or_create_value_meta_with_kind(
         &mut self,
-        _type_key: Option<TypeKey>,
-        slots: u16,
+        type_key: Option<TypeKey>,
+        _slots: u16,
         slot_types: &[vo_common_core::types::SlotType],
         value_kind: Option<vo_common_core::types::ValueKind>,
     ) -> u16 {
@@ -262,15 +266,19 @@ impl CodegenContext {
             let kind = slot_types.first().copied().unwrap_or(SlotType::Value);
             match kind {
                 SlotType::Value => ValueKind::Int as u8,
-                SlotType::GcRef => ValueKind::Pointer as u8,  // Default GcRef, use Pointer
+                SlotType::GcRef => ValueKind::Pointer as u8,
                 SlotType::Interface0 => ValueKind::Interface as u8,
                 SlotType::Interface1 => ValueKind::Interface as u8,
             }
         };
         
-        // Simple ValueMeta: just encode slots and kind
-        // In full implementation, would use proper meta_id from type registration
-        let value_meta = ((slots as u64) << 8) | (kind_byte as u64);
+        // Get meta_id from struct_meta_ids if available, otherwise 0
+        let meta_id = type_key
+            .and_then(|t| self.struct_meta_ids.get(&t).copied())
+            .unwrap_or(0) as u32;
+        
+        // ValueMeta format: [meta_id:24 | value_kind:8]
+        let value_meta = ((meta_id as u64) << 8) | (kind_byte as u64);
         
         // Add as Int constant (VM will interpret as ValueMeta)
         self.add_const(Constant::Int(value_meta as i64))
