@@ -660,6 +660,8 @@ fn compile_stmt_with_label(
 
         // === Labeled statement ===
         StmtKind::Labeled(labeled) => {
+            // Register label position for goto
+            func.define_label(labeled.label.symbol);
             // Pass label to inner statement (for labeled break/continue)
             compile_stmt_with_label(&labeled.stmt, ctx, func, info, Some(labeled.label.symbol))?;
         }
@@ -720,10 +722,8 @@ fn compile_stmt_with_label(
         }
 
         // === Goto ===
-        StmtKind::Goto(_goto_stmt) => {
-            // Goto requires label resolution - for now, emit jump placeholder
-            // In a full implementation, would need to track labels and patch jumps
-            return Err(CodegenError::UnsupportedStmt("goto not fully implemented".to_string()));
+        StmtKind::Goto(goto_stmt) => {
+            func.emit_goto(goto_stmt.label.symbol);
         }
 
         // === Fallthrough ===

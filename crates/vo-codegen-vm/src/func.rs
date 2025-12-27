@@ -67,6 +67,9 @@ pub struct FuncBuilder {
     code: Vec<Instruction>,
     loop_stack: Vec<LoopContext>,
     return_types: Vec<vo_analysis::objects::TypeKey>,
+    // Label support for goto
+    labels: HashMap<Symbol, usize>,           // label -> pc
+    goto_patches: Vec<(usize, Symbol)>,       // (jump_pc, target_label)
 }
 
 impl FuncBuilder {
@@ -84,6 +87,8 @@ impl FuncBuilder {
             code: Vec::new(),
             loop_stack: Vec::new(),
             return_types: Vec::new(),
+            labels: HashMap::new(),
+            goto_patches: Vec::new(),
         }
     }
 
@@ -366,6 +371,25 @@ impl FuncBuilder {
         }
     }
 
+    // === Label / Goto ===
+
+    /// Define a label at current pc (for goto target)
+    pub fn define_label(&mut self, sym: Symbol) {
+        self.labels.insert(sym, self.current_pc());
+    }
+
+    /// Emit goto - jump to label (may be forward or backward)
+    pub fn emit_goto(&mut self, sym: Symbol) {
+        if let Some(&target_pc) = self.labels.get(&sym) {
+            // Backward jump: label already defined
+            self.emit_jump_to(Opcode::Jump, 0, target_pc);
+        } else {
+            // Forward jump: label not yet defined, record for patching
+            let jump_pc = self.emit_jump(Opcode::Jump, 0);
+            self.goto_patches.push((jump_pc, sym));
+        }
+    }
+
     // === Finish ===
 
     pub fn set_ret_slots(&mut self, slots: u16) {
@@ -384,7 +408,17 @@ impl FuncBuilder {
         self.recv_slots = slots;
     }
 
-    pub fn build(self) -> FunctionDef {
+    pub fn build(mut self) -> FunctionDef {
+        // Patch forward gotos
+        let patches: Vec<_> = self.goto_patches.iter()
+            .filter_map(|(jump_pc, sym)| {
+                self.labels.get(sym).map(|&target_pc| (*jump_pc, target_pc))
+            })
+            .collect();
+        for (jump_pc, target_pc) in patches {
+            self.patch_jump(jump_pc, target_pc);
+        }
+        
         // Ensure local_slots is at least ret_slots (for return value)
         let local_slots = self.next_slot.max(self.ret_slots);
         

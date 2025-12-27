@@ -66,6 +66,8 @@ skips:
   - file: go_stmt.vo
     skip: [vm, jit]
     reason: "VariableNotFound"
+  - file: goto_stmt.vo
+    skip: [jit]
   - file: iface_escape_closure.vo
     skip: [jit]
   - file: iface_to_iface_assertion.vo
