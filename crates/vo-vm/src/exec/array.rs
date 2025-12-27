@@ -1,4 +1,4 @@
-//! Array instructions: ArrayNew, ArrayGet, ArraySet, ArrayLen
+//! Array instructions: ArrayNew, ArrayGet, ArraySet
 
 use vo_common_core::types::ValueMeta;
 use vo_runtime_core::gc::{Gc, GcRef};
@@ -47,11 +47,4 @@ pub fn exec_array_set(fiber: &mut Fiber, inst: &Instruction) {
     for i in 0..elem_slots {
         array::set(arr, offset + i, fiber.stack[src_start + i]);
     }
-}
-
-#[inline]
-pub fn exec_array_len(fiber: &mut Fiber, inst: &Instruction) {
-    let arr = fiber.read_reg(inst.b) as GcRef;
-    let len = if arr.is_null() { 0 } else { array::len(arr) };
-    fiber.write_reg(inst.a, len as u64);
 }

@@ -163,7 +163,6 @@ pub enum Opcode {
     ArrayNew,
     ArrayGet,
     ArraySet,
-    ArrayLen,
 
     // === SLICE: Slice operations ===
     SliceNew,

@@ -258,7 +258,6 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::ArrayNew => format!("ArrayNew      r{}, len=r{}, elem_slots={}", a, b, flags),
         Opcode::ArrayGet => format!("ArrayGet      r{}, r{}[r{}], elem_slots={}", a, b, c, flags),
         Opcode::ArraySet => format!("ArraySet      r{}[r{}], r{}, elem_slots={}", a, b, c, flags),
-        Opcode::ArrayLen => format!("ArrayLen      r{}, r{}", a, b),
 
         // SLICE
         Opcode::SliceNew => format!("SliceNew      r{}, r{}, lo=r{}, hi=r{}", a, b, c, flags),

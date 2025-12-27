@@ -566,10 +566,6 @@ impl Vm {
                 exec::exec_array_set(fiber, inst);
                 ExecResult::Continue
             }
-            Opcode::ArrayLen => {
-                exec::exec_array_len(fiber, inst);
-                ExecResult::Continue
-            }
 
             Opcode::SliceNew => {
                 exec::exec_slice_new(fiber, inst, &mut state.gc);
