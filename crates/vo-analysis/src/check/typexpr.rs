@@ -563,6 +563,7 @@ impl Checker {
                 let name_str = self.resolve_ident(name).to_string();
                 let var = self.new_param_var(0, Some(self.pkg), name_str, Some(result_type));
                 self.declare(scope_key, var);
+                self.result.record_def(name.clone(), Some(var));
                 vars.push(var);
             } else {
                 let var = self.new_param_var(0, Some(self.pkg), String::new(), Some(result_type));

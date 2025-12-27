@@ -1,0 +1,32 @@
+package main
+
+func sum(a, b int) (result int) {
+	result = a + b
+	return
+}
+
+func divmod(a, b int) (quot int, rem int) {
+	quot = a / b
+	rem = a % b
+	return
+}
+
+func factorial(n int) (result int) {
+	if n <= 1 {
+		result = 1
+		return
+	}
+	result = n * factorial(n-1)
+	return
+}
+
+func main() {
+	r := sum(3, 4)
+	println("sum(3,4):", r)
+
+	q, m := divmod(17, 5)
+	println("divmod(17,5): quot=", q, "rem=", m)
+
+	f := factorial(5)
+	println("factorial(5):", f)
+}

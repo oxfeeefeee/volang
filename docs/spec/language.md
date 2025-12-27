@@ -1044,23 +1044,41 @@ count += 1
 ReturnStmt ::= "return" ExprList? ";" ;
 ```
 
+**Named Return Values**: Result parameters can be named. Named results are local variables initialized to zero values at function start. A bare `return` returns the current values of named result variables.
+
+```vo
+func sum(a, b int) (result int) {
+    result = a + b
+    return              // returns result (bare return)
+}
+
+func divmod(a, b int) (quot int, rem int) {
+    quot = a / b
+    rem = a % b
+    return              // returns quot, rem
+}
+```
+
 **Static Rules**:
 
 | Function Returns | `return` Form | Validity |
 |------------------|---------------|----------|
 | Nothing (no ResultType) | `return` | ✅ Required |
 | Nothing | `return expr` | ❌ Error |
-| Single type `T` | `return` | ❌ Error |
-| Single type `T` | `return expr` | ✅ Required, expr must be assignable to `T` |
-| Multiple types `(T1, T2, ...)` | `return` | ❌ Error |
-| Multiple types | `return e1, e2, ...` | ✅ Count and types must match |
+| Unnamed single type `T` | `return` | ❌ Error |
+| Unnamed single type `T` | `return expr` | ✅ Required, expr must be assignable to `T` |
+| **Named** single type `(name T)` | `return` | ✅ Returns named result |
+| Unnamed multiple types | `return` | ❌ Error |
+| Unnamed multiple types | `return e1, e2, ...` | ✅ Count and types must match |
+| **Named** multiple types | `return` | ✅ Returns named results |
 
 ```vo
 func f() { return }              // OK
 func g() int { return 42 }       // OK
 func h() (int, string) { return 1, "x" }  // OK
-func i() int { return }          // ERROR
-func j() { return 1 }            // ERROR
+func i() int { return }          // ERROR: unnamed result
+func j() { return 1 }            // ERROR: no result type
+func k() (x int) { return }      // OK: named result
 ```
 
 ### 8.5 If
@@ -1322,7 +1340,7 @@ FuncLit ::= "func" "(" ParamList? ")" ResultType? Block ;
 ```ebnf
 Selector    ::= "." Ident ;
 Index       ::= "[" Expr "]" ;
-SliceExpr   ::= "[" Expr? ":" Expr? "]" ;
+SliceExpr   ::= "[" Expr? ":" Expr? ( ":" Expr )? "]" ;
 Call        ::= "(" ( Expr ( "," Expr )* "..."? )? ")" ;
 ```
 
@@ -1331,6 +1349,17 @@ Call        ::= "(" ( Expr ( "," Expr )* "..."? )? ")" ;
 - `a[:high]` — elements from start to `high-1`
 - `a[low:]` — elements from `low` to end
 - `a[:]` — copy of entire slice
+- `a[low:high:max]` — slice with explicit capacity (three-index slice)
+
+**Three-Index Slice**: The form `a[low:high:max]` creates a slice with `len = high - low` and `cap = max - low`. This controls the capacity of the resulting slice, preventing it from accessing elements beyond `max` of the original array/slice.
+
+```vo
+a := [5]int{1, 2, 3, 4, 5}
+s := a[1:3:4]       // len=2, cap=3 (elements 2,3; can grow to include 4)
+s = a[1:3]          // len=2, cap=4 (can grow to include 4,5)
+```
+
+> **Note**: Three-index slice is not allowed on strings.
 
 ```vo
 user.name       // field access (runtime error if user is nil)
@@ -1338,6 +1367,7 @@ arr[i]          // array/slice index
 m["key"]        // map access
 f(x, y)         // function call
 s[1:3]          // slice expression
+s[1:3:5]        // three-index slice with capacity
 s[:len(s)-1]    // slice from start
 ```
 

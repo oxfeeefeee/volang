@@ -268,7 +268,7 @@ impl Checker {
         let mut cur_name = name.to_string();
 
         loop {
-            let lookup = self.scope(skey).lookup_parent(&cur_name, self.objs());
+            let lookup = crate::scope::lookup_parent(skey, &cur_name, self.objs());
             if lookup.is_none() {
                 break;
             }

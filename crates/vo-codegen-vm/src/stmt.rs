@@ -311,7 +311,30 @@ fn compile_stmt_with_label(
         // === Return ===
         StmtKind::Return(ret) => {
             if ret.values.is_empty() {
-                func.emit_op(Opcode::Return, 0, 0, 0);
+                // Bare return - check for named returns
+                let named_syms = func.named_return_symbols();
+                if named_syms.is_empty() {
+                    func.emit_op(Opcode::Return, 0, 0, 0);
+                } else {
+                    // Look up named return variables in locals
+                    let named_return_info: Vec<_> = named_syms.iter()
+                        .map(|&sym| {
+                            let local = func.lookup_local(sym)
+                                .expect("named return variable must exist in locals");
+                            (local.slot, local.slots)
+                        })
+                        .collect();
+                    
+                    // Copy named return values to return area
+                    let total_ret_slots: u16 = named_return_info.iter().map(|(_, s)| *s).sum();
+                    let ret_start = func.alloc_temp(total_ret_slots);
+                    let mut offset = 0u16;
+                    for &(slot, slots) in &named_return_info {
+                        func.emit_copy(ret_start + offset, slot, slots);
+                        offset += slots;
+                    }
+                    func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
+                }
             } else {
                 // Get function's return types (clone to avoid borrow issues)
                 let ret_types: Vec<_> = func.return_types().to_vec();
@@ -728,8 +751,7 @@ fn compile_stmt_with_label(
 
         // === Fallthrough ===
         StmtKind::Fallthrough => {
-            // Fallthrough in switch - handled by switch compilation
-            // This is a marker that the switch compiler should check
+            // Handled in switch compilation - skipped here
         }
 
         // === Const declaration (in block) ===
@@ -1234,11 +1256,21 @@ fn compile_switch(
     let mut case_body_starts: Vec<usize> = Vec::new();
     for case in &switch_stmt.cases {
         case_body_starts.push(func.current_pc());
+        
+        // Compile statements, track if ends with fallthrough
+        let mut has_fallthrough = false;
         for stmt in &case.body {
-            compile_stmt(stmt, ctx, func, info)?;
+            if matches!(stmt.kind, StmtKind::Fallthrough) {
+                has_fallthrough = true;
+            } else {
+                compile_stmt(stmt, ctx, func, info)?;
+            }
         }
-        // Jump to end (unless fallthrough - TODO)
-        end_jumps.push(func.emit_jump(Opcode::Jump, 0));
+        
+        // Jump to end unless case ends with fallthrough
+        if !has_fallthrough {
+            end_jumps.push(func.emit_jump(Opcode::Jump, 0));
+        }
     }
     
     let end_pc = func.current_pc();

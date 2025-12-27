@@ -87,25 +87,6 @@ impl Scope {
         self.elems.get(name).copied()
     }
 
-    /// Looks up a name in this scope and all parent scopes.
-    pub fn lookup_parent(&self, name: &str, objs: &TCObjects) -> Option<(ScopeKey, ObjKey)> {
-        // First check this scope
-        if let Some(_obj) = self.elems.get(name) {
-            // We need the scope key for this scope, but we don't have it here
-            // This is a limitation - caller should use lookup_parent_with_key
-            return None;
-        }
-        // Check parent scopes
-        if let Some(parent_key) = self.parent {
-            let parent = &objs.scopes[parent_key];
-            if let Some(obj) = parent.lookup(name) {
-                return Some((parent_key, obj));
-            }
-            return parent.lookup_parent(name, objs);
-        }
-        None
-    }
-
     /// Returns an iterator over all names in the scope.
     pub fn names(&self) -> impl Iterator<Item = &String> {
         self.elems.keys()

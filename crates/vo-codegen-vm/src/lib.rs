@@ -565,7 +565,16 @@ fn compile_func_decl(
     let return_types: Vec<_> = func_decl.sig.results.iter()
         .map(|r| info.type_expr_type(r.ty.id))
         .collect();
-    builder.set_return_types(return_types);
+    builder.set_return_types(return_types.clone());
+    
+    // Define named return variables as locals (zero-initialized)
+    for result in &func_decl.sig.results {
+        if let Some(name) = &result.name {
+            let (slots, slot_types) = info.type_expr_layout(result.ty.id);
+            builder.define_local_stack(name.symbol, slots, &slot_types);
+            builder.register_named_return(name.symbol);
+        }
+    }
     
     // Compile function body
     if let Some(body) = &func_decl.body {

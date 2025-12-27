@@ -63,6 +63,7 @@ pub struct FuncBuilder {
     next_slot: u16,
     locals: HashMap<Symbol, LocalVar>,
     captures: HashMap<Symbol, CaptureVar>,  // closure captures
+    named_return_symbols: Vec<Symbol>,      // symbols of named return variables
     slot_types: Vec<SlotType>,
     code: Vec<Instruction>,
     loop_stack: Vec<LoopContext>,
@@ -83,6 +84,7 @@ impl FuncBuilder {
             next_slot: 0,
             locals: HashMap::new(),
             captures: HashMap::new(),
+            named_return_symbols: Vec::new(),
             slot_types: Vec::new(),
             code: Vec::new(),
             loop_stack: Vec::new(),
@@ -169,6 +171,16 @@ impl FuncBuilder {
         self.slot_types.push(SlotType::GcRef);
         self.next_slot += 1;
         slot
+    }
+
+    /// Register a named return variable symbol.
+    pub fn register_named_return(&mut self, sym: Symbol) {
+        self.named_return_symbols.push(sym);
+    }
+
+    /// Get named return variable symbols (for bare return statement).
+    pub fn named_return_symbols(&self) -> &[Symbol] {
+        &self.named_return_symbols
     }
 
     // === Query ===

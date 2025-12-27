@@ -1,0 +1,45 @@
+package main
+
+func grade(score int) string {
+	var result string
+	switch {
+	case score >= 90:
+		result = "A"
+	case score >= 80:
+		result = "B"
+	case score >= 70:
+		result = "C"
+	default:
+		result = "F"
+	}
+	return result
+}
+
+func classify(n int) string {
+	var result string
+	switch n {
+	case 1:
+		result = "one"
+		fallthrough
+	case 2:
+		result = result + "-two"
+		fallthrough
+	case 3:
+		result = result + "-three"
+	default:
+		result = "other"
+	}
+	return result
+}
+
+func main() {
+	println("grade(95):", grade(95))
+	println("grade(85):", grade(85))
+	println("grade(75):", grade(75))
+	println("grade(65):", grade(65))
+
+	println("classify(1):", classify(1))
+	println("classify(2):", classify(2))
+	println("classify(3):", classify(3))
+	println("classify(4):", classify(4))
+}

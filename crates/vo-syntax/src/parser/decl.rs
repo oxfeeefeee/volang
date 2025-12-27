@@ -262,13 +262,33 @@ impl<'a> Parser<'a> {
             while !self.at(TokenKind::RParen) && !self.at_eof() {
                 let start = self.current.span.start;
                 
-                // Try to parse as named result: name type
+                // Try to parse as named result(s): name1, name2, ... type
                 // or unnamed result: type
                 if self.at(TokenKind::Ident) {
                     let first = self.parse_ident()?;
                     
-                    // Check if next token is a type (meaning first was a name)
-                    if self.at_type_start() {
+                    // Check for comma (multiple names sharing a type)
+                    if self.at(TokenKind::Comma) && self.peek_is_ident_before_type() {
+                        // Multiple names: name1, name2, ... type
+                        let mut names = vec![first];
+                        while self.eat(TokenKind::Comma) && self.at(TokenKind::Ident) {
+                            // Check if this ident is a name or starts the type
+                            if self.peek_is_ident_before_type() || self.at_type_start_after_ident() {
+                                names.push(self.parse_ident()?);
+                            } else {
+                                break;
+                            }
+                        }
+                        let ty = self.parse_type()?;
+                        for name in names {
+                            results.push(ResultParam {
+                                name: Some(name.clone()),
+                                ty: ty.clone(),
+                                span: Span::new(start, self.current.span.start),
+                            });
+                        }
+                    } else if self.at_type_start() {
+                        // Single name: name type
                         let ty = self.parse_type()?;
                         results.push(ResultParam {
                             name: Some(first),
@@ -313,6 +333,26 @@ impl<'a> Parser<'a> {
                 span: Span::new(start, self.current.span.start),
             }])
         }
+    }
+    
+    /// Check if we're at "name, name2 type" pattern (multiple names sharing type).
+    /// Called when we're at comma after first ident. Uses self.peek to look one token ahead.
+    /// Returns true if pattern looks like "a, b type" rather than "a, type".
+    fn peek_is_ident_before_type(&self) -> bool {
+        // We're at comma. self.peek is the next token after comma.
+        // Pattern "a, b int" -> we're at ',', peek is 'b' (ident that's a name)
+        // Pattern "a, int"   -> we're at ',', peek is 'int' (ident that's a type)
+        // Without deeper lookahead, we can't distinguish. 
+        // Use heuristic: if peek is ident and it's followed by comma, it's likely a name.
+        // For now, require explicit "name type" pattern - don't support "a, b type" syntax.
+        // Users should write "(a int, b int)" instead of "(a, b int)".
+        false
+    }
+    
+    /// Check if next token after current ident could be part of type or end of names
+    fn at_type_start_after_ident(&self) -> bool {
+        // After seeing "name1, name2", check if next is another name or starts type
+        !self.at_type_start() && self.at(TokenKind::Ident)
     }
     
     /// Checks if current token could start a type expression.
