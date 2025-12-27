@@ -1,8 +1,12 @@
 //! Type info wrapper - provides slot layout calculation and type queries.
+//! 
+//! This module provides a convenient wrapper around Project for codegen queries.
+//! Core type layout functions are in vo_analysis::check::type_info.
 
 use vo_analysis::objects::{ObjKey, TCObjects, TypeKey};
 use vo_analysis::typ::{self, Type};
 use vo_analysis::Project;
+use vo_analysis::check::type_info as type_layout;
 use vo_syntax::ast::Ident;
 use vo_syntax::ast::ExprId;
 use vo_common_core::types::SlotType;
@@ -98,91 +102,14 @@ impl<'a> TypeInfoWrapper<'a> {
         self.type_info().selections.get(&expr_id)
     }
 
-    // === Slot layout calculation ===
+    // === Slot layout calculation (delegates to vo_analysis::check::type_info) ===
 
     pub fn type_slot_count(&self, type_key: TypeKey) -> u16 {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        match &self.tc_objs().types[underlying] {
-            Type::Basic(_) => 1,
-            Type::Pointer(_) => 1,
-            Type::Slice(_) => 1,
-            Type::Map(_) => 1,
-            Type::Chan(_) => 1,
-            Type::Signature(_) => 1, // closure is GcRef
-            Type::Interface(_) => 2,
-            Type::Struct(s) => {
-                let mut total = 0u16;
-                for &field_obj in s.fields() {
-                    let field_type = self.obj_type(field_obj, "struct field must have type");
-                    total += self.type_slot_count(field_type);
-                }
-                // Empty struct still needs 1 slot (zero-size types not supported)
-                total.max(1)
-            }
-            Type::Array(a) => {
-                let elem_slots = self.type_slot_count(a.elem());
-                let len = a.len().expect("array must have length") as u16;
-                elem_slots * len
-            }
-            Type::Named(n) => {
-                // Named type - recurse with underlying
-                self.type_slot_count(n.underlying())
-            }
-            Type::Tuple(t) => {
-                let mut total = 0u16;
-                for &var in t.vars() {
-                    let var_type = self.obj_type(var, "tuple element must have type");
-                    total += self.type_slot_count(var_type);
-                }
-                total
-            }
-            other => panic!("type_slot_count: unhandled type {:?}", other),
-        }
+        type_layout::type_slot_count(type_key, self.tc_objs())
     }
 
     pub fn type_slot_types(&self, type_key: TypeKey) -> Vec<SlotType> {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        match &self.tc_objs().types[underlying] {
-            Type::Basic(_) => vec![SlotType::Value],
-            Type::Pointer(_) => vec![SlotType::GcRef],
-            Type::Slice(_) => vec![SlotType::GcRef],
-            Type::Map(_) => vec![SlotType::GcRef],
-            Type::Chan(_) => vec![SlotType::GcRef],
-            Type::Signature(_) => vec![SlotType::GcRef],
-            Type::Interface(_) => vec![SlotType::Interface0, SlotType::Interface1],
-            Type::Struct(s) => {
-                let mut types = Vec::new();
-                for &field_obj in s.fields() {
-                    let field_type = self.obj_type(field_obj, "struct field must have type");
-                    types.extend(self.type_slot_types(field_type));
-                }
-                // Empty struct still needs 1 slot (consistent with type_slot_count)
-                if types.is_empty() {
-                    types.push(SlotType::Value);
-                }
-                types
-            }
-            Type::Array(a) => {
-                let elem_types = self.type_slot_types(a.elem());
-                let mut types = Vec::new();
-                let len = a.len().expect("array must have length") as usize;
-                for _ in 0..len {
-                    types.extend(elem_types.iter().cloned());
-                }
-                types
-            }
-            Type::Named(n) => self.type_slot_types(n.underlying()),
-            Type::Tuple(t) => {
-                let mut types = Vec::new();
-                for &var in t.vars() {
-                    if let Some(var_type) = self.tc_objs().lobjs[var].typ() {
-                        types.extend(self.type_slot_types(var_type));
-                    }
-                }
-                types
-            }
-            other => panic!("type_slot_types: unhandled type {:?}", other),
-        }
+        type_layout::type_slot_types(type_key, self.tc_objs())
     }
 
     /// Get slots and slot_types for a type expression (used for params/results).
@@ -193,125 +120,48 @@ impl<'a> TypeInfoWrapper<'a> {
         (slots, slot_types)
     }
 
-    // === Struct layout ===
+    // === Struct layout (delegates to vo_analysis::check::type_info) ===
 
-    pub fn struct_field_offset(
-        &self,
-        type_key: TypeKey,
-        field_name: &str,
-    ) -> (u16, u16) {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Struct(s) = &self.tc_objs().types[underlying] {
-            let mut offset = 0u16;
-            for &field_obj in s.fields() {
-                let obj = &self.tc_objs().lobjs[field_obj];
-                let field_type = obj.typ().expect("struct field must have type");
-                let field_slots = self.type_slot_count(field_type);
-                if obj.name() == field_name {
-                    return (offset, field_slots);
-                }
-                offset += field_slots;
-            }
-        }
-        panic!("struct field {} not found during codegen", field_name)
+    pub fn struct_field_offset(&self, type_key: TypeKey, field_name: &str) -> (u16, u16) {
+        type_layout::struct_field_offset(type_key, field_name, self.tc_objs())
     }
 
-    /// Get struct field offset by index (for positional struct literals)
-    pub fn struct_field_offset_by_index(
-        &self,
-        type_key: TypeKey,
-        field_index: usize,
-    ) -> (u16, u16) {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Struct(s) = &self.tc_objs().types[underlying] {
-            let mut offset = 0u16;
-            for (i, &field_obj) in s.fields().iter().enumerate() {
-                let obj = &self.tc_objs().lobjs[field_obj];
-                let field_type = obj.typ().expect("struct field must have type");
-                let field_slots = self.type_slot_count(field_type);
-                if i == field_index {
-                    return (offset, field_slots);
-                }
-                offset += field_slots;
-            }
-        }
-        panic!("struct_field_offset_by_index: field {} not found", field_index)
+    pub fn struct_field_offset_by_index(&self, type_key: TypeKey, field_index: usize) -> (u16, u16) {
+        type_layout::struct_field_offset_by_index(type_key, field_index, self.tc_objs())
     }
     
-    /// Get struct field type by index (for method promotion)
-    pub fn struct_field_type_by_index(
-        &self,
-        type_key: TypeKey,
-        field_index: usize,
-    ) -> TypeKey {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Struct(s) = &self.tc_objs().types[underlying] {
-            if let Some(&field_obj) = s.fields().get(field_index) {
-                return self.obj_type(field_obj, "struct field must have type");
-            }
-        }
-        panic!("struct_field_type_by_index: field {} not found", field_index)
+    pub fn struct_field_type_by_index(&self, type_key: TypeKey, field_index: usize) -> TypeKey {
+        type_layout::struct_field_type_by_index(type_key, field_index, self.tc_objs())
     }
 
-    /// Compute field offset using selection indices (unified approach for all field access)
-    /// This handles both direct fields (indices.len() == 1) and promoted fields (indices.len() > 1)
-    pub fn compute_field_offset_from_indices(
-        &self,
-        base_type: TypeKey,
-        indices: &[usize],
-    ) -> (u16, u16) {
-        if indices.is_empty() {
-            panic!("compute_field_offset_from_indices: empty indices");
-        }
-        
-        let mut offset = 0u16;
-        let mut current_type = base_type;
-        let mut final_slots = 1u16;
-        
-        for (i, &idx) in indices.iter().enumerate() {
-            let (field_offset, field_slots) = self.struct_field_offset_by_index(current_type, idx);
-            offset += field_offset;
-            
-            if i == indices.len() - 1 {
-                final_slots = field_slots;
-            } else {
-                current_type = self.struct_field_type_by_index(current_type, idx);
-            }
-        }
-        
-        (offset, final_slots)
+    pub fn compute_field_offset_from_indices(&self, base_type: TypeKey, indices: &[usize]) -> (u16, u16) {
+        type_layout::compute_field_offset_from_indices(base_type, indices, self.tc_objs())
     }
 
-    // === Type queries ===
+    // === Type queries (delegates to vo_analysis::check::type_info) ===
 
     pub fn is_interface(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_interface().is_some()
+        type_layout::is_interface(type_key, self.tc_objs())
     }
 
     pub fn is_pointer(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_pointer().is_some()
+        type_layout::is_pointer(type_key, self.tc_objs())
     }
 
     pub fn is_struct(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_struct().is_some()
+        type_layout::is_struct(type_key, self.tc_objs())
     }
 
     pub fn is_array(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_array().is_some()
+        type_layout::is_array(type_key, self.tc_objs())
     }
 
     pub fn is_slice(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_slice().is_some()
+        type_layout::is_slice(type_key, self.tc_objs())
     }
 
     pub fn is_map(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_map().is_some()
+        type_layout::is_map(type_key, self.tc_objs())
     }
 
     pub fn is_string(&self, type_key: TypeKey) -> bool {
@@ -319,18 +169,15 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     pub fn is_chan(&self, type_key: TypeKey) -> bool {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        self.tc_objs().types[underlying].try_as_chan().is_some()
+        type_layout::is_chan(type_key, self.tc_objs())
     }
 
-    /// Check if type has value semantics (struct or array - copied by value, not reference)
     pub fn is_value_type(&self, type_key: TypeKey) -> bool {
-        self.is_struct(type_key) || self.is_array(type_key)
+        type_layout::is_value_type(type_key, self.tc_objs())
     }
 
-    /// Check if type is a named type (Type::Named)
     pub fn is_named_type(&self, type_key: TypeKey) -> bool {
-        self.tc_objs().types[type_key].try_as_named().is_some()
+        type_layout::is_named_type(type_key, self.tc_objs())
     }
 
     /// Get map key and value slot counts
@@ -377,41 +224,7 @@ impl<'a> TypeInfoWrapper<'a> {
 
     /// Get ValueKind for a type
     pub fn type_value_kind(&self, type_key: TypeKey) -> vo_common_core::types::ValueKind {
-        use vo_common_core::types::ValueKind;
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        match &self.tc_objs().types[underlying] {
-            Type::Basic(b) => {
-                use vo_analysis::typ::BasicType;
-                match b.typ() {
-                    BasicType::Bool | BasicType::UntypedBool => ValueKind::Bool,
-                    BasicType::Int | BasicType::UntypedInt => ValueKind::Int,
-                    BasicType::Int8 => ValueKind::Int8,
-                    BasicType::Int16 => ValueKind::Int16,
-                    BasicType::Int32 | BasicType::UntypedRune | BasicType::Rune => ValueKind::Int32,
-                    BasicType::Int64 => ValueKind::Int64,
-                    BasicType::Uint => ValueKind::Uint,
-                    BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,
-                    BasicType::Uint16 => ValueKind::Uint16,
-                    BasicType::Uint32 => ValueKind::Uint32,
-                    BasicType::Uint64 | BasicType::Uintptr => ValueKind::Uint64,
-                    BasicType::Float32 => ValueKind::Float32,
-                    BasicType::Float64 | BasicType::UntypedFloat => ValueKind::Float64,
-                    BasicType::Str | BasicType::UntypedString => ValueKind::String,
-                    BasicType::UntypedNil => ValueKind::Void,
-                    other => panic!("type_value_kind: unhandled BasicType {:?}", other),
-                }
-            }
-            Type::Pointer(_) => ValueKind::Pointer,
-            Type::Array(_) => ValueKind::Array,
-            Type::Slice(_) => ValueKind::Slice,
-            Type::Map(_) => ValueKind::Map,
-            Type::Struct(_) => ValueKind::Struct,
-            Type::Interface(_) => ValueKind::Interface,
-            Type::Chan(_) => ValueKind::Channel,
-            Type::Signature(_) => ValueKind::Closure,
-            Type::Named(n) => self.type_value_kind(n.underlying()),
-            other => panic!("type_value_kind: unhandled type {:?}", other),
-        }
+        type_layout::type_value_kind(type_key, self.tc_objs())
     }
 
     /// Get object's type. Panics with the given message if object has no type.

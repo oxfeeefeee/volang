@@ -198,3 +198,335 @@ impl TypeInfo {
         self.escaped_vars.contains(&obj)
     }
 }
+
+// === Type Layout Functions ===
+// These functions compute type layout information (slot counts, slot types, etc.)
+// They only depend on TCObjects and can be used by both codegen and other consumers.
+
+use crate::typ::{self, Type, BasicType};
+use vo_common_core::types::{SlotType, ValueKind};
+use vo_common_core::RuntimeType;
+
+/// Compute the number of slots a type occupies.
+pub fn type_slot_count(type_key: TypeKey, tc_objs: &TCObjects) -> u16 {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    match &tc_objs.types[underlying] {
+        Type::Basic(_) => 1,
+        Type::Pointer(_) => 1,
+        Type::Slice(_) => 1,
+        Type::Map(_) => 1,
+        Type::Chan(_) => 1,
+        Type::Signature(_) => 1, // closure is GcRef
+        Type::Interface(_) => 2,
+        Type::Struct(s) => {
+            let mut total = 0u16;
+            for &field_obj in s.fields() {
+                if let Some(field_type) = tc_objs.lobjs[field_obj].typ() {
+                    total += type_slot_count(field_type, tc_objs);
+                }
+            }
+            // Empty struct still needs 1 slot (zero-size types not supported)
+            total.max(1)
+        }
+        Type::Array(a) => {
+            let elem_slots = type_slot_count(a.elem(), tc_objs);
+            let len = a.len().unwrap_or(0) as u16;
+            elem_slots * len
+        }
+        Type::Named(n) => type_slot_count(n.underlying(), tc_objs),
+        Type::Tuple(t) => {
+            let mut total = 0u16;
+            for &var in t.vars() {
+                if let Some(var_type) = tc_objs.lobjs[var].typ() {
+                    total += type_slot_count(var_type, tc_objs);
+                }
+            }
+            total
+        }
+        other => panic!("type_slot_count: unhandled type {:?}", other),
+    }
+}
+
+/// Compute the slot types for a type.
+pub fn type_slot_types(type_key: TypeKey, tc_objs: &TCObjects) -> Vec<SlotType> {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    match &tc_objs.types[underlying] {
+        Type::Basic(_) => vec![SlotType::Value],
+        Type::Pointer(_) => vec![SlotType::GcRef],
+        Type::Slice(_) => vec![SlotType::GcRef],
+        Type::Map(_) => vec![SlotType::GcRef],
+        Type::Chan(_) => vec![SlotType::GcRef],
+        Type::Signature(_) => vec![SlotType::GcRef],
+        Type::Interface(_) => vec![SlotType::Interface0, SlotType::Interface1],
+        Type::Struct(s) => {
+            let mut types = Vec::new();
+            for &field_obj in s.fields() {
+                if let Some(field_type) = tc_objs.lobjs[field_obj].typ() {
+                    types.extend(type_slot_types(field_type, tc_objs));
+                }
+            }
+            // Empty struct still needs 1 slot
+            if types.is_empty() {
+                types.push(SlotType::Value);
+            }
+            types
+        }
+        Type::Array(a) => {
+            let elem_types = type_slot_types(a.elem(), tc_objs);
+            let mut types = Vec::new();
+            let len = a.len().unwrap_or(0) as usize;
+            for _ in 0..len {
+                types.extend(elem_types.iter().cloned());
+            }
+            types
+        }
+        Type::Named(n) => type_slot_types(n.underlying(), tc_objs),
+        Type::Tuple(t) => {
+            let mut types = Vec::new();
+            for &var in t.vars() {
+                if let Some(var_type) = tc_objs.lobjs[var].typ() {
+                    types.extend(type_slot_types(var_type, tc_objs));
+                }
+            }
+            types
+        }
+        other => panic!("type_slot_types: unhandled type {:?}", other),
+    }
+}
+
+/// Convert a type to its ValueKind.
+pub fn type_value_kind(type_key: TypeKey, tc_objs: &TCObjects) -> ValueKind {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    match &tc_objs.types[underlying] {
+        Type::Basic(b) => {
+            match b.typ() {
+                BasicType::Bool | BasicType::UntypedBool => ValueKind::Bool,
+                BasicType::Int | BasicType::UntypedInt => ValueKind::Int,
+                BasicType::Int8 => ValueKind::Int8,
+                BasicType::Int16 => ValueKind::Int16,
+                BasicType::Int32 | BasicType::UntypedRune | BasicType::Rune => ValueKind::Int32,
+                BasicType::Int64 => ValueKind::Int64,
+                BasicType::Uint => ValueKind::Uint,
+                BasicType::Uint8 | BasicType::Byte => ValueKind::Uint8,
+                BasicType::Uint16 => ValueKind::Uint16,
+                BasicType::Uint32 => ValueKind::Uint32,
+                BasicType::Uint64 | BasicType::Uintptr => ValueKind::Uint64,
+                BasicType::Float32 => ValueKind::Float32,
+                BasicType::Float64 | BasicType::UntypedFloat => ValueKind::Float64,
+                BasicType::Str | BasicType::UntypedString => ValueKind::String,
+                BasicType::UntypedNil => ValueKind::Void,
+                other => panic!("type_value_kind: unhandled BasicType {:?}", other),
+            }
+        }
+        Type::Pointer(_) => ValueKind::Pointer,
+        Type::Array(_) => ValueKind::Array,
+        Type::Slice(_) => ValueKind::Slice,
+        Type::Map(_) => ValueKind::Map,
+        Type::Struct(_) => ValueKind::Struct,
+        Type::Interface(_) => ValueKind::Interface,
+        Type::Chan(_) => ValueKind::Channel,
+        Type::Signature(_) => ValueKind::Closure,
+        Type::Named(n) => type_value_kind(n.underlying(), tc_objs),
+        other => panic!("type_value_kind: unhandled type {:?}", other),
+    }
+}
+
+/// Convert a type to RuntimeType (for type identity checking).
+pub fn type_to_runtime_type(type_key: TypeKey, tc_objs: &TCObjects, named_type_id_fn: impl Fn(TypeKey) -> Option<u32>) -> RuntimeType {
+    let vk = type_value_kind(type_key, tc_objs);
+    
+    match vk {
+        ValueKind::Int | ValueKind::Int8 | ValueKind::Int16 | ValueKind::Int32 | ValueKind::Int64 |
+        ValueKind::Uint | ValueKind::Uint8 | ValueKind::Uint16 | ValueKind::Uint32 | ValueKind::Uint64 |
+        ValueKind::Float32 | ValueKind::Float64 | ValueKind::Bool | ValueKind::String => {
+            RuntimeType::Basic(vk)
+        }
+        ValueKind::Struct | ValueKind::Array => {
+            if let Some(id) = named_type_id_fn(type_key) {
+                RuntimeType::Named(id)
+            } else if vk == ValueKind::Struct {
+                RuntimeType::Struct { fields: Vec::new() }
+            } else {
+                RuntimeType::Array { len: 0, elem: Box::new(RuntimeType::Basic(ValueKind::Void)) }
+            }
+        }
+        ValueKind::Pointer => RuntimeType::Pointer(Box::new(RuntimeType::Basic(ValueKind::Void))),
+        ValueKind::Slice => RuntimeType::Slice(Box::new(RuntimeType::Basic(ValueKind::Void))),
+        ValueKind::Map => RuntimeType::Map {
+            key: Box::new(RuntimeType::Basic(ValueKind::Void)),
+            val: Box::new(RuntimeType::Basic(ValueKind::Void)),
+        },
+        ValueKind::Channel => RuntimeType::Chan {
+            dir: vo_common_core::ChanDir::Both,
+            elem: Box::new(RuntimeType::Basic(ValueKind::Void)),
+        },
+        ValueKind::Interface => RuntimeType::Interface { methods: Vec::new() },
+        ValueKind::Closure => RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false },
+        _ => RuntimeType::Basic(ValueKind::Void),
+    }
+}
+
+/// Convert a Signature type to RuntimeType::Func with proper params/results.
+pub fn signature_to_runtime_type(sig_type: TypeKey, tc_objs: &TCObjects, named_type_id_fn: impl Fn(TypeKey) -> Option<u32> + Copy) -> RuntimeType {
+    if let Type::Signature(sig) = &tc_objs.types[sig_type] {
+        let params_tuple = sig.params();
+        let params: Vec<RuntimeType> = if let Type::Tuple(tuple) = &tc_objs.types[params_tuple] {
+            tuple.vars().iter()
+                .filter_map(|&v| {
+                    tc_objs.lobjs[v].typ().map(|t| type_to_runtime_type(t, tc_objs, named_type_id_fn))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        
+        let results_tuple = sig.results();
+        let results: Vec<RuntimeType> = if let Type::Tuple(tuple) = &tc_objs.types[results_tuple] {
+            tuple.vars().iter()
+                .filter_map(|&v| {
+                    tc_objs.lobjs[v].typ().map(|t| type_to_runtime_type(t, tc_objs, named_type_id_fn))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        
+        RuntimeType::Func {
+            params,
+            results,
+            variadic: sig.variadic(),
+        }
+    } else {
+        RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false }
+    }
+}
+
+// === Type Query Functions ===
+
+/// Check if type is an interface.
+pub fn is_interface(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_interface().is_some()
+}
+
+/// Check if type is a pointer.
+pub fn is_pointer(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_pointer().is_some()
+}
+
+/// Check if type is a struct.
+pub fn is_struct(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_struct().is_some()
+}
+
+/// Check if type is an array.
+pub fn is_array(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_array().is_some()
+}
+
+/// Check if type is a slice.
+pub fn is_slice(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_slice().is_some()
+}
+
+/// Check if type is a map.
+pub fn is_map(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_map().is_some()
+}
+
+/// Check if type is a channel.
+pub fn is_chan(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    tc_objs.types[underlying].try_as_chan().is_some()
+}
+
+/// Check if type has value semantics (struct or array).
+pub fn is_value_type(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    is_struct(type_key, tc_objs) || is_array(type_key, tc_objs)
+}
+
+/// Check if type is a named type.
+pub fn is_named_type(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    tc_objs.types[type_key].try_as_named().is_some()
+}
+
+// === Struct Layout Functions ===
+
+/// Get struct field offset and slot count by field name.
+pub fn struct_field_offset(type_key: TypeKey, field_name: &str, tc_objs: &TCObjects) -> (u16, u16) {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Struct(s) = &tc_objs.types[underlying] {
+        let mut offset = 0u16;
+        for &field_obj in s.fields() {
+            let obj = &tc_objs.lobjs[field_obj];
+            if let Some(field_type) = obj.typ() {
+                let field_slots = type_slot_count(field_type, tc_objs);
+                if obj.name() == field_name {
+                    return (offset, field_slots);
+                }
+                offset += field_slots;
+            }
+        }
+    }
+    panic!("struct field {} not found", field_name)
+}
+
+/// Get struct field offset and slot count by field index.
+pub fn struct_field_offset_by_index(type_key: TypeKey, field_index: usize, tc_objs: &TCObjects) -> (u16, u16) {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Struct(s) = &tc_objs.types[underlying] {
+        let mut offset = 0u16;
+        for (i, &field_obj) in s.fields().iter().enumerate() {
+            if let Some(field_type) = tc_objs.lobjs[field_obj].typ() {
+                let field_slots = type_slot_count(field_type, tc_objs);
+                if i == field_index {
+                    return (offset, field_slots);
+                }
+                offset += field_slots;
+            }
+        }
+    }
+    panic!("struct field index {} not found", field_index)
+}
+
+/// Get struct field type by index.
+pub fn struct_field_type_by_index(type_key: TypeKey, field_index: usize, tc_objs: &TCObjects) -> TypeKey {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Struct(s) = &tc_objs.types[underlying] {
+        if let Some(&field_obj) = s.fields().get(field_index) {
+            if let Some(field_type) = tc_objs.lobjs[field_obj].typ() {
+                return field_type;
+            }
+        }
+    }
+    panic!("struct field index {} not found", field_index)
+}
+
+/// Compute field offset using selection indices.
+pub fn compute_field_offset_from_indices(base_type: TypeKey, indices: &[usize], tc_objs: &TCObjects) -> (u16, u16) {
+    if indices.is_empty() {
+        panic!("compute_field_offset_from_indices: empty indices");
+    }
+    
+    let mut offset = 0u16;
+    let mut current_type = base_type;
+    let mut final_slots = 1u16;
+    
+    for (i, &idx) in indices.iter().enumerate() {
+        let (field_offset, field_slots) = struct_field_offset_by_index(current_type, idx, tc_objs);
+        offset += field_offset;
+        
+        if i == indices.len() - 1 {
+            final_slots = field_slots;
+        } else {
+            current_type = struct_field_type_by_index(current_type, idx, tc_objs);
+        }
+    }
+    
+    (offset, final_slots)
+}

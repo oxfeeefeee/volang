@@ -19,7 +19,7 @@ mod label;
 pub(crate) mod resolver;
 mod returns;
 mod stmt;
-mod type_info;
+pub mod type_info;
 mod typexpr;
 mod util;
 
