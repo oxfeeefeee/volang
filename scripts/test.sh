@@ -8,7 +8,8 @@
 #   ./test.sh -v           # Verbose mode (show all output)
 #   ./test.sh <file.vo>   # Run a single test file
 #
-# Configuration: test_data/tests.yaml
+# Configuration: test_data/_skip.yaml (lists tests to skip)
+# Tests NOT in _skip.yaml run in both vm and jit modes.
 
 set -e
 
@@ -16,10 +17,66 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 TEST_DIR="test_data"
-CONFIG="$TEST_DIR/_tests.yaml"
+SKIP_CONFIG="$TEST_DIR/_skip.yaml"
 BIN="target/debug/vo"
 MODE="${1:-both}"
 VERBOSE=false
+
+# Helper: check if file should skip a mode
+should_skip() {
+    local file="$1"
+    local mode="$2"
+    
+    if [[ ! -f "$SKIP_CONFIG" ]]; then
+        return 1
+    fi
+    
+    # Find the file entry and check its skip modes
+    local in_entry=false
+    local found_file=false
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*file:[[:space:]]*(.+)$ ]]; then
+            if $found_file; then
+                break
+            fi
+            local entry_file="${BASH_REMATCH[1]}"
+            if [[ "$entry_file" == "$file" ]]; then
+                found_file=true
+            fi
+        elif $found_file && [[ "$line" =~ ^[[:space:]]*skip:[[:space:]]*\[(.+)\]$ ]]; then
+            local modes="${BASH_REMATCH[1]}"
+            if [[ "$modes" == *"$mode"* ]]; then
+                return 0
+            fi
+        fi
+    done < "$SKIP_CONFIG"
+    return 1
+}
+
+# Helper: check if file expects error
+expects_error() {
+    local file="$1"
+    
+    if [[ ! -f "$SKIP_CONFIG" ]]; then
+        return 1
+    fi
+    
+    local found_file=false
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*file:[[:space:]]*(.+)$ ]]; then
+            if $found_file; then
+                break
+            fi
+            local entry_file="${BASH_REMATCH[1]}"
+            if [[ "$entry_file" == "$file" ]]; then
+                found_file=true
+            fi
+        elif $found_file && [[ "$line" =~ ^[[:space:]]*expect_error:[[:space:]]*true ]]; then
+            return 0
+        fi
+    done < "$SKIP_CONFIG"
+    return 1
+}
 
 # Colors
 GREEN='\033[0;32m'
@@ -56,12 +113,6 @@ fi
 echo -e "${DIM}Building vo-cli...${NC}"
 cargo build -q -p vo-cli || exit 1
 
-# Check if config exists
-if [[ ! -f "$CONFIG" ]]; then
-    echo -e "${RED}Error: $CONFIG not found${NC}"
-    exit 1
-fi
-
 # Counters
 vm_passed=0
 vm_failed=0
@@ -71,13 +122,6 @@ skipped=0
 
 passed_list=""
 failed_list=""
-
-# Parse YAML and run tests
-# Simple YAML parser using grep/sed
-current_file=""
-current_modes=""
-current_skip=""
-current_expect_error=""
 
 run_test() {
     local file="$1"
@@ -169,14 +213,23 @@ run_test() {
         fi
         local panic_line=$(echo "$output" | grep "panicked at" | head -1 | sed 's/.*panicked at //' | cut -c1-60)
         failed_list="$failed_list  ${RED}✗${NC} $file [$mode] [RUST PANIC: $panic_line]\n"
-    else
-        # No tag found - assume success if no error
+    elif echo "$output" | grep -q "^error:"; then
+        # CLI error output (e.g., "error: analysis error: type check failed")
         if [[ "$mode" == "vm" ]]; then
-            vm_passed=$((vm_passed + 1))
+            vm_failed=$((vm_failed + 1))
         else
-            jit_passed=$((jit_passed + 1))
+            jit_failed=$((jit_failed + 1))
         fi
-        passed_list="$passed_list  ${GREEN}✓${NC} $file [$mode]\n"
+        local error_line=$(echo "$output" | grep "^error:" | head -1 | cut -c1-60)
+        failed_list="$failed_list  ${RED}✗${NC} $file [$mode] [$error_line]\n"
+    else
+        # No [VO:OK] tag and no error - consider it a failure (missing success marker)
+        if [[ "$mode" == "vm" ]]; then
+            vm_failed=$((vm_failed + 1))
+        else
+            jit_failed=$((jit_failed + 1))
+        fi
+        failed_list="$failed_list  ${RED}✗${NC} $file [$mode] [no [VO:OK] marker]\n"
     fi
     
     if $VERBOSE; then
@@ -186,69 +239,82 @@ run_test() {
 
 echo -e "${BOLD}Running Vo integration tests...${NC}\n"
 
-# Read and parse YAML
-while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip comments and empty lines
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    [[ -z "${line// }" ]] && continue
+# Find and run all .vo test files (recursive)
+while IFS= read -r path; do
+    # Get relative path from test_data/
+    file="${path#$TEST_DIR/}"
     
-    # Parse file: entry
-    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*file:[[:space:]]*(.+)$ ]]; then
-        # Process previous test if any
-        if [[ -n "$current_file" && -n "$current_modes" ]]; then
-            if [[ -n "$current_skip" ]]; then
-                skipped=$((skipped + 1))
-                if $VERBOSE; then
-                    echo -e "  ${YELLOW}⊘${NC} $current_file [skipped: $current_skip]"
-                fi
-            else
-                # Run for each mode
-                if [[ "$current_modes" == *"vm"* ]] && [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
-                    run_test "$current_file" "vm" "$current_expect_error"
-                fi
-                if [[ "$current_modes" == *"jit"* ]] && [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
-                    run_test "$current_file" "jit" "$current_expect_error"
-                fi
+    # Skip files in proj_* directories (handled as multi-file projects)
+    if [[ "$file" == proj_*/* ]]; then
+        continue
+    fi
+    
+    # Check if expect_error
+    is_expect_error=""
+    if expects_error "$file"; then
+        is_expect_error="true"
+    fi
+    
+    # Run VM mode
+    if [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
+        if should_skip "$file" "vm"; then
+            skipped=$((skipped + 1))
+            if $VERBOSE; then
+                echo -e "  ${YELLOW}⊘${NC} $file [vm skipped]"
             fi
+        else
+            run_test "$file" "vm" "$is_expect_error"
         fi
-        
-        # Start new test
-        current_file="${BASH_REMATCH[1]}"
-        current_modes=""
-        current_skip=""
-        current_expect_error=""
     fi
     
-    # Parse mode: entry
-    if [[ "$line" =~ ^[[:space:]]*mode:[[:space:]]*\[(.+)\]$ ]]; then
-        current_modes="${BASH_REMATCH[1]}"
+    # Run JIT mode
+    if [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
+        if should_skip "$file" "jit"; then
+            skipped=$((skipped + 1))
+            if $VERBOSE; then
+                echo -e "  ${YELLOW}⊘${NC} $file [jit skipped]"
+            fi
+        else
+            run_test "$file" "jit" "$is_expect_error"
+        fi
     fi
-    
-    # Parse skip: entry
-    if [[ "$line" =~ ^[[:space:]]*skip:[[:space:]]*(.+)$ ]]; then
-        current_skip="${BASH_REMATCH[1]}"
-    fi
-    
-    # Parse expect_error: entry
-    if [[ "$line" =~ ^[[:space:]]*expect_error:[[:space:]]*(.+)$ ]]; then
-        current_expect_error="${BASH_REMATCH[1]}"
-    fi
-    
-done < "$CONFIG"
+done < <(find "$TEST_DIR" -name "*.vo" -type f | sort)
 
-# Process last test
-if [[ -n "$current_file" && -n "$current_modes" ]]; then
-    if [[ -n "$current_skip" ]]; then
-        skipped=$((skipped + 1))
-    else
-        if [[ "$current_modes" == *"vm"* ]] && [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
-            run_test "$current_file" "vm" "$current_expect_error"
-        fi
-        if [[ "$current_modes" == *"jit"* ]] && [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
-            run_test "$current_file" "jit" "$current_expect_error"
+# Run tests for project directories
+while IFS= read -r dir_path; do
+    [[ -z "$dir_path" ]] && continue
+    dir="${dir_path#$TEST_DIR/}/"
+    
+    # Check if expect_error
+    is_expect_error=""
+    if expects_error "$dir"; then
+        is_expect_error="true"
+    fi
+    
+    # Run VM mode
+    if [[ "$MODE" == "vm" || "$MODE" == "both" ]]; then
+        if should_skip "$dir" "vm"; then
+            skipped=$((skipped + 1))
+            if $VERBOSE; then
+                echo -e "  ${YELLOW}⊘${NC} $dir [vm skipped]"
+            fi
+        else
+            run_test "$dir" "vm" "$is_expect_error"
         fi
     fi
-fi
+    
+    # Run JIT mode
+    if [[ "$MODE" == "jit" || "$MODE" == "both" ]]; then
+        if should_skip "$dir" "jit"; then
+            skipped=$((skipped + 1))
+            if $VERBOSE; then
+                echo -e "  ${YELLOW}⊘${NC} $dir [jit skipped]"
+            fi
+        else
+            run_test "$dir" "jit" "$is_expect_error"
+        fi
+    fi
+done < <(find "$TEST_DIR" -maxdepth 1 -type d -name "proj_*" | sort)
 
 total_passed=$((vm_passed + jit_passed))
 total_failed=$((vm_failed + jit_failed))

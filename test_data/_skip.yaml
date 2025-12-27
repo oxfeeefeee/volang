@@ -1,0 +1,251 @@
+# Vo Integration Test Skip Configuration
+#
+# Tests NOT listed here will run in BOTH vm and jit modes.
+# Only list tests that need to be skipped.
+#
+# Format:
+#   skips:
+#     - file: path/to/test.vo      # Relative to test_data/
+#       skip: [vm, jit]            # Skip both modes
+#       skip: [vm]                 # Skip vm mode only
+#       skip: [jit]                # Skip jit mode only
+#       reason: "why"              # Optional reason
+#       expect_error: true         # Test expects an error (negative test)
+
+skips:
+  - file: channel_send.vo
+    skip: [jit]
+  - file: clone_immediate_read.vo
+    skip: [jit]
+  - file: complex_literal.vo
+    skip: [jit]
+  - file: const.vo
+    skip: [jit]
+  - file: const_fold.vo
+    skip: [jit]
+  - file: constant.vo
+    skip: [jit]
+  - file: debug_array_index.vo
+    skip: [jit]
+  - file: debug_clone.vo
+    skip: [jit]
+  - file: debug_escaped_array.vo
+    skip: [jit]
+  - file: debug_iface_bugs.vo
+    skip: [jit]
+  - file: debug_sequence.vo
+    skip: [jit]
+  - file: defer_stmt.vo
+    skip: [vm, jit]
+    reason: "type check failed"
+  - file: embed_interface.vo
+    skip: [jit]
+  - file: embed_interface_impl.vo
+    skip: [jit]
+  - file: embed_method.vo
+    skip: [jit]
+  - file: embed_pointer.vo
+    skip: [jit]
+  - file: embed_shadow.vo
+    skip: [jit]
+  - file: embed_struct.vo
+    skip: [jit]
+  - file: escape_return_value.vo
+    skip: [jit]
+  - file: escape_struct_assign.vo
+    skip: [jit]
+  - file: fib_goroutine.vo
+    skip: [vm, jit]
+    reason: "VariableNotFound"
+  - file: field_offset_debug.vo
+    skip: [jit]
+  - file: go_stmt.vo
+    skip: [vm, jit]
+    reason: "VariableNotFound"
+  - file: iface_escape_closure.vo
+    skip: [jit]
+  - file: iface_to_iface_assertion.vo
+    skip: [jit]
+  - file: init_call_error.vo
+    skip: [jit]
+    expect_error: true
+  - file: interface.vo
+    skip: [jit]
+  - file: interface_closure.vo
+    skip: [jit]
+  - file: interface_conversion.vo
+    skip: [jit]
+  - file: interface_method_set.vo
+    skip: [jit]
+  - file: interface_pointer.vo
+    skip: [jit]
+  - file: interface_simple.vo
+    skip: [jit]
+  - file: jit/bitwise_ops.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/boolean_ops.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/channel_basic.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/comparisons.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/control_flow.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/float_ops.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/for_loop.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/modulo_ops.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/multi_return.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/native_math.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/native_strings.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/negative_numbers.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/nested_calls.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/recursion.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/simple_arithmetic.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/string_const.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: jit/type_conversion.vo
+    skip: [vm, jit]
+    reason: "JIT-only test, JIT not ready"
+  - file: local_type.vo
+    skip: [jit]
+  - file: map.vo
+    skip: [jit]
+  - file: method_dispatch_bug.vo
+    skip: [jit]
+  - file: minimal_bug.vo
+    skip: [jit]
+  - file: minimal_bug2.vo
+    skip: [jit]
+  - file: multi_init.vo
+    skip: [vm, jit]
+    reason: "type check failed"
+  - file: multi_type_method.vo
+    skip: [jit]
+  - file: nested_clone_test.vo
+    skip: [jit]
+  - file: nested_struct_bug.vo
+    skip: [jit]
+  - file: point_then_rect.vo
+    skip: [jit]
+  - file: pointer_basic.vo
+    skip: [jit]
+  - file: pointer_comprehensive.vo
+    skip: [jit]
+  - file: pointer_embedded.vo
+    skip: [jit]
+  - file: pointer_method_call.vo
+    skip: [jit]
+  - file: proj_multifile/
+    skip: [vm, jit]
+    reason: "literal has no const value"
+  - file: proj_qualified_embed/
+    skip: [vm, jit]
+    reason: "type check failed"
+  - file: proj_taskman/
+    skip: [vm, jit]
+    reason: "type check failed"
+  - file: qualified_embed_iface.vo
+    skip: [jit]
+  - file: range_string.vo
+    skip: [jit]
+  - file: rect_only.vo
+    skip: [jit]
+  - file: rect_only_sum.vo
+    skip: [jit]
+  - file: rune_literal.vo
+    skip: [jit]
+  - file: select_stmt.vo
+    skip: [vm, jit]
+    reason: "type check failed"
+  - file: setfield_getfield_test.vo
+    skip: [jit]
+  - file: setfield_test.vo
+    skip: [jit]
+  - file: simple_clone_test.vo
+    skip: [jit]
+  - file: slice.vo
+    skip: [jit]
+  - file: slice_map.vo
+    skip: [jit]
+  - file: slice_ops.vo
+    skip: [jit]
+  - file: stack_array_iter.vo
+    skip: [jit]
+  - file: stack_vs_escaped_array.vo
+    skip: [jit]
+  - file: stdlib/base64.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/bytes.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/errors.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/hex.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/math.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/regexp.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/sort.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/strconv.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/strings.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: stdlib/unicode.vo
+    skip: [vm, jit]
+    reason: "stdlib not ready"
+  - file: struct_method_simple.vo
+    skip: [jit]
+  - file: struct_object.vo
+    skip: [jit]
+  - file: switch_stmt.vo
+    skip: [jit]
+  - file: type_assertion.vo
+    skip: [jit]
+  - file: type_debug.vo
+    skip: [jit]
+  - file: value_receiver_bug.vo
+    skip: [jit]
+  - file: var_dependency.vo
+    skip: [jit]
+  - file: var_init_complex.vo
+    skip: [jit]
+  - file: var_init_func.vo
+    skip: [jit]
+  - file: var_init_order.vo
+    skip: [jit]
