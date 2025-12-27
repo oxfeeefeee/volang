@@ -67,6 +67,7 @@ pub struct FuncBuilder {
     slot_types: Vec<SlotType>,
     code: Vec<Instruction>,
     loop_stack: Vec<LoopContext>,
+    return_types: Vec<vo_analysis::objects::TypeKey>,
 }
 
 impl FuncBuilder {
@@ -83,6 +84,7 @@ impl FuncBuilder {
             slot_types: Vec::new(),
             code: Vec::new(),
             loop_stack: Vec::new(),
+            return_types: Vec::new(),
         }
     }
 
@@ -359,6 +361,14 @@ impl FuncBuilder {
 
     pub fn set_ret_slots(&mut self, slots: u16) {
         self.ret_slots = slots;
+    }
+
+    pub fn set_return_types(&mut self, types: Vec<vo_analysis::objects::TypeKey>) {
+        self.return_types = types;
+    }
+
+    pub fn return_types(&self) -> &[vo_analysis::objects::TypeKey] {
+        &self.return_types
     }
 
     pub fn set_recv_slots(&mut self, slots: u16) {

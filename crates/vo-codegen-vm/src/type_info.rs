@@ -37,6 +37,30 @@ impl<'a> TypeInfoWrapper<'a> {
             .expect("expression must have type during codegen")
     }
 
+    /// Get the i-th element type from a tuple type (for comma-ok expressions)
+    pub fn tuple_elem_type(&self, type_key: TypeKey, i: usize) -> TypeKey {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Tuple(tuple) = &self.tc_objs().types[underlying] {
+            let vars = tuple.vars();
+            if i < vars.len() {
+                return self.tc_objs().lobjs[vars[i]].typ().expect("tuple element must have type");
+            }
+        }
+        panic!("tuple_elem_type: not a tuple or index out of bounds")
+    }
+
+    /// Check if type is a tuple (comma-ok result)
+    pub fn is_tuple(&self, type_key: TypeKey) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        matches!(&self.tc_objs().types[underlying], Type::Tuple(_))
+    }
+
+    pub fn expr_type_raw(&self, expr_id: ExprId) -> TypeKey {
+        self.project.type_info.types.get(&expr_id)
+            .map(|tv| tv.typ)
+            .expect("expression must have type during codegen")
+    }
+
     pub fn expr_slots(&self, expr_id: ExprId) -> u16 {
         self.type_slot_count(self.expr_type(expr_id))
     }

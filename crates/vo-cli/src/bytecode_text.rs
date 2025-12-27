@@ -309,7 +309,7 @@ fn format_instruction(instr: &Instruction) -> String {
 
         // IFACE
         Opcode::IfaceAssign => format!("IfaceAssign   r{}, r{}, iface_meta={}, vk={}", a, b, c, flags),
-        Opcode::IfaceAssert => format!("IfaceAssert   r{}, r{}, target_meta={}", a, b, c),
+        Opcode::IfaceAssert => format!("IfaceAssert   r{}, r{}, target_meta={}, flags={}", a, b, c, flags),
 
         // CONV
         Opcode::ConvI2F => format!("ConvI2F       r{}, r{}", a, b),

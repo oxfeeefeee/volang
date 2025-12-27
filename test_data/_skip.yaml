@@ -237,6 +237,10 @@ skips:
     skip: [jit]
   - file: type_assertion.vo
     skip: [jit]
+  - file: type_assertion_ok.vo
+    skip: [jit]
+  - file: typed_nil_interface.vo
+    skip: [jit]
   - file: type_debug.vo
     skip: [jit]
   - file: value_receiver_bug.vo

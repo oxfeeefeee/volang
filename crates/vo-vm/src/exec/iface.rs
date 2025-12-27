@@ -118,43 +118,48 @@ pub fn exec_iface_assert(
     let src_rttid = interface::unpack_rttid(slot0);
     let src_vk = interface::unpack_value_kind(slot0);
 
-    let matches = match assert_kind {
-        0 => {
-            // Type comparison: check rttid
-            src_rttid == target_id
-        }
-        1 => {
-            // Interface: check if src type satisfies target interface
-            let iface_meta = &module.interface_metas[target_id as usize];
-            if iface_meta.methods.is_empty() {
-                true // empty interface always satisfied
-            } else {
-                // Look up RuntimeType to find named_type_id for method lookup
-                if let Some(rt) = module.runtime_types.get(src_rttid as usize) {
-                    if let vo_common_core::RuntimeType::Named(named_type_id) = rt {
-                        let named_type = &module.named_type_metas[*named_type_id as usize];
-                        // Check each interface method: name must exist AND signature must match
-                        iface_meta.methods.iter().all(|iface_method| {
-                            if let Some(concrete_method) = named_type.methods.get(&iface_method.name) {
-                                // Compare signatures using InterfaceMethod::matches_signature
-                                let iface_method_wrapper = vo_common_core::InterfaceMethod::new(
-                                    vo_common_core::symbol::Symbol::DUMMY,
-                                    iface_method.signature.clone(),
-                                );
-                                iface_method_wrapper.matches_signature(&concrete_method.signature)
-                            } else {
-                                false // method not found
-                            }
-                        })
-                    } else {
-                        false // non-named types can't implement interfaces with methods
-                    }
+    // nil interface (value_kind == Void) always fails assertion
+    let matches = if src_vk == ValueKind::Void {
+        false
+    } else {
+        match assert_kind {
+            0 => {
+                // Type comparison: check rttid
+                src_rttid == target_id
+            }
+            1 => {
+                // Interface: check if src type satisfies target interface
+                let iface_meta = &module.interface_metas[target_id as usize];
+                if iface_meta.methods.is_empty() {
+                    true // empty interface always satisfied
                 } else {
-                    false
+                    // Look up RuntimeType to find named_type_id for method lookup
+                    if let Some(rt) = module.runtime_types.get(src_rttid as usize) {
+                        if let vo_common_core::RuntimeType::Named(named_type_id) = rt {
+                            let named_type = &module.named_type_metas[*named_type_id as usize];
+                            // Check each interface method: name must exist AND signature must match
+                            iface_meta.methods.iter().all(|iface_method| {
+                                if let Some(concrete_method) = named_type.methods.get(&iface_method.name) {
+                                    // Compare signatures using InterfaceMethod::matches_signature
+                                    let iface_method_wrapper = vo_common_core::InterfaceMethod::new(
+                                        vo_common_core::symbol::Symbol::DUMMY,
+                                        iface_method.signature.clone(),
+                                    );
+                                    iface_method_wrapper.matches_signature(&concrete_method.signature)
+                                } else {
+                                    false // method not found
+                                }
+                            })
+                        } else {
+                            false // non-named types can't implement interfaces with methods
+                        }
+                    } else {
+                        false
+                    }
                 }
             }
+            _ => false,
         }
-        _ => false,
     };
 
     // Helper to write successful result

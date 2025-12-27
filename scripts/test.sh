@@ -328,7 +328,7 @@ if [[ -n "$failed_list" ]]; then
 fi
 
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}${BOLD}                   Vo Test Results                       ${NC}${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}${BOLD}                   Vo Test Results                        ${NC}${CYAN}║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════╣${NC}"
 printf "${CYAN}║${NC}  VM:  ${GREEN}%3d passed${NC}  ${RED}%3d failed${NC}                             ${CYAN}║${NC}\n" "$vm_passed" "$vm_failed"
 printf "${CYAN}║${NC}  JIT: ${GREEN}%3d passed${NC}  ${RED}%3d failed${NC}                             ${CYAN}║${NC}\n" "$jit_passed" "$jit_failed"

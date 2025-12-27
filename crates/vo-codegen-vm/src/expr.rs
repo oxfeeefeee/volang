@@ -602,7 +602,9 @@ fn compile_type_assert(
             (1, iface_meta_id)
         } else {
             // All other types: assert_kind=0, target_id=rttid
-            let rttid = ctx.get_or_create_rttid(t);
+            // Use RuntimeType for structural equality in rttid lookup
+            let rt = crate::type_key_to_runtime_type_simple(t, info, &info.project.interner, ctx);
+            let rttid = ctx.intern_rttid(rt);
             (0, rttid)
         }
     } else {
@@ -743,11 +745,15 @@ fn compile_func_lit(
         }
     }
     
-    // Set return slots
+    // Set return slots and types
     let ret_slots: u16 = func_lit.sig.results.iter()
         .map(|r| info.type_expr_layout(r.ty.id).0)
         .sum();
     closure_builder.set_ret_slots(ret_slots);
+    let return_types: Vec<_> = func_lit.sig.results.iter()
+        .map(|r| info.type_expr_type(r.ty.id))
+        .collect();
+    closure_builder.set_return_types(return_types);
     
     // Compile closure body
     crate::stmt::compile_block(&func_lit.body, ctx, &mut closure_builder, info)?;

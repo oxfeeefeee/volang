@@ -37,8 +37,19 @@ pub fn compile_stmt(
                     let obj_key = info.get_def(name);
                     let escapes = info.is_escaped(obj_key);
 
-                    if escapes {
-                        // Heap allocation for escaped variable
+                    // Reference types (pointer, slice, map, channel, closure, string) are already GcRefs
+                    // They don't need boxing even when escaped - they're stored directly as 1-slot GcRef
+                    let vk = info.type_value_kind(type_key);
+                    let is_reference_type = matches!(vk, 
+                        vo_common_core::ValueKind::Pointer 
+                        | vo_common_core::ValueKind::Slice 
+                        | vo_common_core::ValueKind::Map 
+                        | vo_common_core::ValueKind::Channel 
+                        | vo_common_core::ValueKind::Closure 
+                        | vo_common_core::ValueKind::String);
+                    
+                    if escapes && !is_reference_type {
+                        // Heap allocation for escaped value types (struct, array, primitives captured by closure)
                         let slot = func.define_local_heap(name.symbol);
                         
                         // Check if this is an array type
@@ -113,64 +124,106 @@ pub fn compile_stmt(
 
         // === Short variable declaration ===
         StmtKind::ShortVar(short_var) => {
-            for (i, name) in short_var.names.iter().enumerate() {
-                // Skip blank identifier
-                if info.project.interner.resolve(name.symbol) == Some("_") {
-                    continue;
-                }
+            // Check for comma-ok case: v, ok := x.(T) or v, ok := <-ch or v, ok := m[k]
+            // In this case, values.len() == 1 but names.len() == 2, and values[0] has tuple type
+            let is_comma_ok = short_var.values.len() == 1 
+                && short_var.names.len() == 2
+                && info.is_tuple(info.expr_type(short_var.values[0].id));
 
-                let type_key = if i < short_var.values.len() {
-                    Some(info.expr_type(short_var.values[i].id))
-                } else {
-                    None
-                };
+            if is_comma_ok {
+                // Comma-ok: compile expr once, then distribute to variables
+                let tuple_type = info.expr_type(short_var.values[0].id);
+                let total_slots = info.type_slot_count(tuple_type);
+                let tmp_base = func.alloc_temp(total_slots);
+                compile_expr_to(&short_var.values[0], tmp_base, ctx, func, info)?;
 
-                let slots = type_key.map(|t| info.type_slot_count(t)).expect("short var must have value");
-                let slot_types = type_key
-                    .map(|t| info.type_slot_types(t))
-                    .expect("short var must have value");
+                let mut offset = 0u16;
+                for (i, name) in short_var.names.iter().enumerate() {
+                    let elem_type = info.tuple_elem_type(tuple_type, i);
+                    let elem_slots = info.type_slot_count(elem_type);
 
-                // Check if this is a new definition or reassignment
-                let is_def = info.project.type_info.defs.contains_key(&name.id);
+                    // Skip blank identifier
+                    if info.project.interner.resolve(name.symbol) == Some("_") {
+                        offset += elem_slots;
+                        continue;
+                    }
 
-                if is_def {
-                    // New variable
-                    let obj_key = info.get_def(name);
-                    let escapes = info.is_escaped(obj_key);
-                    
-                    // Pointer types are already GcRef, no need for heap wrapper
-                    let is_pointer = type_key.map(|t| info.is_pointer(t)).expect("short var must have value");
+                    let slot_types = info.type_slot_types(elem_type);
+                    let is_def = info.project.type_info.defs.contains_key(&name.id);
 
-                    if escapes && !is_pointer {
-                        // Heap allocation for escaped variable
-                        let slot = func.define_local_heap(name.symbol);
-                        
-                        // Get ValueMeta index for PtrNew
-                        let meta_idx = ctx.get_or_create_value_meta(type_key, slots, &slot_types);
-                        
-                        // PtrNew: dst=slot, meta_reg=temp (loaded from const pool), flags=slots
-                        let meta_reg = func.alloc_temp(1);
-                        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-                        func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_reg, 0);
-                        
-                        // Initialize value
-                        if i < short_var.values.len() {
-                            let tmp = func.alloc_temp(slots);
-                            compile_expr_to(&short_var.values[i], tmp, ctx, func, info)?;
-                            func.emit_ptr_set(slot, 0, tmp, slots);
+                    if is_def {
+                        let obj_key = info.get_def(name);
+                        let escapes = info.is_escaped(obj_key);
+                        let is_pointer = info.is_pointer(elem_type);
+
+                        if escapes && !is_pointer {
+                            let slot = func.define_local_heap(name.symbol);
+                            let meta_idx = ctx.get_or_create_value_meta(Some(elem_type), elem_slots, &slot_types);
+                            let meta_reg = func.alloc_temp(1);
+                            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+                            func.emit_with_flags(Opcode::PtrNew, elem_slots as u8, slot, meta_reg, 0);
+                            func.emit_ptr_set(slot, 0, tmp_base + offset, elem_slots);
+                        } else {
+                            let slot = func.define_local_stack(name.symbol, elem_slots, &slot_types);
+                            func.emit_copy(slot, tmp_base + offset, elem_slots);
                         }
                     } else {
-                        let slot = func.define_local_stack(name.symbol, slots, &slot_types);
-                        if i < short_var.values.len() {
-                            compile_expr_to(&short_var.values[i], slot, ctx, func, info)?;
+                        if let Some(local) = func.lookup_local(name.symbol) {
+                            let slot = local.slot;
+                            func.emit_copy(slot, tmp_base + offset, elem_slots);
                         }
                     }
-                } else {
-                    // Reassignment to existing variable
-                    if let Some(local) = func.lookup_local(name.symbol) {
-                        let slot = local.slot;
-                        if i < short_var.values.len() {
-                            compile_expr_to(&short_var.values[i], slot, ctx, func, info)?;
+                    offset += elem_slots;
+                }
+            } else {
+                // Normal case: N variables = N expressions
+                for (i, name) in short_var.names.iter().enumerate() {
+                    if info.project.interner.resolve(name.symbol) == Some("_") {
+                        continue;
+                    }
+
+                    let type_key = if i < short_var.values.len() {
+                        Some(info.expr_type(short_var.values[i].id))
+                    } else {
+                        None
+                    };
+
+                    let slots = type_key.map(|t| info.type_slot_count(t)).expect("short var must have value");
+                    let slot_types = type_key
+                        .map(|t| info.type_slot_types(t))
+                        .expect("short var must have value");
+
+                    let is_def = info.project.type_info.defs.contains_key(&name.id);
+
+                    if is_def {
+                        let obj_key = info.get_def(name);
+                        let escapes = info.is_escaped(obj_key);
+                        let is_pointer = type_key.map(|t| info.is_pointer(t)).expect("short var must have value");
+
+                        if escapes && !is_pointer {
+                            let slot = func.define_local_heap(name.symbol);
+                            let meta_idx = ctx.get_or_create_value_meta(type_key, slots, &slot_types);
+                            let meta_reg = func.alloc_temp(1);
+                            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+                            func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_reg, 0);
+
+                            if i < short_var.values.len() {
+                                let tmp = func.alloc_temp(slots);
+                                compile_expr_to(&short_var.values[i], tmp, ctx, func, info)?;
+                                func.emit_ptr_set(slot, 0, tmp, slots);
+                            }
+                        } else {
+                            let slot = func.define_local_stack(name.symbol, slots, &slot_types);
+                            if i < short_var.values.len() {
+                                compile_expr_to(&short_var.values[i], slot, ctx, func, info)?;
+                            }
+                        }
+                    } else {
+                        if let Some(local) = func.lookup_local(name.symbol) {
+                            let slot = local.slot;
+                            if i < short_var.values.len() {
+                                compile_expr_to(&short_var.values[i], slot, ctx, func, info)?;
+                            }
                         }
                     }
                 }
@@ -180,12 +233,49 @@ pub fn compile_stmt(
         // === Assignment ===
         StmtKind::Assign(assign) => {
             use vo_syntax::ast::AssignOp;
-            for (lhs, rhs) in assign.lhs.iter().zip(assign.rhs.iter()) {
-                if assign.op == AssignOp::Assign {
-                    compile_assign(lhs, rhs, ctx, func, info)?;
-                } else {
-                    // Compound assignment (+=, -=, etc.)
-                    compile_compound_assign(lhs, rhs, assign.op, ctx, func, info)?;
+            
+            // Check for comma-ok case: _, ok = x.(T) or v, ok = <-ch or v, ok = m[k]
+            let is_comma_ok = assign.op == AssignOp::Assign
+                && assign.rhs.len() == 1
+                && assign.lhs.len() == 2
+                && info.is_tuple(info.expr_type(assign.rhs[0].id));
+            
+            if is_comma_ok {
+                // Comma-ok assignment: compile expr once, then distribute to variables
+                let tuple_type = info.expr_type(assign.rhs[0].id);
+                let total_slots = info.type_slot_count(tuple_type);
+                let tmp_base = func.alloc_temp(total_slots);
+                compile_expr_to(&assign.rhs[0], tmp_base, ctx, func, info)?;
+                
+                let mut offset = 0u16;
+                for (i, lhs_expr) in assign.lhs.iter().enumerate() {
+                    let elem_type = info.tuple_elem_type(tuple_type, i);
+                    let elem_slots = info.type_slot_count(elem_type);
+                    
+                    // Skip blank identifier
+                    if let vo_syntax::ast::ExprKind::Ident(ident) = &lhs_expr.kind {
+                        if info.project.interner.resolve(ident.symbol) == Some("_") {
+                            offset += elem_slots;
+                            continue;
+                        }
+                    }
+                    
+                    // Get lhs location and copy from temp
+                    let lhs_source = crate::expr::get_expr_source(lhs_expr, ctx, func, info);
+                    if let ExprSource::Location(loc) = lhs_source {
+                        func.emit_store_value(loc, tmp_base + offset, elem_slots);
+                    }
+                    offset += elem_slots;
+                }
+            } else {
+                // Normal case: N lhs = N rhs
+                for (lhs, rhs) in assign.lhs.iter().zip(assign.rhs.iter()) {
+                    if assign.op == AssignOp::Assign {
+                        compile_assign(lhs, rhs, ctx, func, info)?;
+                    } else {
+                        // Compound assignment (+=, -=, etc.)
+                        compile_compound_assign(lhs, rhs, assign.op, ctx, func, info)?;
+                    }
                 }
             }
         }
@@ -200,21 +290,38 @@ pub fn compile_stmt(
             if ret.values.is_empty() {
                 func.emit_op(Opcode::Return, 0, 0, 0);
             } else {
-                // Calculate total return slots needed
+                // Get function's return types (clone to avoid borrow issues)
+                let ret_types: Vec<_> = func.return_types().to_vec();
+                
+                // Calculate total return slots needed (use declared return types)
                 let mut total_ret_slots = 0u16;
-                for result in &ret.values {
-                    total_ret_slots += info.expr_slots(result.id);
+                for ret_type in &ret_types {
+                    total_ret_slots += info.type_slot_count(*ret_type);
                 }
                 
                 // Allocate space for return values
                 let ret_start = func.alloc_temp(total_ret_slots);
                 
-                // Compile return values
+                // Compile return values with interface conversion if needed
                 let mut offset = 0u16;
-                for result in &ret.values {
-                    let slots = info.expr_slots(result.id);
-                    compile_expr_to(result, ret_start + offset, ctx, func, info)?;
-                    offset += slots;
+                for (i, result) in ret.values.iter().enumerate() {
+                    let ret_type = ret_types.get(i).copied();
+                    let expr_type = info.expr_type(result.id);
+                    
+                    if let Some(rt) = ret_type {
+                        let slots = info.type_slot_count(rt);
+                        // Check if return type is interface but expr is concrete
+                        if info.is_interface(rt) && !info.is_interface(expr_type) {
+                            compile_iface_assign(ret_start + offset, result, rt, ctx, func, info)?;
+                        } else {
+                            compile_expr_to(result, ret_start + offset, ctx, func, info)?;
+                        }
+                        offset += slots;
+                    } else {
+                        let slots = info.expr_slots(result.id);
+                        compile_expr_to(result, ret_start + offset, ctx, func, info)?;
+                        offset += slots;
+                    }
                 }
                 func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
             }
@@ -1720,10 +1827,13 @@ pub fn compile_iface_assign(
     let src_vk = info.type_value_kind(src_type);
     let iface_meta_id = ctx.get_or_create_interface_meta_id(iface_type, &info.project.tc_objs);
     
+    
     let const_idx = if src_vk == vo_common_core::ValueKind::Interface {
         ctx.register_iface_assign_const_interface(iface_meta_id)
     } else {
-        let rttid = ctx.get_or_create_rttid(src_type);
+        // Use RuntimeType for structural equality in rttid lookup
+        let rt = crate::type_key_to_runtime_type_simple(src_type, info, &info.project.interner, ctx);
+        let rttid = ctx.intern_rttid(rt);
         let named_type_id = ctx.get_named_type_id(src_type);
         ctx.register_iface_assign_const_concrete(rttid, named_type_id, iface_meta_id)
     };

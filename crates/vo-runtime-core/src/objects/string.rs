@@ -33,6 +33,11 @@ impl StringData {
 }
 
 pub fn create(gc: &mut Gc, bytes: &[u8]) -> GcRef {
+    // Empty string is represented as null GcRef (zero value)
+    if bytes.is_empty() {
+        return core::ptr::null_mut();
+    }
+    
     let arr = array::create(gc, ValueMeta::new(0, ValueKind::Uint8), 1, bytes.len());
     let data_ptr = array::as_bytes_mut(arr);
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, bytes.len()); }
@@ -50,13 +55,17 @@ pub fn from_rust_str(gc: &mut Gc, s: &str) -> GcRef {
 }
 
 #[inline]
-pub fn len(s: GcRef) -> usize { StringData::as_ref(s).len as usize }
+pub fn len(s: GcRef) -> usize {
+    if s.is_null() { return 0; }
+    StringData::as_ref(s).len as usize
+}
 #[inline]
 pub fn array_ref(s: GcRef) -> GcRef { StringData::as_ref(s).array }
 #[inline]
 pub fn start(s: GcRef) -> usize { StringData::as_ref(s).start as usize }
 
 pub fn as_bytes(s: GcRef) -> &'static [u8] {
+    if s.is_null() { return &[]; }
     let data = StringData::as_ref(s);
     let ptr = unsafe { array::as_bytes(data.array).add(data.start as usize) };
     unsafe { core::slice::from_raw_parts(ptr, data.len as usize) }
@@ -71,6 +80,9 @@ pub fn index(s: GcRef, idx: usize) -> u8 {
 }
 
 pub fn concat(gc: &mut Gc, a: GcRef, b: GcRef) -> GcRef {
+    // Handle null (empty string) cases
+    if a.is_null() { return b; }
+    if b.is_null() { return a; }
     let a_bytes = as_bytes(a);
     let b_bytes = as_bytes(b);
     let mut combined = Vec::with_capacity(a_bytes.len() + b_bytes.len());
@@ -80,6 +92,8 @@ pub fn concat(gc: &mut Gc, a: GcRef, b: GcRef) -> GcRef {
 }
 
 pub fn slice_of(gc: &mut Gc, s: GcRef, new_start: usize, new_end: usize) -> GcRef {
+    // null is empty string, slicing returns null
+    if s.is_null() || new_start >= new_end { return core::ptr::null_mut(); }
     let src = StringData::as_ref(s);
     let new_s = gc.alloc(ValueMeta::new(0, ValueKind::String), DATA_SLOTS);
     let data = StringData::as_mut(new_s);
@@ -91,7 +105,7 @@ pub fn slice_of(gc: &mut Gc, s: GcRef, new_start: usize, new_end: usize) -> GcRe
 
 pub fn eq(a: GcRef, b: GcRef) -> bool {
     if a == b { return true; }
-    if a.is_null() || b.is_null() { return a.is_null() && b.is_null(); }
+    if a.is_null() || b.is_null() { return false; }
     as_bytes(a) == as_bytes(b)
 }
 

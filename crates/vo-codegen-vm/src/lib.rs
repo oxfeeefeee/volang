@@ -169,28 +169,13 @@ fn register_types(
 }
 
 fn build_runtime_types(
-    project: &Project,
+    _project: &Project,
     ctx: &mut CodegenContext,
-    info: &TypeInfoWrapper,
+    _info: &TypeInfoWrapper,
 ) {
-    use std::collections::HashMap;
-    
-    let tc_objs = &info.project.tc_objs;
-    
-    // Build TypeKey -> named_type_id mapping (u32 for compatibility)
-    let named_type_ids: HashMap<vo_analysis::objects::TypeKey, u32> = ctx.named_type_ids_iter()
-        .map(|(tk, id)| (tk, id as u32))
-        .collect();
-    
-    // Build RuntimeType for each pending type (in rttid order)
-    let type_keys: Vec<_> = ctx.pending_rttids().to_vec();
-    let mut runtime_types = Vec::with_capacity(type_keys.len());
-    
-    for type_key in type_keys {
-        let rt = type_key_to_runtime_type(type_key, tc_objs, &project.interner, &named_type_ids);
-        runtime_types.push(rt);
-    }
-    
+    // RuntimeTypes are now built during codegen via intern_rttid()
+    // Just transfer them from TypeInterner to module
+    let runtime_types = ctx.runtime_types();
     ctx.set_runtime_types(runtime_types);
 }
 
@@ -411,9 +396,10 @@ fn signature_type_to_runtime_type(
     }
 }
 
-/// Simplified type_key to RuntimeType conversion for method signatures
-/// Uses ValueKind-based conversion for basic types, named_type_id for Named types
-fn type_key_to_runtime_type_simple(
+/// Simplified type_key to RuntimeType conversion.
+/// Uses ValueKind-based conversion for basic types, named_type_id for Named types.
+/// Public for use in rttid generation.
+pub fn type_key_to_runtime_type_simple(
     type_key: vo_analysis::objects::TypeKey,
     info: &TypeInfoWrapper,
     _interner: &vo_common::SymbolInterner,
@@ -445,7 +431,10 @@ fn type_key_to_runtime_type_simple(
             }
         }
         ValueKind::Pointer => {
-            RuntimeType::Pointer(Box::new(RuntimeType::Basic(ValueKind::Void)))
+            // Preserve element type for correct rttid comparison
+            let elem_type = info.pointer_elem(type_key);
+            let elem_rt = type_key_to_runtime_type_simple(elem_type, info, _interner, ctx);
+            RuntimeType::Pointer(Box::new(elem_rt))
         }
         ValueKind::Slice => {
             RuntimeType::Slice(Box::new(RuntimeType::Basic(ValueKind::Void)))
@@ -568,11 +557,15 @@ fn compile_func_decl(
         }
     }
     
-    // Set return slots
+    // Set return slots and types
     let ret_slots: u16 = func_decl.sig.results.iter()
         .map(|r| info.type_expr_layout(r.ty.id).0)
         .sum();
     builder.set_ret_slots(ret_slots);
+    let return_types: Vec<_> = func_decl.sig.results.iter()
+        .map(|r| info.type_expr_type(r.ty.id))
+        .collect();
+    builder.set_return_types(return_types);
     
     // Compile function body
     if let Some(body) = &func_decl.body {

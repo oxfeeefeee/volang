@@ -6,6 +6,7 @@ use std::collections::HashMap;
 const MAX_24BIT_ID: u32 = 0xFF_FFFF;
 use vo_analysis::objects::{ObjKey, TypeKey};
 use vo_common::symbol::Symbol;
+use crate::type_interner::TypeInterner;
 use vo_vm::bytecode::{
     Constant, ExternDef, FunctionDef, GlobalDef, InterfaceMeta, Itab, MethodInfo, Module, NamedTypeMeta, StructMeta,
 };
@@ -44,11 +45,8 @@ pub struct CodegenContext {
     /// Type meta_id: TypeKey -> named_type_id
     named_type_ids: HashMap<TypeKey, u32>,
 
-    /// TypeKey -> rttid (runtime type id)
-    rttid_map: HashMap<TypeKey, u32>,
-
-    /// Pending types to build RuntimeType for (in order of rttid assignment)
-    pending_rttids: Vec<TypeKey>,
+    /// RuntimeType -> rttid (structural equality)
+    type_interner: TypeInterner,
 
     /// ObjKey -> func_id
     objkey_to_func: HashMap<ObjKey, u32>,
@@ -92,8 +90,7 @@ impl CodegenContext {
             struct_meta_ids: HashMap::new(),
             interface_meta_ids: HashMap::new(),
             named_type_ids: HashMap::new(),
-            rttid_map: HashMap::new(),
-            pending_rttids: Vec::new(),
+            type_interner: TypeInterner::new(),
             objkey_to_func: HashMap::new(),
             init_functions: Vec::new(),
             pending_itabs: Vec::new(),
@@ -133,25 +130,16 @@ impl CodegenContext {
 
     // === RTTID registration ===
 
-    /// Get or create rttid for a type.
-    pub fn get_or_create_rttid(&mut self, type_key: TypeKey) -> u32 {
-        if let Some(&rttid) = self.rttid_map.get(&type_key) {
-            rttid
-        } else {
-            let rttid = self.pending_rttids.len() as u32;
-            self.rttid_map.insert(type_key, rttid);
-            self.pending_rttids.push(type_key);
-            rttid
-        }
+    /// Get or create rttid for a type using RuntimeType for structural equality.
+    /// This ensures structurally identical types (e.g., two *Dog from different contexts)
+    /// get the same rttid.
+    pub fn intern_rttid(&mut self, rt: vo_common_core::RuntimeType) -> u32 {
+        self.type_interner.intern(rt)
     }
 
-    pub fn get_rttid(&self, type_key: TypeKey) -> Option<u32> {
-        self.rttid_map.get(&type_key).copied()
-    }
-
-    /// Get pending type keys for building RuntimeTypes
-    pub fn pending_rttids(&self) -> &[TypeKey] {
-        &self.pending_rttids
+    /// Get the interned RuntimeTypes (in rttid order)
+    pub fn runtime_types(&self) -> Vec<vo_common_core::RuntimeType> {
+        self.type_interner.types().to_vec()
     }
 
     /// Update a NamedTypeMeta's methods map after function compilation
@@ -557,8 +545,8 @@ impl CodegenContext {
         if self.module.named_type_metas.len() as u32 > MAX_24BIT_ID {
             return Err(format!("too many named types: {} exceeds 24-bit limit", self.module.named_type_metas.len()));
         }
-        if self.pending_rttids.len() as u32 > MAX_24BIT_ID {
-            return Err(format!("too many runtime types: {} exceeds 24-bit limit", self.pending_rttids.len()));
+        if self.type_interner.len() as u32 > MAX_24BIT_ID {
+            return Err(format!("too many runtime types: {} exceeds 24-bit limit", self.type_interner.len()));
         }
         Ok(())
     }
