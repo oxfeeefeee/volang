@@ -252,10 +252,53 @@ pub fn compile_value_to(
         compile_expr_to(expr, dst, ctx, func, info)
     }
 }
-
-// =============================================================================
 // Helper functions
 // =============================================================================
+
+/// Index-based loop for for-range expansion (array, slice, string, map).
+struct IndexLoop {
+    idx_slot: u16,
+    loop_start: usize,
+    end_jump: usize,
+}
+
+impl IndexLoop {
+    /// Begin: __idx := 0, loop: if __idx >= __len { goto end }
+    fn begin(func: &mut FuncBuilder, len_slot: u16, label: Option<vo_common::Symbol>) -> Self {
+        let idx_slot = func.alloc_temp(1);
+        func.emit_op(Opcode::LoadInt, idx_slot, 0, 0);
+        
+        let loop_start = func.current_pc();
+        func.enter_loop(loop_start, label);
+        
+        let cmp_slot = func.alloc_temp(1);
+        func.emit_op(Opcode::GeI, cmp_slot, idx_slot, len_slot);
+        let end_jump = func.emit_jump(Opcode::JumpIf, cmp_slot);
+        
+        Self { idx_slot, loop_start, end_jump }
+    }
+    
+    /// Emit: i := __idx
+    fn emit_key(&self, func: &mut FuncBuilder, key_slot: Option<u16>) {
+        if let Some(k) = key_slot {
+            func.emit_op(Opcode::Copy, k, self.idx_slot, 0);
+        }
+    }
+    
+    /// End: __idx++, goto loop, patch breaks/continues
+    fn end(self, func: &mut FuncBuilder) {
+        let post_pc = func.current_pc();
+        let one = func.alloc_temp(1);
+        func.emit_op(Opcode::LoadInt, one, 1, 0);
+        func.emit_op(Opcode::AddI, self.idx_slot, self.idx_slot, one);
+        func.emit_jump_to(Opcode::Jump, 0, self.loop_start);
+        
+        func.patch_jump(self.end_jump, func.current_pc());
+        let (breaks, continues) = func.exit_loop();
+        for pc in breaks { func.patch_jump(pc, func.current_pc()); }
+        for pc in continues { func.patch_jump(pc, post_pc); }
+    }
+}
 
 /// Define or lookup a range variable (key or value) using StmtCompiler.
 /// - If `define` is true: declare new variable with proper escape handling
@@ -608,110 +651,135 @@ fn compile_stmt_with_label(
                 }
 
                 ForClause::Range { key, value, define, expr } => {
-                    // Compile the range expression
+                    // All for-range loops expanded at compile time. No runtime iterator state.
                     let range_type = info.expr_type(expr.id);
                     let mut sc = StmtCompiler::new(ctx, func, info);
                     
                     if info.is_array(range_type) {
-                        let elem_slots = info.array_elem_slots(range_type) as u8;
-                        let arr_len = info.array_len(range_type) as u32;
-                        let elem_type = info.array_elem_type(range_type);
-                        
-                        // Check if array is on stack or heap
-                        let arr_source = crate::expr::get_expr_source(expr, sc.ctx, sc.func, sc.info);
-                        let stack_arr_slot = match arr_source {
-                            ExprSource::Location(StorageKind::StackValue { slot, .. }) => Some(slot),
-                            _ => None,
+                        let es = info.array_elem_slots(range_type);
+                        let et = info.array_elem_type(range_type);
+                        let len = info.array_len(range_type) as i64;
+                        let src = crate::expr::get_expr_source(expr, sc.ctx, sc.func, sc.info);
+                        let (reg, stk, base) = match src {
+                            ExprSource::Location(StorageKind::StackValue { slot, .. }) => (0, true, slot),
+                            _ => (crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?, false, 0),
                         };
-                        
-                        // Define key and value using StmtCompiler
-                        let key_slot = range_var_slot(&mut sc, key.as_ref(), elem_type, *define)?;
-                        let val_slot = range_var_slot(&mut sc, value.as_ref(), elem_type, *define)?;
-                        
-                        if let Some(arr_slot) = stack_arr_slot {
-                            // Stack array iteration
-                            let iter_args = sc.func.alloc_temp(3);
-                            let meta = crate::type_info::encode_iter_meta(1, elem_slots as u16);
-                            sc.func.emit_op(Opcode::LoadInt, iter_args, meta as u16, (meta >> 16) as u16);
-                            sc.func.emit_op(Opcode::LoadInt, iter_args + 1, arr_slot, 0);
-                            sc.func.emit_op(Opcode::LoadInt, iter_args + 2, arr_len as u16, (arr_len >> 16) as u16);
-                            sc.func.emit_op(Opcode::IterBegin, iter_args, 6, 0);
-                        } else {
-                            // Heap array iteration
-                            let arr_slot = if let vo_syntax::ast::ExprKind::Ident(ident) = &expr.kind {
-                                sc.func.lookup_local(ident.symbol)
-                                    .expect("heap array local not found")
-                                    .storage.slot()
-                            } else {
-                                crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?
-                            };
-                            
-                            let iter_args = sc.func.alloc_temp(2);
-                            let meta = crate::type_info::encode_iter_meta(1, elem_slots as u16);
-                            sc.func.emit_op(Opcode::LoadInt, iter_args, meta as u16, (meta >> 16) as u16);
-                            sc.func.emit_op(Opcode::Copy, iter_args + 1, arr_slot, 0);
-                            sc.func.emit_op(Opcode::IterBegin, iter_args, 0, 0);
+                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
+                                        range_var_slot(&mut sc, value.as_ref(), et, *define)?);
+                        let ls = sc.func.alloc_temp(1);
+                        sc.func.emit_op(Opcode::LoadInt, ls, len as u16, (len >> 16) as u16);
+                        let lp = IndexLoop::begin(sc.func, ls, label);
+                        lp.emit_key(sc.func, key.as_ref().map(|_| ks));
+                        if value.is_some() {
+                            let op = if stk { Opcode::SlotGetN } else { Opcode::ArrayGet };
+                            sc.func.emit_with_flags(op, es as u8, vs, if stk { base } else { reg }, lp.idx_slot);
                         }
+                        compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
+                        lp.end(sc.func);
                         
-                        emit_iter_loop(key_slot, val_slot, &for_stmt.body, sc.ctx, sc.func, sc.info, label)?;
                     } else if info.is_slice(range_type) {
-                        let elem_slots = info.slice_elem_slots(range_type) as u8;
-                        let slice_reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
-                        let elem_type = info.slice_elem_type(range_type);
+                        let es = info.slice_elem_slots(range_type);
+                        let et = info.slice_elem_type(range_type);
+                        let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
+                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
+                                        range_var_slot(&mut sc, value.as_ref(), et, *define)?);
+                        let ls = sc.func.alloc_temp(1);
+                        sc.func.emit_op(Opcode::SliceLen, ls, reg, 0);
+                        let lp = IndexLoop::begin(sc.func, ls, label);
+                        lp.emit_key(sc.func, key.as_ref().map(|_| ks));
+                        if value.is_some() { sc.func.emit_with_flags(Opcode::SliceGet, es as u8, vs, reg, lp.idx_slot); }
+                        compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
+                        lp.end(sc.func);
                         
-                        let key_slot = range_var_slot(&mut sc, key.as_ref(), elem_type, *define)?;
-                        let val_slot = range_var_slot(&mut sc, value.as_ref(), elem_type, *define)?;
-                        
-                        let iter_args = sc.func.alloc_temp(2);
-                        let meta = crate::type_info::encode_iter_meta(1, elem_slots as u16);
-                        sc.func.emit_op(Opcode::LoadInt, iter_args, meta as u16, (meta >> 16) as u16);
-                        sc.func.emit_op(Opcode::Copy, iter_args + 1, slice_reg, 0);
-                        sc.func.emit_op(Opcode::IterBegin, iter_args, 1, 0);
-                        
-                        emit_iter_loop(key_slot, val_slot, &for_stmt.body, sc.ctx, sc.func, sc.info, label)?;
                     } else if info.is_string(range_type) {
-                        let str_reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
+                        // String: iterate by rune (variable width)
+                        let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
+                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), range_type, *define)?,
+                                        range_var_slot(&mut sc, value.as_ref(), range_type, *define)?);
+                        let (pos, len, cmp) = (sc.func.alloc_temp(1), sc.func.alloc_temp(1), sc.func.alloc_temp(1));
+                        // StrDecodeRune writes (rune, width) to consecutive slots
+                        let rune_width = sc.func.alloc_temp(2);
                         
-                        let key_slot = range_var_slot(&mut sc, key.as_ref(), range_type, *define)?;
-                        let val_slot = range_var_slot(&mut sc, value.as_ref(), range_type, *define)?;
+                        sc.func.emit_op(Opcode::LoadInt, pos, 0, 0);
+                        sc.func.emit_op(Opcode::StrLen, len, reg, 0);
                         
-                        let iter_args = sc.func.alloc_temp(2);
-                        let meta = crate::type_info::encode_iter_meta(1, 1);
-                        sc.func.emit_op(Opcode::LoadInt, iter_args, meta as u16, (meta >> 16) as u16);
-                        sc.func.emit_op(Opcode::Copy, iter_args + 1, str_reg, 0);
-                        sc.func.emit_op(Opcode::IterBegin, iter_args, 3, 0);
+                        let loop_start = sc.func.current_pc();
+                        sc.func.enter_loop(loop_start, label);
+                        sc.func.emit_op(Opcode::GeI, cmp, pos, len);
+                        let end_jump = sc.func.emit_jump(Opcode::JumpIf, cmp);
                         
-                        emit_iter_loop(key_slot, val_slot, &for_stmt.body, sc.ctx, sc.func, sc.info, label)?;
+                        sc.func.emit_op(Opcode::StrDecodeRune, rune_width, reg, pos);
+                        if key.is_some() { sc.func.emit_op(Opcode::Copy, ks, pos, 0); }
+                        if value.is_some() { sc.func.emit_op(Opcode::Copy, vs, rune_width, 0); }
+                        
+                        compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
+                        
+                        let post_pc = sc.func.current_pc();
+                        sc.func.emit_op(Opcode::AddI, pos, pos, rune_width + 1);
+                        sc.func.emit_jump_to(Opcode::Jump, 0, loop_start);
+                        
+                        sc.func.patch_jump(end_jump, sc.func.current_pc());
+                        let (breaks, continues) = sc.func.exit_loop();
+                        for pc in breaks { sc.func.patch_jump(pc, sc.func.current_pc()); }
+                        for pc in continues { sc.func.patch_jump(pc, post_pc); }
+                        
                     } else if info.is_map(range_type) {
-                        let map_reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
-                        let (key_slots, val_slots) = info.map_key_val_slots(range_type);
-                        let (key_type, val_type) = info.map_key_val_types(range_type);
+                        let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
+                        let (kn, vn) = info.map_key_val_slots(range_type);
+                        let (kt, vt) = info.map_key_val_types(range_type);
+                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), kt, *define)?,
+                                        range_var_slot(&mut sc, value.as_ref(), vt, *define)?);
+                        let ls = sc.func.alloc_temp(1);
+                        sc.func.emit_op(Opcode::MapLen, ls, reg, 0);
+                        let lp = IndexLoop::begin(sc.func, ls, label);
+                        sc.func.emit_with_flags(Opcode::MapIterGet, (kn as u8) | ((vn as u8) << 4), ks, reg, lp.idx_slot);
+                        if value.is_some() && vs != ks + kn {
+                            if vn == 1 { sc.func.emit_op(Opcode::Copy, vs, ks + kn, 0); }
+                            else { sc.func.emit_with_flags(Opcode::CopyN, vn as u8, vs, ks + kn, 0); }
+                        }
+                        compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
+                        lp.end(sc.func);
                         
-                        let key_slot = range_var_slot(&mut sc, key.as_ref(), key_type, *define)?;
-                        let val_slot = range_var_slot(&mut sc, value.as_ref(), val_type, *define)?;
-                        
-                        let iter_args = sc.func.alloc_temp(2);
-                        let meta = crate::type_info::encode_iter_meta(key_slots, val_slots);
-                        sc.func.emit_op(Opcode::LoadInt, iter_args, meta as u16, (meta >> 16) as u16);
-                        sc.func.emit_op(Opcode::Copy, iter_args + 1, map_reg, 0);
-                        sc.func.emit_op(Opcode::IterBegin, iter_args, 2, 0);
-                        
-                        emit_iter_loop(key_slot, val_slot, &for_stmt.body, sc.ctx, sc.func, sc.info, label)?;
                     } else if info.is_chan(range_type) {
                         let chan_reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
                         let elem_type = info.chan_elem_type(range_type);
+                        let elem_slots = info.chan_elem_slots(range_type);
                         
                         // Channel: use value or key (Go semantics: single var is value)
                         let var_expr = value.as_ref().or(key.as_ref());
                         let val_slot = range_var_slot(&mut sc, var_expr, elem_type, *define)?;
                         
-                        let iter_args = sc.func.alloc_temp(2);
-                        let elem_slots = info.chan_elem_slots(range_type);
-                        sc.func.emit_op(Opcode::LoadInt, iter_args, elem_slots, 0);
-                        sc.func.emit_op(Opcode::Copy, iter_args + 1, chan_reg, 0);
-                        sc.func.emit_op(Opcode::IterBegin, iter_args, 5, 0);
+                        // ok slot
+                        let ok_slot = sc.func.alloc_temp(1);
                         
-                        emit_iter_loop(val_slot, 0, &for_stmt.body, sc.ctx, sc.func, sc.info, label)?;
+                        // loop:
+                        let loop_start = sc.func.current_pc();
+                        sc.func.enter_loop(loop_start, label);
+                        
+                        // v, ok := <-ch
+                        // ChanRecv: a=val_slot, b=chan_reg, c=ok_slot, flags=elem_slots|0x80 (with_ok)
+                        let recv_flags = (elem_slots as u8) | 0x80;
+                        sc.func.emit_with_flags(Opcode::ChanRecv, recv_flags, val_slot, chan_reg, ok_slot);
+                        
+                        // if !ok { goto end }
+                        let end_jump = sc.func.emit_jump(Opcode::JumpIfNot, ok_slot);
+                        
+                        // body
+                        compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
+                        
+                        // goto loop (continue target is loop_start for channel)
+                        sc.func.emit_jump_to(Opcode::Jump, 0, loop_start);
+                        
+                        // end:
+                        sc.func.patch_jump(end_jump, sc.func.current_pc());
+                        let (break_patches, continue_patches) = sc.func.exit_loop();
+                        for pc in break_patches {
+                            sc.func.patch_jump(pc, sc.func.current_pc());
+                        }
+                        for pc in continue_patches {
+                            sc.func.patch_jump(pc, loop_start);
+                        }
+                        
                     } else {
                         return Err(CodegenError::UnsupportedStmt("for-range unsupported type".to_string()));
                     }
@@ -835,41 +903,6 @@ fn compile_stmt_with_label(
         }
     }
 
-    Ok(())
-}
-
-/// Execute the iteration loop body with standard loop control flow.
-/// This handles: enter_loop, IterNext, body, Jump back, patch done, IterEnd, exit_loop
-fn emit_iter_loop(
-    key_slot: u16,
-    val_slot: u16,
-    body: &Block,
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfoWrapper,
-    label: Option<vo_common::Symbol>,
-) -> Result<(), CodegenError> {
-    // IterNext is the loop start (Jump back here, not IterBegin)
-    let iter_next_pc = func.current_pc();
-    func.enter_loop(iter_next_pc, label);
-    
-    // IterNext: a=key_slot, b/c=done_offset (patched), flags=val_slot
-    func.emit_with_flags(Opcode::IterNext, val_slot as u8, key_slot, 0, 0);
-    
-    compile_block(body, ctx, func, info)?;
-    
-    func.emit_jump_to(Opcode::Jump, 0, iter_next_pc);
-    
-    let loop_end = func.current_pc();
-    func.patch_jump(iter_next_pc, loop_end);  // patch IterNext to jump to loop_end when done
-    
-    func.emit_op(Opcode::IterEnd, 0, 0, 0);
-    
-    let (break_patches, _) = func.exit_loop();
-    for pc in break_patches {
-        func.patch_jump(pc, func.current_pc());
-    }
-    
     Ok(())
 }
 

@@ -90,3 +90,15 @@ pub fn exec_str_ge(fiber: &mut Fiber, inst: &Instruction) {
     let b = fiber.read_reg(inst.c) as GcRef;
     fiber.write_reg(inst.a, string::ge(a, b) as u64);
 }
+
+/// StrDecodeRune: Decode UTF-8 rune at position
+/// a = rune_slot, b = str_reg, c = pos_reg, flags (unused)
+/// Writes: rune at a, width at a+1
+#[inline]
+pub fn exec_str_decode_rune(fiber: &mut Fiber, inst: &Instruction) {
+    let s = fiber.read_reg(inst.b) as GcRef;
+    let pos = fiber.read_reg(inst.c) as usize;
+    let (rune, width) = string::decode_rune_at(s, pos);
+    fiber.write_reg(inst.a, rune as u64);
+    fiber.write_reg(inst.a + 1, width as u64);
+}

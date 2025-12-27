@@ -158,6 +158,7 @@ pub enum Opcode {
     StrLe,
     StrGt,
     StrGe,
+    StrDecodeRune,  // Decode UTF-8 rune at position: (rune, width) = decode(str, pos)
 
     // === ARRAY: Heap array operations ===
     ArrayNew,
@@ -179,6 +180,7 @@ pub enum Opcode {
     MapSet,
     MapDelete,
     MapLen,
+    MapIterGet,  // Get key-value by index (for range expansion)
 
     // === CHAN: Channel operations ===
     ChanNew,
@@ -192,10 +194,6 @@ pub enum Opcode {
     SelectRecv,
     SelectExec,
 
-    // === ITER: Iterator (for-range) ===
-    IterBegin,
-    IterNext,
-    IterEnd,
 
     // === CLOSURE: Closure operations ===
     ClosureNew,
@@ -268,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_opcode_roundtrip() {
-        for i in 0..=116u8 {
+        for i in 0..=Opcode::MAX_VALID {
             let op = Opcode::from_u8(i);
             assert_ne!(op, Opcode::Invalid, "opcode {} should be valid", i);
             assert_eq!(op as u8, i);

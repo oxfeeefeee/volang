@@ -547,6 +547,10 @@ impl Vm {
                 exec::exec_str_ge(fiber, inst);
                 ExecResult::Continue
             }
+            Opcode::StrDecodeRune => {
+                exec::exec_str_decode_rune(fiber, inst);
+                ExecResult::Continue
+            }
 
             Opcode::ArrayNew => {
                 exec::exec_array_new(fiber, inst, &mut state.gc);
@@ -610,6 +614,10 @@ impl Vm {
                 exec::exec_map_len(fiber, inst);
                 ExecResult::Continue
             }
+            Opcode::MapIterGet => {
+                exec::exec_map_iter_get(fiber, inst);
+                ExecResult::Continue
+            }
 
             Opcode::ChanNew => {
                 exec::exec_chan_new(fiber, inst, &mut state.gc);
@@ -658,18 +666,6 @@ impl Vm {
                 exec::exec_select_exec(fiber, inst)
             }
 
-            Opcode::IterBegin => {
-                exec::exec_iter_begin(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::IterNext => {
-                exec::exec_iter_next(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::IterEnd => {
-                exec::exec_iter_end(fiber, inst);
-                ExecResult::Continue
-            }
 
             Opcode::ClosureNew => {
                 exec::exec_closure_new(fiber, inst, &mut state.gc);

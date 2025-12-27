@@ -5,7 +5,7 @@ use vo_runtime_core::gc::{Gc, GcRef};
 use vo_runtime_core::objects::interface;
 
 use crate::bytecode::{FunctionDef, GlobalDef};
-use crate::fiber::{Fiber, Iterator};
+use crate::fiber::Fiber;
 use crate::vm::Vm;
 
 impl Vm {
@@ -83,33 +83,6 @@ fn scan_fibers(gc: &mut Gc, fibers: &[Fiber], functions: &[FunctionDef]) {
                 }
                 if !entry.args.is_null() {
                     gc.mark_gray(entry.args);
-                }
-            }
-        }
-
-        for iter in &fiber.iter_stack {
-            match iter {
-                Iterator::HeapArray { arr, .. } => {
-                    if !arr.is_null() {
-                        gc.mark_gray(*arr);
-                    }
-                }
-                Iterator::StackArray { .. } => {}
-                Iterator::Map { map, .. } => {
-                    if !map.is_null() {
-                        gc.mark_gray(*map);
-                    }
-                }
-                Iterator::String { s, .. } => {
-                    if !s.is_null() {
-                        gc.mark_gray(*s);
-                    }
-                }
-                Iterator::IntRange { .. } => {}
-                Iterator::Channel { ch, .. } => {
-                    if !ch.is_null() {
-                        gc.mark_gray(*ch);
-                    }
                 }
             }
         }

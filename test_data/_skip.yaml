@@ -67,14 +67,13 @@ skips:
     skip: [jit]
   - file: hex_literal_debug.vo
     skip: [jit]
-    reason: "debug test file"
   - file: iface_escape_closure.vo
     skip: [jit]
   - file: iface_to_iface_assertion.vo
     skip: [jit]
   - file: init_call_error.vo
-    skip: [jit]
-    expect_error: true
+    skip: [vm, jit]
+    reason: "expected error: init() cannot be called explicitly"
   - file: interface.vo
     skip: [jit]
   - file: interface_closure.vo
@@ -149,8 +148,7 @@ skips:
   - file: minimal_bug2.vo
     skip: [jit]
   - file: multi_init.vo
-    skip: [vm, jit]
-    reason: "type check failed"
+    skip: [jit]
   - file: multi_type_method.vo
     skip: [jit]
   - file: nested_clone_test.vo

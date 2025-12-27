@@ -514,9 +514,3 @@ pub fn encode_func_id(func_idx: u32) -> (u16, u8) {
     let high = ((func_idx >> 16) & 0xFF) as u8;
     (low, high)
 }
-
-/// Encode iterator meta: (key_slots << 8) | val_slots
-#[inline]
-pub fn encode_iter_meta(key_slots: u16, val_slots: u16) -> u64 {
-    ((key_slots as u64) << 8) | (val_slots as u64)
-}

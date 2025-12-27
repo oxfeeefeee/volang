@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use crate::gc::{Gc, GcRef};
 use crate::objects::array;
 use vo_common_core::types::{ValueKind, ValueMeta};
+use vo_common_core::utf8;
 
 #[repr(C)]
 pub struct StringData {
@@ -77,6 +78,15 @@ pub fn as_str(s: GcRef) -> &'static str {
 
 pub fn index(s: GcRef, idx: usize) -> u8 {
     as_bytes(s)[idx]
+}
+
+/// Decode UTF-8 rune at byte position. Returns (rune, width).
+pub fn decode_rune_at(s: GcRef, pos: usize) -> (i32, usize) {
+    let bytes = as_bytes(s);
+    if pos >= bytes.len() {
+        return (0xFFFD, 0);
+    }
+    utf8::decode_rune(&bytes[pos..])
 }
 
 pub fn concat(gc: &mut Gc, a: GcRef, b: GcRef) -> GcRef {

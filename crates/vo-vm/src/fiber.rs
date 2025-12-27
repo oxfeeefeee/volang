@@ -34,38 +34,6 @@ pub struct DeferState {
     pub is_error_return: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum Iterator {
-    HeapArray {
-        arr: GcRef,
-        len: u32,
-        elem_slots: u8,
-        pos: u32,
-    },
-    StackArray {
-        bp: usize,
-        base_slot: u16,
-        len: u32,
-        elem_slots: u8,
-        pos: u32,
-    },
-    Map {
-        map: GcRef,
-        pos: usize,
-    },
-    String {
-        s: GcRef,
-        byte_pos: usize,
-    },
-    IntRange {
-        cur: i64,
-        end: i64,
-        step: i64,
-    },
-    Channel {
-        ch: GcRef,
-    },
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectCaseKind {
@@ -104,7 +72,6 @@ pub struct Fiber {
     pub frames: Vec<CallFrame>,
     pub defer_stack: Vec<DeferEntry>,
     pub defer_state: Option<DeferState>,
-    pub iter_stack: Vec<Iterator>,
     pub select_state: Option<SelectState>,
     pub panic_value: Option<GcRef>,
 }
@@ -118,7 +85,6 @@ impl Fiber {
             frames: Vec::new(),
             defer_stack: Vec::new(),
             defer_state: None,
-            iter_stack: Vec::new(),
             select_state: None,
             panic_value: None,
         }

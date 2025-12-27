@@ -87,3 +87,29 @@ pub fn exec_map_len(fiber: &mut Fiber, inst: &Instruction) {
     let len = if m.is_null() { 0 } else { map::len(m) };
     fiber.write_reg(inst.a, len as u64);
 }
+
+/// MapIterGet: Get key-value by index (for range expansion)
+/// a=key_slot, b=map_reg, c=cursor_slot
+/// flags = key_slots | (val_slots << 4)
+/// Writes key at key_slot, value at key_slot + key_slots
+#[inline]
+pub fn exec_map_iter_get(fiber: &mut Fiber, inst: &Instruction) {
+    let m = fiber.read_reg(inst.b) as GcRef;
+    let idx = fiber.read_reg(inst.c) as usize;
+    let key_slots = (inst.flags & 0x0F) as usize;
+    let val_slots = ((inst.flags >> 4) & 0x0F) as usize;
+
+    let frame = fiber.frames.last().expect("no active frame");
+    let bp = frame.bp;
+    let key_dst = bp + inst.a as usize;
+    let val_dst = key_dst + key_slots;
+
+    if let Some((key, val)) = map::iter_at(m, idx) {
+        for i in 0..key_slots.min(key.len()) {
+            fiber.stack[key_dst + i] = key[i];
+        }
+        for i in 0..val_slots.min(val.len()) {
+            fiber.stack[val_dst + i] = val[i];
+        }
+    }
+}

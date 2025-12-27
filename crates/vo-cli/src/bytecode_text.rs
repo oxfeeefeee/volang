@@ -259,6 +259,7 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::StrLe => format!("StrLe         r{}, r{}, r{}", a, b, c),
         Opcode::StrGt => format!("StrGt         r{}, r{}, r{}", a, b, c),
         Opcode::StrGe => format!("StrGe         r{}, r{}, r{}", a, b, c),
+        Opcode::StrDecodeRune => format!("StrDecodeRune r{}, r{}, r{}", a, b, c),
 
         // ARRAY
         Opcode::ArrayNew => format!("ArrayNew      r{}, len=r{}, elem_slots={}", a, b, flags),
@@ -280,6 +281,11 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::MapSet => format!("MapSet        r{}[r{}], r{}", a, b, c),
         Opcode::MapDelete => format!("MapDelete     r{}[r{}]", a, b),
         Opcode::MapLen => format!("MapLen        r{}, r{}", a, b),
+        Opcode::MapIterGet => {
+            let key_slots = flags & 0x0F;
+            let val_slots = (flags >> 4) & 0x0F;
+            format!("MapIterGet    r{}, r{}[r{}], key_slots={}, val_slots={}", a, b, c, key_slots, val_slots)
+        }
 
         // CHAN
         Opcode::ChanNew => format!("ChanNew       r{}, cap={}", a, b),
@@ -292,11 +298,6 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::SelectSend => format!("SelectSend    r{}, r{}", a, b),
         Opcode::SelectRecv => format!("SelectRecv    r{}, r{}", a, b),
         Opcode::SelectExec => format!("SelectExec    r{}", a),
-
-        // ITER
-        Opcode::IterBegin => format!("IterBegin     r{}, r{}, kind={}", a, b, flags),
-        Opcode::IterNext => format!("IterNext      r{}, r{}, pc_{}", a, b, instr.imm32()),
-        Opcode::IterEnd => format!("IterEnd       r{}", a),
 
         // CLOSURE
         Opcode::ClosureNew => format!("ClosureNew    r{}, func_{}, captures={}", a, b, c),
