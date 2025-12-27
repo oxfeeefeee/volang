@@ -62,8 +62,7 @@ skips:
   - file: label_stmt.vo
     skip: [jit]
   - file: go_stmt.vo
-    skip: [vm, jit]
-    reason: "VariableNotFound"
+    skip: [jit]
   - file: goto_stmt.vo
     skip: [jit]
   - file: hex_literal_debug.vo

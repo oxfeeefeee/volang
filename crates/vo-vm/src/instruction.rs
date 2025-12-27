@@ -203,7 +203,12 @@ pub enum Opcode {
     ClosureSet,
 
     // === GO: Goroutine ===
-    GoCall,
+    /// GoStart: Start goroutine
+    /// - a: func_id_low (if flags bit 0 = 0) or closure_reg (if flags bit 0 = 1)
+    /// - b: args_start
+    /// - c: arg_slots
+    /// - flags bit 0: is_closure, bits 1-7: func_id_high (when not closure)
+    GoStart,
     Yield,
 
     // === DEFER: Defer and error handling ===
@@ -227,7 +232,7 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    const MAX_VALID: u8 = Self::ConvI64I32 as u8;
+    const MAX_VALID: u8 = Self::ConvI64I32 as u8;  // Update if adding opcodes after ConvI64I32
 
     #[inline]
     pub fn from_u8(v: u8) -> Self {

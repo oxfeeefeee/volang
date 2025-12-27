@@ -1,4 +1,4 @@
-//! Goroutine instructions: GoCall, Yield
+//! Goroutine instructions: GoStart, Yield
 
 use vo_runtime_core::gc::GcRef;
 use vo_runtime_core::objects::closure;
@@ -8,25 +8,54 @@ use crate::fiber::Fiber;
 use crate::instruction::Instruction;
 use crate::vm::ExecResult;
 
-pub struct GoCallResult {
+pub struct GoResult {
     pub new_fiber: Fiber,
 }
 
-pub fn exec_go_call(
+/// GoStart: Start goroutine
+/// - a: func_id_low (if flags bit 0 = 0) or closure_reg (if flags bit 0 = 1)
+/// - b: args_start
+/// - c: arg_slots
+/// - flags bit 0: is_closure, bits 1-7: func_id_high (when not closure)
+pub fn exec_go_start(
     fiber: &mut Fiber,
     inst: &Instruction,
     functions: &[FunctionDef],
     next_fiber_id: u32,
-) -> GoCallResult {
-    let closure_ref = fiber.read_reg(inst.a) as GcRef;
-    let func_id = closure::func_id(closure_ref);
-    let func = &functions[func_id as usize];
+) -> GoResult {
+    let is_closure = (inst.flags & 1) != 0;
+    let args_start = inst.b;
+    let arg_slots = inst.c;
 
+    let (func_id, closure_ref) = if is_closure {
+        let closure_ref = fiber.read_reg(inst.a) as GcRef;
+        let func_id = closure::func_id(closure_ref);
+        (func_id, Some(closure_ref))
+    } else {
+        let func_id = inst.a as u32 | ((inst.flags as u32 >> 1) << 16);
+        (func_id, None)
+    };
+
+    let func = &functions[func_id as usize];
     let mut new_fiber = Fiber::new(next_fiber_id);
     new_fiber.push_frame(func_id, func.local_slots, 0, 0);
-    new_fiber.write_reg(0, closure_ref as u64);
 
-    GoCallResult { new_fiber }
+    if let Some(closure_ref) = closure_ref {
+        // Closure goes in reg[0], args start at reg[1]
+        new_fiber.write_reg(0, closure_ref as u64);
+        for i in 0..arg_slots {
+            let val = fiber.read_reg(args_start + i);
+            new_fiber.write_reg(1 + i, val);
+        }
+    } else {
+        // Regular function: args start at reg[0]
+        for i in 0..arg_slots {
+            let val = fiber.read_reg(args_start + i);
+            new_fiber.write_reg(i, val);
+        }
+    }
+
+    GoResult { new_fiber }
 }
 
 #[inline]

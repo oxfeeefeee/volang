@@ -75,6 +75,12 @@ impl Scheduler {
         }
     }
 
+    pub fn block_current(&mut self) {
+        if let Some(id) = self.current {
+            self.fibers[id as usize].status = FiberStatus::Suspended;
+        }
+    }
+
     pub fn schedule_next(&mut self) -> Option<u32> {
         while let Some(id) = self.ready_queue.pop_front() {
             let fiber = &mut self.fibers[id as usize];
@@ -100,14 +106,18 @@ impl Scheduler {
 
     /// Compact dead fibers when too many accumulate.
     /// Returns true if compaction happened.
+    /// NOTE: Disabled because channel stores fiber_id which becomes invalid after compact.
+    /// TODO: Fix by updating channel waiting_receivers/senders during compact.
     pub fn maybe_compact(&mut self) -> bool {
-        let dead_count = self.fibers.iter().filter(|f| f.status == FiberStatus::Dead).count();
-        if dead_count > 64 && dead_count > self.fibers.len() / 2 {
-            self.compact();
-            true
-        } else {
-            false
-        }
+        // Disabled - fiber_id in channels becomes invalid after compact
+        false
+        // let dead_count = self.fibers.iter().filter(|f| f.status == FiberStatus::Dead).count();
+        // if dead_count > 64 && dead_count > self.fibers.len() / 2 {
+        //     self.compact();
+        //     true
+        // } else {
+        //     false
+        // }
     }
 
     /// Remove dead fibers and rebuild indices.

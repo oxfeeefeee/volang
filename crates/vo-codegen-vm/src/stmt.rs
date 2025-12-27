@@ -1006,30 +1006,94 @@ fn compile_defer_impl(
 }
 
 /// Compile go statement
+/// GoStart: a=func_id/closure, b=args_start, c=arg_slots, flags bit0=is_closure
 fn compile_go(
     call: &vo_syntax::ast::Expr,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // The go statement needs to wrap the call in a closure and spawn it
-    // go f(args) -> spawn closure that calls f(args)
+    use vo_syntax::ast::ExprKind;
     
-    if let vo_syntax::ast::ExprKind::Call(call_expr) = &call.kind {
-        // Create a 0-arg closure that captures the function and arguments
-        // For simplicity, we compile args, then create closure with captured values
+    if let ExprKind::Call(call_expr) = &call.kind {
+        // Compute total arg slots
+        let func_type = info.expr_type(call_expr.func.id);
+        let param_types = info.func_param_types(func_type);
         
-        // First, compute total arg slots
         let mut total_arg_slots = 0u16;
-        for arg in &call_expr.args {
-            total_arg_slots += info.expr_slots(arg.id);
+        for (i, arg) in call_expr.args.iter().enumerate() {
+            let param_type = param_types.get(i).copied();
+            let slots = if let Some(pt) = param_type {
+                info.type_slot_count(pt)
+            } else {
+                info.expr_slots(arg.id)
+            };
+            total_arg_slots += slots;
         }
         
-        // Compile function/closure reference
-        let func_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+        // Check if it's a regular function call
+        if let ExprKind::Ident(ident) = &call_expr.func.kind {
+            if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
+                // Regular function - compile args
+                let args_start = if total_arg_slots > 0 {
+                    func.alloc_temp(total_arg_slots)
+                } else {
+                    0
+                };
+                
+                let mut offset = 0u16;
+                for (i, arg) in call_expr.args.iter().enumerate() {
+                    let param_type = param_types.get(i).copied();
+                    if let Some(pt) = param_type {
+                        let slots = info.type_slot_count(pt);
+                        compile_value_to(arg, args_start + offset, pt, ctx, func, info)?;
+                        offset += slots;
+                    } else {
+                        let arg_slots = info.expr_slots(arg.id);
+                        crate::expr::compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+                        offset += arg_slots;
+                    }
+                }
+                
+                // GoStart: a=func_id_low, b=args_start, c=arg_slots, flags=func_id_high<<1
+                let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
+                let flags = func_id_high << 1;  // bit 0 = 0 (not closure)
+                func.emit_with_flags(Opcode::GoStart, flags, func_id_low, args_start, total_arg_slots);
+                return Ok(());
+            }
+            
+            // Check if it's a local variable (closure)
+            if func.lookup_local(ident.symbol).is_some() || func.lookup_capture(ident.symbol).is_some() {
+                let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+                
+                let args_start = if total_arg_slots > 0 {
+                    func.alloc_temp(total_arg_slots)
+                } else {
+                    0
+                };
+                
+                let mut offset = 0u16;
+                for arg in &call_expr.args {
+                    let arg_slots = info.expr_slots(arg.id);
+                    crate::expr::compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+                    offset += arg_slots;
+                }
+                
+                // GoStart: a=closure_reg, b=args_start, c=arg_slots, flags=1 (is_closure)
+                func.emit_with_flags(Opcode::GoStart, 1, closure_reg, args_start, total_arg_slots);
+                return Ok(());
+            }
+        }
         
-        // Compile arguments to temp slots
-        let args_start = func.alloc_temp(total_arg_slots);
+        // Generic case: expression returning a closure
+        let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+        
+        let args_start = if total_arg_slots > 0 {
+            func.alloc_temp(total_arg_slots)
+        } else {
+            0
+        };
+        
         let mut offset = 0u16;
         for arg in &call_expr.args {
             let arg_slots = info.expr_slots(arg.id);
@@ -1037,54 +1101,11 @@ fn compile_go(
             offset += arg_slots;
         }
         
-        // Create a wrapper closure that will be spawned
-        // The closure captures: func_ref + all args
-        let capture_count = 1 + total_arg_slots;
-        
-        // Generate unique closure for go call
-        let closure_name = format!("go_wrapper_{}", ctx.next_closure_id());
-        let mut closure_builder = FuncBuilder::new_closure(&closure_name);
-        
-        // The closure body:
-        // 1. Get captured function ref (capture[0])
-        // 2. Get captured args (capture[1..])
-        // 3. Call the function
-        
-        // ClosureGet capture[0] -> tmp (func ref)
-        let tmp_func = closure_builder.alloc_temp(1);
-        closure_builder.emit_op(Opcode::ClosureGet, tmp_func, 0, 0);
-        
-        // ClosureGet captures[1..] -> args
-        let tmp_args = closure_builder.alloc_temp(total_arg_slots);
-        for i in 0..total_arg_slots {
-            closure_builder.emit_op(Opcode::ClosureGet, tmp_args + i, (1 + i) as u16, 0);
-        }
-        
-        // CallClosure: a=func, b=args, c=(arg_slots<<8|ret_slots=0)
-        let c = crate::type_info::encode_call_args(total_arg_slots, 0);
-        closure_builder.emit_op(Opcode::CallClosure, tmp_func, tmp_args, c);
-        closure_builder.emit_op(Opcode::Return, 0, 0, 0);
-        
-        let closure_func = closure_builder.build();
-        let closure_func_id = ctx.add_function(closure_func);
-        
-        // Create the closure instance
-        let closure_reg = func.alloc_temp(1);
-        func.emit_op(Opcode::ClosureNew, closure_reg, closure_func_id as u16, capture_count);
-        
-        // Set captures: [func_ref, args...]
-        func.emit_op(Opcode::PtrSet, closure_reg, 1, func_reg);  // capture[0] = func_ref
-        for i in 0..total_arg_slots {
-            func.emit_op(Opcode::PtrSet, closure_reg, 2 + i, args_start + i);  // capture[i+1] = arg[i]
-        }
-        
-        // GoCall: a=closure
-        func.emit_op(Opcode::GoCall, closure_reg, 0, 0);
-    } else {
-        return Err(CodegenError::UnsupportedStmt("go with non-call".to_string()));
+        func.emit_with_flags(Opcode::GoStart, 1, closure_reg, args_start, total_arg_slots);
+        return Ok(());
     }
     
-    Ok(())
+    Err(CodegenError::UnsupportedStmt("go requires a call expression".to_string()))
 }
 
 /// Compile select statement

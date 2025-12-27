@@ -20,6 +20,7 @@ pub enum ExecResult {
     Continue,
     Return,
     Yield,
+    Block,  // Channel blocking - don't re-queue, wait for wake
     Panic,
     Done,
 }
@@ -120,6 +121,9 @@ impl Vm {
                 ExecResult::Yield => {
                     self.scheduler.suspend_current();
                 }
+                ExecResult::Block => {
+                    self.scheduler.block_current();
+                }
                 ExecResult::Panic => {
                     self.scheduler.kill_current();
                     return Err(VmError::PanicUnwound);
@@ -157,56 +161,47 @@ impl Vm {
                 (inst, frame.func_id)
             };
 
-            // Handle channel ops specially - they need scheduler access for wake
+            // Handle special ops that need scheduler access
             let op = inst.opcode();
+            
+            // Helper macro for channel ops with blocking support
+            macro_rules! handle_chan_op {
+                ($exec_fn:expr) => {{
+                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                    match $exec_fn(fiber, &inst) {
+                        exec::ChanResult::Continue => ExecResult::Continue,
+                        exec::ChanResult::Yield => {
+                            fiber.current_frame_mut().unwrap().pc -= 1;
+                            ExecResult::Block
+                        }
+                        exec::ChanResult::Panic => ExecResult::Panic,
+                        exec::ChanResult::Wake(id) => {
+                            self.scheduler.wake(id);
+                            ExecResult::Continue
+                        }
+                        exec::ChanResult::WakeMultiple(ids) => {
+                            for id in ids { self.scheduler.wake(id); }
+                            ExecResult::Continue
+                        }
+                    }
+                }};
+            }
+            
             let result = match op {
-                Opcode::ChanSend => {
-                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    match exec::exec_chan_send(fiber, &inst) {
-                        exec::ChanResult::Continue => ExecResult::Continue,
-                        exec::ChanResult::Yield => ExecResult::Yield,
-                        exec::ChanResult::Panic => ExecResult::Panic,
-                        exec::ChanResult::Wake(id) => {
-                            self.scheduler.wake(id);
-                            ExecResult::Continue
-                        }
-                        exec::ChanResult::WakeMultiple(ids) => {
-                            for id in ids { self.scheduler.wake(id); }
-                            ExecResult::Continue
-                        }
-                    }
-                }
-                Opcode::ChanRecv => {
-                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    match exec::exec_chan_recv(fiber, &inst) {
-                        exec::ChanResult::Continue => ExecResult::Continue,
-                        exec::ChanResult::Yield => ExecResult::Yield,
-                        exec::ChanResult::Panic => ExecResult::Panic,
-                        exec::ChanResult::Wake(id) => {
-                            self.scheduler.wake(id);
-                            ExecResult::Continue
-                        }
-                        exec::ChanResult::WakeMultiple(ids) => {
-                            for id in ids { self.scheduler.wake(id); }
-                            ExecResult::Continue
-                        }
-                    }
-                }
+                Opcode::ChanSend => handle_chan_op!(exec::exec_chan_send),
+                Opcode::ChanRecv => handle_chan_op!(exec::exec_chan_recv),
                 Opcode::ChanClose => {
                     let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    match exec::exec_chan_close(fiber, &inst) {
-                        exec::ChanResult::WakeMultiple(ids) => {
-                            for id in ids { self.scheduler.wake(id); }
-                        }
-                        _ => {}
+                    if let exec::ChanResult::WakeMultiple(ids) = exec::exec_chan_close(fiber, &inst) {
+                        for id in ids { self.scheduler.wake(id); }
                     }
                     ExecResult::Continue
                 }
-                Opcode::GoCall => {
+                Opcode::GoStart => {
                     let functions = &module.functions;
                     let next_id = self.scheduler.fibers.len() as u32;
                     let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    let go_result = exec::exec_go_call(fiber, &inst, functions, next_id);
+                    let go_result = exec::exec_go_start(fiber, &inst, functions, next_id);
                     self.scheduler.spawn(go_result.new_fiber);
                     ExecResult::Continue
                 }
@@ -231,6 +226,7 @@ impl Vm {
         // Time slice exhausted
         ExecResult::Continue
     }
+
 
     /// Execute a single instruction.
     fn exec_inst(
@@ -691,9 +687,9 @@ impl Vm {
                 ExecResult::Continue
             }
 
-            Opcode::GoCall => {
-                // GoCall needs special handling - returns new fiber to spawn
-                // For now, return Yield to handle in run_fiber caller
+            Opcode::GoStart => {
+                // GoStart needs special handling - returns new fiber to spawn
+                // Handled in run_fiber, this path shouldn't be reached
                 ExecResult::Yield
             }
             Opcode::Yield => {

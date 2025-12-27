@@ -304,7 +304,16 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::ClosureSet => format!("ClosureSet    r{}[{}], r{}", a, b, c),
 
         // GO
-        Opcode::GoCall => format!("GoCall        func_{}, args={}", a, b),
+        // a=func_id_low/closure_reg, b=args_start, c=arg_slots, flags bit0=is_closure
+        Opcode::GoStart => {
+            let is_closure = (flags & 1) != 0;
+            if is_closure {
+                format!("GoStart       closure=r{}, args=r{}, slots={}", a, b, c)
+            } else {
+                let func_id = a as u32 | (((flags >> 1) as u32) << 16);
+                format!("GoStart       func_{}, args=r{}, slots={}", func_id, b, c)
+            }
+        }
         Opcode::Yield => "Yield".to_string(),
 
         // DEFER
