@@ -200,6 +200,20 @@ impl<'a> TypeInfoWrapper<'a> {
         type_layout::is_value_type(type_key, self.tc_objs())
     }
 
+    /// Reference types (pointer, slice, map, channel, closure, string) are already GcRefs
+    /// They don't need boxing even when escaped
+    pub fn is_reference_type(&self, type_key: TypeKey) -> bool {
+        use vo_common_core::ValueKind;
+        let vk = self.type_value_kind(type_key);
+        matches!(vk, 
+            ValueKind::Pointer 
+            | ValueKind::Slice 
+            | ValueKind::Map 
+            | ValueKind::Channel 
+            | ValueKind::Closure 
+            | ValueKind::String)
+    }
+
     pub fn is_named_type(&self, type_key: TypeKey) -> bool {
         type_layout::is_named_type(type_key, self.tc_objs())
     }

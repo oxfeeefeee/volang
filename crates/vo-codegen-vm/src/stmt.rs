@@ -37,18 +37,7 @@ pub fn compile_stmt(
                     let obj_key = info.get_def(name);
                     let escapes = info.is_escaped(obj_key);
 
-                    // Reference types (pointer, slice, map, channel, closure, string) are already GcRefs
-                    // They don't need boxing even when escaped - they're stored directly as 1-slot GcRef
-                    let vk = info.type_value_kind(type_key);
-                    let is_reference_type = matches!(vk, 
-                        vo_common_core::ValueKind::Pointer 
-                        | vo_common_core::ValueKind::Slice 
-                        | vo_common_core::ValueKind::Map 
-                        | vo_common_core::ValueKind::Channel 
-                        | vo_common_core::ValueKind::Closure 
-                        | vo_common_core::ValueKind::String);
-                    
-                    if escapes && !is_reference_type {
+                    if escapes && !info.is_reference_type(type_key) {
                         // Heap allocation for escaped value types (struct, array, primitives captured by closure)
                         let slot = func.define_local_heap(name.symbol);
                         
@@ -154,14 +143,9 @@ pub fn compile_stmt(
                     if is_def {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
-                        let is_pointer = info.is_pointer(elem_type);
 
-                        if escapes && !is_pointer {
-                            let slot = func.define_local_heap(name.symbol);
-                            let meta_idx = ctx.get_or_create_value_meta(Some(elem_type), elem_slots, &slot_types);
-                            let meta_reg = func.alloc_temp(1);
-                            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-                            func.emit_with_flags(Opcode::PtrNew, elem_slots as u8, slot, meta_reg, 0);
+                        if escapes && !info.is_reference_type(elem_type) {
+                            let slot = emit_heap_alloc(name.symbol, Some(elem_type), elem_slots, &slot_types, ctx, func);
                             func.emit_ptr_set(slot, 0, tmp_base + offset, elem_slots);
                         } else {
                             let slot = func.define_local_stack(name.symbol, elem_slots, &slot_types);
@@ -198,14 +182,10 @@ pub fn compile_stmt(
                     if is_def {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
-                        let is_pointer = type_key.map(|t| info.is_pointer(t)).expect("short var must have value");
+                        let tk = type_key.expect("short var must have value");
 
-                        if escapes && !is_pointer {
-                            let slot = func.define_local_heap(name.symbol);
-                            let meta_idx = ctx.get_or_create_value_meta(type_key, slots, &slot_types);
-                            let meta_reg = func.alloc_temp(1);
-                            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-                            func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_reg, 0);
+                        if escapes && !info.is_reference_type(tk) {
+                            let slot = emit_heap_alloc(name.symbol, type_key, slots, &slot_types, ctx, func);
 
                             if i < short_var.values.len() {
                                 let tmp = func.alloc_temp(slots);
@@ -1860,4 +1840,22 @@ pub fn compile_iface_assign(
         func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, src_reg, const_idx);
     }
     Ok(())
+}
+
+/// Emit PtrNew for heap allocation of a value type.
+/// Returns the slot holding the GcRef to the allocated object.
+fn emit_heap_alloc(
+    symbol: vo_common::symbol::Symbol,
+    type_key: Option<vo_analysis::objects::TypeKey>,
+    slots: u16,
+    slot_types: &[vo_common_core::types::SlotType],
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+) -> u16 {
+    let slot = func.define_local_heap(symbol);
+    let meta_idx = ctx.get_or_create_value_meta(type_key, slots, slot_types);
+    let meta_reg = func.alloc_temp(1);
+    func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+    func.emit_with_flags(Opcode::PtrNew, slots as u8, slot, meta_reg, 0);
+    slot
 }
