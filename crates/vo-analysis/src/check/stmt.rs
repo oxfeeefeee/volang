@@ -776,7 +776,12 @@ impl Checker {
                         }
                         let name = self.resolve_symbol(lhs_ident.symbol).to_string();
                         let okey = self.new_var(lhs_ident.span.start.to_usize(), Some(self.pkg), name, t);
-                        self.declare(self.octx.scope.unwrap(), okey);
+                        // Type switch case variable scope starts at the case clause
+                        let scope_pos = clause.types.last()
+                            .and_then(|te| te.as_ref())
+                            .map(|te| te.span.end.to_usize())
+                            .unwrap_or(clause.span.start.to_usize());
+                        self.declare(self.octx.scope.unwrap(), okey, scope_pos);
                         self.result.record_implicit(clause.span, okey);
                         // For the "declared but not used" error, all lhs variables act as
                         // one; i.e., if any one of them is 'used', all of them are 'used'.
@@ -877,8 +882,9 @@ impl Checker {
                                             }
                                         }
                                         // Declare new variables in scope
+                                        let scope_pos = recv.expr.span.end.to_usize();
                                         for okey in new_vars {
-                                            self.declare(scope_key, okey);
+                                            self.declare(scope_key, okey, scope_pos);
                                         }
                                     } else {
                                         // Assignment: v = <-ch or v, ok = <-ch
@@ -1025,8 +1031,9 @@ impl Checker {
                                 }
                             }
                             // Declare variables
+                            let scope_pos = expr.span.end.to_usize();
                             for okey in vars {
-                                self.declare(scope_key, okey);
+                                self.declare(scope_key, okey, scope_pos);
                             }
                         } else {
                             // ordinary assignment
@@ -1136,9 +1143,14 @@ impl Checker {
         self.process_delayed(top);
 
         // Declare new variables in scope
+        // spec: "The scope of a constant or variable identifier declared inside
+        // a function begins at the end of the ConstSpec or VarSpec (ShortVarDecl
+        // for short variable declarations) and ends at the end of the innermost
+        // containing block."
         if !new_vars.is_empty() {
+            let scope_pos = values.last().map(|e| e.span.end.to_usize()).unwrap_or(span.end.to_usize());
             for okey in &new_vars {
-                self.declare(scope_key, *okey);
+                self.declare(scope_key, *okey, scope_pos);
             }
         } else {
             self.emit(TypeError::NoNewVars.at(span));

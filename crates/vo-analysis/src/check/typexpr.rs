@@ -473,7 +473,9 @@ impl Checker {
         // Create param var and declare (like goscript's collect_params)
         let recv_name = self.resolve_ident(&r.name).to_string();
         let par = self.new_param_var(0, Some(self.pkg), recv_name, Some(recv_type));
-        self.declare(scope_key, par);
+        // Function parameters are visible from the start of the function scope
+        let scope_pos = self.scope(scope_key).pos();
+        self.declare(scope_key, par, scope_pos);
         self.result.record_def(r.name.clone(), Some(par));
 
         vec![par]
@@ -515,7 +517,8 @@ impl Checker {
                         // This is an invalid case, but continue like goscript
                     }
                     let var = self.new_param_var(0, Some(self.pkg), name_str, Some(param_type));
-                    self.declare(scope_key, var);
+                    let scope_pos = self.scope(scope_key).pos();
+                    self.declare(scope_key, var, scope_pos);
                     self.result.record_def(name.clone(), Some(var));
                     vars.push(var);
                 }
@@ -562,7 +565,8 @@ impl Checker {
             if let Some(name) = &result.name {
                 let name_str = self.resolve_ident(name).to_string();
                 let var = self.new_param_var(0, Some(self.pkg), name_str, Some(result_type));
-                self.declare(scope_key, var);
+                let scope_pos = self.scope(scope_key).pos();
+                self.declare(scope_key, var, scope_pos);
                 self.result.record_def(name.clone(), Some(var));
                 vars.push(var);
             } else {

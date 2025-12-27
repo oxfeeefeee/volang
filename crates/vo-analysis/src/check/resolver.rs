@@ -349,12 +349,12 @@ impl Checker {
                 })
                 .collect();
             for elem in elems {
-                self.declare(file_scope, elem);
+                self.declare(file_scope, elem, 0);
             }
             self.add_unused_dot_import(file_scope, imp, import.span);
         } else {
             // Regular import
-            self.declare(file_scope, pkg_name_obj);
+            self.declare(file_scope, pkg_name_obj, 0);
         }
     }
 
@@ -399,11 +399,10 @@ impl Checker {
 
                     // Check arity: names vs values count
                     self.arity_match(
-                        spec.names.len(),
-                        last_values.len(),
+                        &spec.names,
+                        last_values,
                         last_typ_expr.is_some(),
                         true, // is_const
-                        spec.span,
                     );
                 }
             }
@@ -453,11 +452,10 @@ impl Checker {
 
                     // Check arity: names vs values count
                     self.arity_match(
-                        spec.names.len(),
-                        spec.values.len(),
+                        &spec.names,
+                        &spec.values,
                         typ_expr.is_some(),
                         false, // is_const
-                        spec.span,
                     );
                 }
             }
@@ -497,7 +495,7 @@ impl Checker {
                             self.error_code(TypeError::MissingFuncBody, func_decl.span);
                         }
                     } else {
-                        self.declare(scope, okey);
+                        self.declare(scope, okey, 0);
                         self.result.record_def(func_decl.name.clone(), Some(okey));
                     }
                 } else {
@@ -545,7 +543,7 @@ impl Checker {
         }
 
         let scope = *self.package(self.pkg).scope();
-        self.declare(scope, okey);
+        self.declare(scope, okey, 0);
         self.result.record_def(ident.clone(), Some(okey));
         self.obj_map.insert(okey, dkey);
         let order = self.obj_map.len() as u32;
@@ -675,36 +673,57 @@ impl Checker {
     }
 
     /// Checks arity (number of names vs values) for const/var declarations.
+    /// Generates precise error messages pointing to specific names or expressions.
     fn arity_match(
         &self,
-        names_count: usize,
-        values_count: usize,
+        names: &[vo_syntax::ast::Ident],
+        values: &[vo_syntax::ast::Expr],
         has_type: bool,
         is_const: bool,
-        span: Span,
     ) {
-        let l = names_count;
-        let r = values_count;
+        let l = names.len();
+        let r = values.len();
 
         if l < r {
-            self.error_code(TypeError::ExtraInitExpr, span);
+            // More values than names - report extra init expr
+            let extra_expr = &values[l];
+            self.error_code_msg(
+                TypeError::ExtraInitExpr,
+                extra_expr.span,
+                format!("extra init expr"),
+            );
         } else if l > r {
             if is_const {
                 if r == 0 && !has_type {
-                    self.error_code(TypeError::MissingTypeOrInit, span);
+                    // const x - no type and no init
+                    self.error_code_msg(
+                        TypeError::MissingTypeOrInit,
+                        names[0].span,
+                        "missing type or init expr".to_string(),
+                    );
                 }
+                // const with inherited values from previous spec is OK
             } else {
                 // var declaration
                 if r == 0 {
                     // No init expressions
                     if !has_type {
                         // var x - no type and no init
-                        self.error_code(TypeError::MissingTypeOrInit, span);
+                        self.error_code_msg(
+                            TypeError::MissingTypeOrInit,
+                            names[0].span,
+                            "missing type or init expr".to_string(),
+                        );
                     }
                     // var x int - has type, OK
                 } else if r != 1 {
                     // r >= 2 but l > r: more names than values
-                    self.error_code(TypeError::MissingInitExpr, span);
+                    let missing_name = self.resolve_ident(&names[r]);
+                    self.error_code_msg(
+                        TypeError::MissingInitExpr,
+                        names[r].span,
+                        format!("missing init expr for {}", missing_name),
+                    );
                 }
                 // r == 1 and l > 1: N-to-1 assignment, OK
             }

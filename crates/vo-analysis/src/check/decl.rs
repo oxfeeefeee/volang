@@ -30,9 +30,15 @@ impl Checker {
         self.error_code_msg(TypeError::OtherDeclaration, Span::default(), format!("\tother declaration of {}", lobj.name()));
     }
 
-    /// Declares an object in a scope.
+    /// Declares an object in a scope at the given position.
+    /// The scope_pos determines when the variable becomes visible in the scope.
     /// Returns error if name already exists (except for blank identifier "_").
-    pub(crate) fn declare(&mut self, skey: ScopeKey, okey: ObjKey) {
+    /// 
+    /// spec: "The scope of a constant or variable identifier declared inside
+    /// a function begins at the end of the ConstSpec or VarSpec (ShortVarDecl
+    /// for short variable declarations) and ends at the end of the innermost
+    /// containing block."
+    pub(crate) fn declare(&mut self, skey: ScopeKey, okey: ObjKey, scope_pos: usize) {
         // spec: "The blank identifier, represented by the underscore
         // character _, may be used in a declaration like any other
         // identifier but the declaration does not introduce a new binding."
@@ -48,6 +54,7 @@ impl Checker {
                 self.report_alt_decl(o);
                 return;
             }
+            self.lobj_mut(okey).set_scope_pos(scope_pos);
         }
     }
 
@@ -516,9 +523,14 @@ impl Checker {
                     self.process_delayed(top);
 
                     // Declare constants in current scope
+                    // scope_pos is the end of the declaration
                     if let Some(scope) = self.octx.scope {
+                        let scope_pos = current_spec
+                            .and_then(|s| s.values.last())
+                            .map(|e| e.span.end.to_usize())
+                            .unwrap_or_else(|| spec.names.last().map(|n| n.span.end.to_usize()).unwrap_or(0));
                         for okey in lhs {
-                            self.declare(scope, okey);
+                            self.declare(scope, okey, scope_pos);
                         }
                     }
                 }
@@ -572,9 +584,14 @@ impl Checker {
                     self.process_delayed(top);
 
                     // Declare variables in current scope
+                    // scope_pos is the end of the declaration
                     if let Some(scope) = self.octx.scope {
+                        let scope_pos = spec.values.last()
+                            .map(|e| e.span.end.to_usize())
+                            .or_else(|| spec.ty.as_ref().map(|t| t.span.end.to_usize()))
+                            .unwrap_or_else(|| spec.names.last().map(|n| n.span.end.to_usize()).unwrap_or(0));
                         for okey in vars {
-                            self.declare(scope, okey);
+                            self.declare(scope, okey, scope_pos);
                         }
                     }
                 }
@@ -591,7 +608,8 @@ impl Checker {
 
                 // Declare in scope first (type scope starts at identifier)
                 if let Some(scope) = self.octx.scope {
-                    self.declare(scope, okey);
+                    let scope_pos = tdecl.name.span.end.to_usize();
+                    self.declare(scope, okey, scope_pos);
                 }
 
                 // Mark gray and type-check

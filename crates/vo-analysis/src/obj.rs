@@ -395,6 +395,9 @@ impl LangObj {
     }
 
     // Setters
+    pub(crate) fn set_scope_pos(&mut self, pos: Pos) {
+        self.scope_pos = pos;
+    }
     pub(crate) fn set_type(&mut self, typ: Option<TypeKey>) {
         self.typ = typ;
     }
