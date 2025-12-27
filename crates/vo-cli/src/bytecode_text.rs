@@ -229,7 +229,13 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::JumpIfNot => format!("JumpIfNot     r{}, pc_{}", a, instr.imm32()),
 
         // CALL
-        Opcode::Call => format!("Call          r{}, func_{}, args={}", a, b, c),
+        // a=func_id_low, b=args_start, c=(arg_slots<<8|ret_slots), flags=func_id_high
+        Opcode::Call => {
+            let func_id = a as u32 | ((flags as u32) << 16);
+            let arg_slots = c >> 8;
+            let ret_slots = c & 0xFF;
+            format!("Call          func_{}, args=r{}, arg_slots={}, ret_slots={}", func_id, b, arg_slots, ret_slots)
+        }
         Opcode::CallExtern => format!("CallExtern    r{}, extern_{}, args={}", a, b, c),
         Opcode::CallClosure => format!("CallClosure   r{}, r{}, args={}", a, b, c),
         Opcode::CallIface => format!("CallIface     r{}, r{}, method={}, args={}", a, b, c, flags),
@@ -302,8 +308,25 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::Yield => "Yield".to_string(),
 
         // DEFER
-        Opcode::DeferPush => format!("DeferPush     func_{}, args={}", a, b),
-        Opcode::ErrDeferPush => format!("ErrDeferPush  func_{}, args={}", a, b),
+        // a=func_id_low/closure_reg, b=arg_start, c=arg_slots, flags bit0=is_closure
+        Opcode::DeferPush => {
+            let is_closure = (flags & 1) != 0;
+            if is_closure {
+                format!("DeferPush     closure=r{}, args=r{}, slots={}", a, b, c)
+            } else {
+                let func_id = a as u32 | (((flags >> 1) as u32) << 16);
+                format!("DeferPush     func_{}, args=r{}, slots={}", func_id, b, c)
+            }
+        }
+        Opcode::ErrDeferPush => {
+            let is_closure = (flags & 1) != 0;
+            if is_closure {
+                format!("ErrDeferPush  closure=r{}, args=r{}, slots={}", a, b, c)
+            } else {
+                let func_id = a as u32 | (((flags >> 1) as u32) << 16);
+                format!("ErrDeferPush  func_{}, args=r{}, slots={}", func_id, b, c)
+            }
+        }
         Opcode::Panic => format!("Panic         r{}", a),
         Opcode::Recover => format!("Recover       r{}", a),
 

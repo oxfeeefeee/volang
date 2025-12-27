@@ -71,12 +71,18 @@ fn scan_fibers(gc: &mut Gc, fibers: &[Fiber], functions: &[FunctionDef]) {
             if !entry.closure.is_null() {
                 gc.mark_gray(entry.closure);
             }
+            if !entry.args.is_null() {
+                gc.mark_gray(entry.args);
+            }
         }
 
         if let Some(state) = &fiber.defer_state {
             for entry in &state.pending {
                 if !entry.closure.is_null() {
                     gc.mark_gray(entry.closure);
+                }
+                if !entry.args.is_null() {
+                    gc.mark_gray(entry.args);
                 }
             }
         }

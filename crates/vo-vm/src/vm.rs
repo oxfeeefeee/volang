@@ -506,7 +506,8 @@ impl Vm {
             }
             Opcode::Return => {
                 let func = &module.functions[func_id as usize];
-                exec::exec_return(fiber, inst, func)
+                let is_error_return = (inst.flags & 1) != 0;
+                exec::exec_return(fiber, inst, func, module, is_error_return)
             }
 
             Opcode::StrNew => {
@@ -700,11 +701,11 @@ impl Vm {
             }
 
             Opcode::DeferPush => {
-                exec::exec_defer_push(fiber, inst);
+                exec::exec_defer_push(fiber, inst, &mut state.gc);
                 ExecResult::Continue
             }
             Opcode::ErrDeferPush => {
-                exec::exec_err_defer_push(fiber, inst);
+                exec::exec_err_defer_push(fiber, inst, &mut state.gc);
                 ExecResult::Continue
             }
             Opcode::Panic => {

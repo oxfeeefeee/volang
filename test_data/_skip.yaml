@@ -36,8 +36,7 @@ skips:
   - file: debug_sequence.vo
     skip: [jit]
   - file: defer_stmt.vo
-    skip: [vm, jit]
-    reason: "type check failed"
+    skip: [jit]
   - file: embed_interface.vo
     skip: [jit]
   - file: embed_interface_impl.vo
@@ -55,8 +54,7 @@ skips:
   - file: escape_struct_assign.vo
     skip: [jit]
   - file: fib_goroutine.vo
-    skip: [vm, jit]
-    reason: "VariableNotFound"
+    skip: [jit]
   - file: field_offset_debug.vo
     skip: [jit]
   - file: for_stmt.vo

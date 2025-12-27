@@ -803,9 +803,7 @@ fn compile_stmt_with_label(
 
         // === ErrDefer ===
         StmtKind::ErrDefer(err_defer) => {
-            // ErrDefer is like defer but only runs on error return
-            let call_reg = crate::expr::compile_expr(&err_defer.call, ctx, func, info)?;
-            func.emit_op(Opcode::ErrDeferPush, call_reg, 0, 0);
+            compile_defer_impl(&err_defer.call, ctx, func, info, true)?;
         }
 
         // === Fail ===
@@ -889,20 +887,122 @@ pub fn compile_block(
 }
 
 /// Compile defer statement
+/// DeferPush instruction format:
+/// - a: func_id (flags bit 0 = 0) or closure_reg (flags bit 0 = 1)
+/// - b: arg_start
+/// - c: arg_slots
+/// - flags bit 0: is_closure
 fn compile_defer(
     call: &vo_syntax::ast::Expr,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Compile the call expression to get closure/function
-    // For simplicity, compile the entire call and use Defer instruction
-    let call_reg = crate::expr::compile_expr(call, ctx, func, info)?;
+    compile_defer_impl(call, ctx, func, info, false)
+}
+
+fn compile_defer_impl(
+    call: &vo_syntax::ast::Expr,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+    is_errdefer: bool,
+) -> Result<(), CodegenError> {
+    use vo_syntax::ast::ExprKind;
     
-    // DeferPush instruction: push closure to defer stack
-    func.emit_op(Opcode::DeferPush, call_reg, 0, 0);
+    let opcode = if is_errdefer { Opcode::ErrDeferPush } else { Opcode::DeferPush };
     
-    Ok(())
+    if let ExprKind::Call(call_expr) = &call.kind {
+        // Compute total arg slots
+        let func_type = info.expr_type(call_expr.func.id);
+        let param_types = info.func_param_types(func_type);
+        
+        let mut total_arg_slots = 0u16;
+        for (i, arg) in call_expr.args.iter().enumerate() {
+            let param_type = param_types.get(i).copied();
+            let slots = if let Some(pt) = param_type {
+                info.type_slot_count(pt)
+            } else {
+                info.expr_slots(arg.id)
+            };
+            total_arg_slots += slots;
+        }
+        
+        // Check if it's a regular function call
+        if let ExprKind::Ident(ident) = &call_expr.func.kind {
+            if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
+                // Regular function call - compile args
+                let args_start = if total_arg_slots > 0 {
+                    func.alloc_temp(total_arg_slots)
+                } else {
+                    0
+                };
+                
+                let mut offset = 0u16;
+                for (i, arg) in call_expr.args.iter().enumerate() {
+                    let param_type = param_types.get(i).copied();
+                    if let Some(pt) = param_type {
+                        let slots = info.type_slot_count(pt);
+                        compile_value_to(arg, args_start + offset, pt, ctx, func, info)?;
+                        offset += slots;
+                    } else {
+                        let arg_slots = info.expr_slots(arg.id);
+                        crate::expr::compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+                        offset += arg_slots;
+                    }
+                }
+                
+                // DeferPush: a=func_id_low, b=arg_start, c=arg_slots, flags=func_id_high<<1
+                let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
+                let flags = func_id_high << 1;  // bit 0 = 0 (not closure)
+                func.emit_with_flags(opcode, flags, func_id_low, args_start, total_arg_slots);
+                return Ok(());
+            }
+            
+            // Check if it's a local variable (closure)
+            if func.lookup_local(ident.symbol).is_some() || func.lookup_capture(ident.symbol).is_some() {
+                let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+                
+                let args_start = if total_arg_slots > 0 {
+                    func.alloc_temp(total_arg_slots)
+                } else {
+                    0
+                };
+                
+                let mut offset = 0u16;
+                for arg in &call_expr.args {
+                    let arg_slots = info.expr_slots(arg.id);
+                    crate::expr::compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+                    offset += arg_slots;
+                }
+                
+                // DeferPush: a=closure_reg, b=arg_start, c=arg_slots, flags=1 (is_closure)
+                func.emit_with_flags(opcode, 1, closure_reg, args_start, total_arg_slots);
+                return Ok(());
+            }
+        }
+        
+        // Generic case: expression returning a closure
+        let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+        
+        let args_start = if total_arg_slots > 0 {
+            func.alloc_temp(total_arg_slots)
+        } else {
+            0
+        };
+        
+        let mut offset = 0u16;
+        for arg in &call_expr.args {
+            let arg_slots = info.expr_slots(arg.id);
+            crate::expr::compile_expr_to(arg, args_start + offset, ctx, func, info)?;
+            offset += arg_slots;
+        }
+        
+        func.emit_with_flags(opcode, 1, closure_reg, args_start, total_arg_slots);
+        return Ok(());
+    }
+    
+    Err(CodegenError::UnsupportedStmt("defer requires a call expression".to_string()))
 }
 
 /// Compile go statement

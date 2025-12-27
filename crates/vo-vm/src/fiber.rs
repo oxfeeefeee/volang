@@ -17,7 +17,11 @@ pub struct CallFrame {
 #[derive(Debug, Clone)]
 pub struct DeferEntry {
     pub frame_depth: usize,
+    pub func_id: u32,
     pub closure: GcRef,
+    pub args: GcRef,
+    pub arg_slots: u16,
+    pub is_closure: bool,
     pub is_errdefer: bool,
 }
 
