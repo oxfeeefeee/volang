@@ -1533,7 +1533,7 @@ fn compile_compound_assign(
         (AssignOp::And, _) => Opcode::And,
         (AssignOp::Or, _) => Opcode::Or,
         (AssignOp::Xor, _) => Opcode::Xor,
-        (AssignOp::AndNot, _) => return Err(CodegenError::UnsupportedStmt("&^= not implemented".to_string())),
+        (AssignOp::AndNot, _) => Opcode::AndNot,
         (AssignOp::Shl, _) => Opcode::Shl,
         (AssignOp::Shr, _) => Opcode::ShrS,
         (AssignOp::Assign, _) => unreachable!("plain assign handled separately"),

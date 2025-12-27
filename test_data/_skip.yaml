@@ -195,6 +195,10 @@ skips:
     skip: [jit]
   - file: simple_clone_test.vo
     skip: [jit]
+  - file: array_slice.vo
+    skip: [jit]
+  - file: bitwise_ops.vo
+    skip: [jit]
   - file: slice.vo
     skip: [jit]
   - file: slice_map.vo

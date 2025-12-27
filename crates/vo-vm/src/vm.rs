@@ -454,6 +454,10 @@ impl Vm {
                 exec::exec_xor(fiber, inst);
                 ExecResult::Continue
             }
+            Opcode::AndNot => {
+                exec::exec_and_not(fiber, inst);
+                ExecResult::Continue
+            }
             Opcode::Not => {
                 exec::exec_not(fiber, inst);
                 ExecResult::Continue

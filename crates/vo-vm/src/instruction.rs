@@ -125,6 +125,7 @@ pub enum Opcode {
     And,
     Or,
     Xor,
+    AndNot,  // a &^ b = a & (^b)
     Not,
     Shl,
     ShrS,

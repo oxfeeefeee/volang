@@ -1,4 +1,4 @@
-//! Bitwise and logical instructions: And, Or, Xor, Not, Shl, ShrS, ShrU, BoolNot
+//! Bitwise and logical instructions: And, Or, Xor, AndNot, Not, Shl, ShrS, ShrU, BoolNot
 
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;
@@ -22,6 +22,13 @@ pub fn exec_xor(fiber: &mut Fiber, inst: &Instruction) {
     let a = fiber.read_reg(inst.b);
     let b = fiber.read_reg(inst.c);
     fiber.write_reg(inst.a, a ^ b);
+}
+
+#[inline]
+pub fn exec_and_not(fiber: &mut Fiber, inst: &Instruction) {
+    let a = fiber.read_reg(inst.b);
+    let b = fiber.read_reg(inst.c);
+    fiber.write_reg(inst.a, a & !b);
 }
 
 #[inline]

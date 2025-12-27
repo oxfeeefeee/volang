@@ -214,6 +214,7 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::And => format!("And           r{}, r{}, r{}", a, b, c),
         Opcode::Or => format!("Or            r{}, r{}, r{}", a, b, c),
         Opcode::Xor => format!("Xor           r{}, r{}, r{}", a, b, c),
+        Opcode::AndNot => format!("AndNot        r{}, r{}, r{}", a, b, c),
         Opcode::Not => format!("Not           r{}, r{}", a, b),
         Opcode::Shl => format!("Shl           r{}, r{}, r{}", a, b, c),
         Opcode::ShrS => format!("ShrS          r{}, r{}, r{}", a, b, c),
