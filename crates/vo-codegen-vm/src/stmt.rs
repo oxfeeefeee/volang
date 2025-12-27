@@ -107,7 +107,7 @@ fn compile_stmt_with_label(
                             
                             // Initialize if value provided
                             if i < spec.values.len() {
-                                // TODO: array literal initialization for escaped arrays
+                                compile_escaped_array_init(slot, &spec.values[i], type_key, elem_slots, ctx, func, info)?;
                             }
                             // else: ArrayNew already zero-initializes
                         } else {
@@ -228,12 +228,35 @@ fn compile_stmt_with_label(
                         let tk = type_key.expect("short var must have value");
 
                         if escapes && !info.is_reference_type(tk) {
-                            let slot = emit_heap_alloc(name.symbol, type_key, slots, &slot_types, ctx, func);
+                            // Check if this is an array type
+                            if info.is_array(tk) {
+                                // Array: use ArrayNew
+                                let slot = func.define_local_heap(name.symbol);
+                                let arr_len = info.array_len(tk);
+                                let elem_slots = info.array_elem_slots(tk);
+                                let elem_meta_idx = ctx.get_or_create_array_elem_meta(tk, info);
+                                
+                                let meta_reg = func.alloc_temp(1);
+                                func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
+                                
+                                let len_reg = func.alloc_temp(1);
+                                let (b, c) = crate::type_info::encode_i32(arr_len as i32);
+                                func.emit_op(Opcode::LoadInt, len_reg, b, c);
+                                
+                                func.emit_with_flags(Opcode::ArrayNew, elem_slots as u8, slot, meta_reg, len_reg);
+                                
+                                if i < short_var.values.len() {
+                                    compile_escaped_array_init(slot, &short_var.values[i], tk, elem_slots, ctx, func, info)?;
+                                }
+                            } else {
+                                // Struct/primitive: use PtrNew
+                                let slot = emit_heap_alloc(name.symbol, type_key, slots, &slot_types, ctx, func);
 
-                            if i < short_var.values.len() {
-                                let tmp = func.alloc_temp(slots);
-                                compile_expr_to(&short_var.values[i], tmp, ctx, func, info)?;
-                                func.emit_ptr_set(slot, 0, tmp, slots);
+                                if i < short_var.values.len() {
+                                    let tmp = func.alloc_temp(slots);
+                                    compile_expr_to(&short_var.values[i], tmp, ctx, func, info)?;
+                                    func.emit_ptr_set(slot, 0, tmp, slots);
+                                }
                             }
                         } else {
                             let slot = func.define_local_stack(name.symbol, slots, &slot_types);
@@ -1814,6 +1837,51 @@ pub fn compile_iface_assign(
         let src_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
         func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, src_reg, const_idx);
     }
+    Ok(())
+}
+
+/// Initialize an escaped (heap-allocated) array from a composite literal.
+fn compile_escaped_array_init(
+    arr_slot: u16,
+    value: &vo_syntax::ast::Expr,
+    _array_type: vo_analysis::objects::TypeKey,
+    elem_slots: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    use vo_syntax::ast::ExprKind;
+    
+    if let ExprKind::CompositeLit(lit) = &value.kind {
+        // Array literal: [N]T{e1, e2, ...}
+        for (i, elem) in lit.elems.iter().enumerate() {
+            // Compile element value to temp
+            let val_reg = crate::expr::compile_expr(&elem.value, ctx, func, info)?;
+            
+            // Load index
+            let idx_reg = func.alloc_temp(1);
+            func.emit_op(Opcode::LoadInt, idx_reg, i as u16, 0);
+            
+            // ArraySet: a=arr, b=idx, c=val, flags=elem_slots
+            func.emit_with_flags(Opcode::ArraySet, elem_slots as u8, arr_slot, idx_reg, val_reg);
+        }
+    } else {
+        // Non-literal initialization: compile entire value and copy element by element
+        // This handles cases like: var a [3]int = someOtherArray
+        let src_reg = crate::expr::compile_expr(value, ctx, func, info)?;
+        let arr_len = info.array_len(info.expr_type(value.id));
+        
+        for i in 0..arr_len as usize {
+            // Load index
+            let idx_reg = func.alloc_temp(1);
+            func.emit_op(Opcode::LoadInt, idx_reg, i as u16, 0);
+            
+            // ArraySet from src position
+            let src_offset = src_reg + (i as u16) * elem_slots;
+            func.emit_with_flags(Opcode::ArraySet, elem_slots as u8, arr_slot, idx_reg, src_offset);
+        }
+    }
+    
     Ok(())
 }
 

@@ -127,13 +127,20 @@ pub fn compile_expr_to(
                 ExprSource::NeedsCompile => {
                     // Check closure capture
                     if let Some(capture) = func.lookup_capture(ident.symbol) {
-                        // Closure capture: use ClosureGet to get the GcRef, then dereference
+                        // Closure capture: use ClosureGet to get the GcRef
                         func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
                         
                         // Get captured variable's type
                         let type_key = info.obj_type(info.get_use(ident), "captured var must have type");
-                        let value_slots = info.type_slot_count(type_key);
-                        func.emit_ptr_get(dst, dst, 0, value_slots);
+                        
+                        // Among all escaped value types, only arrays use a different memory layout:
+                        // - struct/primitives/interface: PtrNew allocates [GcHeader][data], need PtrGet to read
+                        // - array: ArrayNew allocates [GcHeader][ArrayHeader][elems], ArrayGet handles it directly
+                        // So we only need to distinguish array from everything else.
+                        if !info.is_array(type_key) {
+                            let value_slots = info.type_slot_count(type_key);
+                            func.emit_ptr_get(dst, dst, 0, value_slots);
+                        }
                     } else {
                         // Could be a function name, package, etc. - handle later
                         return Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)));

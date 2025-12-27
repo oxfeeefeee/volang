@@ -256,6 +256,8 @@ skips:
     skip: [jit]
   - file: fallthrough.vo
     skip: [jit]
+  - file: escaped_array_init.vo
+    skip: [jit]
   - file: type_switch.vo
     skip: [jit]
   - file: type_assertion.vo

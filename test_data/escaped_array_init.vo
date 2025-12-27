@@ -1,0 +1,25 @@
+package main
+
+func getSlice() []int {
+	arr := [5]int{10, 20, 30, 40, 50}
+	return arr[1:4]
+}
+
+func captureArray() func() int {
+	arr := [3]int{100, 200, 300}
+	return func() int {
+		return arr[0] + arr[1] + arr[2]
+	}
+}
+
+func main() {
+	s := getSlice()
+	println("slice len:", len(s))
+	println("slice[0]:", s[0])
+	println("slice[1]:", s[1])
+	println("slice[2]:", s[2])
+
+	f := captureArray()
+	sum := f()
+	println("captured sum:", sum)
+}
