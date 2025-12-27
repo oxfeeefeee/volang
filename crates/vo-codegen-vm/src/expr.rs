@@ -435,71 +435,19 @@ fn find_root_location(expr: &Expr, func: &FuncBuilder, info: &TypeInfoWrapper) -
 // === Index (array/slice access) ===
 
 fn compile_index(
-    _expr: &Expr,
-    idx: &vo_syntax::ast::IndexExpr,
+    expr: &Expr,
+    _idx: &vo_syntax::ast::IndexExpr,
     dst: u16,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    let container_type = info.expr_type(idx.expr.id);
+    use crate::lvalue::{resolve_lvalue, emit_lvalue_load};
     
-    // Compile index first (needed for all cases)
-    let index_reg = compile_expr(&idx.index, ctx, func, info)?;
-    
-    // Check if array, slice, map, or string
-    if info.is_array(container_type) {
-        let elem_slots = info.array_elem_slots(container_type);
-        
-        // Check if this is a stack array (non-escaped local variable)
-        if let Some(base_slot) = get_stack_array_base(&idx.expr, ctx, func, info) {
-            // Stack array: use SlotGetN
-            // SlotGetN: a=dst, b=base_slot, c=index_reg, flags=elem_slots
-            func.emit_with_flags(Opcode::SlotGetN, elem_slots as u8, dst, base_slot, index_reg);
-        } else {
-            // Heap array (escaped): compile container and use ArrayGet
-            let container_reg = compile_expr(&idx.expr, ctx, func, info)?;
-            func.emit_with_flags(Opcode::ArrayGet, elem_slots as u8, dst, container_reg, index_reg);
-        }
-    } else if info.is_slice(container_type) {
-        let container_reg = compile_expr(&idx.expr, ctx, func, info)?;
-        let elem_slots = info.slice_elem_slots(container_type);
-        func.emit_with_flags(Opcode::SliceGet, elem_slots as u8, dst, container_reg, index_reg);
-    } else if info.is_map(container_type) {
-        let container_reg = compile_expr(&idx.expr, ctx, func, info)?;
-        // MapGet: a=dst, b=map, c=meta_and_key
-        // meta_and_key: slots[c] = (key_slots << 16) | (val_slots << 1) | has_ok, key=slots[c+1..]
-        let (key_slots, val_slots) = info.map_key_val_slots(container_type);
-        let meta = crate::type_info::encode_map_get_meta(key_slots, val_slots, false);
-        let meta_reg = func.alloc_temp(1 + key_slots);
-        let (b, c) = encode_i32(meta as i32);
-        func.emit_op(Opcode::LoadInt, meta_reg, b, c);
-        // Copy key to meta_reg+1
-        func.emit_copy(meta_reg + 1, index_reg, key_slots);
-        func.emit_op(Opcode::MapGet, dst, container_reg, meta_reg);
-    } else if info.is_string(container_type) {
-        let container_reg = compile_expr(&idx.expr, ctx, func, info)?;
-        // String index: StrIndex
-        func.emit_op(Opcode::StrIndex, dst, container_reg, index_reg);
-    } else {
-        return Err(CodegenError::Internal("index on unsupported type".to_string()));
-    }
-    
+    // Use LValue abstraction - resolves container kind and compiles index
+    let lv = resolve_lvalue(expr, ctx, func, info)?;
+    emit_lvalue_load(&lv, dst, func);
     Ok(())
-}
-
-/// Get the base slot of a stack-allocated array, if applicable.
-/// Returns None if the array is escaped (heap-allocated) or not a simple variable.
-fn get_stack_array_base(
-    expr: &Expr,
-    ctx: &CodegenContext,
-    func: &FuncBuilder,
-    info: &TypeInfoWrapper,
-) -> Option<u16> {
-    match get_expr_source(expr, ctx, func, info) {
-        ExprSource::Location(ValueLocation::Stack { slot, .. }) => Some(slot),
-        _ => None,
-    }
 }
 
 /// Get the GcRef slot of an escaped variable without copying.

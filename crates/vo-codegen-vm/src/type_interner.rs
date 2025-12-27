@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use vo_common_core::{RuntimeType, Symbol, ValueKind, ChanDir, StructField, InterfaceMethod};
-use vo_analysis::arena::ArenaKey;
 use vo_analysis::objects::TypeKey;
 use vo_analysis::typ::{Type, BasicType};
 

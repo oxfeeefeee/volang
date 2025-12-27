@@ -714,37 +714,22 @@ fn compile_stmt_with_label(
 
         // === Inc/Dec ===
         StmtKind::IncDec(inc_dec) => {
-            let reg = crate::expr::compile_expr(&inc_dec.expr, ctx, func, info)?;
+            use crate::lvalue::{emit_lvalue_load, emit_lvalue_store};
+            
+            let lv = crate::lvalue::resolve_lvalue(&inc_dec.expr, ctx, func, info)?;
+            let tmp = func.alloc_temp(1);
+            emit_lvalue_load(&lv, tmp, func);
+            
             let one = func.alloc_temp(1);
             func.emit_op(Opcode::LoadInt, one, 1, 0);
+            
             if inc_dec.is_inc {
-                func.emit_op(Opcode::AddI, reg, reg, one);
+                func.emit_op(Opcode::AddI, tmp, tmp, one);
             } else {
-                func.emit_op(Opcode::SubI, reg, reg, one);
+                func.emit_op(Opcode::SubI, tmp, tmp, one);
             }
-            // Write back if needed (for lvalue expressions)
-            let expr_source = crate::expr::get_expr_source(&inc_dec.expr, ctx, func, info);
-            match expr_source {
-                ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => {
-                    func.emit_op(Opcode::PtrSet, slot, 0, reg);
-                }
-                ExprSource::Location(ValueLocation::Stack { slot, .. }) => {
-                    if slot != reg {
-                        func.emit_op(Opcode::Copy, slot, reg, 0);
-                    }
-                }
-                ExprSource::Location(ValueLocation::Global { index, .. }) => {
-                    func.emit_op(Opcode::GlobalSet, index, reg, 0);
-                }
-                ExprSource::Location(ValueLocation::Reference { slot }) => {
-                    if slot != reg {
-                        func.emit_op(Opcode::Copy, slot, reg, 0);
-                    }
-                }
-                ExprSource::NeedsCompile => {
-                    // Non-lvalue expression, nothing to write back
-                }
-            }
+            
+            emit_lvalue_store(&lv, tmp, func);
         }
 
         // === TypeSwitch ===
@@ -1332,7 +1317,7 @@ fn compile_switch(
     Ok(())
 }
 
-/// Compile assignment.
+/// Compile assignment using LValue abstraction.
 fn compile_assign(
     lhs: &vo_syntax::ast::Expr,
     rhs: &vo_syntax::ast::Expr,
@@ -1340,227 +1325,55 @@ fn compile_assign(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    use vo_syntax::ast::ExprKind;
-
-    match &lhs.kind {
-        ExprKind::Ident(ident) => {
-            // Blank identifier: compile RHS for side effects only
-            if info.project.interner.resolve(ident.symbol) == Some("_") {
-                let _ = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                return Ok(());
-            }
-            
-            // Get lhs and rhs sources
-            let lhs_source = crate::expr::get_expr_source(lhs, ctx, func, info);
-            let rhs_source = crate::expr::get_expr_source(rhs, ctx, func, info);
-            let lhs_type = info.obj_type(info.get_use(ident), "assignment lhs must have type");
-            
-            match lhs_source {
-                ExprSource::Location(lhs_loc) => {
-                    // Check if assigning to interface variable
-                    if info.is_interface(lhs_type) {
-                        // For HeapBoxed interface, use temp slots then write to heap
-                        let (dst_slot, is_heap_boxed, heap_gcref) = match lhs_loc {
-                            ValueLocation::Stack { slot, .. } => (slot, false, 0),
-                            ValueLocation::HeapBoxed { slot, .. } => (func.alloc_temp(2), true, slot),
-                            ValueLocation::Reference { slot } => (slot, false, 0),
-                            ValueLocation::Global { index, .. } => (index, false, 0),
-                        };
-                        
-                        compile_iface_assign(dst_slot, rhs, lhs_type, ctx, func, info)?;
-                        
-                        if is_heap_boxed {
-                            func.emit_ptr_set(heap_gcref, 0, dst_slot, 2);
-                        }
-                        return Ok(());
-                    }
-                    
-                    // Handle value assignment based on lhs and rhs locations
-                    match (&lhs_loc, &rhs_source) {
-                        // Both HeapBoxed: deep copy via PtrClone
-                        (ValueLocation::HeapBoxed { slot: lhs_slot, .. }, 
-                         ExprSource::Location(ValueLocation::HeapBoxed { slot: rhs_slot, .. })) => {
-                            let tmp = func.alloc_temp(1);
-                            func.emit_op(Opcode::PtrClone, tmp, *rhs_slot, 0);
-                            func.emit_op(Opcode::Copy, *lhs_slot, tmp, 0);
-                        }
-                        // HeapBoxed lhs, other rhs: compile rhs, then PtrSet
-                        (ValueLocation::HeapBoxed { slot, value_slots }, _) => {
-                            let tmp = func.alloc_temp(*value_slots);
-                            compile_expr_to(rhs, tmp, ctx, func, info)?;
-                            func.emit_ptr_set(*slot, 0, tmp, *value_slots);
-                        }
-                        // Stack/Global lhs: use emit_store_value or compile directly
-                        (loc, ExprSource::Location(ValueLocation::HeapBoxed { slot: rhs_slot, value_slots })) => {
-                            // rhs is heap: need PtrGet then store
-                            let slots = match loc {
-                                ValueLocation::Stack { slots, .. } => *slots,
-                                ValueLocation::Global { slots, .. } => *slots,
-                                _ => *value_slots,
-                            };
-                            let tmp = func.alloc_temp(slots);
-                            func.emit_ptr_get(tmp, *rhs_slot, 0, slots);
-                            func.emit_store_value(*loc, tmp, slots);
-                        }
-                        // Simple case: compile rhs directly to lhs location
-                        (ValueLocation::Stack { slot, .. }, _) => {
-                            compile_expr_to(rhs, *slot, ctx, func, info)?;
-                        }
-                        (ValueLocation::Global { .. }, _) => {
-                            let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                            let slots = info.type_slot_count(lhs_type);
-                            func.emit_store_value(lhs_loc, tmp, slots);
-                        }
-                        (ValueLocation::Reference { slot }, _) => {
-                            let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                            func.emit_op(Opcode::Copy, *slot, tmp, 0);
-                        }
-                    }
-                }
-                ExprSource::NeedsCompile => {
-                    // Check if this is a closure capture
-                    let capture_index = func.lookup_capture(ident.symbol).map(|c| c.index);
-                    if let Some(idx) = capture_index {
-                        // Captured variable: ClosureGet to get GcRef, then PtrSet
-                        let gcref_slot = func.alloc_temp(1);
-                        func.emit_op(Opcode::ClosureGet, gcref_slot, idx, 0);
-                        
-                        let value_slots = info.type_slot_count(lhs_type);
-                        let tmp = func.alloc_temp(value_slots);
-                        
-                        if info.is_interface(lhs_type) {
-                            compile_iface_assign(tmp, rhs, lhs_type, ctx, func, info)?;
-                        } else {
-                            compile_expr_to(rhs, tmp, ctx, func, info)?;
-                        }
-                        
-                        func.emit_ptr_set(gcref_slot, 0, tmp, value_slots);
-                    } else {
-                        return Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)));
-                    }
-                }
-            }
-        }
-
-        // === Selector assignment (struct field) ===
-        ExprKind::Selector(sel) => {
-            let recv_type = info.expr_type(sel.expr.id);
-            
-            let field_name = info.project.interner.resolve(sel.sel.symbol)
-                .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
-            
-            // Check if receiver is pointer type
-            let is_ptr = info.is_pointer(recv_type);
-            
-            // Get base type for field lookup (deref pointer if needed)
-            let base_type = if is_ptr {
-                info.pointer_base(recv_type)
-            } else {
-                recv_type
-            };
-            
-            // Get field offset using selection indices (unified approach)
-            let (field_offset, slots) = info.get_selection(lhs.id)
-                .map(|sel_info| info.compute_field_offset_from_indices(base_type, sel_info.indices()))
-                .unwrap_or_else(|| info.struct_field_offset(base_type, field_name));
-            
-            // If receiver is pointer type, use Ptr path directly
-            if is_ptr {
-                let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
-                let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                func.emit_ptr_set(ptr_reg, field_offset, tmp, slots);
-            } else {
-                // Resolve selector target and emit assignment
-                let (target, inner_offset) = resolve_selector_target(&sel.expr, info, func, ctx)?;
-                let total_offset = inner_offset + field_offset;
-                
-                match target {
-                    SelectorTarget::Location(ValueLocation::Stack { slot, .. }) => {
-                        let target_slot = slot + total_offset;
-                        compile_expr_to(rhs, target_slot, ctx, func, info)?;
-                    }
-                    SelectorTarget::Location(ValueLocation::HeapBoxed { slot, .. }) |
-                    SelectorTarget::Location(ValueLocation::Reference { slot }) => {
-                        let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                        func.emit_ptr_set(slot, total_offset, tmp, slots);
-                    }
-                    SelectorTarget::CompiledPtr(ptr_reg) => {
-                        let tmp = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                        func.emit_ptr_set(ptr_reg, total_offset, tmp, slots);
-                    }
-                    SelectorTarget::Location(ValueLocation::Global { .. }) => {
-                        // Global variables don't have field selectors in this context
-                        return Err(CodegenError::Internal("global field selector not supported".to_string()));
-                    }
-                }
-            }
-        }
-
-        // === Index assignment (arr[i] = v) ===
-        ExprKind::Index(idx) => {
-            let container_type = info.expr_type(idx.expr.id);
-            
-            // Compile index
-            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
-            
-            // Compile value
-            let val_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
-            
-            if info.is_array(container_type) {
-                // Array: check storage location
-                let elem_slots = info.array_elem_slots(container_type);
-                
-                let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
-                match container_source {
-                    ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => {
-                        // Heap array: ArraySet
-                        func.emit_with_flags(Opcode::ArraySet, elem_slots as u8, slot, index_reg, val_reg);
-                    }
-                    ExprSource::Location(ValueLocation::Stack { slot, .. }) => {
-                        // Stack array: SlotSet/SlotSetN
-                        if elem_slots == 1 {
-                            func.emit_op(Opcode::SlotSet, slot, index_reg, val_reg);
-                        } else {
-                            func.emit_with_flags(Opcode::SlotSetN, elem_slots as u8, slot, index_reg, val_reg);
-                        }
-                    }
-                    _ => {
-                        return Err(CodegenError::InvalidLHS);
-                    }
-                }
-            } else if info.is_slice(container_type) {
-                // Slice: SliceSet
-                let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-                let elem_slots = info.slice_elem_slots(container_type);
-                func.emit_with_flags(Opcode::SliceSet, elem_slots as u8, container_reg, index_reg, val_reg);
-            } else if info.is_map(container_type) {
-                // Map: MapSet
-                // MapSet expects: a=map, b=meta_and_key, c=val
-                // meta_and_key: slots[b] = (key_slots << 8) | val_slots, key=slots[b+1..]
-                let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-                let (key_slots, val_slots) = info.map_key_val_slots(container_type);
-                
-                let meta_and_key_reg = func.alloc_temp(1 + key_slots);
-                let meta = crate::type_info::encode_map_set_meta(key_slots, val_slots);
-                let (b, c) = crate::type_info::encode_i32(meta as i32);
-                func.emit_op(Opcode::LoadInt, meta_and_key_reg, b, c);
-                func.emit_copy(meta_and_key_reg + 1, index_reg, key_slots);
-                
-                func.emit_op(Opcode::MapSet, container_reg, meta_and_key_reg, val_reg);
-            } else {
-                return Err(CodegenError::InvalidLHS);
-            }
-        }
-
-        _ => {
-            return Err(CodegenError::Internal(format!("invalid LHS in assignment: {:?}", lhs.kind)));
+    use crate::lvalue::{resolve_lvalue, emit_lvalue_store, lvalue_slots};
+    
+    // Handle blank identifier: compile RHS for side effects only
+    if let vo_syntax::ast::ExprKind::Ident(ident) = &lhs.kind {
+        if info.project.interner.resolve(ident.symbol) == Some("_") {
+            let _ = crate::expr::compile_expr(rhs, ctx, func, info)?;
+            return Ok(());
         }
     }
-
+    
+    // Resolve LHS to an LValue
+    let lv = resolve_lvalue(lhs, ctx, func, info)?;
+    let slots = lvalue_slots(&lv);
+    
+    // Get LHS type for interface check
+    let lhs_type = info.expr_type(lhs.id);
+    
+    // Handle interface assignment specially
+    if info.is_interface(lhs_type) {
+        return compile_assign_to_interface(&lv, rhs, lhs_type, ctx, func, info);
+    }
+    
+    // Compile RHS to temp, then store to LValue
+    let tmp = func.alloc_temp(slots);
+    compile_expr_to(rhs, tmp, ctx, func, info)?;
+    emit_lvalue_store(&lv, tmp, func);
+    
     Ok(())
 }
 
-/// Compile compound assignment (+=, -=, *=, etc.)
+/// Compile assignment to an interface LValue.
+fn compile_assign_to_interface(
+    lv: &crate::lvalue::LValue,
+    rhs: &vo_syntax::ast::Expr,
+    iface_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    use crate::lvalue::emit_lvalue_store;
+    
+    // Interface is always 2 slots
+    let tmp = func.alloc_temp(2);
+    compile_iface_assign(tmp, rhs, iface_type, ctx, func, info)?;
+    emit_lvalue_store(lv, tmp, func);
+    Ok(())
+}
+
+/// Compile compound assignment (+=, -=, *=, etc.) using LValue abstraction.
 fn compile_compound_assign(
     lhs: &vo_syntax::ast::Expr,
     rhs: &vo_syntax::ast::Expr,
@@ -1569,7 +1382,8 @@ fn compile_compound_assign(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    use vo_syntax::ast::{AssignOp, ExprKind};
+    use vo_syntax::ast::AssignOp;
+    use crate::lvalue::{resolve_lvalue, emit_lvalue_load, emit_lvalue_store, lvalue_slots};
     
     // Get the operation opcode based on AssignOp and type
     let lhs_type = info.expr_type(lhs.id);
@@ -1591,203 +1405,25 @@ fn compile_compound_assign(
         (AssignOp::Xor, _, _) => Opcode::Xor,
         (AssignOp::AndNot, _, _) => Opcode::AndNot,
         (AssignOp::Shl, _, _) => Opcode::Shl,
-        (AssignOp::Shr, _, false) => Opcode::ShrS,  // signed shift
-        (AssignOp::Shr, _, true) => Opcode::ShrU,   // unsigned shift
+        (AssignOp::Shr, _, false) => Opcode::ShrS,
+        (AssignOp::Shr, _, true) => Opcode::ShrU,
         (AssignOp::Assign, _, _) => unreachable!("plain assign handled separately"),
     };
     
-    match &lhs.kind {
-        ExprKind::Ident(ident) => {
-            let lhs_source = crate::expr::get_expr_source(lhs, ctx, func, info);
-            let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
-            
-            match lhs_source {
-                ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => {
-                    // Heap: read, compute, write back
-                    let tmp = func.alloc_temp(1);
-                    func.emit_op(Opcode::PtrGet, tmp, slot, 0);
-                    func.emit_op(opcode, tmp, tmp, rhs_reg);
-                    func.emit_op(Opcode::PtrSet, slot, 0, tmp);
-                }
-                ExprSource::Location(ValueLocation::Stack { slot, .. }) => {
-                    // Stack: compute in place
-                    func.emit_op(opcode, slot, slot, rhs_reg);
-                }
-                ExprSource::Location(ValueLocation::Global { index, .. }) => {
-                    let tmp = func.alloc_temp(1);
-                    func.emit_op(Opcode::GlobalGet, tmp, index, 0);
-                    func.emit_op(opcode, tmp, tmp, rhs_reg);
-                    func.emit_op(Opcode::GlobalSet, index, tmp, 0);
-                }
-                ExprSource::Location(ValueLocation::Reference { slot }) => {
-                    // Reference: compute in place (single slot)
-                    func.emit_op(opcode, slot, slot, rhs_reg);
-                }
-                ExprSource::NeedsCompile => {
-                    return Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)));
-                }
-            }
-        }
-        
-        ExprKind::Selector(sel) => {
-            let recv_type = info.expr_type(sel.expr.id);
-            
-            let field_name = info.project.interner.resolve(sel.sel.symbol)
-                .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
-            
-            let is_ptr = info.is_pointer(recv_type);
-            
-            if is_ptr {
-                let (offset, _slots) = info.struct_field_offset_from_ptr(recv_type, field_name);
-                
-                let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
-                let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                let tmp = func.alloc_temp(1);
-                func.emit_op(Opcode::PtrGet, tmp, ptr_reg, offset);
-                func.emit_op(opcode, tmp, tmp, rhs_reg);
-                func.emit_op(Opcode::PtrSet, ptr_reg, offset, tmp);
-            } else {
-                // Value receiver - need to handle nested selectors
-                let (target, inner_offset) = resolve_selector_target(&sel.expr, info, func, ctx)?;
-                let (offset, _slots) = info.struct_field_offset(recv_type, field_name);
-                
-                let total_offset = inner_offset + offset;
-                let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
-                
-                match target {
-                    SelectorTarget::Location(ValueLocation::Stack { slot, .. }) => {
-                        let target_slot = slot + total_offset;
-                        func.emit_op(opcode, target_slot, target_slot, rhs_reg);
-                    }
-                    SelectorTarget::Location(ValueLocation::HeapBoxed { slot, .. }) |
-                    SelectorTarget::Location(ValueLocation::Reference { slot }) => {
-                        let tmp = func.alloc_temp(1);
-                        func.emit_op(Opcode::PtrGet, tmp, slot, total_offset);
-                        func.emit_op(opcode, tmp, tmp, rhs_reg);
-                        func.emit_op(Opcode::PtrSet, slot, total_offset, tmp);
-                    }
-                    SelectorTarget::CompiledPtr(reg) => {
-                        let tmp = func.alloc_temp(1);
-                        func.emit_op(Opcode::PtrGet, tmp, reg, total_offset);
-                        func.emit_op(opcode, tmp, tmp, rhs_reg);
-                        func.emit_op(Opcode::PtrSet, reg, total_offset, tmp);
-                    }
-                    SelectorTarget::Location(ValueLocation::Global { .. }) => {
-                        return Err(CodegenError::Internal("global field selector not supported".to_string()));
-                    }
-                }
-            }
-        }
-        
-        ExprKind::Index(idx) => {
-            let container_type = info.expr_type(idx.expr.id);
-            
-            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
-            let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
-            
-            if info.is_array(container_type) {
-                let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
-                match container_source {
-                    ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => {
-                        let tmp = func.alloc_temp(1);
-                        func.emit_with_flags(Opcode::ArrayGet, 1, tmp, slot, index_reg);
-                        func.emit_op(opcode, tmp, tmp, rhs_reg);
-                        func.emit_with_flags(Opcode::ArraySet, 1, slot, index_reg, tmp);
-                    }
-                    ExprSource::Location(ValueLocation::Stack { slot, .. }) => {
-                        let tmp = func.alloc_temp(1);
-                        func.emit_op(Opcode::SlotGet, tmp, slot, index_reg);
-                        func.emit_op(opcode, tmp, tmp, rhs_reg);
-                        func.emit_op(Opcode::SlotSet, slot, index_reg, tmp);
-                    }
-                    _ => {
-                        return Err(CodegenError::InvalidLHS);
-                    }
-                }
-            } else if info.is_slice(container_type) {
-                let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-                let tmp = func.alloc_temp(1);
-                func.emit_with_flags(Opcode::SliceGet, 1, tmp, container_reg, index_reg);
-                func.emit_op(opcode, tmp, tmp, rhs_reg);
-                func.emit_with_flags(Opcode::SliceSet, 1, container_reg, index_reg, tmp);
-            } else if info.is_map(container_type) {
-                let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-                let (key_slots, val_slots) = info.map_key_val_slots(container_type);
-                
-                // Build meta_and_key for MapGet/MapSet
-                let meta_and_key_reg = func.alloc_temp(1 + key_slots);
-                let meta = crate::type_info::encode_map_get_meta(key_slots, val_slots, false);
-                let (b, c) = crate::type_info::encode_i32(meta as i32);
-                func.emit_op(Opcode::LoadInt, meta_and_key_reg, b, c);
-                func.emit_copy(meta_and_key_reg + 1, index_reg, key_slots);
-                
-                let tmp = func.alloc_temp(val_slots);
-                func.emit_op(Opcode::MapGet, tmp, container_reg, meta_and_key_reg);
-                func.emit_op(opcode, tmp, tmp, rhs_reg);
-                
-                // Rebuild meta for MapSet (different format)
-                let meta_set = crate::type_info::encode_map_set_meta(key_slots, val_slots);
-                let (b2, c2) = crate::type_info::encode_i32(meta_set as i32);
-                func.emit_op(Opcode::LoadInt, meta_and_key_reg, b2, c2);
-                
-                func.emit_op(Opcode::MapSet, container_reg, meta_and_key_reg, tmp);
-            } else {
-                return Err(CodegenError::InvalidLHS);
-            }
-        }
-        
-        _ => {
-            return Err(CodegenError::InvalidLHS);
-        }
-    }
+    // Resolve LHS to an LValue
+    let lv = resolve_lvalue(lhs, ctx, func, info)?;
+    let slots = lvalue_slots(&lv);
+    
+    // Compile RHS
+    let rhs_reg = crate::expr::compile_expr(rhs, ctx, func, info)?;
+    
+    // Read current value, apply operation, write back
+    let tmp = func.alloc_temp(slots);
+    emit_lvalue_load(&lv, tmp, func);
+    func.emit_op(opcode, tmp, tmp, rhs_reg);
+    emit_lvalue_store(&lv, tmp, func);
     
     Ok(())
-}
-
-/// Selector target for assignment - either a ValueLocation or a compiled pointer register
-enum SelectorTarget {
-    Location(ValueLocation),
-    CompiledPtr(u16),  // Compiled expression result holding GcRef
-}
-
-/// Resolve a selector expression to its target and accumulated offset.
-fn resolve_selector_target(
-    expr: &vo_syntax::ast::Expr,
-    info: &TypeInfoWrapper,
-    func: &mut FuncBuilder,
-    ctx: &mut CodegenContext,
-) -> Result<(SelectorTarget, u16), CodegenError> {
-    use vo_syntax::ast::ExprKind;
-    
-    match &expr.kind {
-        ExprKind::Ident(ident) => {
-            if let Some(local) = func.lookup_local(ident.symbol) {
-                let type_key = info.obj_type(info.get_use(ident), "local var must have type");
-                let loc = crate::expr::get_local_location(local, Some(type_key), info);
-                Ok((SelectorTarget::Location(loc), 0))
-            } else {
-                Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)))
-            }
-        }
-        ExprKind::Selector(sel) => {
-            let recv_type = info.expr_type(sel.expr.id);
-            
-            let field_name = info.project.interner.resolve(sel.sel.symbol)
-                .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
-            
-            if info.is_pointer(recv_type) {
-                // Pointer dereference - compile to get the pointer value
-                let ptr_reg = crate::expr::compile_expr(&sel.expr, ctx, func, info)?;
-                let (offset, _) = info.struct_field_offset_from_ptr(recv_type, field_name);
-                Ok((SelectorTarget::CompiledPtr(ptr_reg), offset))
-            } else {
-                let (base, parent_offset) = resolve_selector_target(&sel.expr, info, func, ctx)?;
-                let (offset, _) = info.struct_field_offset(recv_type, field_name);
-                Ok((base, parent_offset + offset))
-            }
-        }
-        _ => Err(CodegenError::InvalidLHS),
-    }
 }
 
 /// Compile interface assignment: dst = src where dst is interface type

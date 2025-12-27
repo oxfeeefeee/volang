@@ -6,6 +6,7 @@ mod context;
 mod error;
 mod expr;
 mod func;
+mod lvalue;
 mod stmt;
 mod type_info;
 mod type_interner;
