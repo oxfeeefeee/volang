@@ -727,7 +727,7 @@ Note: `DeferPop` removed. Defers are executed automatically by `Return`.
 | Opcode | Operands | Description |
 |--------|----------|-------------|
 | `IfaceAssign` | a, b, c, flags | Assign to interface: dst=`slots[a..a+2]`, src=`slots[b]`, c=`const_idx`, flags=`value_kind` |
-| `IfaceAssert` | a, b, c, flags | Type assert: dst=`a`, src_iface=`b`, target_id=`c`, flags=`assert_kind \| (has_ok << 2)` |
+| `IfaceAssert` | a, b, c, flags | Type assert: dst=`a`, src_iface=`b`, target_id=`c`, flags=`assert_kind \| (has_ok << 2) \| (target_slots << 3)` |
 
 **IfaceAssign Semantics**:
 
@@ -829,32 +829,41 @@ let (actual_named_type_id, actual_vk, itab_id) = if vk == ValueKind::Interface {
 
 ```rust
 // a = dst, b = src_iface (2 slots), c = target_id
-// flags = assert_kind | (has_ok << 2)
-//   assert_kind: 0=Primitive, 1=Named, 2=Interface
+// flags = assert_kind | (has_ok << 2) | (target_slots << 3)
+//   assert_kind: 0=rttid comparison, 1=interface method check
 //   has_ok: whether to return ok bool instead of panic
+//   target_slots: number of slots for target type (for struct/array)
 
 let assert_kind = flags & 0x3;
-let has_ok = (flags >> 2) != 0;
+let has_ok = ((flags >> 2) & 0x1) != 0;
+let target_slots = (flags >> 3) as u16;
 
 let src_slot0 = slots[b];
-let src_named_type_id = (src_slot0 >> 8) & 0xFFFFFF;
+let src_slot1 = slots[b + 1];
+let src_rttid = (src_slot0 >> 8) & 0xFFFFFF;
 let src_vk = (src_slot0 & 0xFF) as ValueKind;
 
-let matches = match assert_kind {
-    0 => src_named_type_id == 0 && src_vk as u32 == c,  // Primitive: check value_kind
-    1 => src_named_type_id == c,                         // Named: check named_type_id
-    2 => {                                               // Interface: check method set
-        if src_named_type_id == 0 { false }
-        else {
-            let is_pointer = src_vk == ValueKind::Pointer;
-            itab_cache.try_build(src_named_type_id, c, is_pointer).is_ok()
+// nil interface (value_kind == Void) always fails assertion
+let matches = if src_vk == ValueKind::Void {
+    false
+} else {
+    match assert_kind {
+        0 => src_rttid == c,  // Type comparison: check rttid
+        1 => {                // Interface: check if src type satisfies target interface
+            let iface_meta = &module.interface_metas[c as usize];
+            if iface_meta.methods.is_empty() {
+                true  // empty interface always satisfied
+            } else {
+                // Look up RuntimeType to find named_type_id for method lookup
+                check_method_set(src_rttid, iface_meta)
+            }
         }
+        _ => false,
     }
-    _ => unreachable!(),
 };
 
 if matches {
-    // Copy value to dst (slots depend on target type)
+    // Copy value to dst (slots depend on target type and assert_kind)
     if has_ok { slots[a + dst_slots] = 1; }
 } else if has_ok {
     slots[a + dst_slots] = 0;
@@ -862,11 +871,6 @@ if matches {
     panic!("type assertion failed");
 }
 ```
-
-**Type Assertion Restrictions**:
-- Only supports: primitive types, named types, interfaces
-- Anonymous composite types (`[]int`, `map[K]V`, etc.) NOT supported
-- Use named type wrapper: `type IntSlice []int`
 
 #### 6.3.26 CONV: Type Conversion
 

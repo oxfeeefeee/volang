@@ -1536,9 +1536,10 @@ assert(count > 0, "count=", count, " name=", name)
 ## 11. Type Switches
 
 ```ebnf
-TypeSwitchStmt ::= "switch" ( Ident ":=" )? Expr "." "(" "type" ")" "{" TypeCaseClause* "}" ;
-TypeCaseClause ::= "case" TypeList ":" Stmt* | "default" ":" Stmt* ;
-TypeList       ::= Type ( "," Type )* ;
+TypeSwitchStmt  ::= "switch" ( SimpleStmt ";" )? TypeSwitchGuard "{" TypeCaseClause* "}" ;
+TypeSwitchGuard ::= ( Ident ":=" )? Expr "." "(" "type" ")" ;
+TypeCaseClause  ::= "case" TypeList ":" Stmt* | "default" ":" Stmt* ;
+TypeList        ::= Type ( "," Type )* ;
 ```
 
 A type switch compares the dynamic type of an interface value against multiple types.

@@ -1083,6 +1083,7 @@ fn compile_select(
 
 
 /// Compile type switch statement
+/// Uses IfaceAssert instruction for type checking and value extraction.
 fn compile_type_switch(
     type_switch: &vo_syntax::ast::TypeSwitchStmt,
     ctx: &mut CodegenContext,
@@ -1094,34 +1095,26 @@ fn compile_type_switch(
         compile_stmt(init, ctx, func, info)?;
     }
     
-    // Compile the expression being type-switched
-    let expr_reg = crate::expr::compile_expr(&type_switch.expr, ctx, func, info)?;
-    
-    // The expression should be an interface - get its value_kind for type checking
-    // Extract value_meta from interface slot0: [itab_id:32 | value_meta:32]
-    let value_kind_reg = func.alloc_temp(1);
-    // value_kind is the low 8 bits of value_meta (low 32 bits of slot0)
-    // For simplicity, we'll use the interface's second slot (data) for comparison
-    // The actual implementation depends on VM support for type switch
+    // Compile the expression being type-switched (must be interface type)
+    // type_switch.expr is x.(type), we need to compile the inner expression x
+    let inner_expr = if let vo_syntax::ast::ExprKind::TypeAssert(ta) = &type_switch.expr.kind {
+        &ta.expr
+    } else {
+        &type_switch.expr
+    };
+    let expr_reg = crate::expr::compile_expr(inner_expr, ctx, func, info)?;
     
     // Store interface for case comparisons
     let iface_slot = func.alloc_temp(2);
     func.emit_op(Opcode::Copy, iface_slot, expr_reg, 0);
     func.emit_op(Opcode::Copy, iface_slot + 1, expr_reg + 1, 0);
     
-    // Extract value_kind from interface slot0
-    func.emit_op(Opcode::Copy, value_kind_reg, expr_reg, 0);
-    // Mask to get value_kind (low 8 bits of low 32 bits)
-    let mask_reg = func.alloc_temp(1);
-    func.emit_op(Opcode::LoadInt, mask_reg, 0xFF, 0);
-    func.emit_op(Opcode::And, value_kind_reg, value_kind_reg, mask_reg);
-    
-    // Collect case jumps
+    // Collect case jumps and info for variable binding
     let mut case_jumps: Vec<(usize, usize)> = Vec::new(); // (case_idx, jump_pc)
     let mut end_jumps: Vec<usize> = Vec::new();
     let mut default_case_idx: Option<usize> = None;
     
-    // Generate type checks for each case
+    // Generate type checks for each case using IfaceAssert
     for (case_idx, case) in type_switch.cases.iter().enumerate() {
         if case.types.is_empty() || case.types.iter().all(|t| t.is_none()) {
             // Default case
@@ -1130,30 +1123,33 @@ fn compile_type_switch(
             // Type case - check each type
             for type_opt in &case.types {
                 if let Some(type_expr) = type_opt {
-                    // Get type's meta_id
                     let type_key = info.type_expr_type(type_expr.id);
-                    let meta_id = ctx.get_struct_meta_id(type_key)
-                        .expect("type switch case type must have meta_id");
                     
-                    // Compare with interface's meta_id
-                    let cmp_reg = func.alloc_temp(1);
-                    let meta_reg = func.alloc_temp(1);
-                    let (b, c) = encode_i32(meta_id as i32);
-                    func.emit_op(Opcode::LoadInt, meta_reg, b, c);
+                    // Determine assert_kind and target_id (same logic as compile_type_assert)
+                    let (assert_kind, target_id): (u8, u32) = if info.is_interface(type_key) {
+                        // Interface: assert_kind=1, target_id=iface_meta_id
+                        let iface_meta_id = ctx.get_or_create_interface_meta_id(type_key, &info.project.tc_objs);
+                        (1, iface_meta_id)
+                    } else {
+                        // All other types: assert_kind=0, target_id=rttid
+                        let rt = crate::type_key_to_runtime_type_simple(type_key, info, &info.project.interner, ctx);
+                        let rttid = ctx.intern_rttid(rt);
+                        (0, rttid)
+                    };
                     
-                    // Extract meta_id from interface: (slot0 >> 8) & 0xFFFFFF
-                    let extracted_meta = func.alloc_temp(1);
-                    func.emit_op(Opcode::Copy, extracted_meta, iface_slot, 0);
-                    let shift_reg = func.alloc_temp(1);
-                    func.emit_op(Opcode::LoadInt, shift_reg, 8, 0);
-                    func.emit_op(Opcode::ShrS, extracted_meta, extracted_meta, shift_reg);
-                    let mask24 = func.alloc_temp(1);
-                    let (b24, c24) = encode_i32(0xFFFFFF);
-                    func.emit_op(Opcode::LoadInt, mask24, b24, c24);
-                    func.emit_op(Opcode::And, extracted_meta, extracted_meta, mask24);
+                    // Allocate temp for IfaceAssert result (value + ok)
+                    let target_slots = info.type_slot_count(type_key) as u8;
+                    let result_slots = if assert_kind == 1 { 2 } else { target_slots as u16 };
+                    let result_reg = func.alloc_temp(result_slots + 1); // +1 for ok bool
+                    let ok_slot = result_reg + result_slots;
                     
-                    func.emit_op(Opcode::EqI, cmp_reg, extracted_meta, meta_reg);
-                    case_jumps.push((case_idx, func.emit_jump(Opcode::JumpIf, cmp_reg)));
+                    // IfaceAssert: a=dst, b=src_iface, c=target_id
+                    // flags = assert_kind | (has_ok << 2) | (target_slots << 3)
+                    let flags = assert_kind | (1 << 2) | ((target_slots) << 3);
+                    func.emit_with_flags(Opcode::IfaceAssert, flags, result_reg, iface_slot, target_id as u16);
+                    
+                    // Jump to case body if ok is true
+                    case_jumps.push((case_idx, func.emit_jump(Opcode::JumpIf, ok_slot)));
                 }
             }
         }
@@ -1161,7 +1157,6 @@ fn compile_type_switch(
     
     // Jump to default or end if no case matched
     let no_match_jump = if let Some(default_idx) = default_case_idx {
-        // Will jump to default case
         Some((default_idx, func.emit_jump(Opcode::Jump, 0)))
     } else {
         Some((usize::MAX, func.emit_jump(Opcode::Jump, 0)))
@@ -1174,7 +1169,6 @@ fn compile_type_switch(
         
         // If assign variable is specified, bind it to the asserted value
         if let Some(assign_name) = &type_switch.assign {
-            // Get the type for this case
             if !case.types.is_empty() {
                 if let Some(Some(type_expr)) = case.types.first() {
                     let type_key = info.type_expr_type(type_expr.id);
@@ -1184,8 +1178,21 @@ fn compile_type_switch(
                     // Define local variable for the asserted value
                     let var_slot = func.define_local_stack(assign_name.symbol, slots, &slot_types);
                     
-                    // Copy interface data to variable
-                    func.emit_copy(var_slot, iface_slot + 1, slots);
+                    // Re-do IfaceAssert to extract value (we know it will succeed)
+                    // This is simpler than trying to reuse the check result
+                    let (assert_kind, target_id): (u8, u32) = if info.is_interface(type_key) {
+                        let iface_meta_id = ctx.get_or_create_interface_meta_id(type_key, &info.project.tc_objs);
+                        (1, iface_meta_id)
+                    } else {
+                        let rt = crate::type_key_to_runtime_type_simple(type_key, info, &info.project.interner, ctx);
+                        let rttid = ctx.intern_rttid(rt);
+                        (0, rttid)
+                    };
+                    
+                    let target_slots = slots as u8;
+                    // IfaceAssert without ok (has_ok=0), result goes directly to var_slot
+                    let flags = assert_kind | ((target_slots) << 3);
+                    func.emit_with_flags(Opcode::IfaceAssert, flags, var_slot, iface_slot, target_id as u16);
                 }
             }
         }
@@ -1198,7 +1205,7 @@ fn compile_type_switch(
         // Jump to end
         end_jumps.push(func.emit_jump(Opcode::Jump, 0));
         
-        let _ = case_idx; // suppress warning
+        let _ = case_idx;
     }
     
     let end_pc = func.current_pc();

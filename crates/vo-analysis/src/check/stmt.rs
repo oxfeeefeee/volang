@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use vo_common::diagnostics::Label;
 use vo_common::span::Span;
 use vo_syntax::ast::Ident;
-use vo_syntax::ast::{AssignOp, Block, Expr, ForClause, Stmt, StmtKind};
+use vo_syntax::ast::{AssignOp, Block, Expr, ExprKind, ForClause, Stmt, StmtKind};
 use ordered_float::OrderedFloat;
 
 use crate::constant::Value;
@@ -733,8 +733,15 @@ impl Checker {
                     }
                 });
                 
+                // For type switch, tss.expr is x.(type) - we need to check the inner expr
+                // to avoid "use of .(type) outside type switch" error from expr checker
                 let x = &mut Operand::new();
-                self.expr(x, &tss.expr);
+                let inner_expr = if let ExprKind::TypeAssert(ta) = &tss.expr.kind {
+                    &ta.expr
+                } else {
+                    &tss.expr
+                };
+                self.expr(x, inner_expr);
                 if x.invalid() {
                     self.close_scope();
                     return;

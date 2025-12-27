@@ -323,59 +323,73 @@ impl<'a> Parser<'a> {
         Ok(StmtKind::For(ForStmt { clause, body }))
     }
 
+    /// Check if stmt is a type switch guard: x.(type) or v := x.(type)
+    /// Returns (assign, expr) if it is a type switch guard
+    fn is_type_switch_guard(stmt: &Stmt) -> Option<(Option<Ident>, Expr)> {
+        match &stmt.kind {
+            StmtKind::Expr(expr) => {
+                if let ExprKind::TypeAssert(ta) = &expr.kind {
+                    if ta.ty.is_none() {
+                        return Some((None, expr.clone()));
+                    }
+                }
+            }
+            StmtKind::ShortVar(svd) => {
+                if svd.names.len() == 1 && svd.values.len() == 1 {
+                    if let ExprKind::TypeAssert(ta) = &svd.values[0].kind {
+                        if ta.ty.is_none() {
+                            return Some((Some(svd.names[0].clone()), svd.values[0].clone()));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
     fn parse_switch_stmt(&mut self) -> ParseResult<StmtKind> {
         self.expect(TokenKind::Switch)?;
         
         let saved = self.allow_composite_lit;
         self.allow_composite_lit = false;
         
-        // Parse optional init and tag
-        let (init, tag) = if self.at(TokenKind::LBrace) {
-            (None, None)
-        } else {
-            let first = self.parse_simple_stmt_or_expr()?;
+        // Phase 1: Parse s1 and s2 (like goscript)
+        let (mut s1, mut s2): (Option<Stmt>, Option<Stmt>) = (None, None);
+        
+        if !self.at(TokenKind::LBrace) {
+            s2 = Some(self.parse_simple_stmt_or_expr()?);
             
             if self.at(TokenKind::Semicolon) {
                 self.advance();
-                let tag = if self.at(TokenKind::LBrace) {
-                    None
-                } else {
-                    Some(self.parse_expr()?)
-                };
-                (Some(Box::new(first)), tag)
-            } else {
-                match first.kind {
-                    StmtKind::Expr(expr) => {
-                        // Check for type switch: x.(type)
-                        if let ExprKind::TypeAssert(ref ta) = expr.kind {
-                            if ta.ty.is_none() {
-                                // Type switch
-                                self.allow_composite_lit = saved;
-                                return self.parse_type_switch_body(None, None, expr);
-                            }
-                        }
-                        (None, Some(expr))
-                    }
-                    _ => {
-                        self.error("expected expression in switch");
-                        return Err(());
-                    }
-                }
-            }
-        };
-        
-        self.allow_composite_lit = saved;
-        
-        // Check if this is a type switch
-        if let Some(ref tag_expr) = tag {
-            if let ExprKind::TypeAssert(ref ta) = tag_expr.kind {
-                if ta.ty.is_none() {
-                    return self.parse_type_switch_body(init, None, tag_expr.clone());
+                s1 = s2.take();
+                if !self.at(TokenKind::LBrace) {
+                    s2 = Some(self.parse_simple_stmt_or_expr()?);
                 }
             }
         }
         
-        // Regular switch
+        self.allow_composite_lit = saved;
+        
+        // Phase 2: Check if type switch and build AST
+        if let Some(ref guard) = s2 {
+            if let Some((assign, expr)) = Self::is_type_switch_guard(guard) {
+                return self.parse_type_switch_body(s1.map(Box::new), assign, expr);
+            }
+        }
+        
+        // Regular switch: extract tag expression from s2
+        let tag = match s2 {
+            Some(stmt) => match stmt.kind {
+                StmtKind::Expr(expr) => Some(expr),
+                _ => {
+                    self.error("expected expression in switch");
+                    return Err(());
+                }
+            },
+            None => None,
+        };
+        
         self.expect(TokenKind::LBrace)?;
         let mut cases = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at_eof() {
@@ -383,7 +397,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RBrace)?;
         
-        Ok(StmtKind::Switch(SwitchStmt { init, tag, cases }))
+        Ok(StmtKind::Switch(SwitchStmt { init: s1.map(Box::new), tag, cases }))
     }
 
     fn parse_type_switch_body(&mut self, init: Option<Box<Stmt>>, assign: Option<Ident>, expr: Expr) -> ParseResult<StmtKind> {

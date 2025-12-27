@@ -235,6 +235,8 @@ skips:
     skip: [jit]
   - file: switch_stmt.vo
     skip: [jit]
+  - file: type_switch.vo
+    skip: [jit]
   - file: type_assertion.vo
     skip: [jit]
   - file: type_assertion_ok.vo
