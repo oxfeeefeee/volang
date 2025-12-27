@@ -1,0 +1,7 @@
+// Debug: hex literal issue
+package main
+
+func main() {
+	var ui uint = 0x9000000000000001
+	println(ui == 0x9000000000000000 + 1, ui)
+}

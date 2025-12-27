@@ -418,45 +418,22 @@ impl<'a> TypeInfoWrapper<'a> {
 
     /// Check if type is an integer type
     pub fn is_int(&self, type_key: TypeKey) -> bool {
-        use vo_analysis::typ::BasicType;
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
-            matches!(b.typ(),
-                BasicType::Int | BasicType::Int8 | BasicType::Int16 | BasicType::Int32 | BasicType::Int64 |
-                BasicType::Uint | BasicType::Uint8 | BasicType::Uint16 | BasicType::Uint32 | BasicType::Uint64 |
-                BasicType::UntypedInt | BasicType::UntypedRune)
-        } else {
-            false
-        }
+        type_layout::is_int(type_key, self.tc_objs())
     }
 
     /// Check if type is a float type
     pub fn is_float(&self, type_key: TypeKey) -> bool {
-        use vo_analysis::typ::BasicType;
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
-            matches!(b.typ(), BasicType::Float32 | BasicType::Float64 | BasicType::UntypedFloat)
-        } else {
-            false
-        }
+        type_layout::is_float(type_key, self.tc_objs())
+    }
+
+    /// Check if type is an unsigned integer type
+    pub fn is_unsigned(&self, type_key: TypeKey) -> bool {
+        type_layout::is_unsigned(type_key, self.tc_objs())
     }
 
     /// Get integer bit size. Panics if type is not an integer type.
     pub fn int_bits(&self, type_key: TypeKey) -> u8 {
-        use vo_analysis::typ::BasicType;
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Basic(b) = &self.tc_objs().types[underlying] {
-            match b.typ() {
-                BasicType::Int8 | BasicType::Uint8 => 8,
-                BasicType::Int16 | BasicType::Uint16 => 16,
-                BasicType::Int32 | BasicType::Uint32 | BasicType::UntypedRune => 32,
-                BasicType::Int64 | BasicType::Uint64 => 64,
-                BasicType::Int | BasicType::Uint | BasicType::UntypedInt => 64, // assume 64-bit platform
-                other => panic!("int_bits: not an integer type {:?}", other),
-            }
-        } else {
-            panic!("int_bits: not a Basic type")
-        }
+        type_layout::int_bits(type_key, self.tc_objs())
     }
 
     /// Get base type from pointer type

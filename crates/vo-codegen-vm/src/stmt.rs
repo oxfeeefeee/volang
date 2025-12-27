@@ -1519,24 +1519,26 @@ fn compile_compound_assign(
     // Get the operation opcode based on AssignOp and type
     let lhs_type = info.expr_type(lhs.id);
     let is_float = info.is_float(lhs_type);
+    let is_unsigned = info.is_unsigned(lhs_type);
     
-    let opcode = match (op, is_float) {
-        (AssignOp::Add, false) => Opcode::AddI,
-        (AssignOp::Add, true) => Opcode::AddF,
-        (AssignOp::Sub, false) => Opcode::SubI,
-        (AssignOp::Sub, true) => Opcode::SubF,
-        (AssignOp::Mul, false) => Opcode::MulI,
-        (AssignOp::Mul, true) => Opcode::MulF,
-        (AssignOp::Div, false) => Opcode::DivI,
-        (AssignOp::Div, true) => Opcode::DivF,
-        (AssignOp::Rem, _) => Opcode::ModI,
-        (AssignOp::And, _) => Opcode::And,
-        (AssignOp::Or, _) => Opcode::Or,
-        (AssignOp::Xor, _) => Opcode::Xor,
-        (AssignOp::AndNot, _) => Opcode::AndNot,
-        (AssignOp::Shl, _) => Opcode::Shl,
-        (AssignOp::Shr, _) => Opcode::ShrS,
-        (AssignOp::Assign, _) => unreachable!("plain assign handled separately"),
+    let opcode = match (op, is_float, is_unsigned) {
+        (AssignOp::Add, false, _) => Opcode::AddI,
+        (AssignOp::Add, true, _) => Opcode::AddF,
+        (AssignOp::Sub, false, _) => Opcode::SubI,
+        (AssignOp::Sub, true, _) => Opcode::SubF,
+        (AssignOp::Mul, false, _) => Opcode::MulI,
+        (AssignOp::Mul, true, _) => Opcode::MulF,
+        (AssignOp::Div, false, _) => Opcode::DivI,
+        (AssignOp::Div, true, _) => Opcode::DivF,
+        (AssignOp::Rem, _, _) => Opcode::ModI,
+        (AssignOp::And, _, _) => Opcode::And,
+        (AssignOp::Or, _, _) => Opcode::Or,
+        (AssignOp::Xor, _, _) => Opcode::Xor,
+        (AssignOp::AndNot, _, _) => Opcode::AndNot,
+        (AssignOp::Shl, _, _) => Opcode::Shl,
+        (AssignOp::Shr, _, false) => Opcode::ShrS,  // signed shift
+        (AssignOp::Shr, _, true) => Opcode::ShrU,   // unsigned shift
+        (AssignOp::Assign, _, _) => unreachable!("plain assign handled separately"),
     };
     
     match &lhs.kind {

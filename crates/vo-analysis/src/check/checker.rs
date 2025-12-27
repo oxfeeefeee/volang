@@ -489,15 +489,14 @@ impl Checker {
     }
 
     /// Record all untyped expressions in the result.
-    /// Converts remaining untyped types to their default typed versions.
+    /// Uses the type already set in info.typ (which may have been updated by convert_untyped).
     fn record_untyped(&mut self) {
         let untyped: Vec<_> = self.untyped.drain().collect();
         for (id, info) in untyped {
             if info.mode != OperandMode::Invalid {
                 if let Some(typ) = info.typ {
-                    // Convert untyped to default type before recording
-                    let final_typ = typ::untyped_default_type(typ, self.objs());
-                    self.result.record_type_and_value(id, info.mode.clone(), final_typ);
+                    // Use the type as-is - it may have been updated by convert_untyped
+                    self.result.record_type_and_value(id, info.mode.clone(), typ);
                 }
             }
         }

@@ -325,6 +325,7 @@ impl Checker {
         if info.mode.constant_val().is_some() {
             // If x is a constant, it must be representable as a value of typ.
             let mut c = Operand::with_mode(info.mode.clone(), info.typ);
+            c.set_expr(&info.expr);
             self.convert_untyped(&mut c, t);
             if c.invalid() {
                 return;
@@ -1333,6 +1334,9 @@ impl Checker {
                 }
             }
         }
+        
+        // Ensure x.expr points to the current expression (not a sub-expression)
+        x.set_expr(e);
     }
 
     // =========================================================================

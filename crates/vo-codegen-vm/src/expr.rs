@@ -100,7 +100,8 @@ pub fn compile_expr_to(
         ExprKind::IntLit(_) | ExprKind::RuneLit(_) | ExprKind::FloatLit(_) | ExprKind::StringLit(_) => {
             let val = get_const_value(expr.id, info)
                 .ok_or_else(|| CodegenError::Internal("literal has no const value".to_string()))?;
-            compile_const_value(val, dst, ctx, func)?;
+            let target_type = info.expr_type(expr.id);
+            compile_const_value(val, dst, target_type, ctx, func, info)?;
         }
 
         // === Identifier ===
@@ -113,7 +114,8 @@ pub fn compile_expr_to(
             
             // Check if this is a compile-time constant (const declaration)
             if let Some(val) = get_const_value(expr.id, info) {
-                compile_const_value(val, dst, ctx, func)?;
+                let target_type = info.expr_type(expr.id);
+                compile_const_value(val, dst, target_type, ctx, func, info)?;
                 return Ok(());
             }
             
@@ -144,7 +146,8 @@ pub fn compile_expr_to(
         ExprKind::Binary(bin) => {
             // Check if this is a compile-time constant expression
             if let Some(val) = get_const_value(expr.id, info) {
-                compile_const_value(val, dst, ctx, func)?;
+                let target_type = info.expr_type(expr.id);
+                compile_const_value(val, dst, target_type, ctx, func, info)?;
                 return Ok(());
             }
             
@@ -156,48 +159,50 @@ pub fn compile_expr_to(
             let operand_type = info.expr_type(bin.left.id);
             let is_float = info.is_float(operand_type);
             let is_string = info.is_string(operand_type);
+            let is_unsigned = info.is_unsigned(operand_type);
 
-            let opcode = match (&bin.op, is_float, is_string) {
-                (BinaryOp::Add, false, false) => Opcode::AddI,
-                (BinaryOp::Add, true, false) => Opcode::AddF,
-                (BinaryOp::Add, _, true) => Opcode::StrConcat,
-                (BinaryOp::Sub, false, _) => Opcode::SubI,
-                (BinaryOp::Sub, true, _) => Opcode::SubF,
-                (BinaryOp::Mul, false, _) => Opcode::MulI,
-                (BinaryOp::Mul, true, _) => Opcode::MulF,
-                (BinaryOp::Div, false, _) => Opcode::DivI,
-                (BinaryOp::Div, true, _) => Opcode::DivF,
-                (BinaryOp::Rem, _, _) => Opcode::ModI,
+            let opcode = match (&bin.op, is_float, is_string, is_unsigned) {
+                (BinaryOp::Add, false, false, _) => Opcode::AddI,
+                (BinaryOp::Add, true, false, _) => Opcode::AddF,
+                (BinaryOp::Add, _, true, _) => Opcode::StrConcat,
+                (BinaryOp::Sub, false, _, _) => Opcode::SubI,
+                (BinaryOp::Sub, true, _, _) => Opcode::SubF,
+                (BinaryOp::Mul, false, _, _) => Opcode::MulI,
+                (BinaryOp::Mul, true, _, _) => Opcode::MulF,
+                (BinaryOp::Div, false, _, _) => Opcode::DivI,
+                (BinaryOp::Div, true, _, _) => Opcode::DivF,
+                (BinaryOp::Rem, _, _, _) => Opcode::ModI,
 
                 // Comparison
-                (BinaryOp::Eq, false, false) => Opcode::EqI,
-                (BinaryOp::Eq, true, false) => Opcode::EqF,
-                (BinaryOp::Eq, _, true) => Opcode::StrEq,
-                (BinaryOp::NotEq, false, false) => Opcode::NeI,
-                (BinaryOp::NotEq, true, false) => Opcode::NeF,
-                (BinaryOp::NotEq, _, true) => Opcode::StrNe,
-                (BinaryOp::Lt, false, false) => Opcode::LtI,
-                (BinaryOp::Lt, true, false) => Opcode::LtF,
-                (BinaryOp::Lt, _, true) => Opcode::StrLt,
-                (BinaryOp::LtEq, false, false) => Opcode::LeI,
-                (BinaryOp::LtEq, true, false) => Opcode::LeF,
-                (BinaryOp::LtEq, _, true) => Opcode::StrLe,
-                (BinaryOp::Gt, false, false) => Opcode::GtI,
-                (BinaryOp::Gt, true, false) => Opcode::GtF,
-                (BinaryOp::Gt, _, true) => Opcode::StrGt,
-                (BinaryOp::GtEq, false, false) => Opcode::GeI,
-                (BinaryOp::GtEq, true, false) => Opcode::GeF,
-                (BinaryOp::GtEq, _, true) => Opcode::StrGe,
+                (BinaryOp::Eq, false, false, _) => Opcode::EqI,
+                (BinaryOp::Eq, true, false, _) => Opcode::EqF,
+                (BinaryOp::Eq, _, true, _) => Opcode::StrEq,
+                (BinaryOp::NotEq, false, false, _) => Opcode::NeI,
+                (BinaryOp::NotEq, true, false, _) => Opcode::NeF,
+                (BinaryOp::NotEq, _, true, _) => Opcode::StrNe,
+                (BinaryOp::Lt, false, false, _) => Opcode::LtI,
+                (BinaryOp::Lt, true, false, _) => Opcode::LtF,
+                (BinaryOp::Lt, _, true, _) => Opcode::StrLt,
+                (BinaryOp::LtEq, false, false, _) => Opcode::LeI,
+                (BinaryOp::LtEq, true, false, _) => Opcode::LeF,
+                (BinaryOp::LtEq, _, true, _) => Opcode::StrLe,
+                (BinaryOp::Gt, false, false, _) => Opcode::GtI,
+                (BinaryOp::Gt, true, false, _) => Opcode::GtF,
+                (BinaryOp::Gt, _, true, _) => Opcode::StrGt,
+                (BinaryOp::GtEq, false, false, _) => Opcode::GeI,
+                (BinaryOp::GtEq, true, false, _) => Opcode::GeF,
+                (BinaryOp::GtEq, _, true, _) => Opcode::StrGe,
 
                 // Bitwise
-                (BinaryOp::And, _, _) => Opcode::And,
-                (BinaryOp::Or, _, _) => Opcode::Or,
-                (BinaryOp::Xor, _, _) => Opcode::Xor,
-                (BinaryOp::Shl, _, _) => Opcode::Shl,
-                (BinaryOp::Shr, _, _) => Opcode::ShrS, // TODO: unsigned shift
+                (BinaryOp::And, _, _, _) => Opcode::And,
+                (BinaryOp::Or, _, _, _) => Opcode::Or,
+                (BinaryOp::Xor, _, _, _) => Opcode::Xor,
+                (BinaryOp::Shl, _, _, _) => Opcode::Shl,
+                (BinaryOp::Shr, _, _, false) => Opcode::ShrS,  // signed shift
+                (BinaryOp::Shr, _, _, true) => Opcode::ShrU,   // unsigned shift
 
                 // Logical (short-circuit handled separately)
-                (BinaryOp::LogAnd, _, _) | (BinaryOp::LogOr, _, _) => {
+                (BinaryOp::LogAnd, _, _, _) | (BinaryOp::LogOr, _, _, _) => {
                     return compile_short_circuit(expr, &bin.op, &bin.left, &bin.right, dst, ctx, func, info);
                 }
 
@@ -211,7 +216,8 @@ pub fn compile_expr_to(
         ExprKind::Unary(unary) => {
             // Check if this is a compile-time constant expression (e.g., -100)
             if let Some(val) = get_const_value(expr.id, info) {
-                compile_const_value(val, dst, ctx, func)?;
+                let target_type = info.expr_type(expr.id);
+                compile_const_value(val, dst, target_type, ctx, func, info)?;
                 return Ok(());
             }
             
@@ -1766,8 +1772,10 @@ fn get_const_value<'a>(expr_id: vo_syntax::ast::ExprId, info: &'a TypeInfoWrappe
 fn compile_const_value(
     val: &vo_analysis::ConstValue,
     dst: u16,
+    target_type: vo_analysis::objects::TypeKey,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
     use vo_analysis::constant::Value;
     match val {
@@ -1785,7 +1793,14 @@ fn compile_const_value(
             }
         }
         Value::IntBig(big) => {
-            let idx = ctx.const_int(big.try_into().unwrap_or(i64::MAX));
+            // Use target type to determine signed vs unsigned conversion
+            let val: i64 = if info.is_unsigned(target_type) {
+                let u: u64 = big.try_into().expect("type checker should ensure value fits u64");
+                u as i64
+            } else {
+                big.try_into().expect("type checker should ensure value fits i64")
+            };
+            let idx = ctx.const_int(val);
             func.emit_op(Opcode::LoadConst, dst, idx, 0);
         }
         Value::Float(f) => {

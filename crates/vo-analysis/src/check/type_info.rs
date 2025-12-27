@@ -455,6 +455,67 @@ pub fn is_named_type(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
     tc_objs.types[type_key].try_as_named().is_some()
 }
 
+/// Check if type is an integer type.
+pub fn is_int(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    use crate::typ::BasicInfo;
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Basic(b) = &tc_objs.types[underlying] {
+        b.info() == BasicInfo::IsInteger
+    } else {
+        false
+    }
+}
+
+/// Check if type is a float type.
+pub fn is_float(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    use crate::typ::BasicType;
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Basic(b) = &tc_objs.types[underlying] {
+        matches!(b.typ(), BasicType::Float32 | BasicType::Float64 | BasicType::UntypedFloat)
+    } else {
+        false
+    }
+}
+
+/// Check if type is an unsigned integer type.
+pub fn is_unsigned(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Basic(b) = &tc_objs.types[underlying] {
+        b.typ().is_unsigned()
+    } else {
+        false
+    }
+}
+
+/// Check if type is a string type.
+pub fn is_string(type_key: TypeKey, tc_objs: &TCObjects) -> bool {
+    use crate::typ::BasicType;
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Basic(b) = &tc_objs.types[underlying] {
+        matches!(b.typ(), BasicType::Str | BasicType::UntypedString)
+    } else {
+        false
+    }
+}
+
+/// Get integer bit size. Panics if type is not an integer type.
+pub fn int_bits(type_key: TypeKey, tc_objs: &TCObjects) -> u8 {
+    use crate::typ::BasicType;
+    let underlying = typ::underlying_type(type_key, tc_objs);
+    if let Type::Basic(b) = &tc_objs.types[underlying] {
+        match b.typ() {
+            BasicType::Int8 | BasicType::Uint8 | BasicType::Byte => 8,
+            BasicType::Int16 | BasicType::Uint16 => 16,
+            BasicType::Int32 | BasicType::Uint32 | BasicType::Rune | BasicType::UntypedRune => 32,
+            BasicType::Int64 | BasicType::Uint64 => 64,
+            BasicType::Int | BasicType::Uint | BasicType::Uintptr | BasicType::UntypedInt => 64,
+            other => panic!("int_bits: not an integer type {:?}", other),
+        }
+    } else {
+        panic!("int_bits: not a Basic type")
+    }
+}
+
 // === Struct Layout Functions ===
 
 /// Get struct field offset and slot count by field name.
