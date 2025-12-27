@@ -12,7 +12,7 @@ use vo_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
-use crate::func::{FuncBuilder, ValueLocation};
+use crate::func::{FuncBuilder, StorageKind};
 use crate::type_info::TypeInfoWrapper;
 
 /// Container kind for index operations.
@@ -33,8 +33,8 @@ pub enum ContainerKind {
 /// An LValue - a location that can be assigned to.
 #[derive(Debug)]
 pub enum LValue {
-    /// Direct variable location
-    Variable(ValueLocation),
+    /// Direct variable storage (includes stack, heap-boxed, heap-array, reference, global)
+    Variable(StorageKind),
     
     /// Pointer dereference: *p
     /// ptr_reg holds the GcRef, elem_slots is the size of pointed-to value
@@ -65,18 +65,16 @@ pub fn resolve_lvalue(
     match &expr.kind {
         // === Identifier ===
         ExprKind::Ident(ident) => {
-            // Check local variable first
+            // Check local variable first - storage is already computed in LocalVar
             if let Some(local) = func.lookup_local(ident.symbol) {
-                let type_key = info.obj_type(info.get_use(ident), "lvalue must have type");
-                let loc = crate::expr::get_local_location(local, Some(type_key), info);
-                return Ok(LValue::Variable(loc));
+                return Ok(LValue::Variable(local.storage));
             }
             
             // Check global variable
             if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
                 let type_key = info.obj_type(info.get_use(ident), "global must have type");
                 let slots = info.type_slot_count(type_key);
-                return Ok(LValue::Variable(ValueLocation::Global { 
+                return Ok(LValue::Variable(StorageKind::Global { 
                     index: global_idx as u16, 
                     slots 
                 }));
@@ -137,20 +135,27 @@ pub fn resolve_lvalue(
             if info.is_array(container_type) {
                 let elem_slots = info.array_elem_slots(container_type);
                 
-                // Check if stack or heap array
+                // Check if stack or heap array using StorageKind
                 let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
                 match container_source {
-                    crate::func::ExprSource::Location(ValueLocation::Stack { slot, .. }) => {
+                    crate::func::ExprSource::Location(StorageKind::StackValue { slot, .. }) => {
                         Ok(LValue::Index {
                             kind: ContainerKind::StackArray { base_slot: slot, elem_slots },
                             container_reg: slot,
                             index_reg,
                         })
                     }
-                    crate::func::ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => {
+                    crate::func::ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, .. }) => {
                         Ok(LValue::Index {
                             kind: ContainerKind::HeapArray { elem_slots },
-                            container_reg: slot,
+                            container_reg: gcref_slot,
+                            index_reg,
+                        })
+                    }
+                    crate::func::ExprSource::Location(StorageKind::HeapArray { gcref_slot, .. }) => {
+                        Ok(LValue::Index {
+                            kind: ContainerKind::HeapArray { elem_slots },
+                            container_reg: gcref_slot,
                             index_reg,
                         })
                     }
@@ -211,8 +216,8 @@ pub fn emit_lvalue_load(
     func: &mut FuncBuilder,
 ) {
     match lv {
-        LValue::Variable(loc) => {
-            func.emit_load_value(*loc, dst);
+        LValue::Variable(storage) => {
+            func.emit_storage_load(*storage, dst);
         }
         
         LValue::Deref { ptr_reg, offset, elem_slots } => {
@@ -283,14 +288,8 @@ pub fn emit_lvalue_store(
     func: &mut FuncBuilder,
 ) {
     match lv {
-        LValue::Variable(loc) => {
-            let slots = match loc {
-                ValueLocation::Stack { slots, .. } => *slots,
-                ValueLocation::HeapBoxed { value_slots, .. } => *value_slots,
-                ValueLocation::Reference { .. } => 1,
-                ValueLocation::Global { slots, .. } => *slots,
-            };
-            func.emit_store_value(*loc, src, slots);
+        LValue::Variable(storage) => {
+            func.emit_storage_store(*storage, src);
         }
         
         LValue::Deref { ptr_reg, offset, elem_slots } => {
@@ -358,12 +357,7 @@ pub fn emit_lvalue_store(
 /// Get the number of slots this LValue refers to.
 pub fn lvalue_slots(lv: &LValue) -> u16 {
     match lv {
-        LValue::Variable(loc) => match loc {
-            ValueLocation::Stack { slots, .. } => *slots,
-            ValueLocation::HeapBoxed { value_slots, .. } => *value_slots,
-            ValueLocation::Reference { .. } => 1,
-            ValueLocation::Global { slots, .. } => *slots,
-        },
+        LValue::Variable(storage) => storage.value_slots(),
         LValue::Deref { elem_slots, .. } => *elem_slots,
         LValue::Field { slots, .. } => *slots,
         LValue::Index { kind, .. } => match kind {
@@ -390,11 +384,12 @@ enum FlattenedField {
 /// Walk Field chain to find root and accumulate offset.
 fn flatten_field(lv: &LValue) -> FlattenedField {
     match lv {
-        LValue::Variable(loc) => match loc {
-            ValueLocation::Stack { slot, .. } => FlattenedField::Stack { slot: *slot, total_offset: 0 },
-            ValueLocation::HeapBoxed { slot, .. } => FlattenedField::HeapBoxed { gcref_slot: *slot, total_offset: 0 },
-            ValueLocation::Reference { slot } => FlattenedField::HeapBoxed { gcref_slot: *slot, total_offset: 0 },
-            ValueLocation::Global { index, .. } => FlattenedField::Global { index: *index, total_offset: 0 },
+        LValue::Variable(storage) => match storage {
+            StorageKind::StackValue { slot, .. } => FlattenedField::Stack { slot: *slot, total_offset: 0 },
+            StorageKind::HeapBoxed { gcref_slot, .. } => FlattenedField::HeapBoxed { gcref_slot: *gcref_slot, total_offset: 0 },
+            StorageKind::HeapArray { gcref_slot, .. } => FlattenedField::HeapBoxed { gcref_slot: *gcref_slot, total_offset: 0 },
+            StorageKind::Reference { slot } => FlattenedField::HeapBoxed { gcref_slot: *slot, total_offset: 0 },
+            StorageKind::Global { index, .. } => FlattenedField::Global { index: *index, total_offset: 0 },
         },
         LValue::Deref { ptr_reg, offset, .. } => FlattenedField::Deref { ptr_reg: *ptr_reg, total_offset: *offset },
         LValue::Field { base, offset, .. } => {

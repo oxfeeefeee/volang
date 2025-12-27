@@ -6,35 +6,72 @@ use vo_common_core::types::SlotType;
 use vo_vm::bytecode::FunctionDef;
 use vo_vm::instruction::{Instruction, Opcode};
 
-/// Value storage location - unified abstraction for variable access.
+/// Storage strategy for a variable - determined once at definition time.
+/// This unifies all type/escape analysis decisions into a single enum,
+/// eliminating scattered is_array/is_interface checks at usage sites.
 #[derive(Debug, Clone, Copy)]
-pub enum ValueLocation {
-    /// Stack-allocated value (slot holds actual data, N slots)
-    Stack { slot: u16, slots: u16 },
-    /// Heap-boxed value type (slot holds GcRef pointing to value_slots of data)
-    HeapBoxed { slot: u16, value_slots: u16 },
-    /// Reference type (slot holds GcRef which IS the value, 1 slot)
+pub enum StorageKind {
+    /// Stack-allocated value (N slots, Copy/CopyN access)
+    StackValue { slot: u16, slots: u16 },
+    
+    /// Heap-boxed struct/primitive/interface (1 slot GcRef, PtrGet/PtrSet access)
+    /// Layout: [GcHeader][data...]
+    HeapBoxed { gcref_slot: u16, value_slots: u16 },
+    
+    /// Heap-allocated array (1 slot GcRef, ArrayGet/ArraySet access)
+    /// Layout: [GcHeader][ArrayHeader][elems...]
+    HeapArray { gcref_slot: u16, elem_slots: u16 },
+    
+    /// Reference type (1 slot GcRef IS the value itself, Copy access)
     Reference { slot: u16 },
-    /// Global variable
+    
+    /// Global variable (GlobalGet/GlobalSet access)
     Global { index: u16, slots: u16 },
+}
+
+impl StorageKind {
+    /// Get the slot where this storage starts (GcRef slot for heap types)
+    pub fn slot(&self) -> u16 {
+        match self {
+            StorageKind::StackValue { slot, .. } => *slot,
+            StorageKind::HeapBoxed { gcref_slot, .. } => *gcref_slot,
+            StorageKind::HeapArray { gcref_slot, .. } => *gcref_slot,
+            StorageKind::Reference { slot } => *slot,
+            StorageKind::Global { index, .. } => *index,
+        }
+    }
+    
+    /// Get the number of value slots (logical size, not physical GcRef slot count)
+    pub fn value_slots(&self) -> u16 {
+        match self {
+            StorageKind::StackValue { slots, .. } => *slots,
+            StorageKind::HeapBoxed { value_slots, .. } => *value_slots,
+            StorageKind::HeapArray { elem_slots, .. } => *elem_slots, // per-element
+            StorageKind::Reference { .. } => 1,
+            StorageKind::Global { slots, .. } => *slots,
+        }
+    }
+    
+    /// Check if this is a heap-allocated storage (GcRef in local slot)
+    pub fn is_heap(&self) -> bool {
+        matches!(self, StorageKind::HeapBoxed { .. } | StorageKind::HeapArray { .. })
+    }
 }
 
 /// Expression value source - where an expression's value comes from.
 #[derive(Debug, Clone, Copy)]
 pub enum ExprSource {
     /// Value is in a known location (variable)
-    Location(ValueLocation),
+    Location(StorageKind),
     /// Value needs to be compiled (temporary result)
     NeedsCompile,
 }
 
-/// Local variable info.
+/// Local variable info with complete storage strategy.
 #[derive(Debug, Clone)]
 pub struct LocalVar {
     pub symbol: Symbol,
-    pub slot: u16,
-    pub slots: u16,
-    pub is_heap: bool,
+    pub storage: StorageKind,
 }
 
 /// Capture info for closure.
@@ -125,9 +162,7 @@ impl FuncBuilder {
             sym,
             LocalVar {
                 symbol: sym,
-                slot,
-                slots,
-                is_heap: false,
+                storage: StorageKind::StackValue { slot, slots },
             },
         );
         self.slot_types.extend_from_slice(types);
@@ -139,6 +174,12 @@ impl FuncBuilder {
 
     // === Local variable definition ===
 
+    /// Define a local variable with the given StorageKind.
+    /// This is the unified entry point - all type decisions are made by the caller.
+    pub fn define_local(&mut self, sym: Symbol, storage: StorageKind) {
+        self.locals.insert(sym, LocalVar { symbol: sym, storage });
+    }
+
     /// Stack allocation (non-escaping).
     pub fn define_local_stack(&mut self, sym: Symbol, slots: u16, types: &[SlotType]) -> u16 {
         let slot = self.next_slot;
@@ -146,9 +187,7 @@ impl FuncBuilder {
             sym,
             LocalVar {
                 symbol: sym,
-                slot,
-                slots,
-                is_heap: false,
+                storage: StorageKind::StackValue { slot, slots },
             },
         );
         self.slot_types.extend_from_slice(types);
@@ -156,16 +195,44 @@ impl FuncBuilder {
         slot
     }
 
-    /// Heap allocation (escaping) - 1 slot GcRef.
-    pub fn define_local_heap(&mut self, sym: Symbol) -> u16 {
+    /// Heap allocation for struct/primitive/interface (1 slot GcRef, PtrGet/PtrSet access).
+    pub fn define_local_heap_boxed(&mut self, sym: Symbol, value_slots: u16) -> u16 {
+        let gcref_slot = self.next_slot;
+        self.locals.insert(
+            sym,
+            LocalVar {
+                symbol: sym,
+                storage: StorageKind::HeapBoxed { gcref_slot, value_slots },
+            },
+        );
+        self.slot_types.push(SlotType::GcRef);
+        self.next_slot += 1;
+        gcref_slot
+    }
+
+    /// Heap allocation for array (1 slot GcRef, ArrayGet/ArraySet access).
+    pub fn define_local_heap_array(&mut self, sym: Symbol, elem_slots: u16) -> u16 {
+        let gcref_slot = self.next_slot;
+        self.locals.insert(
+            sym,
+            LocalVar {
+                symbol: sym,
+                storage: StorageKind::HeapArray { gcref_slot, elem_slots },
+            },
+        );
+        self.slot_types.push(SlotType::GcRef);
+        self.next_slot += 1;
+        gcref_slot
+    }
+
+    /// Reference type (1 slot GcRef IS the value).
+    pub fn define_local_reference(&mut self, sym: Symbol) -> u16 {
         let slot = self.next_slot;
         self.locals.insert(
             sym,
             LocalVar {
                 symbol: sym,
-                slot,
-                slots: 1,
-                is_heap: true,
+                storage: StorageKind::Reference { slot },
             },
         );
         self.slot_types.push(SlotType::GcRef);
@@ -190,7 +257,7 @@ impl FuncBuilder {
     }
 
     pub fn is_heap_local(&self, sym: Symbol) -> bool {
-        self.locals.get(&sym).map(|l| l.is_heap).unwrap_or(false)
+        self.locals.get(&sym).map(|l| l.storage.is_heap()).unwrap_or(false)
     }
 
     // === Temp allocation ===
@@ -258,40 +325,59 @@ impl FuncBuilder {
         }
     }
 
-    // === ValueLocation helpers ===
+    // === StorageKind helpers ===
 
-    /// Load value from location to dst
-    pub fn emit_load_value(&mut self, loc: ValueLocation, dst: u16) {
-        match loc {
-            ValueLocation::Stack { slot, slots } => {
+    /// Load value from storage to dst.
+    /// For HeapArray, this copies the GcRef (the array reference), not element data.
+    /// Use ArrayGet for element access.
+    pub fn emit_storage_load(&mut self, storage: StorageKind, dst: u16) {
+        match storage {
+            StorageKind::StackValue { slot, slots } => {
                 self.emit_copy(dst, slot, slots);
             }
-            ValueLocation::HeapBoxed { slot, value_slots } => {
-                self.emit_ptr_get(dst, slot, 0, value_slots);
+            StorageKind::HeapBoxed { gcref_slot, value_slots } => {
+                self.emit_ptr_get(dst, gcref_slot, 0, value_slots);
             }
-            ValueLocation::Reference { slot } => {
+            StorageKind::HeapArray { gcref_slot, .. } => {
+                // Array as a whole: copy GcRef (for passing to functions, etc.)
+                self.emit_op(Opcode::Copy, dst, gcref_slot, 0);
+            }
+            StorageKind::Reference { slot } => {
                 self.emit_op(Opcode::Copy, dst, slot, 0);
             }
-            ValueLocation::Global { index, .. } => {
-                self.emit_op(Opcode::GlobalGet, dst, index, 0);
+            StorageKind::Global { index, slots } => {
+                if slots == 1 {
+                    self.emit_op(Opcode::GlobalGet, dst, index, 0);
+                } else {
+                    self.emit_with_flags(Opcode::GlobalGetN, slots as u8, dst, index, 0);
+                }
             }
         }
     }
 
-    /// Store value from src to location
-    pub fn emit_store_value(&mut self, loc: ValueLocation, src: u16, src_slots: u16) {
-        match loc {
-            ValueLocation::Stack { slot, slots } => {
-                self.emit_copy(slot, src, slots.min(src_slots));
+    /// Store value from src to storage.
+    /// For HeapArray, this copies the GcRef. Use ArraySet for element access.
+    pub fn emit_storage_store(&mut self, storage: StorageKind, src: u16) {
+        match storage {
+            StorageKind::StackValue { slot, slots } => {
+                self.emit_copy(slot, src, slots);
             }
-            ValueLocation::HeapBoxed { slot, value_slots } => {
-                self.emit_ptr_set(slot, 0, src, value_slots.min(src_slots));
+            StorageKind::HeapBoxed { gcref_slot, value_slots } => {
+                self.emit_ptr_set(gcref_slot, 0, src, value_slots);
             }
-            ValueLocation::Reference { slot } => {
+            StorageKind::HeapArray { gcref_slot, .. } => {
+                // Store GcRef (for re-assignment of array variable)
+                self.emit_op(Opcode::Copy, gcref_slot, src, 0);
+            }
+            StorageKind::Reference { slot } => {
                 self.emit_op(Opcode::Copy, slot, src, 0);
             }
-            ValueLocation::Global { index, .. } => {
-                self.emit_op(Opcode::GlobalSet, index, src, 0);
+            StorageKind::Global { index, slots } => {
+                if slots == 1 {
+                    self.emit_op(Opcode::GlobalSet, index, src, 0);
+                } else {
+                    self.emit_with_flags(Opcode::GlobalSetN, slots as u8, index, src, 0);
+                }
             }
         }
     }

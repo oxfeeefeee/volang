@@ -7,7 +7,7 @@ use vo_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
-use crate::func::{ExprSource, FuncBuilder, LocalVar, ValueLocation};
+use crate::func::{ExprSource, FuncBuilder, StorageKind};
 use crate::type_info::TypeInfoWrapper;
 
 // =============================================================================
@@ -24,23 +24,6 @@ struct MethodResolution {
     defining_type: Option<TypeKey>,
 }
 
-/// Get ValueLocation for a local variable based on its storage and type.
-pub fn get_local_location(local: &LocalVar, type_key: Option<vo_analysis::objects::TypeKey>, info: &TypeInfoWrapper) -> ValueLocation {
-    if local.is_heap {
-        let is_value_type = type_key.map(|t| info.is_value_type(t)).unwrap_or(false);
-        let is_interface = type_key.map(|t| info.is_interface(t)).unwrap_or(false);
-        // Interface is also HeapBoxed when escaped (2 slots on heap)
-        if is_value_type || is_interface {
-            let value_slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
-            ValueLocation::HeapBoxed { slot: local.slot, value_slots }
-        } else {
-            ValueLocation::Reference { slot: local.slot }
-        }
-    } else {
-        ValueLocation::Stack { slot: local.slot, slots: local.slots }
-    }
-}
-
 /// Get ExprSource for an expression - determines where the value comes from.
 pub fn get_expr_source(
     expr: &Expr,
@@ -49,28 +32,28 @@ pub fn get_expr_source(
     info: &TypeInfoWrapper,
 ) -> ExprSource {
     if let ExprKind::Ident(ident) = &expr.kind {
-        // Check local variable
+        // Check local variable - storage is already computed
         if let Some(local) = func.lookup_local(ident.symbol) {
-            let type_key = info.obj_type(info.get_use(ident), "local var must have type");
-            return ExprSource::Location(get_local_location(local, Some(type_key), info));
+            return ExprSource::Location(local.storage);
         }
         // Check global variable
         if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
             let type_key = info.obj_type(info.get_use(ident), "global var must have type");
             let slots = info.type_slot_count(type_key);
-            return ExprSource::Location(ValueLocation::Global { index: global_idx as u16, slots });
+            return ExprSource::Location(StorageKind::Global { index: global_idx as u16, slots });
         }
     }
     ExprSource::NeedsCompile
 }
 
-/// Get the GcRef slot from a ValueLocation (for heap-based locations).
-/// Returns Some(slot) if the location holds a GcRef, None for stack/global values.
-fn get_gcref_slot(loc: &ValueLocation) -> Option<u16> {
-    match loc {
-        ValueLocation::HeapBoxed { slot, .. } => Some(*slot),
-        ValueLocation::Reference { slot } => Some(*slot),
-        ValueLocation::Stack { .. } | ValueLocation::Global { .. } => None,
+/// Get the GcRef slot from a StorageKind (for heap-based locations).
+/// Returns Some(slot) if the storage holds a GcRef, None for stack/global values.
+fn get_gcref_slot(storage: &StorageKind) -> Option<u16> {
+    match storage {
+        StorageKind::HeapBoxed { gcref_slot, .. } => Some(*gcref_slot),
+        StorageKind::HeapArray { gcref_slot, .. } => Some(*gcref_slot),
+        StorageKind::Reference { slot } => Some(*slot),
+        StorageKind::StackValue { .. } | StorageKind::Global { .. } => None,
     }
 }
 
@@ -121,8 +104,8 @@ pub fn compile_expr_to(
             
             // Get expression source and load value
             match get_expr_source(expr, ctx, func, info) {
-                ExprSource::Location(loc) => {
-                    func.emit_load_value(loc, dst);
+                ExprSource::Location(storage) => {
+                    func.emit_storage_load(storage, dst);
                 }
                 ExprSource::NeedsCompile => {
                     // Check closure capture
@@ -130,13 +113,11 @@ pub fn compile_expr_to(
                         // Closure capture: use ClosureGet to get the GcRef
                         func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
                         
-                        // Get captured variable's type
+                        // Get captured variable's type to determine how to read the value
                         let type_key = info.obj_type(info.get_use(ident), "captured var must have type");
                         
-                        // Among all escaped value types, only arrays use a different memory layout:
-                        // - struct/primitives/interface: PtrNew allocates [GcHeader][data], need PtrGet to read
-                        // - array: ArrayNew allocates [GcHeader][ArrayHeader][elems], ArrayGet handles it directly
-                        // So we only need to distinguish array from everything else.
+                        // Arrays use [GcHeader][ArrayHeader][elems] layout - the GcRef IS the array
+                        // Struct/primitive/interface use [GcHeader][data] layout - need PtrGet to read
                         if !info.is_array(type_key) {
                             let value_slots = info.type_slot_count(type_key);
                             func.emit_ptr_get(dst, dst, 0, value_slots);
@@ -389,22 +370,26 @@ fn compile_selector(
         func.emit_ptr_get(dst, ptr_reg, offset, slots);
     } else {
         // Value receiver: check storage location
-        let root_location = find_root_location(&sel.expr, func, info);
+        let root_storage = find_root_storage(&sel.expr, func);
         
-        match root_location {
-            Some(ValueLocation::HeapBoxed { slot, .. }) => {
+        match root_storage {
+            Some(StorageKind::HeapBoxed { gcref_slot, .. }) => {
                 // Heap variable: use PtrGet with offset
-                func.emit_ptr_get(dst, slot, offset, slots);
+                func.emit_ptr_get(dst, gcref_slot, offset, slots);
             }
-            Some(ValueLocation::Reference { slot }) => {
+            Some(StorageKind::HeapArray { gcref_slot, .. }) => {
+                // Heap array: use PtrGet with offset (for struct fields within array elements)
+                func.emit_ptr_get(dst, gcref_slot, offset, slots);
+            }
+            Some(StorageKind::Reference { slot }) => {
                 // Reference type: use PtrGet with offset
                 func.emit_ptr_get(dst, slot, offset, slots);
             }
-            Some(ValueLocation::Stack { slot, .. }) => {
+            Some(StorageKind::StackValue { slot, .. }) => {
                 // Stack variable: direct slot access
                 func.emit_copy(dst, slot + offset, slots);
             }
-            Some(ValueLocation::Global { .. }) => {
+            Some(StorageKind::Global { .. }) => {
                 // Global variables don't have field selectors through this path
                 return Err(CodegenError::Internal("global field selector not supported".to_string()));
             }
@@ -419,14 +404,11 @@ fn compile_selector(
     Ok(())
 }
 
-/// Find root variable's ValueLocation for selector chain
-fn find_root_location(expr: &Expr, func: &FuncBuilder, info: &TypeInfoWrapper) -> Option<ValueLocation> {
+/// Find root variable's StorageKind for selector chain
+fn find_root_storage(expr: &Expr, func: &FuncBuilder) -> Option<StorageKind> {
     match &expr.kind {
         ExprKind::Ident(ident) => {
-            func.lookup_local(ident.symbol).map(|local| {
-                let type_key = info.obj_type(info.get_use(ident), "local var must have type");
-                get_local_location(local, Some(type_key), info)
-            })
+            func.lookup_local(ident.symbol).map(|local| local.storage)
         }
         _ => None,
     }
@@ -460,7 +442,7 @@ fn get_escaped_var_gcref(
     info: &TypeInfoWrapper,
 ) -> Option<u16> {
     match get_expr_source(expr, ctx, func, info) {
-        ExprSource::Location(ValueLocation::HeapBoxed { slot, .. }) => Some(slot),
+        ExprSource::Location(storage) => get_gcref_slot(&storage),
         _ => None,
     }
 }
@@ -756,7 +738,7 @@ fn compile_func_lit(
                 // PtrSet: heap[slots[a]].offset[b] = slots[c]
                 // offset = 1 (ClosureHeader) + capture_index
                 let offset = 1 + i as u16;
-                parent_func.emit_op(Opcode::PtrSet, dst, offset, local.slot);
+                parent_func.emit_op(Opcode::PtrSet, dst, offset, local.storage.slot());
             }
         }
     }
@@ -776,9 +758,9 @@ fn compile_addr_of(
     // &x where x is escaped -> x's slot already holds GcRef, just copy
     if let ExprKind::Ident(ident) = &operand.kind {
         if let Some(local) = func.lookup_local(ident.symbol) {
-            if local.is_heap {
+            if local.storage.is_heap() {
                 // x is already heap-allocated, its slot holds the GcRef
-                func.emit_op(Opcode::Copy, dst, local.slot, 0);
+                func.emit_op(Opcode::Copy, dst, local.storage.slot(), 0);
                 return Ok(());
             }
         }
@@ -1096,7 +1078,7 @@ fn emit_receiver(
     sel_expr: &Expr,
     args_start: u16,
     recv_type: TypeKey,
-    recv_location: Option<ValueLocation>,
+    recv_storage: Option<StorageKind>,
     expects_ptr_recv: bool,
     actual_recv_type: TypeKey,
     embed_offset: u16,
@@ -1106,7 +1088,7 @@ fn emit_receiver(
 ) -> Result<(), CodegenError> {
     if expects_ptr_recv {
         // Method expects *T: pass GcRef directly
-        if let Some(gcref_slot) = recv_location.as_ref().and_then(get_gcref_slot) {
+        if let Some(gcref_slot) = recv_storage.as_ref().and_then(get_gcref_slot) {
             func.emit_copy(args_start, gcref_slot, 1);
         } else {
             let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
@@ -1117,17 +1099,25 @@ fn emit_receiver(
         let recv_is_ptr = info.is_pointer(recv_type);
         let value_slots = info.type_slot_count(actual_recv_type);
         
-        if let Some(ValueLocation::HeapBoxed { slot, .. }) = recv_location {
-            // Heap variable: directly read from GcRef slot (don't use compile_expr which would dereference twice)
-            func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, slot, embed_offset);
-        } else if recv_is_ptr {
-            // Pointer receiver: compile_expr gives us the pointer, then dereference
-            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
-            func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
-        } else {
-            // Stack variable: compile_expr gives us the value, just copy
-            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
-            func.emit_copy(args_start, recv_reg + embed_offset, value_slots);
+        match recv_storage {
+            Some(StorageKind::HeapBoxed { gcref_slot, .. }) => {
+                // Heap boxed: directly read from GcRef slot
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, gcref_slot, embed_offset);
+            }
+            Some(StorageKind::HeapArray { gcref_slot, .. }) => {
+                // Heap array: directly read from GcRef slot
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, gcref_slot, embed_offset);
+            }
+            _ if recv_is_ptr => {
+                // Pointer receiver: compile_expr gives us the pointer, then dereference
+                let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
+            }
+            _ => {
+                // Stack variable or other: compile_expr gives us the value, just copy
+                let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+                func.emit_copy(args_start, recv_reg + embed_offset, value_slots);
+            }
         }
     }
     Ok(())
@@ -1259,12 +1249,9 @@ fn compile_concrete_method(
     let actual_recv_type = resolution.defining_type.unwrap_or(base_type);
     let is_promoted = resolution.defining_type.is_some();
     
-    // Get receiver location for optimization
-    let recv_location = if let ExprKind::Ident(ident) = &sel.expr.kind {
-        func.lookup_local(ident.symbol).map(|local| {
-            let type_key = info.obj_type(info.get_use(ident), "method receiver must have type");
-            get_local_location(local, Some(type_key), info)
-        })
+    // Get receiver storage for optimization - storage already computed in LocalVar
+    let recv_storage = if let ExprKind::Ident(ident) = &sel.expr.kind {
+        func.lookup_local(ident.symbol).map(|local| local.storage)
     } else {
         None
     };
@@ -1280,7 +1267,7 @@ fn compile_concrete_method(
     // Emit receiver
     let embed_offset = compute_embed_offset(selection, is_promoted, base_type, info);
     emit_receiver(
-        &sel.expr, args_start, recv_type, recv_location,
+        &sel.expr, args_start, recv_type, recv_storage,
         resolution.expects_ptr_recv, actual_recv_type, embed_offset,
         ctx, func, info
     )?;
@@ -1698,15 +1685,14 @@ fn compile_composite_lit(
                             func.emit_op(Opcode::LoadInt, meta_and_key_reg + 1, 0, 0);
                         } else {
                             // Variable reference - compile as identifier expression
-                            if let Some(local) = func.lookup_local(ident.symbol) {
-                                if local.is_heap {
-                                    func.emit_op(Opcode::Copy, meta_and_key_reg + 1, local.slot, 0);
-                                } else {
-                                    func.emit_copy(meta_and_key_reg + 1, local.slot, local.slots);
-                                }
-                            } else {
-                                return Err(CodegenError::Internal(format!("map key ident not found: {:?}", ident.symbol)));
-                            }
+                            let storage = func.lookup_local(ident.symbol)
+                                .map(|l| l.storage)
+                                .ok_or_else(|| CodegenError::Internal(format!("map key ident not found: {:?}", ident.symbol)))?;
+                            // Use emit_storage_load to handle all storage kinds properly
+                            let value_slots = storage.value_slots();
+                            let tmp = func.alloc_temp(value_slots);
+                            func.emit_storage_load(storage, tmp);
+                            func.emit_copy(meta_and_key_reg + 1, tmp, value_slots);
                         }
                     }
                 };
