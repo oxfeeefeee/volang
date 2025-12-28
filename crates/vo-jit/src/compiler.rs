@@ -187,7 +187,7 @@ impl<'a> FunctionCompiler<'a> {
             
             // Check if this instruction terminates the block
             match inst.opcode() {
-                Opcode::Return | Opcode::Jump => {
+                Opcode::Return | Opcode::Jump | Opcode::Panic => {
                     block_terminated = true;
                 }
                 Opcode::JumpIf | Opcode::JumpIfNot => {

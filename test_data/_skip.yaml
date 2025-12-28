@@ -8,84 +8,49 @@
 #     - file: path/to/test.vo      # Relative to test_data/
 #       skip: [vm, jit]            # Skip both modes
 #       skip: [vm]                 # Skip vm mode only
-#       skip: [jit]                # Skip jit mode only
+#                  # Skip jit mode only
 #       reason: "why"              # Optional reason
 #       expect_error: true         # Test expects an error (negative test)
 
 skips:
   - file: channel_send.vo
-    skip: [jit]
   - file: clone_immediate_read.vo
-    skip: [jit]
   - file: complex_literal.vo
-    skip: [jit]
   - file: const.vo
-    skip: [jit]
   - file: const_fold.vo
-    skip: [jit]
   - file: constant.vo
-    skip: [jit]
   - file: debug_array_index.vo
-    skip: [jit]
   - file: debug_clone.vo
-    skip: [jit]
   - file: debug_escaped_array.vo
-    skip: [jit]
   - file: debug_iface_bugs.vo
-    skip: [jit]
   - file: debug_sequence.vo
-    skip: [jit]
   - file: defer_stmt.vo
-    skip: [jit]
   - file: embed_interface.vo
-    skip: [jit]
   - file: embed_interface_impl.vo
-    skip: [jit]
   - file: embed_method.vo
-    skip: [jit]
   - file: embed_pointer.vo
-    skip: [jit]
   - file: embed_shadow.vo
-    skip: [jit]
   - file: embed_struct.vo
-    skip: [jit]
   - file: escape_return_value.vo
-    skip: [jit]
   - file: escape_struct_assign.vo
-    skip: [jit]
   - file: fib_goroutine.vo
-    skip: [jit]
   - file: field_offset_debug.vo
-    skip: [jit]
   - file: for_stmt.vo
-    skip: [jit]
   - file: label_stmt.vo
-    skip: [jit]
   - file: go_stmt.vo
-    skip: [jit]
   - file: goto_stmt.vo
-    skip: [jit]
   - file: hex_literal_debug.vo
-    skip: [jit]
   - file: iface_escape_closure.vo
-    skip: [jit]
   - file: iface_to_iface_assertion.vo
-    skip: [jit]
   - file: init_call_error.vo
     skip: [vm, jit]
     reason: "expected error: init() cannot be called explicitly"
   - file: interface.vo
-    skip: [jit]
   - file: interface_closure.vo
-    skip: [jit]
   - file: interface_conversion.vo
-    skip: [jit]
   - file: interface_method_set.vo
-    skip: [jit]
   - file: interface_pointer.vo
-    skip: [jit]
   - file: interface_simple.vo
-    skip: [jit]
   - file: jit/bitwise_ops.vo
     skip: [vm]
     reason: "JIT-only test"
@@ -138,33 +103,19 @@ skips:
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"
   - file: local_type.vo
-    skip: [jit]
   - file: map.vo
-    skip: [jit]
   - file: method_dispatch_bug.vo
-    skip: [jit]
   - file: minimal_bug.vo
-    skip: [jit]
   - file: minimal_bug2.vo
-    skip: [jit]
   - file: multi_init.vo
-    skip: [jit]
   - file: multi_type_method.vo
-    skip: [jit]
   - file: nested_clone_test.vo
-    skip: [jit]
   - file: nested_struct_bug.vo
-    skip: [jit]
   - file: point_then_rect.vo
-    skip: [jit]
   - file: pointer_basic.vo
-    skip: [jit]
   - file: pointer_comprehensive.vo
-    skip: [jit]
   - file: pointer_embedded.vo
-    skip: [jit]
   - file: pointer_method_call.vo
-    skip: [jit]
   - file: proj_multifile/
     skip: [vm, jit]
     reason: "literal has no const value"
@@ -175,40 +126,24 @@ skips:
     skip: [vm, jit]
     reason: "type check failed"
   - file: qualified_embed_iface.vo
-    skip: [jit]
   - file: range_string.vo
-    skip: [jit]
   - file: rect_only.vo
-    skip: [jit]
   - file: rect_only_sum.vo
-    skip: [jit]
   - file: rune_literal.vo
-    skip: [jit]
   - file: select_stmt.vo
     skip: [vm, jit]
     reason: "type check failed"
   - file: setfield_getfield_test.vo
-    skip: [jit]
   - file: shift_ops.vo
-    skip: [jit]
   - file: setfield_test.vo
-    skip: [jit]
   - file: simple_clone_test.vo
-    skip: [jit]
   - file: array_slice.vo
-    skip: [jit]
   - file: bitwise_ops.vo
-    skip: [jit]
   - file: slice.vo
-    skip: [jit]
   - file: slice_map.vo
-    skip: [jit]
   - file: slice_ops.vo
-    skip: [jit]
   - file: stack_array_iter.vo
-    skip: [jit]
   - file: stack_vs_escaped_array.vo
-    skip: [jit]
   - file: stdlib/base64.vo
     skip: [vm, jit]
     reason: "stdlib not ready"
@@ -240,45 +175,24 @@ skips:
     skip: [vm, jit]
     reason: "stdlib not ready"
   - file: struct_method_simple.vo
-    skip: [jit]
   - file: struct_object.vo
-    skip: [jit]
   - file: switch_stmt.vo
-    skip: [jit]
   - file: three_index_slice.vo
-    skip: [jit]
   - file: named_return.vo
-    skip: [jit]
   - file: fallthrough.vo
-    skip: [jit]
   - file: escaped_array_init.vo
-    skip: [jit]
   - file: type_switch.vo
-    skip: [jit]
   - file: type_assertion.vo
-    skip: [jit]
   - file: type_assertion_ok.vo
-    skip: [jit]
   - file: typed_nil_interface.vo
-    skip: [jit]
   - file: type_debug.vo
-    skip: [jit]
   - file: value_receiver_bug.vo
-    skip: [jit]
   - file: var_dependency.vo
-    skip: [jit]
   - file: var_init_complex.vo
-    skip: [jit]
   - file: var_init_func.vo
-    skip: [jit]
   - file: var_init_order.vo
-    skip: [jit]
   # Extension syntax tests
   - file: fail_stmt.vo
-    skip: [jit]
   - file: question_operator.vo
-    skip: [jit]
   - file: errdefer_stmt.vo
-    skip: [jit]
   - file: debug_nil_interface.vo
-    skip: [jit]
