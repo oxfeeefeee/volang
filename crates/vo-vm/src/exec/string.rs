@@ -1,4 +1,4 @@
-//! String instructions: StrNew, StrLen, StrIndex, StrConcat, StrSlice, StrEq, StrNe, StrLt, StrLe, StrGt, StrGe
+//! String instructions: StrNew, StrConcat, StrSlice
 
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::string;
@@ -18,21 +18,6 @@ pub fn exec_str_new(fiber: &mut Fiber, inst: &Instruction, constants: &[Constant
 }
 
 #[inline]
-pub fn exec_str_len(fiber: &mut Fiber, inst: &Instruction) {
-    let s = fiber.read_reg(inst.b) as GcRef;
-    let len = if s.is_null() { 0 } else { string::len(s) };
-    fiber.write_reg(inst.a, len as u64);
-}
-
-#[inline]
-pub fn exec_str_index(fiber: &mut Fiber, inst: &Instruction) {
-    let s = fiber.read_reg(inst.b) as GcRef;
-    let idx = fiber.read_reg(inst.c) as usize;
-    let byte = string::index(s, idx);
-    fiber.write_reg(inst.a, byte as u64);
-}
-
-#[inline]
 pub fn exec_str_concat(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
     let a = fiber.read_reg(inst.b) as GcRef;
     let b = fiber.read_reg(inst.c) as GcRef;
@@ -47,58 +32,4 @@ pub fn exec_str_slice(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
     let hi = fiber.read_reg(inst.c + 1) as usize;
     let result = string::slice_of(gc, s, lo, hi);
     fiber.write_reg(inst.a, result as u64);
-}
-
-#[inline]
-pub fn exec_str_eq(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b) as GcRef;
-    let b = fiber.read_reg(inst.c) as GcRef;
-    fiber.write_reg(inst.a, string::eq(a, b) as u64);
-}
-
-#[inline]
-pub fn exec_str_ne(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b) as GcRef;
-    let b = fiber.read_reg(inst.c) as GcRef;
-    fiber.write_reg(inst.a, string::ne(a, b) as u64);
-}
-
-#[inline]
-pub fn exec_str_lt(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b) as GcRef;
-    let b = fiber.read_reg(inst.c) as GcRef;
-    fiber.write_reg(inst.a, string::lt(a, b) as u64);
-}
-
-#[inline]
-pub fn exec_str_le(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b) as GcRef;
-    let b = fiber.read_reg(inst.c) as GcRef;
-    fiber.write_reg(inst.a, string::le(a, b) as u64);
-}
-
-#[inline]
-pub fn exec_str_gt(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b) as GcRef;
-    let b = fiber.read_reg(inst.c) as GcRef;
-    fiber.write_reg(inst.a, string::gt(a, b) as u64);
-}
-
-#[inline]
-pub fn exec_str_ge(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b) as GcRef;
-    let b = fiber.read_reg(inst.c) as GcRef;
-    fiber.write_reg(inst.a, string::ge(a, b) as u64);
-}
-
-/// StrDecodeRune: Decode UTF-8 rune at position
-/// a = rune_slot, b = str_reg, c = pos_reg, flags (unused)
-/// Writes: rune at a, width at a+1
-#[inline]
-pub fn exec_str_decode_rune(fiber: &mut Fiber, inst: &Instruction) {
-    let s = fiber.read_reg(inst.b) as GcRef;
-    let pos = fiber.read_reg(inst.c) as usize;
-    let (rune, width) = string::decode_rune_at(s, pos);
-    fiber.write_reg(inst.a, rune as u64);
-    fiber.write_reg(inst.a + 1, width as u64);
 }

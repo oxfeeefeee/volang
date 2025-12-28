@@ -1,13 +1,7 @@
-//! Copy instructions: Copy, CopyN, SlotGet, SlotSet, SlotGetN, SlotSetN
+//! Copy instructions: CopyN, SlotGet, SlotSet, SlotGetN, SlotSetN
 
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;
-
-#[inline]
-pub fn exec_copy(fiber: &mut Fiber, inst: &Instruction) {
-    let val = fiber.read_reg(inst.b);
-    fiber.write_reg(inst.a, val);
-}
 
 #[inline]
 pub fn exec_copy_n(fiber: &mut Fiber, inst: &Instruction) {

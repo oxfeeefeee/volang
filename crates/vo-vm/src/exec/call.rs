@@ -14,45 +14,71 @@ use crate::vm::ExecResult;
 
 pub fn exec_call(fiber: &mut Fiber, inst: &Instruction, module: &Module) -> ExecResult {
     let func_id = (inst.a as u32) | ((inst.flags as u32) << 16);
-    let arg_start = inst.b;
+    let arg_start = inst.b as usize;
     let arg_slots = (inst.c >> 8) as usize;
     let ret_slots = (inst.c & 0xFF) as u16;
 
     let func = &module.functions[func_id as usize];
 
-    let args: Vec<u64> = (0..arg_slots)
-        .map(|i| fiber.read_reg(arg_start + i as u16))
-        .collect();
-
-    fiber.push_frame(func_id, func.local_slots, arg_start, ret_slots);
-
-    for (i, arg) in args.into_iter().enumerate() {
-        fiber.write_reg(i as u16, arg);
+    // Get caller's bp before pushing new frame
+    let caller_bp = fiber.frames.last().map_or(0, |f| f.bp);
+    
+    // New frame's bp is current stack top
+    let new_bp = fiber.stack.len();
+    
+    // Extend stack for new frame
+    fiber.stack.resize(new_bp + func.local_slots as usize, 0);
+    
+    // Copy args directly from caller's frame to new frame (no Vec allocation)
+    // SAFETY: source and dest don't overlap since new_bp >= caller_bp + arg_start + arg_slots
+    for i in 0..arg_slots {
+        fiber.stack[new_bp + i] = fiber.stack[caller_bp + arg_start + i];
     }
+    
+    // Push frame
+    fiber.frames.push(CallFrame {
+        func_id,
+        pc: 0,
+        bp: new_bp,
+        ret_reg: inst.b,
+        ret_count: ret_slots,
+    });
 
     ExecResult::Continue
 }
 
 pub fn exec_call_closure(fiber: &mut Fiber, inst: &Instruction, module: &Module) -> ExecResult {
-    let closure_ref = fiber.read_reg(inst.a) as GcRef;
+    let caller_bp = fiber.frames.last().map_or(0, |f| f.bp);
+    let closure_ref = fiber.stack[caller_bp + inst.a as usize] as GcRef;
     let func_id = closure::func_id(closure_ref);
-    let arg_start = inst.b;
+    let arg_start = inst.b as usize;
     let arg_slots = (inst.c >> 8) as usize;
     let ret_slots = (inst.c & 0xFF) as u16;
 
     let func = &module.functions[func_id as usize];
 
-    let args: Vec<u64> = (0..arg_slots)
-        .map(|i| fiber.read_reg(arg_start + i as u16))
-        .collect();
-
-    fiber.push_frame(func_id, func.local_slots, arg_start, ret_slots);
-
-    fiber.write_reg(0, closure_ref as u64);
-
-    for (i, arg) in args.into_iter().enumerate() {
-        fiber.write_reg((i + 1) as u16, arg);
+    // New frame's bp is current stack top
+    let new_bp = fiber.stack.len();
+    
+    // Extend stack for new frame
+    fiber.stack.resize(new_bp + func.local_slots as usize, 0);
+    
+    // Slot 0 is closure ref
+    fiber.stack[new_bp] = closure_ref as u64;
+    
+    // Copy args directly (no Vec allocation)
+    for i in 0..arg_slots {
+        fiber.stack[new_bp + 1 + i] = fiber.stack[caller_bp + arg_start + i];
     }
+    
+    // Push frame
+    fiber.frames.push(CallFrame {
+        func_id,
+        pc: 0,
+        bp: new_bp,
+        ret_reg: inst.b,
+        ret_count: ret_slots,
+    });
 
     ExecResult::Continue
 }
@@ -67,8 +93,9 @@ pub fn exec_call_iface(
     let ret_slots = (inst.c & 0xFF) as u16;
     let method_idx = inst.flags as usize;
 
-    let slot0 = fiber.read_reg(inst.a);
-    let slot1 = fiber.read_reg(inst.a + 1);
+    let caller_bp = fiber.frames.last().map_or(0, |f| f.bp);
+    let slot0 = fiber.stack[caller_bp + inst.a as usize];
+    let slot1 = fiber.stack[caller_bp + inst.a as usize + 1];
 
     let itab_id = (slot0 >> 32) as u32;
     let func_id = itab_cache.lookup_method(itab_id, method_idx);
@@ -76,19 +103,28 @@ pub fn exec_call_iface(
     let func = &module.functions[func_id as usize];
     let recv_slots = func.recv_slots as usize;
 
-    let args: Vec<u64> = (0..arg_slots)
-        .map(|i| fiber.read_reg(inst.b + i as u16))
-        .collect();
-
-    fiber.push_frame(func_id, func.local_slots, inst.b, ret_slots);
-
+    // New frame's bp is current stack top
+    let new_bp = fiber.stack.len();
+    
+    // Extend stack for new frame
+    fiber.stack.resize(new_bp + func.local_slots as usize, 0);
+    
     // Pass slot1 directly as receiver (1 slot: GcRef or primitive)
-    // For value receiver methods, itab points to wrapper that dereferences
-    fiber.write_reg(0, slot1);
-
-    for (i, arg) in args.into_iter().enumerate() {
-        fiber.write_reg((recv_slots + i) as u16, arg);
+    fiber.stack[new_bp] = slot1;
+    
+    // Copy args directly (no Vec allocation)
+    for i in 0..arg_slots {
+        fiber.stack[new_bp + recv_slots + i] = fiber.stack[caller_bp + inst.b as usize + i];
     }
+    
+    // Push frame
+    fiber.frames.push(CallFrame {
+        func_id,
+        pc: 0,
+        bp: new_bp,
+        ret_reg: inst.b,
+        ret_count: ret_slots,
+    });
 
     ExecResult::Continue
 }
@@ -136,6 +172,42 @@ pub fn exec_return(
     let ret_start = inst.a as usize;
     let ret_count = inst.b as usize;
 
+    // Check if there are any defers for current frame
+    let has_defers = fiber.defer_stack.last()
+        .map_or(false, |e| e.frame_depth == current_frame_depth);
+
+    if !has_defers {
+        // Fast path: no defers - avoid Vec allocation for common case (<=4 return values)
+        let frame = fiber.frames.last().unwrap();
+        let current_bp = frame.bp;
+        let ret_reg = frame.ret_reg;
+        let ret_slots = frame.ret_count as usize;
+        let write_count = ret_slots.min(ret_count);
+        
+        // Read return values before pop_frame truncates stack
+        // Use fixed array for common case (most functions return 0-4 values)
+        let mut ret_buf = [0u64; 4];
+        for i in 0..write_count.min(4) {
+            ret_buf[i] = fiber.stack[current_bp + ret_start + i];
+        }
+        
+        // Pop frame (truncates stack)
+        fiber.pop_frame();
+        
+        if fiber.frames.is_empty() {
+            return ExecResult::Done;
+        }
+        
+        // Write return values to caller's frame
+        let caller_bp = fiber.frames.last().unwrap().bp;
+        for i in 0..write_count.min(4) {
+            fiber.stack[caller_bp + ret_reg as usize + i] = ret_buf[i];
+        }
+        
+        return ExecResult::Return;
+    }
+
+    // Slow path: has defers - need to save return values in Vec
     let ret_vals: Vec<u64> = (0..ret_count)
         .map(|i| fiber.read_reg((ret_start + i) as u16))
         .collect();
@@ -173,7 +245,7 @@ pub fn exec_return(
         return call_defer_entry(fiber, &first_defer, module);
     }
 
-    // No defers - normal return
+    // No defers after filtering - normal return
     if fiber.frames.is_empty() {
         return ExecResult::Done;
     }

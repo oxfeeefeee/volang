@@ -1,17 +1,8 @@
-//! Load instructions: Nop, LoadInt, LoadConst
+//! Load instructions: Nop, LoadConst
 
 use crate::bytecode::Constant;
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;
-
-#[inline]
-pub fn exec_nop(_fiber: &mut Fiber, _inst: &Instruction) {}
-
-#[inline]
-pub fn exec_load_int(fiber: &mut Fiber, inst: &Instruction) {
-    let val = inst.imm32() as i64 as u64;
-    fiber.write_reg(inst.a, val);
-}
 
 #[inline]
 pub fn exec_load_const(fiber: &mut Fiber, inst: &Instruction, constants: &[Constant]) {

@@ -3,7 +3,22 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use vo_runtime::gc::Gc;
+/// Unchecked stack read - SAFETY: caller ensures bp + offset is within bounds
+macro_rules! stack_get {
+    ($stack:expr, $idx:expr) => {
+        unsafe { *$stack.get_unchecked($idx) }
+    };
+}
+
+/// Unchecked stack write - SAFETY: caller ensures bp + offset is within bounds
+macro_rules! stack_set {
+    ($stack:expr, $idx:expr, $val:expr) => {
+        unsafe { *$stack.get_unchecked_mut($idx) = $val }
+    };
+}
+
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::{array, slice, string};
 
 use crate::bytecode::Module;
 use crate::exec::{self, ExternRegistry};
@@ -159,7 +174,8 @@ extern "C" fn vm_call_trampoline(
             }
         }
         
-        let result = Vm::exec_inst(&mut fiber, &inst, frame_func_id, module, &mut vm.state);
+        let bp = fiber.frames.last().map(|f| f.bp).unwrap_or(0);
+        let result = exec_inst_inline(&mut fiber, &inst, frame_func_id, bp, module, &mut vm.state);
         
         match result {
             ExecResult::Continue => {}
@@ -458,40 +474,567 @@ impl Vm {
 
     /// Run a fiber for up to TIME_SLICE instructions.
     fn run_fiber(&mut self, fiber_id: u32) -> ExecResult {
-        // Use raw pointer to avoid borrow conflicts with try_jit_call
         let module_ptr = match &self.module {
             Some(m) => m as *const Module,
             None => return ExecResult::Done,
         };
-        // SAFETY: module_ptr is valid for the duration of run_fiber because
-        // self.module is not modified during execution.
+        // SAFETY: module_ptr is valid for the duration of run_fiber.
         let module = unsafe { &*module_ptr };
 
         for _ in 0..TIME_SLICE {
-            // Fetch instruction
-            let (inst, func_id) = {
-                let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                let frame = match fiber.current_frame_mut() {
-                    Some(f) => f,
-                    None => return ExecResult::Done,
-                };
-                let func = &module.functions[frame.func_id as usize];
-                if frame.pc >= func.code.len() {
-                    return ExecResult::Done;
-                }
-                let inst = func.code[frame.pc];
-                frame.pc += 1;
-                (inst, frame.func_id)
-            };
-
-            // Handle special ops that need scheduler access
-            let op = inst.opcode();
+            // Get fiber reference at start of each iteration
+            // This is necessary because GoStart's spawn() may reallocate the fibers vec
+            let fiber = &mut self.scheduler.fibers[fiber_id as usize];
             
-            // Helper macro for channel ops with blocking support
-            macro_rules! handle_chan_op {
-                ($exec_fn:expr) => {{
-                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    match $exec_fn(fiber, &inst) {
+            // Fetch instruction
+            let frame = match fiber.current_frame_mut() {
+                Some(f) => f,
+                None => return ExecResult::Done,
+            };
+            let func_id = frame.func_id;
+            let bp = frame.bp;
+            let func = &module.functions[func_id as usize];
+            if frame.pc >= func.code.len() {
+                return ExecResult::Done;
+            }
+            let inst = func.code[frame.pc];
+            frame.pc += 1;
+
+            // Single dispatch - all instructions handled here
+            let result = match inst.opcode() {
+                Opcode::Nop => ExecResult::Continue,
+
+                Opcode::LoadInt => {
+                    let val = inst.imm32() as i64 as u64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, val);
+                    ExecResult::Continue
+                }
+                Opcode::LoadConst => {
+                    exec::exec_load_const(fiber, &inst, &module.constants);
+                    ExecResult::Continue
+                }
+
+                Opcode::Copy => {
+                    let val = stack_get!(fiber.stack, bp + inst.b as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, val);
+                    ExecResult::Continue
+                }
+                Opcode::CopyN => {
+                    exec::exec_copy_n(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SlotGet => {
+                    exec::exec_slot_get(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SlotSet => {
+                    exec::exec_slot_set(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SlotGetN => {
+                    exec::exec_slot_get_n(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SlotSetN => {
+                    exec::exec_slot_set_n(fiber, &inst);
+                    ExecResult::Continue
+                }
+
+                Opcode::GlobalGet => {
+                    exec::exec_global_get(fiber, &inst, &self.state.globals);
+                    ExecResult::Continue
+                }
+                Opcode::GlobalGetN => {
+                    exec::exec_global_get_n(fiber, &inst, &self.state.globals);
+                    ExecResult::Continue
+                }
+                Opcode::GlobalSet => {
+                    exec::exec_global_set(fiber, &inst, &mut self.state.globals);
+                    ExecResult::Continue
+                }
+                Opcode::GlobalSetN => {
+                    exec::exec_global_set_n(fiber, &inst, &mut self.state.globals);
+                    ExecResult::Continue
+                }
+
+                Opcode::PtrNew => {
+                    exec::exec_ptr_new(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::PtrGet => {
+                    exec::exec_ptr_get(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::PtrSet => {
+                    exec::exec_ptr_set(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::PtrGetN => {
+                    exec::exec_ptr_get_n(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::PtrSetN => {
+                    exec::exec_ptr_set_n(fiber, &inst);
+                    ExecResult::Continue
+                }
+
+                // Integer arithmetic - inline for hot path
+                Opcode::AddI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_add(b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::SubI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_sub(b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::MulI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_mul(b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::DivI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::ModI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::NegI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_neg() as u64);
+                    ExecResult::Continue
+                }
+
+                // Float arithmetic
+                Opcode::AddF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a + b).to_bits());
+                    ExecResult::Continue
+                }
+                Opcode::SubF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a - b).to_bits());
+                    ExecResult::Continue
+                }
+                Opcode::MulF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a * b).to_bits());
+                    ExecResult::Continue
+                }
+                Opcode::DivF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a / b).to_bits());
+                    ExecResult::Continue
+                }
+                Opcode::NegF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (-a).to_bits());
+                    ExecResult::Continue
+                }
+
+                // Integer comparison - inline
+                Opcode::EqI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a == b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::NeI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a != b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::LtI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a < b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::LeI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a <= b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::GtI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a > b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::GeI => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a >= b) as u64);
+                    ExecResult::Continue
+                }
+
+                // Float comparison
+                Opcode::EqF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a == b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::NeF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a != b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::LtF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a < b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::LeF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a <= b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::GtF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a > b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::GeF => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a >= b) as u64);
+                    ExecResult::Continue
+                }
+
+                // Bitwise - inline
+                Opcode::And => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, a & b);
+                    ExecResult::Continue
+                }
+                Opcode::Or => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, a | b);
+                    ExecResult::Continue
+                }
+                Opcode::Xor => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, a ^ b);
+                    ExecResult::Continue
+                }
+                Opcode::AndNot => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, a & !b);
+                    ExecResult::Continue
+                }
+                Opcode::Not => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, !a);
+                    ExecResult::Continue
+                }
+                Opcode::Shl => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as u32;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_shl(b));
+                    ExecResult::Continue
+                }
+                Opcode::ShrS => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as u32;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_shr(b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::ShrU => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as u32;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_shr(b));
+                    ExecResult::Continue
+                }
+                Opcode::BoolNot => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize);
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a == 0) as u64);
+                    ExecResult::Continue
+                }
+
+                // Jump - inline
+                Opcode::Jump => {
+                    let offset = inst.imm32();
+                    let frame = fiber.current_frame_mut().unwrap();
+                    frame.pc = (frame.pc as i64 + offset as i64 - 1) as usize;
+                    ExecResult::Continue
+                }
+                Opcode::JumpIf => {
+                    let cond = stack_get!(fiber.stack, bp + inst.a as usize);
+                    if cond != 0 {
+                        let offset = inst.imm32();
+                        let frame = fiber.current_frame_mut().unwrap();
+                        frame.pc = (frame.pc as i64 + offset as i64 - 1) as usize;
+                    }
+                    ExecResult::Continue
+                }
+                Opcode::JumpIfNot => {
+                    let cond = stack_get!(fiber.stack, bp + inst.a as usize);
+                    if cond == 0 {
+                        let offset = inst.imm32();
+                        let frame = fiber.current_frame_mut().unwrap();
+                        frame.pc = (frame.pc as i64 + offset as i64 - 1) as usize;
+                    }
+                    ExecResult::Continue
+                }
+
+                // Call instructions
+                #[cfg(feature = "jit")]
+                Opcode::Call => {
+                    let target_func_id = (inst.a as u32) | ((inst.flags as u32) << 16);
+                    let arg_start = inst.b;
+                    let arg_slots = (inst.c >> 8) as usize;
+                    let ret_slots = (inst.c & 0xFF) as u16;
+                    
+                    let has_jit_func = self.jit.as_ref()
+                        .and_then(|jit| unsafe { jit.get_func_ptr(target_func_id) })
+                        .is_some();
+                    
+                    if has_jit_func {
+                        self.try_jit_call(fiber_id, target_func_id, arg_start, arg_slots, ret_slots)
+                            .unwrap_or(ExecResult::Continue)
+                    } else {
+                        if self.hot_counter.record_call(target_func_id) {
+                            if let Some(jit) = &mut self.jit {
+                                let target_func = &module.functions[target_func_id as usize];
+                                if jit.can_jit(target_func, module) {
+                                    if jit.compile(target_func_id, target_func, module).is_ok() {
+                                        if let Some(ptr) = unsafe { jit.get_func_ptr(target_func_id) } {
+                                            if (target_func_id as usize) < self.jit_func_table.len() {
+                                                self.jit_func_table[target_func_id as usize] = ptr as *const u8;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                        exec::exec_call(fiber, &inst, module)
+                    }
+                }
+                #[cfg(not(feature = "jit"))]
+                Opcode::Call => {
+                    exec::exec_call(fiber, &inst, module)
+                }
+                Opcode::CallExtern => {
+                    exec::exec_call_extern(fiber, &inst, &module.externs, &self.state.extern_registry, &mut self.state.gc)
+                }
+                Opcode::CallClosure => {
+                    exec::exec_call_closure(fiber, &inst, module)
+                }
+                Opcode::CallIface => {
+                    exec::exec_call_iface(fiber, &inst, module, &self.state.itab_cache)
+                }
+                Opcode::Return => {
+                    let func = &module.functions[func_id as usize];
+                    let is_error_return = (inst.flags & 1) != 0;
+                    exec::exec_return(fiber, &inst, func, module, is_error_return)
+                }
+
+                // String operations
+                Opcode::StrNew => {
+                    exec::exec_str_new(fiber, &inst, &module.constants, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::StrLen => {
+                    let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let len = if s.is_null() { 0 } else { string::len(s) };
+                    stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrIndex => {
+                    let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+                    let byte = string::index(s, idx);
+                    stack_set!(fiber.stack, bp + inst.a as usize, byte as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrConcat => {
+                    exec::exec_str_concat(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::StrSlice => {
+                    exec::exec_str_slice(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::StrEq => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+                    stack_set!(fiber.stack, bp + inst.a as usize, string::eq(a, b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrNe => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+                    stack_set!(fiber.stack, bp + inst.a as usize, string::ne(a, b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrLt => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+                    stack_set!(fiber.stack, bp + inst.a as usize, string::lt(a, b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrLe => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+                    stack_set!(fiber.stack, bp + inst.a as usize, string::le(a, b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrGt => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+                    stack_set!(fiber.stack, bp + inst.a as usize, string::gt(a, b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrGe => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+                    stack_set!(fiber.stack, bp + inst.a as usize, string::ge(a, b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::StrDecodeRune => {
+                    let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let pos = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+                    let (rune, width) = string::decode_rune_at(s, pos);
+                    stack_set!(fiber.stack, bp + inst.a as usize, rune as u64);
+                    stack_set!(fiber.stack, bp + inst.a as usize + 1, width as u64);
+                    ExecResult::Continue
+                }
+
+                // Array operations
+                Opcode::ArrayNew => {
+                    exec::exec_array_new(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::ArrayGet => {
+                    let arr = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+                    let elem_slots = inst.flags as usize;
+                    let offset = idx * elem_slots;
+                    let dst_start = bp + inst.a as usize;
+                    for i in 0..elem_slots {
+                        stack_set!(fiber.stack, dst_start + i, array::get(arr, offset + i));
+                    }
+                    ExecResult::Continue
+                }
+                Opcode::ArraySet => {
+                    let arr = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
+                    let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
+                    let elem_slots = inst.flags as usize;
+                    let offset = idx * elem_slots;
+                    let src_start = bp + inst.c as usize;
+                    for i in 0..elem_slots {
+                        array::set(arr, offset + i, stack_get!(fiber.stack, src_start + i));
+                    }
+                    ExecResult::Continue
+                }
+
+                // Slice operations
+                Opcode::SliceNew => {
+                    exec::exec_slice_new(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::SliceGet => {
+                    let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+                    let elem_slots = inst.flags as usize;
+                    let offset = idx * elem_slots;
+                    let dst_start = bp + inst.a as usize;
+                    for i in 0..elem_slots {
+                        stack_set!(fiber.stack, dst_start + i, slice::get(s, offset + i));
+                    }
+                    ExecResult::Continue
+                }
+                Opcode::SliceSet => {
+                    let s = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
+                    let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
+                    let elem_slots = inst.flags as usize;
+                    let offset = idx * elem_slots;
+                    let src_start = bp + inst.c as usize;
+                    for i in 0..elem_slots {
+                        slice::set(s, offset + i, stack_get!(fiber.stack, src_start + i));
+                    }
+                    ExecResult::Continue
+                }
+                Opcode::SliceLen => {
+                    let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let len = if s.is_null() { 0 } else { slice::len(s) };
+                    stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
+                    ExecResult::Continue
+                }
+                Opcode::SliceCap => {
+                    let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+                    let cap = if s.is_null() { 0 } else { slice::cap(s) };
+                    stack_set!(fiber.stack, bp + inst.a as usize, cap as u64);
+                    ExecResult::Continue
+                }
+                Opcode::SliceSlice => {
+                    exec::exec_slice_slice(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::SliceAppend => {
+                    exec::exec_slice_append(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+
+                // Map operations
+                Opcode::MapNew => {
+                    exec::exec_map_new(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::MapGet => {
+                    exec::exec_map_get(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::MapSet => {
+                    exec::exec_map_set(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::MapDelete => {
+                    exec::exec_map_delete(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::MapLen => {
+                    exec::exec_map_len(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::MapIterGet => {
+                    exec::exec_map_iter_get(fiber, &inst);
+                    ExecResult::Continue
+                }
+
+                // Channel operations - need scheduler access
+                Opcode::ChanNew => {
+                    exec::exec_chan_new(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::ChanSend => {
+                    match exec::exec_chan_send(fiber, &inst) {
                         exec::ChanResult::Continue => ExecResult::Continue,
                         exec::ChanResult::Yield => {
                             fiber.current_frame_mut().unwrap().pc -= 1;
@@ -507,78 +1050,128 @@ impl Vm {
                             ExecResult::Continue
                         }
                     }
-                }};
-            }
-            
-            let result = match op {
-                Opcode::ChanSend => handle_chan_op!(exec::exec_chan_send),
-                Opcode::ChanRecv => handle_chan_op!(exec::exec_chan_recv),
+                }
+                Opcode::ChanRecv => {
+                    match exec::exec_chan_recv(fiber, &inst) {
+                        exec::ChanResult::Continue => ExecResult::Continue,
+                        exec::ChanResult::Yield => {
+                            fiber.current_frame_mut().unwrap().pc -= 1;
+                            ExecResult::Block
+                        }
+                        exec::ChanResult::Panic => ExecResult::Panic,
+                        exec::ChanResult::Wake(id) => {
+                            self.scheduler.wake(id);
+                            ExecResult::Continue
+                        }
+                        exec::ChanResult::WakeMultiple(ids) => {
+                            for id in ids { self.scheduler.wake(id); }
+                            ExecResult::Continue
+                        }
+                    }
+                }
                 Opcode::ChanClose => {
-                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    if let exec::ChanResult::WakeMultiple(ids) = exec::exec_chan_close(fiber, &inst) {
-                        for id in ids { self.scheduler.wake(id); }
+                    match exec::exec_chan_close(fiber, &inst) {
+                        exec::ChanResult::WakeMultiple(ids) => {
+                            for id in ids { self.scheduler.wake(id); }
+                        }
+                        _ => {}
                     }
                     ExecResult::Continue
                 }
+
+                // Select operations
+                Opcode::SelectBegin => {
+                    exec::exec_select_begin(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SelectSend => {
+                    exec::exec_select_send(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SelectRecv => {
+                    exec::exec_select_recv(fiber, &inst);
+                    ExecResult::Continue
+                }
+                Opcode::SelectExec => {
+                    exec::exec_select_exec(fiber, &inst)
+                }
+
+                // Closure operations
+                Opcode::ClosureNew => {
+                    exec::exec_closure_new(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
+                }
+                Opcode::ClosureGet => {
+                    exec::exec_closure_get(fiber, &inst);
+                    ExecResult::Continue
+                }
+
+                // Goroutine - needs scheduler
+                // NOTE: spawn may reallocate fibers vec, but loop re-acquires fiber each iteration
                 Opcode::GoStart => {
-                    let functions = &module.functions;
+                    // Must drop fiber borrow before accessing scheduler.fibers.len()
                     let next_id = self.scheduler.fibers.len() as u32;
                     let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    let go_result = exec::exec_go_start(fiber, &inst, functions, next_id);
+                    let go_result = exec::exec_go_start(fiber, &inst, &module.functions, next_id);
                     self.scheduler.spawn(go_result.new_fiber);
                     ExecResult::Continue
                 }
-                #[cfg(feature = "jit")]
-                Opcode::Call => {
-                    let target_func_id = (inst.a as u32) | ((inst.flags as u32) << 16);
-                    let arg_start = inst.b;
-                    let arg_slots = (inst.c >> 8) as usize;
-                    let ret_slots = (inst.c & 0xFF) as u16;
-                    
-                    // Check if JIT is available for this function
-                    let has_jit_func = self.jit.as_ref()
-                        .and_then(|jit| unsafe { jit.get_func_ptr(target_func_id) })
-                        .is_some();
-                    
-                    if has_jit_func {
-                        // JIT path
-                        self.try_jit_call(fiber_id, target_func_id, arg_start, arg_slots, ret_slots)
-                            .unwrap_or(ExecResult::Continue)
-                    } else {
-                        // Record call for hot function detection
-                        if self.hot_counter.record_call(target_func_id) {
-                            // Function just became hot - try to compile it
-                            if let Some(jit) = &mut self.jit {
-                                let func = &module.functions[target_func_id as usize];
-                                if jit.can_jit(func, module) {
-                                    // Compile and update function pointer table
-                                    if jit.compile(target_func_id, func, module).is_ok() {
-                                        // Update jit_func_table with the compiled function pointer
-                                        if let Some(ptr) = unsafe { jit.get_func_ptr(target_func_id) } {
-                                            if (target_func_id as usize) < self.jit_func_table.len() {
-                                                self.jit_func_table[target_func_id as usize] = ptr as *const u8;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // Interpreter path
-                        let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                        exec::exec_call(fiber, &inst, module)
-                    }
+
+                // Defer and error handling
+                Opcode::DeferPush => {
+                    exec::exec_defer_push(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
                 }
-                _ => {
-                    let fiber = &mut self.scheduler.fibers[fiber_id as usize];
-                    Self::exec_inst(fiber, &inst, func_id, module, &mut self.state)
+                Opcode::ErrDeferPush => {
+                    exec::exec_err_defer_push(fiber, &inst, &mut self.state.gc);
+                    ExecResult::Continue
                 }
+                Opcode::Panic => {
+                    exec::exec_panic(fiber, &inst)
+                }
+                Opcode::Recover => {
+                    exec::exec_recover(fiber, &inst);
+                    ExecResult::Continue
+                }
+
+                // Interface operations
+                Opcode::IfaceAssign => {
+                    exec::exec_iface_assign(fiber, &inst, &mut self.state.gc, &mut self.state.itab_cache, module);
+                    ExecResult::Continue
+                }
+                Opcode::IfaceAssert => {
+                    exec::exec_iface_assert(fiber, &inst, &mut self.state.itab_cache, module)
+                }
+
+                // Type conversion - inline
+                Opcode::ConvI2F => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, (a as f64).to_bits());
+                    ExecResult::Continue
+                }
+                Opcode::ConvF2I => {
+                    let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+                    stack_set!(fiber.stack, bp + inst.a as usize, a as i64 as u64);
+                    ExecResult::Continue
+                }
+                Opcode::ConvI32I64 => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i32;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a as i64 as u64);
+                    ExecResult::Continue
+                }
+                Opcode::ConvI64I32 => {
+                    let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+                    stack_set!(fiber.stack, bp + inst.a as usize, a as i32 as u64);
+                    ExecResult::Continue
+                }
+
+                Opcode::Invalid => ExecResult::Panic,
             };
 
             match result {
                 ExecResult::Continue => continue,
                 ExecResult::Return => {
-                    let fiber = &self.scheduler.fibers[fiber_id as usize];
-                    if fiber.frames.is_empty() {
+                    if self.scheduler.fibers[fiber_id as usize].frames.is_empty() {
                         return ExecResult::Done;
                     }
                 }
@@ -586,482 +1179,451 @@ impl Vm {
             }
         }
 
-        // Time slice exhausted
         ExecResult::Continue
     }
 
 
-    /// Execute a single instruction.
-    fn exec_inst(
-        fiber: &mut Fiber,
-        inst: &Instruction,
-        func_id: u32,
-        module: &Module,
-        state: &mut VmState,
-    ) -> ExecResult {
-        let op = inst.opcode();
+}
 
-        match op {
-            Opcode::Nop => ExecResult::Continue,
-
-            Opcode::LoadInt => {
-                exec::exec_load_int(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LoadConst => {
-                exec::exec_load_const(fiber, inst, &module.constants);
-                ExecResult::Continue
-            }
-
-            Opcode::Copy => {
-                exec::exec_copy(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::CopyN => {
-                exec::exec_copy_n(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SlotGet => {
-                exec::exec_slot_get(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SlotSet => {
-                exec::exec_slot_set(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SlotGetN => {
-                exec::exec_slot_get_n(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SlotSetN => {
-                exec::exec_slot_set_n(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::GlobalGet => {
-                exec::exec_global_get(fiber, inst, &state.globals);
-                ExecResult::Continue
-            }
-            Opcode::GlobalGetN => {
-                exec::exec_global_get_n(fiber, inst, &state.globals);
-                ExecResult::Continue
-            }
-            Opcode::GlobalSet => {
-                exec::exec_global_set(fiber, inst, &mut state.globals);
-                ExecResult::Continue
-            }
-            Opcode::GlobalSetN => {
-                exec::exec_global_set_n(fiber, inst, &mut state.globals);
-                ExecResult::Continue
-            }
-
-            Opcode::PtrNew => {
-                exec::exec_ptr_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::PtrGet => {
-                exec::exec_ptr_get(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::PtrSet => {
-                exec::exec_ptr_set(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::PtrGetN => {
-                exec::exec_ptr_get_n(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::PtrSetN => {
-                exec::exec_ptr_set_n(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::AddI => {
-                exec::exec_add_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SubI => {
-                exec::exec_sub_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::MulI => {
-                exec::exec_mul_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::DivI => {
-                exec::exec_div_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ModI => {
-                exec::exec_mod_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::NegI => {
-                exec::exec_neg_i(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::AddF => {
-                exec::exec_add_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SubF => {
-                exec::exec_sub_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::MulF => {
-                exec::exec_mul_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::DivF => {
-                exec::exec_div_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::NegF => {
-                exec::exec_neg_f(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::EqI => {
-                exec::exec_eq_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::NeI => {
-                exec::exec_ne_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LtI => {
-                exec::exec_lt_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LeI => {
-                exec::exec_le_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::GtI => {
-                exec::exec_gt_i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::GeI => {
-                exec::exec_ge_i(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::EqF => {
-                exec::exec_eq_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::NeF => {
-                exec::exec_ne_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LtF => {
-                exec::exec_lt_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LeF => {
-                exec::exec_le_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::GtF => {
-                exec::exec_gt_f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::GeF => {
-                exec::exec_ge_f(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::And => {
-                exec::exec_and(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::Or => {
-                exec::exec_or(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::Xor => {
-                exec::exec_xor(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::AndNot => {
-                exec::exec_and_not(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::Not => {
-                exec::exec_not(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::Shl => {
-                exec::exec_shl(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ShrS => {
-                exec::exec_shr_s(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ShrU => {
-                exec::exec_shr_u(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::BoolNot => {
-                exec::exec_bool_not(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::Jump => {
-                exec::exec_jump(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::JumpIf => {
-                exec::exec_jump_if(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::JumpIfNot => {
-                exec::exec_jump_if_not(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::Call => {
-                exec::exec_call(fiber, inst, module)
-            }
-            Opcode::CallExtern => {
-                exec::exec_call_extern(fiber, inst, &module.externs, &state.extern_registry, &mut state.gc)
-            }
-            Opcode::CallClosure => {
-                exec::exec_call_closure(fiber, inst, module)
-            }
-            Opcode::CallIface => {
-                exec::exec_call_iface(fiber, inst, module, &state.itab_cache)
-            }
-            Opcode::Return => {
-                let func = &module.functions[func_id as usize];
-                let is_error_return = (inst.flags & 1) != 0;
-                exec::exec_return(fiber, inst, func, module, is_error_return)
-            }
-
-            Opcode::StrNew => {
-                exec::exec_str_new(fiber, inst, &module.constants, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::StrLen => {
-                exec::exec_str_len(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrIndex => {
-                exec::exec_str_index(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrConcat => {
-                exec::exec_str_concat(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::StrSlice => {
-                exec::exec_str_slice(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::StrEq => {
-                exec::exec_str_eq(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrNe => {
-                exec::exec_str_ne(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrLt => {
-                exec::exec_str_lt(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrLe => {
-                exec::exec_str_le(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrGt => {
-                exec::exec_str_gt(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrGe => {
-                exec::exec_str_ge(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::StrDecodeRune => {
-                exec::exec_str_decode_rune(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::ArrayNew => {
-                exec::exec_array_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::ArrayGet => {
-                exec::exec_array_get(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ArraySet => {
-                exec::exec_array_set(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::SliceNew => {
-                exec::exec_slice_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::SliceGet => {
-                exec::exec_slice_get(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SliceSet => {
-                exec::exec_slice_set(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SliceLen => {
-                exec::exec_slice_len(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SliceCap => {
-                exec::exec_slice_cap(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SliceSlice => {
-                exec::exec_slice_slice(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::SliceAppend => {
-                exec::exec_slice_append(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-
-            Opcode::MapNew => {
-                exec::exec_map_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::MapGet => {
-                exec::exec_map_get(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::MapSet => {
-                exec::exec_map_set(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::MapDelete => {
-                exec::exec_map_delete(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::MapLen => {
-                exec::exec_map_len(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::MapIterGet => {
-                exec::exec_map_iter_get(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::ChanNew => {
-                exec::exec_chan_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::ChanSend => {
-                // ChanSend returns ChanResult, convert to ExecResult
-                // Wake handling needs scheduler access - return Yield to handle at higher level
-                match exec::exec_chan_send(fiber, inst) {
-                    exec::ChanResult::Continue => ExecResult::Continue,
-                    exec::ChanResult::Yield => ExecResult::Yield,
-                    exec::ChanResult::Panic => ExecResult::Panic,
-                    exec::ChanResult::Wake(_) | exec::ChanResult::WakeMultiple(_) => ExecResult::Yield,
-                }
-            }
-            Opcode::ChanRecv => {
-                match exec::exec_chan_recv(fiber, inst) {
-                    exec::ChanResult::Continue => ExecResult::Continue,
-                    exec::ChanResult::Yield => ExecResult::Yield,
-                    exec::ChanResult::Panic => ExecResult::Panic,
-                    exec::ChanResult::Wake(_) | exec::ChanResult::WakeMultiple(_) => ExecResult::Yield,
-                }
-            }
-            Opcode::ChanClose => {
-                match exec::exec_chan_close(fiber, inst) {
-                    exec::ChanResult::Continue => ExecResult::Continue,
-                    exec::ChanResult::Yield => ExecResult::Yield,
-                    exec::ChanResult::Panic => ExecResult::Panic,
-                    exec::ChanResult::Wake(_) | exec::ChanResult::WakeMultiple(_) => ExecResult::Continue,
-                }
-            }
-
-            Opcode::SelectBegin => {
-                exec::exec_select_begin(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SelectSend => {
-                exec::exec_select_send(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SelectRecv => {
-                exec::exec_select_recv(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::SelectExec => {
-                exec::exec_select_exec(fiber, inst)
-            }
-
-
-            Opcode::ClosureNew => {
-                exec::exec_closure_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::ClosureGet => {
-                exec::exec_closure_get(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::GoStart => {
-                // GoStart needs special handling - returns new fiber to spawn
-                // Handled in run_fiber, this path shouldn't be reached
-                ExecResult::Yield
-            }
-
-            Opcode::DeferPush => {
-                exec::exec_defer_push(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::ErrDeferPush => {
-                exec::exec_err_defer_push(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::Panic => {
-                exec::exec_panic(fiber, inst)
-            }
-            Opcode::Recover => {
-                exec::exec_recover(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::IfaceAssign => {
-                exec::exec_iface_assign(fiber, inst, &mut state.gc, &mut state.itab_cache, module);
-                ExecResult::Continue
-            }
-            Opcode::IfaceAssert => {
-                exec::exec_iface_assert(fiber, inst, &mut state.itab_cache, module)
-            }
-
-            Opcode::ConvI2F => {
-                exec::exec_conv_i2f(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ConvF2I => {
-                exec::exec_conv_f2i(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ConvI32I64 => {
-                exec::exec_conv_i32_i64(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::ConvI64I32 => {
-                exec::exec_conv_i64_i32(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::Invalid => ExecResult::Panic,
+/// Inline instruction execution for vm_call_trampoline (JIT->VM calls).
+/// This is a standalone function to avoid code duplication with run_fiber.
+#[cfg(feature = "jit")]
+fn exec_inst_inline(
+    fiber: &mut Fiber,
+    inst: &Instruction,
+    func_id: u32,
+    bp: usize,
+    module: &Module,
+    state: &mut VmState,
+) -> ExecResult {
+    match inst.opcode() {
+        Opcode::Nop => ExecResult::Continue,
+        Opcode::LoadInt => {
+            let val = inst.imm32() as i64 as u64;
+            stack_set!(fiber.stack, bp + inst.a as usize, val);
+            ExecResult::Continue
         }
+        Opcode::LoadConst => {
+            exec::exec_load_const(fiber, inst, &module.constants);
+            ExecResult::Continue
+        }
+        Opcode::Copy => {
+            let val = stack_get!(fiber.stack, bp + inst.b as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, val);
+            ExecResult::Continue
+        }
+        Opcode::CopyN => { exec::exec_copy_n(fiber, inst); ExecResult::Continue }
+        Opcode::SlotGet => { exec::exec_slot_get(fiber, inst); ExecResult::Continue }
+        Opcode::SlotSet => { exec::exec_slot_set(fiber, inst); ExecResult::Continue }
+        Opcode::SlotGetN => { exec::exec_slot_get_n(fiber, inst); ExecResult::Continue }
+        Opcode::SlotSetN => { exec::exec_slot_set_n(fiber, inst); ExecResult::Continue }
+        Opcode::GlobalGet => { exec::exec_global_get(fiber, inst, &state.globals); ExecResult::Continue }
+        Opcode::GlobalGetN => { exec::exec_global_get_n(fiber, inst, &state.globals); ExecResult::Continue }
+        Opcode::GlobalSet => { exec::exec_global_set(fiber, inst, &mut state.globals); ExecResult::Continue }
+        Opcode::GlobalSetN => { exec::exec_global_set_n(fiber, inst, &mut state.globals); ExecResult::Continue }
+        Opcode::PtrNew => { exec::exec_ptr_new(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::PtrGet => { exec::exec_ptr_get(fiber, inst); ExecResult::Continue }
+        Opcode::PtrSet => { exec::exec_ptr_set(fiber, inst); ExecResult::Continue }
+        Opcode::PtrGetN => { exec::exec_ptr_get_n(fiber, inst); ExecResult::Continue }
+        Opcode::PtrSetN => { exec::exec_ptr_set_n(fiber, inst); ExecResult::Continue }
+        // Integer arithmetic
+        Opcode::AddI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_add(b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::SubI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_sub(b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::MulI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_mul(b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::DivI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::ModI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::NegI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_neg() as u64);
+            ExecResult::Continue
+        }
+        // Float arithmetic
+        Opcode::AddF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a + b).to_bits());
+            ExecResult::Continue
+        }
+        Opcode::SubF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a - b).to_bits());
+            ExecResult::Continue
+        }
+        Opcode::MulF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a * b).to_bits());
+            ExecResult::Continue
+        }
+        Opcode::DivF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a / b).to_bits());
+            ExecResult::Continue
+        }
+        Opcode::NegF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (-a).to_bits());
+            ExecResult::Continue
+        }
+        // Integer comparison
+        Opcode::EqI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, (a == b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::NeI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, (a != b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::LtI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, (a < b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::LeI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, (a <= b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::GtI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, (a > b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::GeI => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, (a >= b) as u64);
+            ExecResult::Continue
+        }
+        // Float comparison
+        Opcode::EqF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a == b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::NeF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a != b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::LtF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a < b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::LeF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a <= b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::GtF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a > b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::GeF => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            let b = f64::from_bits(stack_get!(fiber.stack, bp + inst.c as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, (a >= b) as u64);
+            ExecResult::Continue
+        }
+        // Bitwise
+        Opcode::And => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, a & b);
+            ExecResult::Continue
+        }
+        Opcode::Or => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, a | b);
+            ExecResult::Continue
+        }
+        Opcode::Xor => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, a ^ b);
+            ExecResult::Continue
+        }
+        Opcode::AndNot => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, a & !b);
+            ExecResult::Continue
+        }
+        Opcode::Not => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, !a);
+            ExecResult::Continue
+        }
+        Opcode::Shl => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as u32;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_shl(b));
+            ExecResult::Continue
+        }
+        Opcode::ShrS => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as u32;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_shr(b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::ShrU => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as u32;
+            stack_set!(fiber.stack, bp + inst.a as usize, a.wrapping_shr(b));
+            ExecResult::Continue
+        }
+        Opcode::BoolNot => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize);
+            stack_set!(fiber.stack, bp + inst.a as usize, (a == 0) as u64);
+            ExecResult::Continue
+        }
+        // Jump
+        Opcode::Jump => {
+            let offset = inst.imm32();
+            let frame = fiber.current_frame_mut().unwrap();
+            frame.pc = (frame.pc as i64 + offset as i64 - 1) as usize;
+            ExecResult::Continue
+        }
+        Opcode::JumpIf => {
+            let cond = stack_get!(fiber.stack, bp + inst.a as usize);
+            if cond != 0 {
+                let offset = inst.imm32();
+                let frame = fiber.current_frame_mut().unwrap();
+                frame.pc = (frame.pc as i64 + offset as i64 - 1) as usize;
+            }
+            ExecResult::Continue
+        }
+        Opcode::JumpIfNot => {
+            let cond = stack_get!(fiber.stack, bp + inst.a as usize);
+            if cond == 0 {
+                let offset = inst.imm32();
+                let frame = fiber.current_frame_mut().unwrap();
+                frame.pc = (frame.pc as i64 + offset as i64 - 1) as usize;
+            }
+            ExecResult::Continue
+        }
+        // Call
+        Opcode::Call => exec::exec_call(fiber, inst, module),
+        Opcode::CallExtern => exec::exec_call_extern(fiber, inst, &module.externs, &state.extern_registry, &mut state.gc),
+        Opcode::CallClosure => exec::exec_call_closure(fiber, inst, module),
+        Opcode::CallIface => exec::exec_call_iface(fiber, inst, module, &state.itab_cache),
+        Opcode::Return => {
+            let func = &module.functions[func_id as usize];
+            let is_error_return = (inst.flags & 1) != 0;
+            exec::exec_return(fiber, inst, func, module, is_error_return)
+        }
+        // String
+        Opcode::StrNew => { exec::exec_str_new(fiber, inst, &module.constants, &mut state.gc); ExecResult::Continue }
+        Opcode::StrLen => {
+            let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let len = if s.is_null() { 0 } else { string::len(s) };
+            stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrIndex => {
+            let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+            let byte = string::index(s, idx);
+            stack_set!(fiber.stack, bp + inst.a as usize, byte as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrConcat => { exec::exec_str_concat(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::StrSlice => { exec::exec_str_slice(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::StrEq => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+            stack_set!(fiber.stack, bp + inst.a as usize, string::eq(a, b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrNe => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+            stack_set!(fiber.stack, bp + inst.a as usize, string::ne(a, b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrLt => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+            stack_set!(fiber.stack, bp + inst.a as usize, string::lt(a, b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrLe => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+            stack_set!(fiber.stack, bp + inst.a as usize, string::le(a, b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrGt => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+            stack_set!(fiber.stack, bp + inst.a as usize, string::gt(a, b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrGe => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let b = stack_get!(fiber.stack, bp + inst.c as usize) as GcRef;
+            stack_set!(fiber.stack, bp + inst.a as usize, string::ge(a, b) as u64);
+            ExecResult::Continue
+        }
+        Opcode::StrDecodeRune => {
+            let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let pos = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+            let (rune, width) = string::decode_rune_at(s, pos);
+            stack_set!(fiber.stack, bp + inst.a as usize, rune as u64);
+            stack_set!(fiber.stack, bp + inst.a as usize + 1, width as u64);
+            ExecResult::Continue
+        }
+        // Array
+        Opcode::ArrayNew => { exec::exec_array_new(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::ArrayGet => {
+            let arr = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+            let elem_slots = inst.flags as usize;
+            let offset = idx * elem_slots;
+            let dst_start = bp + inst.a as usize;
+            for i in 0..elem_slots {
+                stack_set!(fiber.stack, dst_start + i, array::get(arr, offset + i));
+            }
+            ExecResult::Continue
+        }
+        Opcode::ArraySet => {
+            let arr = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
+            let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
+            let elem_slots = inst.flags as usize;
+            let offset = idx * elem_slots;
+            let src_start = bp + inst.c as usize;
+            for i in 0..elem_slots {
+                array::set(arr, offset + i, stack_get!(fiber.stack, src_start + i));
+            }
+            ExecResult::Continue
+        }
+        // Slice
+        Opcode::SliceNew => { exec::exec_slice_new(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::SliceGet => {
+            let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
+            let elem_slots = inst.flags as usize;
+            let offset = idx * elem_slots;
+            let dst_start = bp + inst.a as usize;
+            for i in 0..elem_slots {
+                stack_set!(fiber.stack, dst_start + i, slice::get(s, offset + i));
+            }
+            ExecResult::Continue
+        }
+        Opcode::SliceSet => {
+            let s = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
+            let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
+            let elem_slots = inst.flags as usize;
+            let offset = idx * elem_slots;
+            let src_start = bp + inst.c as usize;
+            for i in 0..elem_slots {
+                slice::set(s, offset + i, stack_get!(fiber.stack, src_start + i));
+            }
+            ExecResult::Continue
+        }
+        Opcode::SliceLen => {
+            let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let len = if s.is_null() { 0 } else { slice::len(s) };
+            stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
+            ExecResult::Continue
+        }
+        Opcode::SliceCap => {
+            let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
+            let cap = if s.is_null() { 0 } else { slice::cap(s) };
+            stack_set!(fiber.stack, bp + inst.a as usize, cap as u64);
+            ExecResult::Continue
+        }
+        Opcode::SliceSlice => { exec::exec_slice_slice(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::SliceAppend => { exec::exec_slice_append(fiber, inst, &mut state.gc); ExecResult::Continue }
+        // Map
+        Opcode::MapNew => { exec::exec_map_new(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::MapGet => { exec::exec_map_get(fiber, inst); ExecResult::Continue }
+        Opcode::MapSet => { exec::exec_map_set(fiber, inst); ExecResult::Continue }
+        Opcode::MapDelete => { exec::exec_map_delete(fiber, inst); ExecResult::Continue }
+        Opcode::MapLen => { exec::exec_map_len(fiber, inst); ExecResult::Continue }
+        Opcode::MapIterGet => { exec::exec_map_iter_get(fiber, inst); ExecResult::Continue }
+        // Channel - not supported in JIT trampoline
+        Opcode::ChanNew => { exec::exec_chan_new(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::ChanSend | Opcode::ChanRecv | Opcode::ChanClose => ExecResult::Panic,
+        // Select - not supported in JIT trampoline
+        Opcode::SelectBegin | Opcode::SelectSend | Opcode::SelectRecv | Opcode::SelectExec => ExecResult::Panic,
+        // Closure
+        Opcode::ClosureNew => { exec::exec_closure_new(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::ClosureGet => { exec::exec_closure_get(fiber, inst); ExecResult::Continue }
+        // GoStart - not supported in JIT trampoline
+        Opcode::GoStart => ExecResult::Panic,
+        // Defer
+        Opcode::DeferPush => { exec::exec_defer_push(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::ErrDeferPush => { exec::exec_err_defer_push(fiber, inst, &mut state.gc); ExecResult::Continue }
+        Opcode::Panic => exec::exec_panic(fiber, inst),
+        Opcode::Recover => { exec::exec_recover(fiber, inst); ExecResult::Continue }
+        // Interface
+        Opcode::IfaceAssign => { exec::exec_iface_assign(fiber, inst, &mut state.gc, &mut state.itab_cache, module); ExecResult::Continue }
+        Opcode::IfaceAssert => exec::exec_iface_assert(fiber, inst, &mut state.itab_cache, module),
+        // Conversion
+        Opcode::ConvI2F => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, (a as f64).to_bits());
+            ExecResult::Continue
+        }
+        Opcode::ConvF2I => {
+            let a = f64::from_bits(stack_get!(fiber.stack, bp + inst.b as usize));
+            stack_set!(fiber.stack, bp + inst.a as usize, a as i64 as u64);
+            ExecResult::Continue
+        }
+        Opcode::ConvI32I64 => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i32;
+            stack_set!(fiber.stack, bp + inst.a as usize, a as i64 as u64);
+            ExecResult::Continue
+        }
+        Opcode::ConvI64I32 => {
+            let a = stack_get!(fiber.stack, bp + inst.b as usize) as i64;
+            stack_set!(fiber.stack, bp + inst.a as usize, a as i32 as u64);
+            ExecResult::Continue
+        }
+        Opcode::Invalid => ExecResult::Panic,
     }
 }
 
