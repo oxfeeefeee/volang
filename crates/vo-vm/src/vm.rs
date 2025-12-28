@@ -99,18 +99,17 @@ extern "C" fn vm_call_trampoline(
     
     let func = &module.functions[func_id as usize];
     
-    // Create a temporary fiber for the call (id 0 is unused for temp fiber)
-    let mut temp_fiber = Fiber::new(0);
-    temp_fiber.stack.resize(func.local_slots as usize, 0);
+    // Create a temporary fiber for the call
+    let mut fiber = Fiber::new(0);
+    fiber.stack.resize(func.local_slots as usize, 0);
     
     // Copy args to fiber stack
     for i in 0..arg_count as usize {
-        let val = unsafe { *args.add(i) };
-        temp_fiber.stack[i] = val;
+        fiber.stack[i] = unsafe { *args.add(i) };
     }
     
     // Push initial frame
-    temp_fiber.frames.push(crate::fiber::CallFrame {
+    fiber.frames.push(crate::fiber::CallFrame {
         func_id,
         pc: 0,
         bp: 0,
@@ -118,57 +117,69 @@ extern "C" fn vm_call_trampoline(
         ret_count: ret_count as u16,
     });
     
-    // Storage for return values (saved before pop_frame truncates stack)
-    let mut ret_vals: Vec<u64> = Vec::new();
+    // Track if we've saved return values from the original function
+    let mut saved_ret_vals: Option<Vec<u64>> = None;
     
     // Execute until done
     loop {
-        // Get frame info without holding mutable borrow
-        let (frame_func_id, inst) = {
-            let frame = match temp_fiber.current_frame_mut() {
-                Some(f) => f,
-                None => break,
-            };
-            let func = &module.functions[frame.func_id as usize];
-            if frame.pc >= func.code.len() {
-                break;
-            }
-            let inst = func.code[frame.pc];
-            frame.pc += 1;
-            (frame.func_id, inst)
+        // Get current frame
+        let frame = match fiber.frames.last_mut() {
+            Some(f) => f,
+            None => break,
         };
         
-        // Special handling for Return: save return values BEFORE exec_inst
-        // because exec_return will pop_frame and truncate the stack
-        if inst.opcode() == crate::instruction::Opcode::Return {
-            // Only save if this is the last frame (returning to JIT)
-            if temp_fiber.frames.len() == 1 {
+        let current_func = &module.functions[frame.func_id as usize];
+        if frame.pc >= current_func.code.len() {
+            break;
+        }
+        
+        let inst = current_func.code[frame.pc];
+        let frame_func_id = frame.func_id;
+        frame.pc += 1;
+        
+        // For Return instruction: save return values before exec_return modifies stack
+        // Save when returning from the INITIAL frame (bp == 0) and not in defer execution
+        if inst.opcode() == crate::instruction::Opcode::Return && fiber.defer_state.is_none() {
+            let frame_bp = fiber.frames.last().map(|f| f.bp).unwrap_or(0);
+            
+            // Only save when returning from the initial frame (the one we created)
+            if frame_bp == 0 {
                 let ret_start = inst.a as usize;
-                let ret_count_inst = inst.b as usize;
-                ret_vals = (0..ret_count_inst)
-                    .map(|i| temp_fiber.read_reg((ret_start + i) as u16))
-                    .collect();
+                let ret_count_from_inst = inst.b as usize;
+                
+                // Bounds check before reading
+                let mut vals = Vec::with_capacity(ret_count_from_inst);
+                for i in 0..ret_count_from_inst {
+                    let idx = ret_start + i;
+                    if idx < fiber.stack.len() {
+                        vals.push(fiber.stack[idx]);
+                    }
+                }
+                saved_ret_vals = Some(vals);
             }
         }
         
-        let result = Vm::exec_inst(&mut temp_fiber, &inst, frame_func_id, module, &mut vm.state);
+        let result = Vm::exec_inst(&mut fiber, &inst, frame_func_id, module, &mut vm.state);
+        
         match result {
-            ExecResult::Continue => continue,
+            ExecResult::Continue => {}
             ExecResult::Return => {
-                if temp_fiber.frames.is_empty() {
+                if fiber.frames.is_empty() {
                     break;
                 }
             }
-            ExecResult::Panic => return JitResult::Panic,
             ExecResult::Done => break,
+            ExecResult::Panic => return JitResult::Panic,
             _ => {}
         }
     }
     
-    // Copy return values
-    for i in 0..ret_count as usize {
-        if i < ret_vals.len() {
-            unsafe { *ret.add(i) = ret_vals[i] };
+    // Copy saved return values to output buffer
+    if let Some(vals) = saved_ret_vals {
+        for (i, val) in vals.iter().enumerate() {
+            if i < ret_count as usize {
+                unsafe { *ret.add(i) = *val };
+            }
         }
     }
     

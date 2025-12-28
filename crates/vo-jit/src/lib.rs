@@ -840,6 +840,13 @@ impl JitCompiler {
             );
             let stack_map = compiler.compile()?;
             
+            // Debug: print Cranelift IR if VO_DUMP_JIT_IR is set
+            if std::env::var("VO_DUMP_JIT_IR").is_ok() {
+                eprintln!("=== JIT IR for func_{} ({}) ===", func_id, &func_name);
+                eprintln!("{}", self.ctx.func);
+                eprintln!("=== End IR ===\n");
+            }
+            
             // 5. Compile to machine code
             self.module.define_function(func_id_cl, &mut self.ctx)?;
             self.module.clear_context(&mut self.ctx);

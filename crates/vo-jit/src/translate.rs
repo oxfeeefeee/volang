@@ -736,10 +736,10 @@ impl FunctionCompiler<'_> {
     }
 
     pub(crate) fn translate_ptr_set(&mut self, inst: &Instruction) {
-        // Store to GcRef
+        // PtrSet: a = ptr, b = offset, c = val
         let ptr = self.read_var(inst.a);
-        let val = self.read_var(inst.b);
-        let offset = (inst.c as i32) * 8;
+        let offset = (inst.b as i32) * 8;
+        let val = self.read_var(inst.c);
         
         // NOTE: Write barrier integration
         // When storing a GcRef into a heap object during GC marking phase,
