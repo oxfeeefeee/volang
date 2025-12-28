@@ -17,8 +17,13 @@ pub struct StringData {
     pub len: u32,
 }
 
-const DATA_SLOTS: u16 = 2;
+pub const DATA_SLOTS: u16 = 2;
 const _: () = assert!(core::mem::size_of::<StringData>() == DATA_SLOTS as usize * 8);
+
+// Field offsets for inline access
+pub const FIELD_ARRAY: usize = 0;   // u64 offset for array GcRef
+pub const FIELD_START: usize = 2;   // u32 offset (byte 8)
+pub const FIELD_LEN: usize = 3;     // u32 offset (byte 12)
 
 impl StringData {
     #[inline]

@@ -20,6 +20,91 @@ macro_rules! stack_set {
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::{array, slice, string};
 
+// Reuse layout constants from vo-runtime
+use array::HEADER_SLOTS as ARRAY_DATA_OFFSET;
+use slice::{FIELD_ARRAY as SLICE_FIELD_ARRAY, FIELD_START as SLICE_FIELD_START,
+            FIELD_LEN as SLICE_FIELD_LEN, FIELD_CAP as SLICE_FIELD_CAP};
+use string::{FIELD_ARRAY as STRING_FIELD_ARRAY, FIELD_START as STRING_FIELD_START,
+             FIELD_LEN as STRING_FIELD_LEN};
+
+macro_rules! array_get {
+    ($arr:expr, $offset:expr) => {
+        unsafe { *$arr.add(ARRAY_DATA_OFFSET + $offset) }
+    };
+}
+
+macro_rules! array_set {
+    ($arr:expr, $offset:expr, $val:expr) => {
+        unsafe { *$arr.add(ARRAY_DATA_OFFSET + $offset) = $val }
+    };
+}
+
+macro_rules! slice_array {
+    ($s:expr) => {
+        unsafe { *(($s as *const u64).add(SLICE_FIELD_ARRAY) as *const GcRef) }
+    };
+}
+
+macro_rules! slice_start {
+    ($s:expr) => {
+        unsafe { *(($s as *const u64).add(SLICE_FIELD_START)) as usize }
+    };
+}
+
+macro_rules! slice_len {
+    ($s:expr) => {
+        unsafe { *(($s as *const u64).add(SLICE_FIELD_LEN)) as usize }
+    };
+}
+
+macro_rules! slice_cap {
+    ($s:expr) => {
+        unsafe { *(($s as *const u64).add(SLICE_FIELD_CAP)) as usize }
+    };
+}
+
+macro_rules! slice_get {
+    ($s:expr, $offset:expr) => {{
+        let arr = slice_array!($s);
+        let start = slice_start!($s);
+        array_get!(arr, start + $offset)
+    }};
+}
+
+macro_rules! slice_set {
+    ($s:expr, $offset:expr, $val:expr) => {{
+        let arr = slice_array!($s);
+        let start = slice_start!($s);
+        array_set!(arr, start + $offset, $val)
+    }};
+}
+
+macro_rules! string_array {
+    ($s:expr) => {
+        unsafe { *(($s as *const u64).add(STRING_FIELD_ARRAY) as *const GcRef) }
+    };
+}
+
+macro_rules! string_start {
+    ($s:expr) => {
+        unsafe { *(($s as *const u32).add(STRING_FIELD_START)) as usize }
+    };
+}
+
+macro_rules! string_len {
+    ($s:expr) => {
+        unsafe { *(($s as *const u32).add(STRING_FIELD_LEN)) as usize }
+    };
+}
+
+macro_rules! string_index {
+    ($s:expr, $idx:expr) => {{
+        let arr = string_array!($s);
+        let start = string_start!($s);
+        unsafe { *((arr.add(ARRAY_DATA_OFFSET) as *const u8).add(start + $idx)) }
+    }};
+}
+
 use crate::bytecode::Module;
 use crate::exec::{self, ExternRegistry};
 use crate::fiber::Fiber;
@@ -862,14 +947,14 @@ impl Vm {
                 }
                 Opcode::StrLen => {
                     let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
-                    let len = if s.is_null() { 0 } else { string::len(s) };
+                    let len = if s.is_null() { 0 } else { string_len!(s) };
                     stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrIndex => {
                     let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
                     let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
-                    let byte = string::index(s, idx);
+                    let byte = string_index!(s, idx);
                     stack_set!(fiber.stack, bp + inst.a as usize, byte as u64);
                     ExecResult::Continue
                 }
@@ -938,7 +1023,7 @@ impl Vm {
                     let offset = idx * elem_slots;
                     let dst_start = bp + inst.a as usize;
                     for i in 0..elem_slots {
-                        stack_set!(fiber.stack, dst_start + i, array::get(arr, offset + i));
+                        stack_set!(fiber.stack, dst_start + i, array_get!(arr, offset + i));
                     }
                     ExecResult::Continue
                 }
@@ -949,7 +1034,7 @@ impl Vm {
                     let offset = idx * elem_slots;
                     let src_start = bp + inst.c as usize;
                     for i in 0..elem_slots {
-                        array::set(arr, offset + i, stack_get!(fiber.stack, src_start + i));
+                        array_set!(arr, offset + i, stack_get!(fiber.stack, src_start + i));
                     }
                     ExecResult::Continue
                 }
@@ -966,7 +1051,7 @@ impl Vm {
                     let offset = idx * elem_slots;
                     let dst_start = bp + inst.a as usize;
                     for i in 0..elem_slots {
-                        stack_set!(fiber.stack, dst_start + i, slice::get(s, offset + i));
+                        stack_set!(fiber.stack, dst_start + i, slice_get!(s, offset + i));
                     }
                     ExecResult::Continue
                 }
@@ -977,19 +1062,19 @@ impl Vm {
                     let offset = idx * elem_slots;
                     let src_start = bp + inst.c as usize;
                     for i in 0..elem_slots {
-                        slice::set(s, offset + i, stack_get!(fiber.stack, src_start + i));
+                        slice_set!(s, offset + i, stack_get!(fiber.stack, src_start + i));
                     }
                     ExecResult::Continue
                 }
                 Opcode::SliceLen => {
                     let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
-                    let len = if s.is_null() { 0 } else { slice::len(s) };
+                    let len = if s.is_null() { 0 } else { slice_len!(s) };
                     stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
                     ExecResult::Continue
                 }
                 Opcode::SliceCap => {
                     let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
-                    let cap = if s.is_null() { 0 } else { slice::cap(s) };
+                    let cap = if s.is_null() { 0 } else { slice_cap!(s) };
                     stack_set!(fiber.stack, bp + inst.a as usize, cap as u64);
                     ExecResult::Continue
                 }
@@ -1458,14 +1543,14 @@ fn exec_inst_inline(
         Opcode::StrNew => { exec::exec_str_new(fiber, inst, &module.constants, &mut state.gc); ExecResult::Continue }
         Opcode::StrLen => {
             let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
-            let len = if s.is_null() { 0 } else { string::len(s) };
+            let len = if s.is_null() { 0 } else { string_len!(s) };
             stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
             ExecResult::Continue
         }
         Opcode::StrIndex => {
             let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
             let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
-            let byte = string::index(s, idx);
+            let byte = string_index!(s, idx);
             stack_set!(fiber.stack, bp + inst.a as usize, byte as u64);
             ExecResult::Continue
         }
@@ -1524,7 +1609,7 @@ fn exec_inst_inline(
             let offset = idx * elem_slots;
             let dst_start = bp + inst.a as usize;
             for i in 0..elem_slots {
-                stack_set!(fiber.stack, dst_start + i, array::get(arr, offset + i));
+                stack_set!(fiber.stack, dst_start + i, array_get!(arr, offset + i));
             }
             ExecResult::Continue
         }
@@ -1535,7 +1620,7 @@ fn exec_inst_inline(
             let offset = idx * elem_slots;
             let src_start = bp + inst.c as usize;
             for i in 0..elem_slots {
-                array::set(arr, offset + i, stack_get!(fiber.stack, src_start + i));
+                array_set!(arr, offset + i, stack_get!(fiber.stack, src_start + i));
             }
             ExecResult::Continue
         }
@@ -1548,7 +1633,7 @@ fn exec_inst_inline(
             let offset = idx * elem_slots;
             let dst_start = bp + inst.a as usize;
             for i in 0..elem_slots {
-                stack_set!(fiber.stack, dst_start + i, slice::get(s, offset + i));
+                stack_set!(fiber.stack, dst_start + i, slice_get!(s, offset + i));
             }
             ExecResult::Continue
         }
@@ -1559,19 +1644,19 @@ fn exec_inst_inline(
             let offset = idx * elem_slots;
             let src_start = bp + inst.c as usize;
             for i in 0..elem_slots {
-                slice::set(s, offset + i, stack_get!(fiber.stack, src_start + i));
+                slice_set!(s, offset + i, stack_get!(fiber.stack, src_start + i));
             }
             ExecResult::Continue
         }
         Opcode::SliceLen => {
             let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
-            let len = if s.is_null() { 0 } else { slice::len(s) };
+            let len = if s.is_null() { 0 } else { slice_len!(s) };
             stack_set!(fiber.stack, bp + inst.a as usize, len as u64);
             ExecResult::Continue
         }
         Opcode::SliceCap => {
             let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
-            let cap = if s.is_null() { 0 } else { slice::cap(s) };
+            let cap = if s.is_null() { 0 } else { slice_cap!(s) };
             stack_set!(fiber.stack, bp + inst.a as usize, cap as u64);
             ExecResult::Continue
         }
