@@ -6,7 +6,8 @@
 
 1. Implement JIT compilation for hot functions using Cranelift
 2. Keep JIT simple by only supporting synchronous operations
-3. Minimal changes to existing VM
+3. Single-tier JIT for simplicity (inlining deferred)
+4. Minimal changes to existing VM
 
 ### Key Decisions
 
@@ -14,8 +15,84 @@
 - **No separate goroutine model**: No corosensei, no stackful coroutines
 - **Async operations excluded**: Functions with defer/recover/go/channel/select are not JIT-compiled
 - **Compile-time iterator expansion**: All for-range loops expanded at compile time
+- **Single-tier JIT**: Interpreter → JIT (Cranelift optimized, no inlining initially)
+- **No deoptimization needed**: Vo is statically typed, no type speculation
+- **No OSR**: Complexity not justified for edge cases
+- **Restricted safepoints**: GC only at loop back-edges and function calls
+- **GcRef spill to stack**: All GcRef variables spilled to stack slots for simple stack maps
+- **Zero-copy args/ret**: JIT args/ret pointers point directly to VM stack
 
-## 2. JIT Support Matrix
+## 2. JIT Compilation
+
+### Architecture
+
+```
+Tier 0: vo-vm Interpreter
+        │
+        │ call_count >= 100 OR loop_back_edge >= 1000
+        ▼
+JIT: Cranelift (optimized, no inlining)
+        │
+        │ Future: add inlining based on profiling data
+        ▼
+JIT + Inlining (optional, deferred)
+```
+
+### Performance Expectations
+
+| Tier | vs Interpreter | Compilation Cost | Trigger |
+|------|----------------|------------------|----------|
+| Interpreter | 1x | 0 | — |
+| JIT | 15-30x | ~2-5ms/function | call ≥100 or loop ≥1000 |
+| JIT + Inlining | 30-80x | ~10-50ms/function | Future |
+
+### Why No Deoptimization
+
+Vo is statically typed. Unlike JavaScript/Python:
+- `x + y` type is known at compile time (no type guards needed)
+- No hidden class changes
+- Interface dispatch uses inline cache, not speculation
+
+### Why No OSR (On-Stack Replacement)
+
+OSR solves "single-call function with hot loop" (e.g., `main()` with billion iterations).
+
+Complexity:
+- Multiple entry points per function
+- Frame state capture and mapping
+- Platform-specific trampolines
+- ~1000+ lines of code
+
+Workaround: Extract hot loops into separate functions.
+
+### Hot Detection
+
+Hot detection is done **in the VM interpreter**, not in bytecode. No bytecode modifications needed.
+
+```rust
+pub struct HotCounter {
+    call_counts: HashMap<u32, u32>,      // func_id -> call count
+    loop_counts: HashMap<u32, u32>,      // func_id -> back-edge count
+}
+
+impl HotCounter {
+    /// Called in VM's exec_call
+    pub fn record_call(&mut self, func_id: u32) -> bool {
+        let count = self.call_counts.entry(func_id).or_insert(0);
+        *count += 1;
+        *count == 100  // trigger JIT compilation
+    }
+    
+    /// Called in VM's exec_jump when target < current_pc (back-edge)
+    pub fn record_loop_back_edge(&mut self, func_id: u32) -> bool {
+        let count = self.loop_counts.entry(func_id).or_insert(0);
+        *count += 1;
+        *count == 1000 && self.call_counts.get(&func_id).copied().unwrap_or(0) < 100
+    }
+}
+```
+
+## 3. JIT Support Matrix
 
 ### Supported
 
@@ -24,7 +101,8 @@
 | Arithmetic, comparison, bitwise ops | Direct Cranelift mapping |
 | Branching, jumps | Direct mapping |
 | Function calls | Both VM and JIT targets |
-| Stack/heap variable access | Register + offset |
+| Stack variable access | Cranelift stack slots |
+| Heap variable access | GcRef load/store |
 | Heap allocation | Call out to `vo_gc_alloc` |
 | for-range array/slice/int | Compile-time expansion |
 | for-range map/string | Compile-time expansion + runtime helper |
@@ -55,7 +133,7 @@ fn can_jit(func: &FunctionDef) -> bool {
 }
 ```
 
-## 3. Architecture
+## 4. Architecture
 
 ```
 vo-runtime-core (shared)
@@ -80,7 +158,7 @@ vo-jit (new)
 └── trampoline.rs      # VM ↔ JIT bridge
 ```
 
-## 4. For-Range Compile-Time Expansion
+## 5. For-Range Compile-Time Expansion
 
 All for-range loops are expanded at **codegen** time (vo-codegen-vm). Both VM and JIT execute the same expanded bytecode. No runtime iterator state, no special iterator instructions.
 
@@ -172,7 +250,7 @@ end:
 
 Function containing channel range will not be JIT-compiled (due to blocking ChanRecv).
 
-## 5. VM Changes
+## 6. VM Changes
 
 ### Remove Entirely
 
@@ -187,7 +265,7 @@ Function containing channel range will not be JIT-compiled (due to blocking Chan
 
 All for-range loops are now compile-time expanded. No runtime iterator state needed.
 
-## 6. Runtime API (vo-runtime-core/src/jit_api.rs)
+## 7. Runtime API (vo-runtime-core/src/jit_api.rs)
 
 ```rust
 /// JIT function signature
@@ -200,8 +278,12 @@ pub type JitFunc = extern "C" fn(
 #[repr(C)]
 pub struct JitContext {
     pub gc: *mut Gc,
+    pub gc_is_marking: *const bool,  // For inline write barrier check
     pub globals: *mut u64,
     pub panic_flag: *mut bool,
+    pub safepoint_flag: *const bool, // GC requests pause
+    pub vm: *mut c_void,             // Opaque, cast in trampoline
+    pub fiber: *mut c_void,          // Opaque, cast in trampoline
 }
 
 #[repr(C)]
@@ -210,12 +292,14 @@ pub enum JitResult {
     Panic,
 }
 
-// GC
+// GC allocation
 #[no_mangle]
 pub extern "C" fn vo_gc_alloc(gc: *mut Gc, slots: u32, meta: u32) -> u64;
 
+// Write barrier - inline fast path in JIT, call slow path when marking
+// JIT generates: if (*gc).is_marking { vo_gc_write_barrier_slow(...) } else { *field = val }
 #[no_mangle]
-pub extern "C" fn vo_gc_write_barrier(gc: *mut Gc, field: *mut u64, val: u64);
+pub extern "C" fn vo_gc_write_barrier_slow(gc: *mut Gc, field: *mut u64, old_val: u64);
 
 // Map iteration (cursor is local variable, not runtime state)
 #[no_mangle]
@@ -229,9 +313,135 @@ pub extern "C" fn vo_map_iter_next(
 // String iteration
 #[no_mangle]
 pub extern "C" fn vo_decode_rune(s: u64, pos: u64, rune: *mut i32) -> u64; // returns next_pos
+
+// Call VM function from JIT
+#[no_mangle]
+pub extern "C" fn vo_call_vm(
+    ctx: *mut JitContext,
+    func_id: u32,
+    args: *const u64,
+    arg_count: u32,
+    ret: *mut u64,
+    ret_count: u32,
+) -> JitResult;
 ```
 
-## 7. JIT Execution Model
+// Panic
+#[no_mangle]
+pub extern "C" fn vo_panic(ctx: *mut JitContext, msg: u64);
+
+// Safepoint - called when safepoint_flag is set
+#[no_mangle]
+pub extern "C" fn vo_gc_safepoint(ctx: *mut JitContext);
+```
+
+## 8. GC Integration
+
+### Safepoint Strategy
+
+GC only runs at **restricted safepoints** (not arbitrary allocation points):
+- Loop back-edges
+- Function call/return boundaries
+
+This simplifies implementation while remaining compatible with incremental GC.
+
+```rust
+// JIT generates at loop back-edge:
+loop_header:
+    if *ctx.safepoint_flag {
+        vo_gc_safepoint(ctx);  // May trigger GC
+    }
+    // ... loop body ...
+    goto loop_header
+```
+
+### Stack Map
+
+Precise stack maps record which stack slots contain GcRefs at each safepoint:
+
+```rust
+pub struct StackMapEntry {
+    pub pc_offset: u32,           // Relative to function start
+    pub gc_ref_slots: Vec<i32>,   // Offsets from frame pointer
+}
+
+pub struct CompiledFunction {
+    pub code: *const u8,
+    pub code_size: usize,
+    pub stack_maps: Vec<StackMapEntry>,
+}
+```
+
+During GC, scan JIT frames using stack maps:
+
+```rust
+fn scan_jit_stack(gc: &mut Gc, jit_frames: &[JitFrame], cache: &JitCache) {
+    for frame in jit_frames {
+        let func = cache.get(frame.func_id);
+        if let Some(map) = func.find_stack_map(frame.pc_offset()) {
+            for &slot_offset in &map.gc_ref_slots {
+                let gc_ref = frame.read_slot(slot_offset);
+                if gc_ref != 0 {
+                    gc.mark(GcRef::from_raw(gc_ref));
+                }
+            }
+        }
+    }
+}
+```
+
+### GcRef Spill Strategy
+
+**All GcRef variables are spilled to Cranelift stack slots** (not kept in registers across safepoints).
+
+This simplifies stack map generation:
+- Stack map is static per function (list of stack slot offsets)
+- No need to track register liveness at each safepoint
+- Performance cost: ~10-15% (acceptable for simplicity)
+
+```rust
+struct GcRefTracker {
+    /// Maps local variable index to stack slot (for GcRef types only)
+    gc_ref_slots: HashMap<u32, StackSlot>,
+}
+
+impl GcRefTracker {
+    fn allocate_gc_ref(&mut self, builder: &mut FunctionBuilder, var_idx: u32) -> StackSlot {
+        let slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8,  // 64-bit GcRef
+        ));
+        self.gc_ref_slots.insert(var_idx, slot);
+        slot
+    }
+    
+    fn get_gc_ref_slots(&self) -> Vec<i32> {
+        // Return all slot offsets for stack map
+        self.gc_ref_slots.values().map(|s| s.offset()).collect()
+    }
+}
+```
+
+### Write Barrier (Inline Fast Path)
+
+JIT generates inline code for write barrier:
+
+```rust
+// JIT-generated pseudo-code for pointer field write
+fn write_ptr_field(gc: *mut Gc, obj: GcRef, offset: usize, new_val: u64) {
+    let field = obj.field_ptr(offset);
+    if unsafe { (*gc).is_marking } {
+        let old_val = unsafe { *field };
+        vo_gc_write_barrier_slow(gc, field, old_val);
+    }
+    unsafe { *field = new_val; }
+}
+```
+
+Fast path (not marking) = 1 memory read + 1 branch + 1 write.
+Slow path called only during GC marking phase.
+
+## 9. JIT Execution Model
 
 ### VM Calls JIT
 
@@ -289,49 +499,7 @@ fn jit_function(ctx: *mut JitContext, args: *const u64, ret: *mut u64) -> JitRes
 }
 ```
 
-## 8. GC Interaction
-
-### During JIT Execution
-
-- GC does **not** scan JIT native stack
-- JIT functions are "atomic" from GC perspective
-
-### At Call-Out Points
-
-Before calling runtime functions, JIT flushes live GcRefs to known location:
-
-```rust
-#[repr(C)]
-pub struct JitContext {
-    // ...
-    pub gc_roots: *mut [u64; 16],  // Spill area for GcRefs
-    pub gc_root_count: *mut u8,
-}
-```
-
-JIT compiler tracks which values are GcRefs and generates spill code before calls.
-
-### Write Barrier
-
-All pointer writes must use barrier:
-
-```rust
-// SATB barrier (mark old value)
-#[no_mangle]
-pub extern "C" fn vo_gc_write_barrier(gc: *mut Gc, field: *mut u64, val: u64) {
-    unsafe {
-        if (*gc).is_marking() {
-            let old = *field;
-            if old != 0 {
-                (*gc).mark_gray(old as GcRef);
-            }
-        }
-        *field = val;
-    }
-}
-```
-
-## 9. JIT Compiler Structure
+## 10. JIT Compiler Structure
 
 ```rust
 pub struct JitCompiler {
@@ -374,27 +542,93 @@ impl JitCompiler {
 }
 ```
 
-## 10. Implementation Steps
+## 11. Implementation Steps
 
-| Order | Task | Scope |
-|-------|------|-------|
-| 1 | vo-codegen-vm: Expand array/slice/int for-range | codegen |
-| 2 | vo-codegen-vm: Expand map/string for-range | codegen |
-| 3 | vo-vm: Remove Iterator enum (except Channel) | fiber.rs |
-| 4 | vo-vm: Remove IterBegin/IterNext/IterEnd opcodes | instruction.rs, exec |
-| 5 | vo-runtime-core: Add extern "C" API | new jit_api.rs |
-| 6 | vo-jit: Create crate, implement bytecode → Cranelift | new crate |
-| 7 | vo-jit: Implement VM ↔ JIT trampoline | trampoline.rs |
-| 8 | vo-vm: Add JIT dispatch in call instruction | exec/call.rs |
+Note: Steps 1-4 (for-range expansion, iterator removal) are already completed.
 
-## 11. File Changes
+### Phase 1: Basic JIT (no GC, no calls)
+
+| Order | Task | Status |
+|-------|------|--------|
+| 1 | vo-codegen-vm: Expand array/slice/int for-range | ✅ Done |
+| 2 | vo-codegen-vm: Expand map/string for-range | ✅ Done |
+| 3 | vo-vm: Remove Iterator enum | ✅ Done |
+| 4 | vo-vm: Remove IterBegin/IterNext/IterEnd opcodes | ✅ Done |
+| 5 | vo-jit: Create crate structure | Pending |
+| 6 | vo-jit: Compile `return constant` | Pending |
+| 7 | vo-jit: Arithmetic, comparison, branch, local vars | Pending |
+| 8 | vo-jit: Heap variable read/write (no GC) | Pending |
+
+### Phase 2: VM ↔ JIT Integration
+
+| Order | Task | Status |
+|-------|------|--------|
+| 9 | vo-jit: VM → JIT trampoline | Pending |
+| 10 | vo-jit: JIT → VM trampoline (vo_call_vm) | Pending |
+| 11 | vo-vm: Add hot counter in exec_call/exec_jump | Pending |
+| 12 | vo-vm: Add JIT cache + dispatch in Call | Pending |
+
+### Phase 3: GC Integration
+
+| Order | Task | Status |
+|-------|------|--------|
+| 13 | vo-jit: GcRef spill + stack map generation | Pending |
+| 14 | vo-jit: Safepoint + vo_gc_safepoint | Pending |
+| 15 | vo-jit: Write barrier (inline fast path) | Pending |
+| 16 | vo-runtime-core: GC stack map scanning | Pending |
+
+### Phase 4: Optimization (Optional)
+
+| Order | Task | Status |
+|-------|------|--------|
+| 17 | vo-jit: Inlining | Deferred |
+
+## 12. File Changes
 
 | File | Action |
 |------|--------|
-| `vo-codegen-vm/src/lower/for_range.rs` | Add: expand all for-range |
-| `vo-runtime-core/src/jit_api.rs` | Add: extern "C" runtime API |
-| `vo-vm/src/fiber.rs` | Modify: remove Iterator enum, iter_stack |
-| `vo-vm/src/instruction.rs` | Modify: remove IterBegin/IterNext/IterEnd opcodes |
-| `vo-vm/src/exec/iter.rs` | Remove entirely |
-| `vo-vm/src/vm.rs` | Modify: remove iter opcode handling |
-| `vo-jit/` | Add: new crate |
+| `vo-jit/Cargo.toml` | Add: new crate with cranelift dependencies |
+| `vo-jit/src/lib.rs` | Add: JitCompiler, JitCache |
+| `vo-jit/src/compiler.rs` | Add: bytecode → Cranelift translation |
+| `vo-jit/src/gc_tracking.rs` | Add: GcRef spill, stack map generation |
+| `vo-runtime-core/src/jit_api.rs` | Add: JitContext, extern "C" API |
+| `vo-runtime-core/src/gc.rs` | Modify: add stack map scanning |
+| `vo-vm/src/hot_counter.rs` | Add: call/loop counting |
+| `vo-vm/src/vm.rs` | Modify: add JIT cache, hot counter, dispatch |
+
+## 13. Summary
+
+### Core Approach
+
+**Synchronous JIT with restricted safepoints**: JIT functions execute synchronously within VM Fiber context. GC only triggers at specific points (loop back-edges, function calls), avoiding the complexity of arbitrary-point GC while remaining compatible with incremental GC.
+
+### Single-Tier JIT (Initially)
+
+```
+Interpreter (1x) → JIT (15-30x) → [Future: JIT + Inlining (30-80x)]
+```
+
+- **JIT**: Cranelift with optimizations, triggered at 100 calls or 1000 loop iterations
+- **Inlining**: Deferred; add later based on profiling data
+
+### What We Don't Do (and Why)
+
+| Feature | Decision | Rationale |
+|---------|----------|----------|
+| Tiered JIT (T1/T2) | Single tier initially | Simpler; add tiers if compile time becomes issue |
+| Deoptimization | Not needed | Static types → no type speculation |
+| OSR | Not implemented | ~1000 LoC for edge case; workaround: extract hot loops |
+| Arbitrary-point GC | Restricted to safepoints | Simpler stack map, compatible with incremental GC |
+| JIT for async ops | Excluded | defer/go/channel need VM scheduler |
+| GcRef in registers | Spill to stack | Simpler stack map; ~10-15% perf cost acceptable |
+
+### GC Integration
+
+- **GcRef spill**: All GcRef variables spilled to stack slots (not in registers across safepoints)
+- **Static stack map**: One stack map per function (list of GcRef slot offsets)
+- **Safepoints**: Loop back-edges and function calls check `safepoint_flag`
+- **Write barrier**: Inline fast path (check `is_marking`), slow path for actual marking
+
+### One-Line Summary
+
+**A simplified single-tier JIT for statically-typed languages: Cranelift backend, GcRef spill for simple stack maps, restricted safepoints for GC, no deopt/OSR since static types eliminate the need.**

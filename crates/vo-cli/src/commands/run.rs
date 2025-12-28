@@ -5,10 +5,9 @@ use vo_common::diagnostics::DiagnosticEmitter;
 use vo_common::vfs::{FileSet, RealFs};
 use vo_analysis::{analyze_project, AnalysisError};
 use vo_module::VfsConfig;
-use vo_codegen_vm::compile_project;
-use vo_runtime_vm::extern_fn::StdMode;
-use vo_runtime_vm::VmResult;
+use vo_codegen::compile_project;
 use vo_vm::bytecode::Module;
+use vo_vm::vm::{Vm, VmError};
 use vo_syntax::parser;
 use crate::printer::AstPrinter;
 use crate::bytecode_text;
@@ -19,6 +18,16 @@ pub enum RunMode {
     #[default]
     Vm,
     Jit,
+}
+
+/// Standard library mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StdMode {
+    /// Core mode: no OS dependencies (for WASM, embedded)
+    Core,
+    /// Full mode: complete standard library
+    #[default]
+    Full,
 }
 
 impl std::fmt::Display for RunMode {
@@ -94,7 +103,7 @@ pub fn run(
     // Run the module
     match mode {
         RunMode::Vm => run_vm(module, std_mode),
-        RunMode::Jit => run_jit(module),
+        RunMode::Jit => run_jit(module, std_mode),
     }
 }
 
@@ -183,56 +192,55 @@ fn compile_source_file(path: &Path) -> Result<Module, Box<dyn std::error::Error>
 }
 
 /// Run a module using the VM interpreter.
-fn run_vm(module: Module, std_mode: StdMode) -> Result<(), Box<dyn std::error::Error>> {
-    let mut vm = vo_runtime_vm::create_vm_with_mode(std_mode);
-    vm.load_module(module);
+fn run_vm(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error::Error>> {
+    let mut vm = Vm::new();
+    vm.load(module);
     
     match vm.run() {
-        VmResult::Done | VmResult::Ok => {
+        Ok(()) => {
             println!("[VO:OK]");
             Ok(())
         }
-        VmResult::Panic(msg) => {
-            println!("[VO:PANIC:{}]", msg);
-            Err(format!("panic: {}", msg).into())
-        }
-        VmResult::Yield => {
-            println!("[VO:ERROR:unexpected yield]");
-            Err("unexpected yield".into())
+        Err(e) => {
+            println!("[VO:PANIC:{:?}]", e);
+            Err(format!("panic: {:?}", e).into())
         }
     }
 }
 
-#[allow(dead_code)]
-
 /// Run a module using the JIT compiler.
-fn run_jit(module: Module) -> Result<(), Box<dyn std::error::Error>> {
-    let mut jit = vo_jit::JitCompiler::new()
-        .map_err(|e| {
-            println!("[VO:ERROR:JIT init: {}]", e);
-            format!("JIT init error: {}", e)
-        })?;
+///
+/// Uses the same VM as interpreter mode, but with JIT enabled.
+/// Hot functions are automatically compiled to native code.
+///
+/// Environment variables:
+/// - `VO_JIT_CALL_THRESHOLD`: Call count threshold (default: 100)
+/// - `VO_JIT_LOOP_THRESHOLD`: Loop back-edge threshold (default: 1000)
+fn run_jit(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error::Error>> {
+    let call_threshold = std::env::var("VO_JIT_CALL_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let loop_threshold = std::env::var("VO_JIT_LOOP_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok());
     
-    jit.compile_module(&module)
-        .map_err(|e| {
-            println!("[VO:ERROR:JIT compile: {}]", e);
-            format!("JIT compile error: {}", e)
-        })?;
-    
-    // Get the entry function and call it
-    let entry_fn: fn() = unsafe {
-        jit.get_function("$entry")
-            .ok_or_else(|| {
-                println!("[VO:ERROR:entry function not found]");
-                "entry function not found"
-            })?
+    let mut vm = match (call_threshold, loop_threshold) {
+        (Some(call), Some(loop_)) => Vm::with_jit_thresholds(call, loop_),
+        (Some(call), None) => Vm::with_jit_thresholds(call, 1000),
+        (None, Some(loop_)) => Vm::with_jit_thresholds(100, loop_),
+        (None, None) => Vm::new(),
     };
+    vm.init_jit();
+    vm.load(module);
     
-    // Initialize scheduler for channel/goroutine support
-    let scheduler = vo_runtime_native::goroutine::Scheduler::new();
-    vo_runtime_native::goroutine::set_current_scheduler(&scheduler);
-    
-    entry_fn();
-    println!("[VO:OK]");
-    Ok(())
+    match vm.run() {
+        Ok(()) => {
+            println!("[VO:OK]");
+            Ok(())
+        }
+        Err(e) => {
+            println!("[VO:PANIC:{:?}]", e);
+            Err(format!("panic: {:?}", e).into())
+        }
+    }
 }

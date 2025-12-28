@@ -25,7 +25,7 @@
 use std::process;
 
 use clap::{Parser, Subcommand, Args};
-use vo_runtime_vm::extern_fn::StdMode;
+use commands::run::StdMode;
 
 mod bytecode_tests;
 mod commands;

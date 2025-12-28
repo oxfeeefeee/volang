@@ -1,8 +1,8 @@
 //! GC root scanning for VM.
 
-use vo_common_core::types::SlotType;
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_runtime_core::objects::interface;
+use vo_runtime::SlotType;
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::interface;
 
 use crate::bytecode::{FunctionDef, GlobalDef};
 use crate::fiber::Fiber;
@@ -22,7 +22,7 @@ impl Vm {
 fn scan_globals(gc: &mut Gc, globals: &[u64], global_defs: &[GlobalDef]) {
     let mut global_idx = 0;
     for def in global_defs {
-        let vk = vo_common_core::types::ValueKind::from_u8(def.value_kind);
+        let vk = vo_runtime::ValueKind::from_u8(def.value_kind);
         if vk.may_contain_gc_refs() {
             for i in 0..def.slots as usize {
                 let val = globals[global_idx + i];

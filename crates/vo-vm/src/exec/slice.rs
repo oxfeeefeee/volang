@@ -1,8 +1,8 @@
 //! Slice instructions: SliceNew, SliceGet, SliceSet, SliceLen, SliceCap, SliceSlice, SliceAppend
 
-use vo_common_core::types::ValueMeta;
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_runtime_core::objects::slice;
+use vo_runtime::ValueMeta;
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::slice;
 
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;

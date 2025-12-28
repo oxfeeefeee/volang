@@ -7,9 +7,9 @@ use crate::fiber::Fiber;
 use crate::instruction::Instruction;
 use crate::vm::ExecResult;
 
-pub use vo_runtime_core::ffi::ExternRegistry;
-use vo_runtime_core::ffi::ExternResult;
-use vo_runtime_core::gc::Gc;
+pub use vo_runtime::ffi::ExternRegistry;
+use vo_runtime::ffi::ExternResult;
+use vo_runtime::gc::Gc;
 
 pub fn exec_call_extern(
     fiber: &mut Fiber,

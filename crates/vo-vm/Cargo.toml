@@ -7,9 +7,13 @@ description = "Vo language virtual machine"
 
 [features]
 default = ["std"]
-std = ["vo-common-core/std", "vo-runtime-core/std"]
+std = ["vo-runtime/std"]
+# Enable JIT compilation support
+jit = ["vo-jit"]
 
 [dependencies]
-vo-common-core = { path = "../vo-common-core" }
-vo-runtime-core = { path = "../vo-runtime-core" }
+vo-runtime = { path = "../vo-runtime" }
 hashbrown = "0.15"
+
+# Optional JIT compiler
+vo-jit = { path = "../vo-jit", optional = true }

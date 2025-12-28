@@ -4,9 +4,9 @@ use std::path::Path;
 use vo_common::vfs::{FileSet, RealFs};
 use vo_analysis::analyze_project;
 use vo_module::{ModFile, VfsConfig};
-use vo_codegen_vm::compile_project;
-use vo_runtime_vm::extern_fn::StdMode;
-use vo_runtime_vm::VmResult;
+use vo_codegen::compile_project;
+use vo_vm::vm::Vm;
+use super::run::StdMode;
 
 /// Build and run a Vo project.
 ///
@@ -55,12 +55,11 @@ pub fn run(path: &str, std_mode: StdMode) -> Result<(), Box<dyn std::error::Erro
     
     // During development: run directly without writing file
     println!("Running module: {} (std={})", module.name, if std_mode == StdMode::Core { "core" } else { "full" });
-    let mut vm = vo_runtime_vm::create_vm_with_mode(std_mode);
-    vm.load_module(module.clone());
+    let mut vm = Vm::new();
+    vm.load(module.clone());
     match vm.run() {
-        VmResult::Done | VmResult::Ok => println!("\n✓ Execution completed"),
-        VmResult::Panic(msg) => return Err(format!("panic: {}", msg).into()),
-        VmResult::Yield => return Err("unexpected yield".into()),
+        Ok(()) => println!("\n✓ Execution completed"),
+        Err(e) => return Err(format!("panic: {:?}", e).into()),
     }
     Ok(())
 }

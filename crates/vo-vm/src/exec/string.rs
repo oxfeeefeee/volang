@@ -1,7 +1,7 @@
 //! String instructions: StrNew, StrLen, StrIndex, StrConcat, StrSlice, StrEq, StrNe, StrLt, StrLe, StrGt, StrGe
 
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_runtime_core::objects::string;
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::string;
 
 use crate::bytecode::Constant;
 use crate::fiber::Fiber;

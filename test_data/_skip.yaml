@@ -87,8 +87,8 @@ skips:
   - file: interface_simple.vo
     skip: [jit]
   - file: jit/bitwise_ops.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "JIT-only test"
   - file: jit/boolean_ops.vo
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"
@@ -96,17 +96,17 @@ skips:
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"
   - file: jit/comparisons.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "JIT-only test"
   - file: jit/control_flow.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "JIT-only test"
   - file: jit/float_ops.vo
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"
   - file: jit/for_loop.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "JIT-only test"
   - file: jit/modulo_ops.vo
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"
@@ -123,14 +123,14 @@ skips:
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"
   - file: jit/nested_calls.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "JIT-only test"
   - file: jit/recursion.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "recursive Call inside JIT function needs vo_call_vm"
   - file: jit/simple_arithmetic.vo
-    skip: [vm, jit]
-    reason: "JIT-only test, JIT not ready"
+    skip: [vm]
+    reason: "JIT-only test"
   - file: jit/string_const.vo
     skip: [vm, jit]
     reason: "JIT-only test, JIT not ready"

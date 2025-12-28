@@ -204,8 +204,7 @@ impl TypeInfo {
 // They only depend on TCObjects and can be used by both codegen and other consumers.
 
 use crate::typ::{self, Type, BasicType};
-use vo_common_core::types::{SlotType, ValueKind};
-use vo_common_core::RuntimeType;
+use vo_runtime::{SlotType, ValueKind, RuntimeType};
 
 /// Compute the number of slots a type occupies.
 pub fn type_slot_count(type_key: TypeKey, tc_objs: &TCObjects) -> u16 {
@@ -357,7 +356,7 @@ pub fn type_to_runtime_type(type_key: TypeKey, tc_objs: &TCObjects, named_type_i
             val: Box::new(RuntimeType::Basic(ValueKind::Void)),
         },
         ValueKind::Channel => RuntimeType::Chan {
-            dir: vo_common_core::ChanDir::Both,
+            dir: vo_runtime::ChanDir::Both,
             elem: Box::new(RuntimeType::Basic(ValueKind::Void)),
         },
         ValueKind::Interface => RuntimeType::Interface { methods: Vec::new() },

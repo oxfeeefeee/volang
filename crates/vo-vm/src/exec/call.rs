@@ -3,8 +3,8 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_runtime_core::objects::closure;
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::closure;
 
 use crate::bytecode::{FunctionDef, Module};
 use crate::fiber::{CallFrame, DeferState, Fiber};

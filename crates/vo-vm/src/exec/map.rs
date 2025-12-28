@@ -1,8 +1,8 @@
 //! Map instructions: MapNew, MapGet, MapSet, MapDelete, MapLen
 
-use vo_common_core::types::ValueMeta;
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_runtime_core::objects::map;
+use vo_runtime::ValueMeta;
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::map;
 
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;

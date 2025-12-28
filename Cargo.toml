@@ -11,12 +11,11 @@ members = [
   "crates/vo-module",
   
   # Code Generation
-  "crates/vo-codegen-vm",
+  "crates/vo-codegen",
   # "crates/vo-codegen-cranelift",
   
   # Runtime
-  "crates/vo-runtime-core",
-  "crates/vo-runtime-vm",
+  "crates/vo-runtime",
   "crates/vo-runtime-native",
   
   # VM

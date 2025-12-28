@@ -1,7 +1,7 @@
 //! Goroutine instructions: GoStart
 
-use vo_runtime_core::gc::GcRef;
-use vo_runtime_core::objects::closure;
+use vo_runtime::gc::GcRef;
+use vo_runtime::objects::closure;
 
 use crate::bytecode::FunctionDef;
 use crate::fiber::Fiber;

@@ -8,6 +8,7 @@ description = "Core types for Vo (no_std compatible)"
 [dependencies]
 num_enum = { version = "0.7", default-features = false }
 string-interner = { version = "0.17", optional = true }
+hashbrown = "0.15"
 
 [features]
 default = ["std"]

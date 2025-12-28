@@ -532,7 +532,7 @@ fn generate_wrapper(
     
     // Determine crate path based on whether we're inside vo-runtime-core
     let is_runtime_core = std::env::var("CARGO_PKG_NAME")
-        .map(|n| n == "vo-runtime-core")
+        .map(|n| n == "vo-runtime")
         .unwrap_or(false);
     
     // Generate wrapper with #[no_mangle] for dynamic library export
@@ -558,16 +558,16 @@ fn generate_wrapper(
         } else {
             Ok(quote! {
                 #[doc(hidden)]
-                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCallWithGc) -> vo_runtime_core::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut vo_runtime::ffi::ExternCallWithGc) -> vo_runtime::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
-                    vo_runtime_core::ffi::ExternResult::Ok
+                    vo_runtime::ffi::ExternResult::Ok
                 }
 
-                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE_WITH_GC)]
+                #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE_WITH_GC)]
                 #[doc(hidden)]
-                static #entry_name: vo_runtime_core::ffi::ExternEntryWithGc = vo_runtime_core::ffi::ExternEntryWithGc {
+                static #entry_name: vo_runtime::ffi::ExternEntryWithGc = vo_runtime::ffi::ExternEntryWithGc {
                     name: #lookup_name,
                     func: #wrapper_name,
                 };
@@ -594,16 +594,16 @@ fn generate_wrapper(
         } else {
             Ok(quote! {
                 #[doc(hidden)]
-                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCall) -> vo_runtime_core::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut vo_runtime::ffi::ExternCall) -> vo_runtime::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
-                    vo_runtime_core::ffi::ExternResult::Ok
+                    vo_runtime::ffi::ExternResult::Ok
                 }
 
-                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE)]
+                #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE)]
                 #[doc(hidden)]
-                static #entry_name: vo_runtime_core::ffi::ExternEntry = vo_runtime_core::ffi::ExternEntry {
+                static #entry_name: vo_runtime::ffi::ExternEntry = vo_runtime::ffi::ExternEntry {
                     name: #lookup_name,
                     func: #wrapper_name,
                 };
@@ -656,7 +656,7 @@ fn vo_builtin_impl(name: String, func: ItemFn) -> syn::Result<TokenStream2> {
     let call_expr = quote! { #fn_name(#(#arg_names),*) };
     
     let is_runtime_core = std::env::var("CARGO_PKG_NAME")
-        .map(|n| n == "vo-runtime-core")
+        .map(|n| n == "vo-runtime")
         .unwrap_or(false);
     
     if needs_gc {
@@ -684,16 +684,16 @@ fn vo_builtin_impl(name: String, func: ItemFn) -> syn::Result<TokenStream2> {
                 #func
 
                 #[doc(hidden)]
-                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCallWithGc) -> vo_runtime_core::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut vo_runtime::ffi::ExternCallWithGc) -> vo_runtime::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
-                    vo_runtime_core::ffi::ExternResult::Ok
+                    vo_runtime::ffi::ExternResult::Ok
                 }
 
-                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE_WITH_GC)]
+                #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE_WITH_GC)]
                 #[doc(hidden)]
-                static #entry_name: vo_runtime_core::ffi::ExternEntryWithGc = vo_runtime_core::ffi::ExternEntryWithGc {
+                static #entry_name: vo_runtime::ffi::ExternEntryWithGc = vo_runtime::ffi::ExternEntryWithGc {
                     name: #name,
                     func: #wrapper_name,
                 };
@@ -724,16 +724,16 @@ fn vo_builtin_impl(name: String, func: ItemFn) -> syn::Result<TokenStream2> {
                 #func
 
                 #[doc(hidden)]
-                pub fn #wrapper_name(call: &mut vo_runtime_core::ffi::ExternCall) -> vo_runtime_core::ffi::ExternResult {
+                pub fn #wrapper_name(call: &mut vo_runtime::ffi::ExternCall) -> vo_runtime::ffi::ExternResult {
                     #(#arg_reads)*
                     let __result = #call_expr;
                     #ret_writes
-                    vo_runtime_core::ffi::ExternResult::Ok
+                    vo_runtime::ffi::ExternResult::Ok
                 }
 
-                #[vo_runtime_core::distributed_slice(vo_runtime_core::EXTERN_TABLE)]
+                #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE)]
                 #[doc(hidden)]
-                static #entry_name: vo_runtime_core::ffi::ExternEntry = vo_runtime_core::ffi::ExternEntry {
+                static #entry_name: vo_runtime::ffi::ExternEntry = vo_runtime::ffi::ExternEntry {
                     name: #name,
                     func: #wrapper_name,
                 };

@@ -1,7 +1,7 @@
 //! Closure instructions: ClosureNew, ClosureGet
 
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_runtime_core::objects::closure;
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::objects::closure;
 
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;

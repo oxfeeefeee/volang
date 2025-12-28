@@ -1,0 +1,18 @@
+[package]
+name = "vo-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Vo language runtime - shared data structures for VM and JIT (no_std compatible)"
+
+[features]
+default = ["std"]
+std = ["vo-common-core/std", "linkme", "vo-ffi-macro"]
+
+[dependencies]
+vo-common-core = { path = "../vo-common-core" }
+hashbrown = "0.15"
+
+# Std only
+linkme = { version = "0.3", optional = true }
+vo-ffi-macro = { path = "../vo-ffi-macro", optional = true }

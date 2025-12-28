@@ -15,8 +15,7 @@ std = [
     "vo-common",
     "vo-syntax",
     "vo-analysis",
-    "vo-codegen-vm",
-    "vo-runtime-vm",
+    "vo-codegen",
     "console_error_panic_hook",
     "web-sys",
 ]
@@ -33,8 +32,7 @@ vo-vm = { path = "../vo-vm" }
 vo-common = { path = "../vo-common", optional = true }
 vo-syntax = { path = "../vo-syntax", optional = true }
 vo-analysis = { path = "../vo-analysis", optional = true }
-vo-codegen-vm = { path = "../vo-codegen-vm", optional = true }
-vo-runtime-vm = { path = "../vo-runtime-vm", optional = true }
+vo-codegen = { path = "../vo-codegen", optional = true }
 
 # WASM bindings
 wasm-bindgen = "0.2"

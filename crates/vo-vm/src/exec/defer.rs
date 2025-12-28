@@ -1,7 +1,7 @@
 //! Defer instructions: DeferPush, ErrDeferPush, Panic, Recover
 
-use vo_runtime_core::gc::{Gc, GcRef};
-use vo_common_core::types::{ValueKind, ValueMeta};
+use vo_runtime::gc::{Gc, GcRef};
+use vo_runtime::{ValueKind, ValueMeta};
 
 use crate::fiber::{DeferEntry, Fiber};
 use crate::instruction::Instruction;

@@ -42,7 +42,7 @@ use vo_syntax::parse;
 #[cfg(feature = "compiler")]
 use vo_analysis::analyze_single_file;
 #[cfg(feature = "compiler")]
-use vo_codegen_vm::compile_project;
+use vo_codegen::compile_project;
 
 // ============================================================================
 // Initialization (std only)

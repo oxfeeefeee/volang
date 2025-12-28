@@ -3,7 +3,7 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use vo_runtime_core::gc::GcRef;
+use vo_runtime::gc::GcRef;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CallFrame {

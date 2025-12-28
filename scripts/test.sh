@@ -144,7 +144,12 @@ run_test() {
         echo -e "${DIM}Running: $BIN run $path --mode=$mode${NC}"
     fi
     
-    output=$("$BIN" run "$path" --mode="$mode" 2>&1) || true
+    # For JIT mode, use low threshold to ensure JIT compilation is triggered
+    if [[ "$mode" == "jit" ]]; then
+        output=$(VO_JIT_CALL_THRESHOLD=1 "$BIN" run "$path" --mode="$mode" 2>&1) || true
+    else
+        output=$("$BIN" run "$path" --mode="$mode" 2>&1) || true
+    fi
     
     # Check output for result tags
     local has_error=false

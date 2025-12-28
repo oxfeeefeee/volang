@@ -3,7 +3,16 @@ name = "vo-jit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "JIT compiler for Vo bytecode"
+description = "JIT compiler for Vo bytecode using Cranelift"
 
 [dependencies]
-vo-vm = { path = "../vo-vm" }
+vo-runtime = { path = "../vo-runtime" }
+
+# Cranelift JIT
+cranelift-codegen = "0.116"
+cranelift-frontend = "0.116"
+cranelift-jit = "0.116"
+cranelift-module = "0.116"
+cranelift-native = "0.116"
+
+target-lexicon = "0.12"
