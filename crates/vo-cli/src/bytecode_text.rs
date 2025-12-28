@@ -144,9 +144,6 @@ fn format_instruction(instr: &Instruction) -> String {
     match op {
         // LOAD
         Opcode::Nop => "Nop".to_string(),
-        Opcode::LoadNil => format!("LoadNil       r{}", a),
-        Opcode::LoadTrue => format!("LoadTrue      r{}", a),
-        Opcode::LoadFalse => format!("LoadFalse     r{}", a),
         Opcode::LoadInt => format!("LoadInt       r{}, {}", a, instr.imm32()),
         Opcode::LoadConst => format!("LoadConst     r{}, const_{}", a, b),
 
@@ -168,7 +165,6 @@ fn format_instruction(instr: &Instruction) -> String {
 
         // PTR
         Opcode::PtrNew => format!("PtrNew        r{}, meta=r{}, slots={}", a, b, flags),
-        Opcode::PtrClone => format!("PtrClone      r{}, r{}", a, b),
         Opcode::PtrGet => format!("PtrGet        r{}, r{}[{}]", a, b, c),
         Opcode::PtrSet => format!("PtrSet        r{}[{}], r{}", a, b, c),
         Opcode::PtrGetN => format!("PtrGetN       r{}, r{}[{}], n={}", a, b, c, flags),
@@ -204,11 +200,6 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::LeF => format!("LeF           r{}, r{}, r{}", a, b, c),
         Opcode::GtF => format!("GtF           r{}, r{}, r{}", a, b, c),
         Opcode::GeF => format!("GeF           r{}, r{}, r{}", a, b, c),
-
-        // CMP Ref
-        Opcode::EqRef => format!("EqRef         r{}, r{}, r{}", a, b, c),
-        Opcode::NeRef => format!("NeRef         r{}, r{}, r{}", a, b, c),
-        Opcode::IsNil => format!("IsNil         r{}, r{}", a, b),
 
         // BIT
         Opcode::And => format!("And           r{}, r{}, r{}", a, b, c),
@@ -302,7 +293,6 @@ fn format_instruction(instr: &Instruction) -> String {
         // CLOSURE
         Opcode::ClosureNew => format!("ClosureNew    r{}, func_{}, captures={}", a, b, c),
         Opcode::ClosureGet => format!("ClosureGet    r{}, r{}[{}]", a, b, c),
-        Opcode::ClosureSet => format!("ClosureSet    r{}[{}], r{}", a, b, c),
 
         // GO
         // a=func_id_low/closure_reg, b=args_start, c=arg_slots, flags bit0=is_closure
@@ -315,7 +305,6 @@ fn format_instruction(instr: &Instruction) -> String {
                 format!("GoStart       func_{}, args=r{}, slots={}", func_id, b, c)
             }
         }
-        Opcode::Yield => "Yield".to_string(),
 
         // DEFER
         // a=func_id_low/closure_reg, b=arg_start, c=arg_slots, flags bit0=is_closure

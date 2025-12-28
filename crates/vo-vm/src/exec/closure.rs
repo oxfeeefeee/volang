@@ -1,4 +1,4 @@
-//! Closure instructions: ClosureNew, ClosureGet, ClosureSet
+//! Closure instructions: ClosureNew, ClosureGet
 
 use vo_runtime_core::gc::{Gc, GcRef};
 use vo_runtime_core::objects::closure;
@@ -19,11 +19,4 @@ pub fn exec_closure_get(fiber: &mut Fiber, inst: &Instruction) {
     let c = fiber.read_reg(0) as GcRef;
     let val = closure::get_capture(c, inst.b as usize);
     fiber.write_reg(inst.a, val);
-}
-
-#[inline]
-pub fn exec_closure_set(fiber: &mut Fiber, inst: &Instruction) {
-    let c = fiber.read_reg(0) as GcRef;
-    let val = fiber.read_reg(inst.b);
-    closure::set_capture(c, inst.a as usize, val);
 }

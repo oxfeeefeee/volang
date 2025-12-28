@@ -238,18 +238,6 @@ impl Vm {
         match op {
             Opcode::Nop => ExecResult::Continue,
 
-            Opcode::LoadNil => {
-                exec::exec_load_nil(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LoadTrue => {
-                exec::exec_load_true(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::LoadFalse => {
-                exec::exec_load_false(fiber, inst);
-                ExecResult::Continue
-            }
             Opcode::LoadInt => {
                 exec::exec_load_int(fiber, inst);
                 ExecResult::Continue
@@ -303,10 +291,6 @@ impl Vm {
 
             Opcode::PtrNew => {
                 exec::exec_ptr_new(fiber, inst, &mut state.gc);
-                ExecResult::Continue
-            }
-            Opcode::PtrClone => {
-                exec::exec_ptr_clone(fiber, inst, &mut state.gc);
                 ExecResult::Continue
             }
             Opcode::PtrGet => {
@@ -419,19 +403,6 @@ impl Vm {
             }
             Opcode::GeF => {
                 exec::exec_ge_f(fiber, inst);
-                ExecResult::Continue
-            }
-
-            Opcode::EqRef => {
-                exec::exec_eq_ref(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::NeRef => {
-                exec::exec_ne_ref(fiber, inst);
-                ExecResult::Continue
-            }
-            Opcode::IsNil => {
-                exec::exec_is_nil(fiber, inst);
                 ExecResult::Continue
             }
 
@@ -675,18 +646,11 @@ impl Vm {
                 exec::exec_closure_get(fiber, inst);
                 ExecResult::Continue
             }
-            Opcode::ClosureSet => {
-                exec::exec_closure_set(fiber, inst);
-                ExecResult::Continue
-            }
 
             Opcode::GoStart => {
                 // GoStart needs special handling - returns new fiber to spawn
                 // Handled in run_fiber, this path shouldn't be reached
                 ExecResult::Yield
-            }
-            Opcode::Yield => {
-                exec::exec_yield(fiber, inst)
             }
 
             Opcode::DeferPush => {

@@ -1,4 +1,4 @@
-//! Load instructions: Nop, LoadNil, LoadTrue, LoadFalse, LoadInt, LoadConst
+//! Load instructions: Nop, LoadInt, LoadConst
 
 use crate::bytecode::Constant;
 use crate::fiber::Fiber;
@@ -6,21 +6,6 @@ use crate::instruction::Instruction;
 
 #[inline]
 pub fn exec_nop(_fiber: &mut Fiber, _inst: &Instruction) {}
-
-#[inline]
-pub fn exec_load_nil(fiber: &mut Fiber, inst: &Instruction) {
-    fiber.write_reg(inst.a, 0);
-}
-
-#[inline]
-pub fn exec_load_true(fiber: &mut Fiber, inst: &Instruction) {
-    fiber.write_reg(inst.a, 1);
-}
-
-#[inline]
-pub fn exec_load_false(fiber: &mut Fiber, inst: &Instruction) {
-    fiber.write_reg(inst.a, 0);
-}
 
 #[inline]
 pub fn exec_load_int(fiber: &mut Fiber, inst: &Instruction) {

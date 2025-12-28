@@ -55,9 +55,6 @@ impl Instruction {
 pub enum Opcode {
     // === LOAD: Load immediate/constant ===
     Nop = 0,
-    LoadNil,
-    LoadTrue,
-    LoadFalse,
     LoadInt,
     LoadConst,
 
@@ -79,7 +76,6 @@ pub enum Opcode {
 
     // === PTR: Heap pointer operations ===
     PtrNew,
-    PtrClone,
     PtrGet,
     PtrSet,
     PtrGetN,
@@ -115,11 +111,6 @@ pub enum Opcode {
     LeF,
     GtF,
     GeF,
-
-    // === CMP: Reference comparison ===
-    EqRef,
-    NeRef,
-    IsNil,
 
     // === BIT: Bitwise operations ===
     And,
@@ -198,7 +189,6 @@ pub enum Opcode {
     // === CLOSURE: Closure operations ===
     ClosureNew,
     ClosureGet,
-    ClosureSet,
 
     // === GO: Goroutine ===
     /// GoStart: Start goroutine
@@ -207,7 +197,6 @@ pub enum Opcode {
     /// - c: arg_slots
     /// - flags bit 0: is_closure, bits 1-7: func_id_high (when not closure)
     GoStart,
-    Yield,
 
     // === DEFER: Defer and error handling ===
     DeferPush,

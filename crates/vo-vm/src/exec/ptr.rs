@@ -1,4 +1,4 @@
-//! Pointer instructions: PtrNew, PtrClone, PtrGet, PtrSet, PtrGetN, PtrSetN
+//! Pointer instructions: PtrNew, PtrGet, PtrSet, PtrGetN, PtrSetN
 
 use vo_common_core::types::ValueMeta;
 use vo_runtime_core::gc::{Gc, GcRef};
@@ -13,13 +13,6 @@ pub fn exec_ptr_new(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
     let slots = inst.flags as u16;
     let ptr = gc.alloc(value_meta, slots);
     fiber.write_reg(inst.a, ptr as u64);
-}
-
-#[inline]
-pub fn exec_ptr_clone(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
-    let src = fiber.read_reg(inst.b) as GcRef;
-    let dst = unsafe { gc.ptr_clone(src) };
-    fiber.write_reg(inst.a, dst as u64);
 }
 
 #[inline]

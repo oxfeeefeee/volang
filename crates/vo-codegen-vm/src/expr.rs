@@ -15,13 +15,13 @@ use crate::type_info::TypeInfoWrapper;
 // =============================================================================
 
 /// Result of resolving a concrete method call.
-struct MethodResolution {
+pub struct MethodResolution {
     /// Function index in the module
-    func_idx: u32,
+    pub func_idx: u32,
     /// Whether the method expects a pointer receiver (*T)
-    expects_ptr_recv: bool,
+    pub expects_ptr_recv: bool,
     /// For promoted methods: the type that defines the method (different from caller's type)
-    defining_type: Option<TypeKey>,
+    pub defining_type: Option<TypeKey>,
 }
 
 /// Get ExprSource for an expression - determines where the value comes from.
@@ -48,7 +48,7 @@ pub fn get_expr_source(
 
 /// Get the GcRef slot from a StorageKind (for heap-based locations).
 /// Returns Some(slot) if the storage holds a GcRef, None for stack/global values.
-fn get_gcref_slot(storage: &StorageKind) -> Option<u16> {
+pub fn get_gcref_slot(storage: &StorageKind) -> Option<u16> {
     match storage {
         StorageKind::HeapBoxed { gcref_slot, .. } => Some(*gcref_slot),
         StorageKind::HeapArray { gcref_slot, .. } => Some(*gcref_slot),
@@ -91,7 +91,7 @@ pub fn compile_expr_to(
         ExprKind::Ident(ident) => {
             // Handle nil literal
             if info.project.interner.resolve(ident.symbol) == Some("nil") {
-                func.emit_op(Opcode::LoadNil, dst, 0, 0);
+                func.emit_op(Opcode::LoadInt, dst, 0, 0);
                 return Ok(());
             }
             
@@ -282,7 +282,7 @@ pub fn compile_expr_to(
         ExprKind::TypeAsExpr(_) => {
             // Type expressions are handled by make/new builtins
             // Just return 0 as placeholder
-            func.emit_op(Opcode::LoadNil, dst, 0, 0);
+            func.emit_op(Opcode::LoadInt, dst, 0, 0);
         }
 
         // === Try unwrap (?) ===
@@ -303,9 +303,11 @@ pub fn compile_expr_to(
             let error_slots = 2u16;
             let error_start = inner_start + inner_slots - error_slots;
             
-            // Check if error is nil: IsNil checks if slot0 == 0
+            // Check if error is nil: compare slot0 with 0
             let is_nil_reg = func.alloc_temp(1);
-            func.emit_op(Opcode::IsNil, is_nil_reg, error_start, 0);
+            let zero_reg = func.alloc_temp(1);
+            func.emit_op(Opcode::LoadInt, zero_reg, 0, 0);
+            func.emit_op(Opcode::EqI, is_nil_reg, error_start, zero_reg);
             
             // If error is nil, skip the fail path
             let skip_fail_jump = func.emit_jump(Opcode::JumpIf, is_nil_reg);
@@ -322,7 +324,7 @@ pub fn compile_expr_to(
             
             // Initialize all slots to zero/nil
             for i in 0..total_ret_slots {
-                func.emit_op(Opcode::LoadNil, ret_start + i, 0, 0);
+                func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
             }
             
             // Copy the error to the last return slot(s)
@@ -1041,7 +1043,7 @@ fn compile_call(
 
 /// Resolve a method on a concrete type.
 /// Returns MethodResolution with func_idx, whether it expects pointer receiver, and defining type.
-fn resolve_method(
+pub fn resolve_method(
     base_type: TypeKey,
     method_name: &str,
     selection: Option<&Selection>,
@@ -1094,7 +1096,7 @@ fn get_defining_type_from_selection(sel: &Selection, info: &TypeInfoWrapper) -> 
 }
 
 /// Compute field offset for promoted method (embedded field access).
-fn compute_embed_offset(
+pub fn compute_embed_offset(
     selection: Option<&Selection>,
     is_promoted: bool,
     base_type: TypeKey,
@@ -1122,7 +1124,7 @@ fn compute_embed_offset(
 /// Cases:
 /// - `expects_ptr_recv=true`: pass GcRef (variable must be heap-allocated)
 /// - `expects_ptr_recv=false`: pass value (copy from stack or dereference from heap)
-fn emit_receiver(
+pub fn emit_receiver(
     sel_expr: &Expr,
     args_start: u16,
     recv_type: TypeKey,
@@ -1620,7 +1622,7 @@ fn compile_composite_lit(
         
         // Zero-initialize all slots first
         for i in 0..total_slots {
-            func.emit_op(Opcode::LoadNil, dst + i, 0, 0);
+            func.emit_op(Opcode::LoadInt, dst + i, 0, 0);
         }
         
         // Initialize specified fields

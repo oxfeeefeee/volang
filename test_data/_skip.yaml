@@ -279,8 +279,6 @@ skips:
   - file: question_operator.vo
     skip: [jit]
   - file: errdefer_stmt.vo
-    skip: [vm, jit]
-    reason: "errdefer method call codegen not implemented"
-  # Debug nil interface test
+    skip: [jit]
   - file: debug_nil_interface.vo
     skip: [jit]

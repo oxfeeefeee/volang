@@ -1,4 +1,4 @@
-//! Goroutine instructions: GoStart, Yield
+//! Goroutine instructions: GoStart
 
 use vo_runtime_core::gc::GcRef;
 use vo_runtime_core::objects::closure;
@@ -6,7 +6,6 @@ use vo_runtime_core::objects::closure;
 use crate::bytecode::FunctionDef;
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;
-use crate::vm::ExecResult;
 
 pub struct GoResult {
     pub new_fiber: Fiber,
@@ -56,9 +55,4 @@ pub fn exec_go_start(
     }
 
     GoResult { new_fiber }
-}
-
-#[inline]
-pub fn exec_yield(_fiber: &mut Fiber, _inst: &Instruction) -> ExecResult {
-    ExecResult::Yield
 }

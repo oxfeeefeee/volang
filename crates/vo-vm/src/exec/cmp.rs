@@ -1,4 +1,4 @@
-//! Comparison instructions: EqI, NeI, LtI, LeI, GtI, GeI, EqF, NeF, LtF, LeF, GtF, GeF, EqRef, NeRef, IsNil
+//! Comparison instructions: EqI, NeI, LtI, LeI, GtI, GeI, EqF, NeF, LtF, LeF, GtF, GeF
 
 use crate::fiber::Fiber;
 use crate::instruction::Instruction;
@@ -85,24 +85,4 @@ pub fn exec_ge_f(fiber: &mut Fiber, inst: &Instruction) {
     let a = f64::from_bits(fiber.read_reg(inst.b));
     let b = f64::from_bits(fiber.read_reg(inst.c));
     fiber.write_reg(inst.a, (a >= b) as u64);
-}
-
-#[inline]
-pub fn exec_eq_ref(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b);
-    let b = fiber.read_reg(inst.c);
-    fiber.write_reg(inst.a, (a == b) as u64);
-}
-
-#[inline]
-pub fn exec_ne_ref(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b);
-    let b = fiber.read_reg(inst.c);
-    fiber.write_reg(inst.a, (a != b) as u64);
-}
-
-#[inline]
-pub fn exec_is_nil(fiber: &mut Fiber, inst: &Instruction) {
-    let a = fiber.read_reg(inst.b);
-    fiber.write_reg(inst.a, (a == 0) as u64);
 }
