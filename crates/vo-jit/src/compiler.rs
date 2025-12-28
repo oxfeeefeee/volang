@@ -57,6 +57,10 @@ pub struct FunctionCompiler<'a> {
     pub(crate) call_closure_func: Option<FuncRef>,
     /// FuncRef for vo_call_iface runtime helper.
     pub(crate) call_iface_func: Option<FuncRef>,
+    /// FuncRef for vo_panic runtime helper.
+    pub(crate) panic_func: Option<FuncRef>,
+    /// FuncRef for vo_call_extern runtime helper.
+    pub(crate) call_extern_func: Option<FuncRef>,
     /// String helper FuncRefs.
     pub(crate) str_funcs: StringFuncs,
     /// Map helper FuncRefs.
@@ -112,6 +116,8 @@ impl<'a> FunctionCompiler<'a> {
         gc_alloc_func: Option<FuncRef>,
         call_closure_func: Option<FuncRef>,
         call_iface_func: Option<FuncRef>,
+        panic_func: Option<FuncRef>,
+        call_extern_func: Option<FuncRef>,
         str_funcs: StringFuncs,
         map_funcs: MapFuncs,
         misc_funcs: MiscFuncs,
@@ -139,6 +145,8 @@ impl<'a> FunctionCompiler<'a> {
             gc_alloc_func,
             call_closure_func,
             call_iface_func,
+            panic_func,
+            call_extern_func,
             str_funcs,
             map_funcs,
             misc_funcs,

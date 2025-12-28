@@ -33,6 +33,50 @@ extern "C" fn itab_lookup_trampoline(
     }
 }
 
+/// Extern call trampoline for JIT -> extern function calls.
+#[cfg(feature = "jit")]
+extern "C" fn call_extern_trampoline(
+    registry: *const std::ffi::c_void,
+    gc: *mut vo_runtime::gc::Gc,
+    extern_id: u32,
+    args: *const u64,
+    arg_count: u32,
+    ret: *mut u64,
+) -> JitResult {
+    use vo_runtime::ffi::{ExternCall, ExternResult};
+    
+    let registry = unsafe { &*(registry as *const ExternRegistry) };
+    let gc = unsafe { &mut *gc };
+    
+    // Create a temporary stack for the extern call
+    let mut temp_stack: Vec<u64> = (0..arg_count as usize)
+        .map(|i| unsafe { *args.add(i) })
+        .collect();
+    
+    // Call through ExternRegistry
+    let result = registry.call(
+        extern_id,
+        &mut temp_stack,
+        0,     // bp
+        0,     // arg_start
+        arg_count as u16,
+        0,     // ret_start (same as arg_start)
+        gc,
+    );
+    
+    match result {
+        ExternResult::Ok => {
+            // Copy return values (extern functions may return values in the same slots)
+            for i in 0..arg_count as usize {
+                unsafe { *ret.add(i) = temp_stack[i] };
+            }
+            JitResult::Ok
+        }
+        ExternResult::Yield => JitResult::Panic, // Yield not supported in JIT
+        ExternResult::Panic(_) => JitResult::Panic,
+    }
+}
+
 /// VM call trampoline for JIT -> VM calls.
 /// This function is called by vo_call_vm when JIT code needs to call another function.
 #[cfg(feature = "jit")]
@@ -292,6 +336,8 @@ impl Vm {
             call_vm_fn: Some(vm_call_trampoline),
             itabs: self.state.itab_cache.itabs_ptr(),
             itab_lookup_fn: Some(itab_lookup_trampoline),
+            extern_registry: &self.state.extern_registry as *const _ as *const std::ffi::c_void,
+            call_extern_fn: Some(call_extern_trampoline),
         };
         
         // Call JIT function

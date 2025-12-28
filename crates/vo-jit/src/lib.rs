@@ -175,6 +175,29 @@ pub struct JitCompiler {
     ctx: cranelift_codegen::Context,
     /// Cache of compiled functions.
     cache: JitCache,
+    /// Cached FuncIds for runtime helper functions (declared once).
+    helper_funcs: HelperFuncIds,
+}
+
+/// Cached FuncIds for runtime helpers.
+#[derive(Clone, Copy)]
+struct HelperFuncIds {
+    safepoint: cranelift_module::FuncId,
+    call_vm: cranelift_module::FuncId,
+    gc_alloc: cranelift_module::FuncId,
+    call_closure: cranelift_module::FuncId,
+    call_iface: cranelift_module::FuncId,
+    panic: cranelift_module::FuncId,
+    call_extern: cranelift_module::FuncId,
+    str_new: cranelift_module::FuncId,
+    str_len: cranelift_module::FuncId,
+    str_index: cranelift_module::FuncId,
+    str_concat: cranelift_module::FuncId,
+    str_slice: cranelift_module::FuncId,
+    str_eq: cranelift_module::FuncId,
+    str_cmp: cranelift_module::FuncId,
+    str_decode_rune: cranelift_module::FuncId,
+    ptr_clone: cranelift_module::FuncId,
 }
 
 impl JitCompiler {
@@ -213,14 +236,211 @@ impl JitCompiler {
         builder.symbol("vo_map_set", vo_runtime::jit_api::vo_map_set as *const u8);
         builder.symbol("vo_map_delete", vo_runtime::jit_api::vo_map_delete as *const u8);
         builder.symbol("vo_ptr_clone", vo_runtime::jit_api::vo_ptr_clone as *const u8);
+        builder.symbol("vo_panic", vo_runtime::jit_api::vo_panic as *const u8);
+        builder.symbol("vo_call_extern", vo_runtime::jit_api::vo_call_extern as *const u8);
 
-        let module = JITModule::new(builder);
+        let mut module = JITModule::new(builder);
         let ctx = module.make_context();
+        
+        // Declare all helper functions once during initialization
+        let ptr_type = module.target_config().pointer_type();
+        
+        // vo_gc_safepoint(ctx)
+        let safepoint_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig
+        };
+        let safepoint = module.declare_function("vo_gc_safepoint", cranelift_module::Linkage::Import, &safepoint_sig)?;
+        
+        // vo_call_vm(ctx, func_id, args, arg_count, ret, ret_count) -> JitResult
+        let call_vm_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig
+        };
+        let call_vm = module.declare_function("vo_call_vm", cranelift_module::Linkage::Import, &call_vm_sig)?;
+        
+        // vo_gc_alloc(gc, meta, slots) -> GcRef
+        let gc_alloc_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let gc_alloc = module.declare_function("vo_gc_alloc", cranelift_module::Linkage::Import, &gc_alloc_sig)?;
+        
+        // vo_call_closure(ctx, closure_ref, args, arg_count, ret, ret_count) -> JitResult
+        let call_closure_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig
+        };
+        let call_closure = module.declare_function("vo_call_closure", cranelift_module::Linkage::Import, &call_closure_sig)?;
+        
+        // vo_call_iface(ctx, slot0, slot1, method_idx, args, arg_count, ret, ret_count, func_id) -> JitResult
+        let call_iface_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig
+        };
+        let call_iface = module.declare_function("vo_call_iface", cranelift_module::Linkage::Import, &call_iface_sig)?;
+        
+        // vo_panic(ctx, msg)
+        let panic_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let panic = module.declare_function("vo_panic", cranelift_module::Linkage::Import, &panic_sig)?;
+        
+        // vo_call_extern(ctx, extern_id, args, arg_count, ret) -> JitResult
+        let call_extern_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig
+        };
+        let call_extern = module.declare_function("vo_call_extern", cranelift_module::Linkage::Import, &call_extern_sig)?;
+        
+        // String helpers
+        let str_new_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_new = module.declare_function("vo_str_new", cranelift_module::Linkage::Import, &str_new_sig)?;
+        
+        let str_len_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_len = module.declare_function("vo_str_len", cranelift_module::Linkage::Import, &str_len_sig)?;
+        
+        let str_index_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_index = module.declare_function("vo_str_index", cranelift_module::Linkage::Import, &str_index_sig)?;
+        
+        let str_concat_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_concat = module.declare_function("vo_str_concat", cranelift_module::Linkage::Import, &str_concat_sig)?;
+        
+        let str_slice_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_slice = module.declare_function("vo_str_slice", cranelift_module::Linkage::Import, &str_slice_sig)?;
+        
+        let str_eq_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_eq = module.declare_function("vo_str_eq", cranelift_module::Linkage::Import, &str_eq_sig)?;
+        
+        let str_cmp_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+            sig
+        };
+        let str_cmp = module.declare_function("vo_str_cmp", cranelift_module::Linkage::Import, &str_cmp_sig)?;
+        
+        let str_decode_rune_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let str_decode_rune = module.declare_function("vo_str_decode_rune", cranelift_module::Linkage::Import, &str_decode_rune_sig)?;
+        
+        // vo_ptr_clone(gc, ptr) -> GcRef
+        let ptr_clone_sig = {
+            let mut sig = cranelift_codegen::ir::Signature::new(module.target_config().default_call_conv);
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            sig
+        };
+        let ptr_clone = module.declare_function("vo_ptr_clone", cranelift_module::Linkage::Import, &ptr_clone_sig)?;
+        
+        let helper_funcs = HelperFuncIds {
+            safepoint,
+            call_vm,
+            gc_alloc,
+            call_closure,
+            call_iface,
+            panic,
+            call_extern,
+            str_new,
+            str_len,
+            str_index,
+            str_concat,
+            str_slice,
+            str_eq,
+            str_cmp,
+            str_decode_rune,
+            ptr_clone,
+        };
 
         Ok(Self {
             module,
             ctx,
             cache: JitCache::new(),
+            helper_funcs,
         })
     }
 
@@ -289,188 +509,33 @@ impl JitCompiler {
         self.ctx.func.signature = sig;
         self.ctx.func.name = cranelift_codegen::ir::UserFuncName::user(0, func_id);
 
-        // 4. Declare runtime helper functions
-        let safepoint_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // ctx
-            sig
-        };
-        let safepoint_id = self.module.declare_function(
-            "vo_gc_safepoint",
-            cranelift_module::Linkage::Import,
-            &safepoint_sig,
-        )?;
-        
-        // vo_call_vm(ctx, func_id, args, arg_count, ret, ret_count) -> JitResult
-        let call_vm_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // ctx
-            sig.params.push(AbiParam::new(types::I32)); // func_id
-            sig.params.push(AbiParam::new(ptr_type)); // args
-            sig.params.push(AbiParam::new(types::I32)); // arg_count
-            sig.params.push(AbiParam::new(ptr_type)); // ret
-            sig.params.push(AbiParam::new(types::I32)); // ret_count
-            sig.returns.push(AbiParam::new(types::I32)); // JitResult
-            sig
-        };
-        let call_vm_id = self.module.declare_function(
-            "vo_call_vm",
-            cranelift_module::Linkage::Import,
-            &call_vm_sig,
-        )?;
-        
-        // vo_gc_alloc(gc, meta, slots) -> GcRef (u64)
-        let gc_alloc_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // gc: *mut Gc
-            sig.params.push(AbiParam::new(types::I32)); // meta: u32
-            sig.params.push(AbiParam::new(types::I32)); // slots: u32
-            sig.returns.push(AbiParam::new(types::I64)); // GcRef
-            sig
-        };
-        let gc_alloc_id = self.module.declare_function(
-            "vo_gc_alloc",
-            cranelift_module::Linkage::Import,
-            &gc_alloc_sig,
-        )?;
-        
-        // vo_call_closure(ctx, closure_ref, args, arg_count, ret, ret_count) -> JitResult
-        let call_closure_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // ctx
-            sig.params.push(AbiParam::new(types::I64)); // closure_ref
-            sig.params.push(AbiParam::new(ptr_type)); // args
-            sig.params.push(AbiParam::new(types::I32)); // arg_count
-            sig.params.push(AbiParam::new(ptr_type)); // ret
-            sig.params.push(AbiParam::new(types::I32)); // ret_count
-            sig.returns.push(AbiParam::new(types::I32)); // JitResult
-            sig
-        };
-        let call_closure_id = self.module.declare_function(
-            "vo_call_closure",
-            cranelift_module::Linkage::Import,
-            &call_closure_sig,
-        )?;
-        
-        // vo_call_iface(ctx, slot0, slot1, method_idx, args, arg_count, ret, ret_count, func_id) -> JitResult
-        let call_iface_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // ctx
-            sig.params.push(AbiParam::new(types::I64)); // iface_slot0
-            sig.params.push(AbiParam::new(types::I64)); // iface_slot1
-            sig.params.push(AbiParam::new(types::I32)); // method_idx
-            sig.params.push(AbiParam::new(ptr_type)); // args
-            sig.params.push(AbiParam::new(types::I32)); // arg_count
-            sig.params.push(AbiParam::new(ptr_type)); // ret
-            sig.params.push(AbiParam::new(types::I32)); // ret_count
-            sig.params.push(AbiParam::new(types::I32)); // func_id (pre-resolved)
-            sig.returns.push(AbiParam::new(types::I32)); // JitResult
-            sig
-        };
-        let call_iface_id = self.module.declare_function(
-            "vo_call_iface",
-            cranelift_module::Linkage::Import,
-            &call_iface_sig,
-        )?;
-        
-        // Declare string helper functions
-        let str_new_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // gc
-            sig.params.push(AbiParam::new(ptr_type)); // data
-            sig.params.push(AbiParam::new(types::I64)); // len
-            sig.returns.push(AbiParam::new(types::I64)); // GcRef
-            sig
-        };
-        let str_new_id = self.module.declare_function("vo_str_new", cranelift_module::Linkage::Import, &str_new_sig)?;
-        
-        let str_len_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(types::I64)); // s
-            sig.returns.push(AbiParam::new(types::I64)); // len
-            sig
-        };
-        let str_len_id = self.module.declare_function("vo_str_len", cranelift_module::Linkage::Import, &str_len_sig)?;
-        
-        let str_index_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(types::I64)); // s
-            sig.params.push(AbiParam::new(types::I64)); // idx
-            sig.returns.push(AbiParam::new(types::I64)); // byte
-            sig
-        };
-        let str_index_id = self.module.declare_function("vo_str_index", cranelift_module::Linkage::Import, &str_index_sig)?;
-        
-        let str_concat_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // gc
-            sig.params.push(AbiParam::new(types::I64)); // a
-            sig.params.push(AbiParam::new(types::I64)); // b
-            sig.returns.push(AbiParam::new(types::I64)); // result
-            sig
-        };
-        let str_concat_id = self.module.declare_function("vo_str_concat", cranelift_module::Linkage::Import, &str_concat_sig)?;
-        
-        let str_slice_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr_type)); // gc
-            sig.params.push(AbiParam::new(types::I64)); // s
-            sig.params.push(AbiParam::new(types::I64)); // lo
-            sig.params.push(AbiParam::new(types::I64)); // hi
-            sig.returns.push(AbiParam::new(types::I64)); // result
-            sig
-        };
-        let str_slice_id = self.module.declare_function("vo_str_slice", cranelift_module::Linkage::Import, &str_slice_sig)?;
-        
-        let str_eq_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(types::I64)); // a
-            sig.params.push(AbiParam::new(types::I64)); // b
-            sig.returns.push(AbiParam::new(types::I64)); // result
-            sig
-        };
-        let str_eq_id = self.module.declare_function("vo_str_eq", cranelift_module::Linkage::Import, &str_eq_sig)?;
-        
-        let str_cmp_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(types::I64)); // a
-            sig.params.push(AbiParam::new(types::I64)); // b
-            sig.returns.push(AbiParam::new(types::I32)); // result
-            sig
-        };
-        let str_cmp_id = self.module.declare_function("vo_str_cmp", cranelift_module::Linkage::Import, &str_cmp_sig)?;
-        
-        let str_decode_rune_sig = {
-            let mut sig = Signature::new(self.module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(types::I64)); // s
-            sig.params.push(AbiParam::new(types::I64)); // pos
-            sig.returns.push(AbiParam::new(types::I64)); // (rune << 32) | width
-            sig
-        };
-        let str_decode_rune_id = self.module.declare_function("vo_str_decode_rune", cranelift_module::Linkage::Import, &str_decode_rune_sig)?;
-        
-        // 5. Build function IR using FunctionCompiler
+        // 4. Build function IR using FunctionCompiler
+        // Use cached helper FuncIds (declared once in new())
         let mut func_ctx = FunctionBuilderContext::new();
         {
-            let safepoint_func = self.module.declare_func_in_func(safepoint_id, &mut self.ctx.func);
-            let call_vm_func = self.module.declare_func_in_func(call_vm_id, &mut self.ctx.func);
-            let gc_alloc_func = self.module.declare_func_in_func(gc_alloc_id, &mut self.ctx.func);
-            let call_closure_func = self.module.declare_func_in_func(call_closure_id, &mut self.ctx.func);
-            let call_iface_func = self.module.declare_func_in_func(call_iface_id, &mut self.ctx.func);
+            let safepoint_func = self.module.declare_func_in_func(self.helper_funcs.safepoint, &mut self.ctx.func);
+            let call_vm_func = self.module.declare_func_in_func(self.helper_funcs.call_vm, &mut self.ctx.func);
+            let gc_alloc_func = self.module.declare_func_in_func(self.helper_funcs.gc_alloc, &mut self.ctx.func);
+            let call_closure_func = self.module.declare_func_in_func(self.helper_funcs.call_closure, &mut self.ctx.func);
+            let call_iface_func = self.module.declare_func_in_func(self.helper_funcs.call_iface, &mut self.ctx.func);
+            let panic_func = self.module.declare_func_in_func(self.helper_funcs.panic, &mut self.ctx.func);
+            let call_extern_func = self.module.declare_func_in_func(self.helper_funcs.call_extern, &mut self.ctx.func);
             
             let str_funcs = crate::compiler::StringFuncs {
-                str_new: Some(self.module.declare_func_in_func(str_new_id, &mut self.ctx.func)),
-                str_len: Some(self.module.declare_func_in_func(str_len_id, &mut self.ctx.func)),
-                str_index: Some(self.module.declare_func_in_func(str_index_id, &mut self.ctx.func)),
-                str_concat: Some(self.module.declare_func_in_func(str_concat_id, &mut self.ctx.func)),
-                str_slice: Some(self.module.declare_func_in_func(str_slice_id, &mut self.ctx.func)),
-                str_eq: Some(self.module.declare_func_in_func(str_eq_id, &mut self.ctx.func)),
-                str_cmp: Some(self.module.declare_func_in_func(str_cmp_id, &mut self.ctx.func)),
-                str_decode_rune: Some(self.module.declare_func_in_func(str_decode_rune_id, &mut self.ctx.func)),
+                str_new: Some(self.module.declare_func_in_func(self.helper_funcs.str_new, &mut self.ctx.func)),
+                str_len: Some(self.module.declare_func_in_func(self.helper_funcs.str_len, &mut self.ctx.func)),
+                str_index: Some(self.module.declare_func_in_func(self.helper_funcs.str_index, &mut self.ctx.func)),
+                str_concat: Some(self.module.declare_func_in_func(self.helper_funcs.str_concat, &mut self.ctx.func)),
+                str_slice: Some(self.module.declare_func_in_func(self.helper_funcs.str_slice, &mut self.ctx.func)),
+                str_eq: Some(self.module.declare_func_in_func(self.helper_funcs.str_eq, &mut self.ctx.func)),
+                str_cmp: Some(self.module.declare_func_in_func(self.helper_funcs.str_cmp, &mut self.ctx.func)),
+                str_decode_rune: Some(self.module.declare_func_in_func(self.helper_funcs.str_decode_rune, &mut self.ctx.func)),
             };
             
             let map_funcs = crate::compiler::MapFuncs::default();
-            let misc_funcs = crate::compiler::MiscFuncs::default();
+            let misc_funcs = crate::compiler::MiscFuncs {
+                ptr_clone: Some(self.module.declare_func_in_func(self.helper_funcs.ptr_clone, &mut self.ctx.func)),
+            };
             
             let compiler = FunctionCompiler::new(
                 &mut self.ctx.func,
@@ -482,6 +547,8 @@ impl JitCompiler {
                 Some(gc_alloc_func),
                 Some(call_closure_func),
                 Some(call_iface_func),
+                Some(panic_func),
+                Some(call_extern_func),
                 str_funcs,
                 map_funcs,
                 misc_funcs,

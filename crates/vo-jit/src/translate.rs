@@ -204,63 +204,63 @@ impl FunctionCompiler<'_> {
     // =========================================================================
 
     pub(crate) fn translate_and(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let result = self.builder.ins().band(a, b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_or(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let result = self.builder.ins().bor(a, b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_xor(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let result = self.builder.ins().bxor(a, b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_and_not(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let not_b = self.builder.ins().bnot(b);
         let result = self.builder.ins().band(a, not_b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_not(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
+        let a = self.read_var(inst.b);
         let result = self.builder.ins().bnot(a);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_shl(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let result = self.builder.ins().ishl(a, b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_shr_s(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let result = self.builder.ins().sshr(a, b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_shr_u(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
-        let b = self.read_var(inst.b);
+        let a = self.read_var(inst.b);
+        let b = self.read_var(inst.c);
         let result = self.builder.ins().ushr(a, b);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_bool_not(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
+        let a = self.read_var(inst.b);
         let zero = self.builder.ins().iconst(types::I64, 0);
         let cmp = self.builder.ins().icmp(IntCC::Equal, a, zero);
         let result = self.builder.ins().uextend(types::I64, cmp);
@@ -342,15 +342,15 @@ impl FunctionCompiler<'_> {
         let arg_slots = (inst.c >> 8) as usize;
         let ret_slots = (inst.c & 0xFF) as usize;
         
-        // Allocate stack space for args and ret buffers
+        // Allocate stack space for args and ret buffers (min 8 bytes to avoid zero-size slots)
         let arg_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (arg_slots * 8) as u32,
+            (arg_slots.max(1) * 8) as u32,
             0,
         ));
         let ret_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (ret_slots * 8) as u32,
+            (ret_slots.max(1) * 8) as u32,
             0,
         ));
         
@@ -400,9 +400,70 @@ impl FunctionCompiler<'_> {
     }
 
     pub(crate) fn translate_call_extern(&mut self, inst: &Instruction) {
-        // TODO: Call external function
+        // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
+        // Return values are written starting at dst (inst.a)
+        // In VM, ret_start = arg_start (reuses argument slots), but we use inst.a as dst
+        let call_extern_func = match self.call_extern_func {
+            Some(f) => f,
+            None => return,
+        };
+        
         self.emit_safepoint();
-        let _ = inst;
+        
+        let dst = inst.a;
+        let extern_id = inst.b as u32;
+        let arg_start = inst.c as usize;
+        let arg_count = inst.flags as usize;
+        
+        // Allocate stack space for args buffer
+        let arg_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            (arg_count.max(1) * 8) as u32,
+            0,
+        ));
+        
+        // Copy args to stack buffer
+        for i in 0..arg_count {
+            let val = self.read_var((arg_start + i) as u16);
+            self.builder.ins().stack_store(val, arg_slot, (i * 8) as i32);
+        }
+        
+        // Get pointer to arg buffer (also used for return values)
+        let arg_ptr = self.builder.ins().stack_addr(types::I64, arg_slot, 0);
+        
+        // Call vo_call_extern(ctx, extern_id, args, arg_count, ret)
+        let ctx = self.get_ctx_param();
+        let extern_id_val = self.builder.ins().iconst(types::I32, extern_id as i64);
+        let arg_count_val = self.builder.ins().iconst(types::I32, arg_count as i64);
+        
+        let call = self.builder.ins().call(
+            call_extern_func,
+            &[ctx, extern_id_val, arg_ptr, arg_count_val, arg_ptr], // ret = args (same buffer)
+        );
+        let result = self.builder.inst_results(call)[0];
+        
+        // Check for panic (result != 0)
+        let panic_block = self.builder.create_block();
+        let continue_block = self.builder.create_block();
+        
+        self.builder.ins().brif(result, panic_block, &[], continue_block, &[]);
+        
+        // Panic block: return JitResult::Panic
+        self.builder.switch_to_block(panic_block);
+        self.builder.seal_block(panic_block);
+        let panic_result = self.builder.ins().iconst(types::I32, 1);
+        self.builder.ins().return_(&[panic_result]);
+        
+        // Continue block: copy return values back to dst slots
+        self.builder.switch_to_block(continue_block);
+        self.builder.seal_block(continue_block);
+        
+        // Extern functions return values in the same buffer (reusing arg slots)
+        // Copy them to dst (inst.a). Number of return values = arg_count (same buffer reuse)
+        for i in 0..arg_count {
+            let val = self.builder.ins().stack_load(types::I64, arg_slot, (i * 8) as i32);
+            self.write_var(dst + i as u16, val);
+        }
     }
 
     pub(crate) fn translate_call_closure(&mut self, inst: &Instruction) {
@@ -419,15 +480,15 @@ impl FunctionCompiler<'_> {
         let arg_slots = (inst.c >> 8) as usize;
         let ret_slots = (inst.c & 0xFF) as usize;
         
-        // Allocate stack space for args and ret buffers
+        // Allocate stack space for args and ret buffers (min 8 bytes to avoid zero-size slots)
         let arg_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (arg_slots * 8) as u32,
+            (arg_slots.max(1) * 8) as u32,
             0,
         ));
         let ret_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (ret_slots * 8) as u32,
+            (ret_slots.max(1) * 8) as u32,
             0,
         ));
         
@@ -489,15 +550,15 @@ impl FunctionCompiler<'_> {
         let arg_slots = (inst.c >> 8) as usize;
         let ret_slots = (inst.c & 0xFF) as usize;
         
-        // Allocate stack space for args and ret buffers
+        // Allocate stack space for args and ret buffers (min 8 bytes to avoid zero-size slots)
         let arg_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (arg_slots * 8) as u32,
+            (arg_slots.max(1) * 8) as u32,
             0,
         ));
         let ret_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (ret_slots * 8) as u32,
+            (ret_slots.max(1) * 8) as u32,
             0,
         ));
         
@@ -737,20 +798,21 @@ impl FunctionCompiler<'_> {
     // =========================================================================
 
     pub(crate) fn translate_slot_get(&mut self, inst: &Instruction) {
-        // TODO: Dynamic slot access
-        let _ = inst;
+        // SlotGet: dynamic slot access for stack arrays
+        // TODO: Implement dynamic slot indexing
+        panic!("SlotGet not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_slot_set(&mut self, inst: &Instruction) {
-        let _ = inst;
+        panic!("SlotSet not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_slot_get_n(&mut self, inst: &Instruction) {
-        let _ = inst;
+        panic!("SlotGetN not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_slot_set_n(&mut self, inst: &Instruction) {
-        let _ = inst;
+        panic!("SlotSetN not yet implemented in JIT: {:?}", inst);
     }
 
     // =========================================================================
@@ -1266,15 +1328,14 @@ impl FunctionCompiler<'_> {
     pub(crate) fn translate_slice_slice(&mut self, inst: &Instruction) {
         // SliceSlice: a = dst, b = slice/array, c = lo (hi at c+1, max at c+2 if three-index)
         // flags: bit0 = is_array, bit1 = has_max
-        // TODO: Implement with runtime helper for complexity
-        // For now, mark as not implemented - slice operations through VM
-        let _ = inst;
+        // TODO: Implement with vo_slice_slice / vo_slice_slice3 runtime helper
+        panic!("SliceSlice not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_slice_append(&mut self, inst: &Instruction) {
         // SliceAppend: a = dst, b = slice, c = val_src, flags = elem_slots
-        // TODO: Implement with runtime helper (needs potential reallocation)
-        let _ = inst;
+        // TODO: Implement with vo_slice_append runtime helper
+        panic!("SliceAppend not yet implemented in JIT: {:?}", inst);
     }
 
     // =========================================================================
@@ -1285,26 +1346,25 @@ impl FunctionCompiler<'_> {
         // MapNew: a = dst, b = packed_meta_slot, c = (key_slots << 8) | val_slots
         // packed_meta = (key_meta << 32) | val_meta
         // TODO: Add vo_map_new FuncRef and call it
-        // For now, mark as not implemented
-        let _ = inst;
+        panic!("MapNew not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_map_get(&mut self, inst: &Instruction) {
         // MapGet: complex - needs runtime helper
         // TODO: Implement with vo_map_get
-        let _ = inst;
+        panic!("MapGet not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_map_set(&mut self, inst: &Instruction) {
         // MapSet: complex - needs runtime helper
         // TODO: Implement with vo_map_set
-        let _ = inst;
+        panic!("MapSet not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_map_delete(&mut self, inst: &Instruction) {
         // MapDelete: needs runtime helper
         // TODO: Implement with vo_map_delete
-        let _ = inst;
+        panic!("MapDelete not yet implemented in JIT: {:?}", inst);
     }
 
     pub(crate) fn translate_map_len(&mut self, inst: &Instruction) {
@@ -1343,7 +1403,7 @@ impl FunctionCompiler<'_> {
     pub(crate) fn translate_map_iter_get(&mut self, inst: &Instruction) {
         // MapIterGet: needs runtime helper for iteration
         // TODO: Implement with vo_map_iter_get
-        let _ = inst;
+        panic!("MapIterGet not yet implemented in JIT: {:?}", inst);
     }
 
     // =========================================================================
@@ -1352,7 +1412,7 @@ impl FunctionCompiler<'_> {
 
     pub(crate) fn translate_chan_new(&mut self, inst: &Instruction) {
         // TODO: Call vo_chan_new
-        let _ = inst;
+        panic!("ChanNew not yet implemented in JIT: {:?}", inst);
     }
 
     // =========================================================================
@@ -1457,13 +1517,18 @@ impl FunctionCompiler<'_> {
         let slot0 = self.builder.ins().iconst(types::I64, slot0_val as i64);
         
         // slot1 depends on value kind
-        // ValueKind::Struct = 7, Array = 8 need ptr_clone
+        // ValueKind::Struct = 7, Array = 8 need ptr_clone (deep copy for value semantics)
         // ValueKind::Interface = 11 is complex (skip for now)
         let slot1 = if vk == 7 || vk == 8 {
-            // Struct/Array: need deep copy
-            // TODO: Call vo_ptr_clone
-            // For now, just copy the pointer (incorrect but allows compilation)
-            src
+            // Struct/Array: need deep copy via vo_ptr_clone
+            if let Some(ptr_clone_func) = self.misc_funcs.ptr_clone {
+                let gc_ptr = self.load_gc_ptr();
+                let call = self.builder.ins().call(ptr_clone_func, &[gc_ptr, src]);
+                self.builder.inst_results(call)[0]
+            } else {
+                // Fallback: just copy pointer (incorrect but allows compilation)
+                src
+            }
         } else if vk == 11 {
             // Interface -> Interface: need runtime support
             // For now, just copy slot1 from source
@@ -1480,7 +1545,7 @@ impl FunctionCompiler<'_> {
     pub(crate) fn translate_iface_assert(&mut self, inst: &Instruction) {
         // IfaceAssert is complex - needs runtime support for type checking
         // TODO: Implement with vo_iface_assert runtime helper
-        let _ = inst;
+        panic!("IfaceAssert not yet implemented in JIT: {:?}", inst);
     }
 
     // =========================================================================
@@ -1488,21 +1553,21 @@ impl FunctionCompiler<'_> {
     // =========================================================================
 
     pub(crate) fn translate_conv_i2f(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
+        let a = self.read_var(inst.b);
         let f = self.builder.ins().fcvt_from_sint(types::F64, a);
         let result = self.builder.ins().bitcast(types::I64, cranelift_codegen::ir::MemFlags::new(), f);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_conv_f2i(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
+        let a = self.read_var(inst.b);
         let f = self.builder.ins().bitcast(types::F64, cranelift_codegen::ir::MemFlags::new(), a);
         let result = self.builder.ins().fcvt_to_sint(types::I64, f);
         self.write_var(inst.a, result);
     }
 
     pub(crate) fn translate_conv_i32_i64(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
+        let a = self.read_var(inst.b);
         // Sign extend 32-bit to 64-bit
         let truncated = self.builder.ins().ireduce(types::I32, a);
         let result = self.builder.ins().sextend(types::I64, truncated);
@@ -1510,7 +1575,7 @@ impl FunctionCompiler<'_> {
     }
 
     pub(crate) fn translate_conv_i64_i32(&mut self, inst: &Instruction) {
-        let a = self.read_var(inst.a);
+        let a = self.read_var(inst.b);
         // Truncate 64-bit to 32-bit, then zero-extend back
         let truncated = self.builder.ins().ireduce(types::I32, a);
         let result = self.builder.ins().uextend(types::I64, truncated);
@@ -1522,10 +1587,20 @@ impl FunctionCompiler<'_> {
     // =========================================================================
 
     pub(crate) fn translate_panic(&mut self, inst: &Instruction) {
-        // TODO: Call vo_panic(ctx, msg) and return JitResult::Panic
-        let _ = inst;
+        let panic_func = match self.panic_func {
+            Some(f) => f,
+            None => {
+                let panic = self.builder.ins().iconst(types::I32, 1);
+                self.builder.ins().return_(&[panic]);
+                return;
+            }
+        };
         
-        // For now, just return Panic
+        let ctx = self.get_ctx_param();
+        let msg = self.read_var(inst.b);
+        
+        self.builder.ins().call(panic_func, &[ctx, msg]);
+        
         let panic = self.builder.ins().iconst(types::I32, 1);
         self.builder.ins().return_(&[panic]);
     }

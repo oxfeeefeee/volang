@@ -83,6 +83,12 @@ pub struct JitContext {
     
     /// Function to lookup method from itab: (itabs, itab_id, method_idx) -> func_id
     pub itab_lookup_fn: Option<extern "C" fn(*const c_void, u32, u32) -> u32>,
+    
+    /// Pointer to ExternRegistry for calling extern functions.
+    pub extern_registry: *const c_void,
+    
+    /// Callback to call extern function: (registry, gc, extern_id, args, arg_count, ret) -> JitResult
+    pub call_extern_fn: Option<extern "C" fn(*const c_void, *mut Gc, u32, *const u64, u32, *mut u64) -> JitResult>,
 }
 
 // =============================================================================
@@ -231,6 +237,36 @@ pub extern "C" fn vo_panic(ctx: *mut JitContext, _msg: u64) {
         let ctx = &mut *ctx;
         *ctx.panic_flag = true;
     }
+}
+
+/// Call an extern function from JIT code.
+///
+/// # Arguments
+/// - `ctx`: JIT context
+/// - `extern_id`: Extern function ID
+/// - `args`: Pointer to argument slots
+/// - `arg_count`: Number of argument slots
+/// - `ret`: Pointer to return value slots
+///
+/// # Returns
+/// - `JitResult::Ok` if function completed normally
+/// - `JitResult::Panic` if function panicked
+#[no_mangle]
+pub extern "C" fn vo_call_extern(
+    ctx: *mut JitContext,
+    extern_id: u32,
+    args: *const u64,
+    arg_count: u32,
+    ret: *mut u64,
+) -> JitResult {
+    let ctx_ref = unsafe { &*ctx };
+    
+    let call_fn = match ctx_ref.call_extern_fn {
+        Some(f) => f,
+        None => return JitResult::Panic,
+    };
+    
+    call_fn(ctx_ref.extern_registry, ctx_ref.gc, extern_id, args, arg_count, ret)
 }
 
 /// Call a closure from JIT code.
@@ -676,6 +712,7 @@ pub fn get_runtime_symbols() -> &'static [(&'static str, *const u8)] {
         ("vo_call_closure", vo_call_closure as *const u8),
         ("vo_call_iface", vo_call_iface as *const u8),
         ("vo_panic", vo_panic as *const u8),
+        ("vo_call_extern", vo_call_extern as *const u8),
         ("vo_map_iter_next", vo_map_iter_next as *const u8),
         ("vo_str_new", vo_str_new as *const u8),
         ("vo_str_len", vo_str_len as *const u8),
