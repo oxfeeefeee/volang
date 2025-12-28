@@ -75,6 +75,14 @@ pub struct JitContext {
     /// Callback to execute a function in VM.
     /// Set by VM when creating JitContext.
     pub call_vm_fn: Option<VmCallFn>,
+    
+    /// Pointer to itab array for interface method dispatch.
+    /// Each Itab contains a Vec<u32> of method func_ids.
+    /// Layout: *const Vec<Itab> (opaque, used by vo_call_iface)
+    pub itabs: *const c_void,
+    
+    /// Function to lookup method from itab: (itabs, itab_id, method_idx) -> func_id
+    pub itab_lookup_fn: Option<extern "C" fn(*const c_void, u32, u32) -> u32>,
 }
 
 // =============================================================================
@@ -116,14 +124,14 @@ pub enum JitResult {
 /// # Safety
 /// - `gc` must be a valid pointer to a Gc instance
 #[no_mangle]
-pub extern "C" fn vo_gc_alloc(_gc: *mut Gc, _meta: u32, _slots: u32) -> u64 {
-    // TODO: Implement
-    // unsafe {
-    //     let gc = &mut *gc;
-    //     let value_meta = ValueMeta::from_raw(meta);
-    //     gc.alloc(value_meta, slots as u16) as u64
-    // }
-    todo!("vo_gc_alloc not yet implemented")
+pub extern "C" fn vo_gc_alloc(gc: *mut Gc, meta: u32, slots: u32) -> u64 {
+    use crate::ValueMeta;
+    
+    unsafe {
+        let gc = &mut *gc;
+        let value_meta = ValueMeta::from_raw(meta);
+        gc.alloc(value_meta, slots as u16) as u64
+    }
 }
 
 /// Write barrier for GC.
@@ -218,10 +226,205 @@ pub extern "C" fn vo_call_vm(
 /// # Safety
 /// - `ctx` must be a valid pointer to JitContext
 #[no_mangle]
-pub extern "C" fn vo_panic(_ctx: *mut JitContext, _msg: u64) {
-    // TODO: Implement
-    // 1. Set panic_flag to true
-    // 2. Store panic message in fiber
+pub extern "C" fn vo_panic(ctx: *mut JitContext, _msg: u64) {
+    unsafe {
+        let ctx = &mut *ctx;
+        *ctx.panic_flag = true;
+    }
+}
+
+/// Call a closure from JIT code.
+///
+/// # Arguments
+/// - `ctx`: JIT context
+/// - `closure_ref`: GcRef to the closure object
+/// - `args`: Pointer to argument slots (closure_ref is NOT included)
+/// - `arg_count`: Number of argument slots
+/// - `ret`: Pointer to return value slots
+/// - `ret_count`: Number of return value slots
+///
+/// # Returns
+/// - `JitResult::Ok` if function completed normally
+/// - `JitResult::Panic` if function panicked
+#[no_mangle]
+pub extern "C" fn vo_call_closure(
+    ctx: *mut JitContext,
+    closure_ref: u64,
+    args: *const u64,
+    arg_count: u32,
+    ret: *mut u64,
+    ret_count: u32,
+) -> JitResult {
+    use crate::objects::closure;
+    
+    let ctx_ref = unsafe { &*ctx };
+    let func_id = closure::func_id(closure_ref as crate::gc::GcRef);
+    
+    // Prepare args with closure as first slot
+    let mut full_args = vec![closure_ref];
+    for i in 0..arg_count {
+        full_args.push(unsafe { *args.add(i as usize) });
+    }
+    
+    let call_fn = match ctx_ref.call_vm_fn {
+        Some(f) => f,
+        None => return JitResult::Panic,
+    };
+    
+    call_fn(
+        ctx_ref.vm,
+        ctx_ref.fiber,
+        func_id,
+        full_args.as_ptr(),
+        (arg_count + 1),
+        ret,
+        ret_count,
+    )
+}
+
+/// Call an interface method from JIT code.
+///
+/// # Arguments
+/// - `ctx`: JIT context
+/// - `iface_slot0`: Interface slot0 (itab_id << 32 | value_meta)
+/// - `iface_slot1`: Interface slot1 (data: immediate or GcRef)
+/// - `method_idx`: Method index in the interface
+/// - `args`: Pointer to argument slots (receiver is NOT included)
+/// - `arg_count`: Number of argument slots (excluding receiver)
+/// - `ret`: Pointer to return value slots
+/// - `ret_count`: Number of return value slots
+///
+/// # Returns
+/// - `JitResult::Ok` if function completed normally
+/// - `JitResult::Panic` if function panicked
+#[no_mangle]
+pub extern "C" fn vo_call_iface(
+    ctx: *mut JitContext,
+    iface_slot0: u64,
+    iface_slot1: u64,
+    method_idx: u32,
+    args: *const u64,
+    arg_count: u32,
+    ret: *mut u64,
+    ret_count: u32,
+    _func_id_hint: u32, // Reserved for future optimization
+) -> JitResult {
+    let ctx_ref = unsafe { &*ctx };
+    
+    // Extract itab_id from slot0 (high 32 bits)
+    let itab_id = (iface_slot0 >> 32) as u32;
+    
+    // Lookup func_id from itab
+    let func_id = match ctx_ref.itab_lookup_fn {
+        Some(lookup) => lookup(ctx_ref.itabs, itab_id, method_idx),
+        None => return JitResult::Panic, // No lookup function registered
+    };
+    
+    // Prepare args with receiver as first slot
+    let mut full_args = vec![iface_slot1];
+    for i in 0..arg_count {
+        full_args.push(unsafe { *args.add(i as usize) });
+    }
+    
+    let call_fn = match ctx_ref.call_vm_fn {
+        Some(f) => f,
+        None => return JitResult::Panic,
+    };
+    
+    call_fn(
+        ctx_ref.vm,
+        ctx_ref.fiber,
+        func_id,
+        full_args.as_ptr(),
+        arg_count + 1,
+        ret,
+        ret_count,
+    )
+}
+
+// =============================================================================
+// Map Helpers
+// =============================================================================
+
+/// Create a new map.
+#[no_mangle]
+pub extern "C" fn vo_map_new(gc: *mut Gc, key_meta: u32, val_meta: u32, key_slots: u32, val_slots: u32) -> u64 {
+    use crate::objects::map;
+    use crate::ValueMeta;
+    unsafe {
+        let gc = &mut *gc;
+        map::create(gc, ValueMeta::from_raw(key_meta), ValueMeta::from_raw(val_meta), key_slots as u16, val_slots as u16) as u64
+    }
+}
+
+/// Get map length.
+#[no_mangle]
+pub extern "C" fn vo_map_len(m: u64) -> u64 {
+    use crate::objects::map;
+    if m == 0 { return 0; }
+    map::len(m as crate::gc::GcRef) as u64
+}
+
+/// Get value from map. Returns pointer to value slots, or null if not found.
+/// key_ptr points to key_slots u64 values.
+/// val_ptr is output buffer for val_slots u64 values.
+/// Returns 1 if found, 0 if not found.
+#[no_mangle]
+pub extern "C" fn vo_map_get(m: u64, key_ptr: *const u64, key_slots: u32, val_ptr: *mut u64, val_slots: u32) -> u64 {
+    use crate::objects::map;
+    if m == 0 { return 0; }
+    
+    let key = unsafe { core::slice::from_raw_parts(key_ptr, key_slots as usize) };
+    let (val_opt, ok) = map::get_with_ok(m as crate::gc::GcRef, key);
+    
+    if let Some(val) = val_opt {
+        let copy_len = (val_slots as usize).min(val.len());
+        unsafe {
+            core::ptr::copy_nonoverlapping(val.as_ptr(), val_ptr, copy_len);
+        }
+    }
+    ok as u64
+}
+
+/// Set value in map.
+#[no_mangle]
+pub extern "C" fn vo_map_set(m: u64, key_ptr: *const u64, key_slots: u32, val_ptr: *const u64, val_slots: u32) {
+    use crate::objects::map;
+    if m == 0 { return; }
+    
+    let key = unsafe { core::slice::from_raw_parts(key_ptr, key_slots as usize) };
+    let val = unsafe { core::slice::from_raw_parts(val_ptr, val_slots as usize) };
+    map::set(m as crate::gc::GcRef, key, val);
+}
+
+/// Delete key from map.
+#[no_mangle]
+pub extern "C" fn vo_map_delete(m: u64, key_ptr: *const u64, key_slots: u32) {
+    use crate::objects::map;
+    if m == 0 { return; }
+    
+    let key = unsafe { core::slice::from_raw_parts(key_ptr, key_slots as usize) };
+    map::delete(m as crate::gc::GcRef, key);
+}
+
+/// Get key-value by index for iteration.
+/// Returns 1 if valid entry exists, 0 if end of map.
+#[no_mangle]
+pub extern "C" fn vo_map_iter_get(m: u64, idx: u64, key_ptr: *mut u64, key_slots: u32, val_ptr: *mut u64, val_slots: u32) -> u64 {
+    use crate::objects::map;
+    if m == 0 { return 0; }
+    
+    if let Some((key, val)) = map::iter_at(m as crate::gc::GcRef, idx as usize) {
+        let key_copy = (key_slots as usize).min(key.len());
+        let val_copy = (val_slots as usize).min(val.len());
+        unsafe {
+            core::ptr::copy_nonoverlapping(key.as_ptr(), key_ptr, key_copy);
+            core::ptr::copy_nonoverlapping(val.as_ptr(), val_ptr, val_copy);
+        }
+        1
+    } else {
+        0
+    }
 }
 
 // =============================================================================
@@ -261,16 +464,199 @@ pub extern "C" fn vo_map_iter_next(
 ///
 /// # Returns
 /// Packed value: `(rune << 32) | width`
-/// - `rune`: The decoded Unicode code point (or replacement char on error)
-/// - `width`: Number of bytes consumed (1-4)
-///
-/// # Safety
-/// - `s` must be a valid string GcRef
-/// - `pos` must be within string bounds
 #[no_mangle]
-pub extern "C" fn vo_str_decode_rune(_s: u64, _pos: u64) -> u64 {
-    // TODO: Implement
-    todo!("vo_str_decode_rune not yet implemented")
+pub extern "C" fn vo_str_decode_rune(s: u64, pos: u64) -> u64 {
+    use crate::objects::string;
+    let (rune, width) = string::decode_rune_at(s as crate::gc::GcRef, pos as usize);
+    ((rune as u64) << 32) | (width as u64)
+}
+
+/// Get string length.
+#[no_mangle]
+pub extern "C" fn vo_str_len(s: u64) -> u64 {
+    use crate::objects::string;
+    string::len(s as crate::gc::GcRef) as u64
+}
+
+/// Get byte at index.
+#[no_mangle]
+pub extern "C" fn vo_str_index(s: u64, idx: u64) -> u64 {
+    use crate::objects::string;
+    string::index(s as crate::gc::GcRef, idx as usize) as u64
+}
+
+/// Concatenate two strings.
+#[no_mangle]
+pub extern "C" fn vo_str_concat(gc: *mut Gc, a: u64, b: u64) -> u64 {
+    use crate::objects::string;
+    unsafe {
+        let gc = &mut *gc;
+        string::concat(gc, a as crate::gc::GcRef, b as crate::gc::GcRef) as u64
+    }
+}
+
+/// Create string slice.
+#[no_mangle]
+pub extern "C" fn vo_str_slice(gc: *mut Gc, s: u64, lo: u64, hi: u64) -> u64 {
+    use crate::objects::string;
+    unsafe {
+        let gc = &mut *gc;
+        string::slice_of(gc, s as crate::gc::GcRef, lo as usize, hi as usize) as u64
+    }
+}
+
+/// Compare strings for equality.
+#[no_mangle]
+pub extern "C" fn vo_str_eq(a: u64, b: u64) -> u64 {
+    use crate::objects::string;
+    string::eq(a as crate::gc::GcRef, b as crate::gc::GcRef) as u64
+}
+
+/// Compare strings.
+#[no_mangle]
+pub extern "C" fn vo_str_cmp(a: u64, b: u64) -> i32 {
+    use crate::objects::string;
+    string::cmp(a as crate::gc::GcRef, b as crate::gc::GcRef)
+}
+
+/// Create string from constant index.
+#[no_mangle]
+pub extern "C" fn vo_str_new(gc: *mut Gc, data: *const u8, len: u64) -> u64 {
+    use crate::objects::string;
+    unsafe {
+        let gc = &mut *gc;
+        let bytes = core::slice::from_raw_parts(data, len as usize);
+        string::create(gc, bytes) as u64
+    }
+}
+
+// =============================================================================
+// Interface Helpers
+// =============================================================================
+
+/// Pack interface slot0: (itab_id << 32) | (rttid << 8) | value_kind
+#[no_mangle]
+pub extern "C" fn vo_iface_pack_slot0(itab_id: u32, rttid: u32, vk: u8) -> u64 {
+    ((itab_id as u64) << 32) | ((rttid as u64) << 8) | (vk as u64)
+}
+
+/// Clone a GcRef (deep copy for value semantics).
+#[no_mangle]
+pub extern "C" fn vo_ptr_clone(gc: *mut Gc, ptr: u64) -> u64 {
+    if ptr == 0 {
+        return 0;
+    }
+    unsafe {
+        let gc = &mut *gc;
+        gc.ptr_clone(ptr as crate::gc::GcRef) as u64
+    }
+}
+
+// =============================================================================
+// Array Helpers
+// =============================================================================
+
+/// Create a new array.
+/// Returns GcRef to array data (after ArrayHeader).
+#[no_mangle]
+pub extern "C" fn vo_array_new(gc: *mut Gc, elem_meta: u32, elem_slots: u32, len: u64) -> u64 {
+    use crate::objects::array;
+    use crate::ValueMeta;
+    unsafe {
+        let gc = &mut *gc;
+        array::create(gc, ValueMeta::from_raw(elem_meta), elem_slots as usize, len as usize) as u64
+    }
+}
+
+/// Get element from array.
+/// Returns the value at arr[slot_offset].
+#[no_mangle]
+pub extern "C" fn vo_array_get(arr: u64, slot_offset: u64) -> u64 {
+    use crate::objects::array;
+    array::get(arr as crate::gc::GcRef, slot_offset as usize)
+}
+
+/// Set element in array.
+#[no_mangle]
+pub extern "C" fn vo_array_set(arr: u64, slot_offset: u64, val: u64) {
+    use crate::objects::array;
+    array::set(arr as crate::gc::GcRef, slot_offset as usize, val);
+}
+
+// =============================================================================
+// Slice Helpers
+// =============================================================================
+
+/// Create a new slice.
+#[no_mangle]
+pub extern "C" fn vo_slice_new(gc: *mut Gc, elem_meta: u32, elem_slots: u32, len: u64, cap: u64) -> u64 {
+    use crate::objects::slice;
+    use crate::ValueMeta;
+    unsafe {
+        let gc = &mut *gc;
+        slice::create(gc, ValueMeta::from_raw(elem_meta), elem_slots as usize, len as usize, cap as usize) as u64
+    }
+}
+
+/// Get slice length.
+#[no_mangle]
+pub extern "C" fn vo_slice_len(s: u64) -> u64 {
+    use crate::objects::slice;
+    slice::len(s as crate::gc::GcRef) as u64
+}
+
+/// Get slice capacity.
+#[no_mangle]
+pub extern "C" fn vo_slice_cap(s: u64) -> u64 {
+    use crate::objects::slice;
+    slice::cap(s as crate::gc::GcRef) as u64
+}
+
+/// Get element from slice.
+#[no_mangle]
+pub extern "C" fn vo_slice_get(s: u64, slot_offset: u64) -> u64 {
+    use crate::objects::slice;
+    slice::get(s as crate::gc::GcRef, slot_offset as usize)
+}
+
+/// Set element in slice.
+#[no_mangle]
+pub extern "C" fn vo_slice_set(s: u64, slot_offset: u64, val: u64) {
+    use crate::objects::slice;
+    slice::set(s as crate::gc::GcRef, slot_offset as usize, val);
+}
+
+/// Create a sub-slice (two-index: s[lo:hi]).
+#[no_mangle]
+pub extern "C" fn vo_slice_slice(gc: *mut Gc, s: u64, lo: u64, hi: u64) -> u64 {
+    use crate::objects::slice;
+    unsafe {
+        let gc = &mut *gc;
+        slice::slice_of(gc, s as crate::gc::GcRef, lo as usize, hi as usize) as u64
+    }
+}
+
+/// Create a sub-slice with cap (three-index: s[lo:hi:max]).
+#[no_mangle]
+pub extern "C" fn vo_slice_slice3(gc: *mut Gc, s: u64, lo: u64, hi: u64, max: u64) -> u64 {
+    use crate::objects::slice;
+    unsafe {
+        let gc = &mut *gc;
+        slice::slice_of_with_cap(gc, s as crate::gc::GcRef, lo as usize, hi as usize, max as usize) as u64
+    }
+}
+
+/// Append single element to slice.
+/// val_ptr points to elem_slots u64 values.
+#[no_mangle]
+pub extern "C" fn vo_slice_append(gc: *mut Gc, elem_meta: u32, elem_slots: u32, s: u64, val_ptr: *const u64) -> u64 {
+    use crate::objects::slice;
+    use crate::ValueMeta;
+    unsafe {
+        let gc = &mut *gc;
+        let val = core::slice::from_raw_parts(val_ptr, elem_slots as usize);
+        slice::append(gc, ValueMeta::from_raw(elem_meta), elem_slots as usize, s as crate::gc::GcRef, val) as u64
+    }
 }
 
 // =============================================================================
@@ -287,8 +673,36 @@ pub fn get_runtime_symbols() -> &'static [(&'static str, *const u8)] {
         ("vo_gc_write_barrier", vo_gc_write_barrier as *const u8),
         ("vo_gc_safepoint", vo_gc_safepoint as *const u8),
         ("vo_call_vm", vo_call_vm as *const u8),
+        ("vo_call_closure", vo_call_closure as *const u8),
+        ("vo_call_iface", vo_call_iface as *const u8),
         ("vo_panic", vo_panic as *const u8),
         ("vo_map_iter_next", vo_map_iter_next as *const u8),
+        ("vo_str_new", vo_str_new as *const u8),
+        ("vo_str_len", vo_str_len as *const u8),
+        ("vo_str_index", vo_str_index as *const u8),
+        ("vo_str_concat", vo_str_concat as *const u8),
+        ("vo_str_slice", vo_str_slice as *const u8),
+        ("vo_str_eq", vo_str_eq as *const u8),
+        ("vo_str_cmp", vo_str_cmp as *const u8),
         ("vo_str_decode_rune", vo_str_decode_rune as *const u8),
+        ("vo_array_new", vo_array_new as *const u8),
+        ("vo_array_get", vo_array_get as *const u8),
+        ("vo_array_set", vo_array_set as *const u8),
+        ("vo_slice_new", vo_slice_new as *const u8),
+        ("vo_slice_len", vo_slice_len as *const u8),
+        ("vo_slice_cap", vo_slice_cap as *const u8),
+        ("vo_slice_get", vo_slice_get as *const u8),
+        ("vo_slice_set", vo_slice_set as *const u8),
+        ("vo_slice_slice", vo_slice_slice as *const u8),
+        ("vo_slice_slice3", vo_slice_slice3 as *const u8),
+        ("vo_slice_append", vo_slice_append as *const u8),
+        ("vo_iface_pack_slot0", vo_iface_pack_slot0 as *const u8),
+        ("vo_ptr_clone", vo_ptr_clone as *const u8),
+        ("vo_map_new", vo_map_new as *const u8),
+        ("vo_map_len", vo_map_len as *const u8),
+        ("vo_map_get", vo_map_get as *const u8),
+        ("vo_map_set", vo_map_set as *const u8),
+        ("vo_map_delete", vo_map_delete as *const u8),
+        ("vo_map_iter_get", vo_map_iter_get as *const u8),
     ]
 }

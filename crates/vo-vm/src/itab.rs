@@ -95,4 +95,9 @@ impl ItabCache {
     pub fn lookup_method(&self, itab_id: u32, method_idx: usize) -> u32 {
         self.itabs[itab_id as usize].methods[method_idx]
     }
+
+    /// Get pointer to itabs slice for JIT context.
+    pub fn itabs_ptr(&self) -> *const core::ffi::c_void {
+        self.itabs.as_ptr() as *const core::ffi::c_void
+    }
 }

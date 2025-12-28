@@ -51,6 +51,47 @@ pub struct FunctionCompiler<'a> {
     pub(crate) safepoint_func: Option<FuncRef>,
     /// FuncRef for vo_call_vm runtime helper.
     pub(crate) call_vm_func: Option<FuncRef>,
+    /// FuncRef for vo_gc_alloc runtime helper.
+    pub(crate) gc_alloc_func: Option<FuncRef>,
+    /// FuncRef for vo_call_closure runtime helper.
+    pub(crate) call_closure_func: Option<FuncRef>,
+    /// FuncRef for vo_call_iface runtime helper.
+    pub(crate) call_iface_func: Option<FuncRef>,
+    /// String helper FuncRefs.
+    pub(crate) str_funcs: StringFuncs,
+    /// Map helper FuncRefs.
+    pub(crate) map_funcs: MapFuncs,
+    /// Misc helper FuncRefs.
+    pub(crate) misc_funcs: MiscFuncs,
+}
+
+/// FuncRefs for string operations.
+#[derive(Default, Clone, Copy)]
+pub struct StringFuncs {
+    pub str_new: Option<FuncRef>,
+    pub str_len: Option<FuncRef>,
+    pub str_index: Option<FuncRef>,
+    pub str_concat: Option<FuncRef>,
+    pub str_slice: Option<FuncRef>,
+    pub str_eq: Option<FuncRef>,
+    pub str_cmp: Option<FuncRef>,
+    pub str_decode_rune: Option<FuncRef>,
+}
+
+/// FuncRefs for map operations.
+#[derive(Default, Clone, Copy)]
+pub struct MapFuncs {
+    pub map_new: Option<FuncRef>,
+    pub map_len: Option<FuncRef>,
+    pub map_get: Option<FuncRef>,
+    pub map_set: Option<FuncRef>,
+    pub map_delete: Option<FuncRef>,
+}
+
+/// FuncRef for ptr_clone (deep copy).
+#[derive(Default, Clone, Copy)]
+pub struct MiscFuncs {
+    pub ptr_clone: Option<FuncRef>,
 }
 
 impl<'a> FunctionCompiler<'a> {
@@ -68,6 +109,12 @@ impl<'a> FunctionCompiler<'a> {
         vo_module: &'a VoModule,
         safepoint_func: Option<FuncRef>,
         call_vm_func: Option<FuncRef>,
+        gc_alloc_func: Option<FuncRef>,
+        call_closure_func: Option<FuncRef>,
+        call_iface_func: Option<FuncRef>,
+        str_funcs: StringFuncs,
+        map_funcs: MapFuncs,
+        misc_funcs: MiscFuncs,
     ) -> Self {
         let mut builder = FunctionBuilder::new(func, func_ctx);
         
@@ -89,6 +136,12 @@ impl<'a> FunctionCompiler<'a> {
             current_pc: 0,
             safepoint_func,
             call_vm_func,
+            gc_alloc_func,
+            call_closure_func,
+            call_iface_func,
+            str_funcs,
+            map_funcs,
+            misc_funcs,
         }
     }
 
@@ -412,6 +465,30 @@ impl<'a> FunctionCompiler<'a> {
 
     pub(crate) fn get_ret_param(&mut self) -> Value {
         self.builder.block_params(self.entry_block)[2]
+    }
+
+    /// Load globals pointer from JitContext.
+    /// JitContext layout: gc(0), globals(8), safepoint_flag(16), ...
+    pub(crate) fn load_globals_ptr(&mut self) -> Value {
+        let ctx = self.get_ctx_param();
+        self.builder.ins().load(
+            types::I64,
+            cranelift_codegen::ir::MemFlags::trusted(),
+            ctx,
+            8, // offset to globals
+        )
+    }
+
+    /// Load GC pointer from JitContext.
+    /// JitContext layout: gc(0), globals(8), safepoint_flag(16), ...
+    pub(crate) fn load_gc_ptr(&mut self) -> Value {
+        let ctx = self.get_ctx_param();
+        self.builder.ins().load(
+            types::I64,
+            cranelift_codegen::ir::MemFlags::trusted(),
+            ctx,
+            0, // offset to gc
+        )
     }
 
     /// Emit a safepoint check (for GC).

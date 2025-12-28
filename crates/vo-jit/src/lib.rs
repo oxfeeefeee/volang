@@ -197,6 +197,22 @@ impl JitCompiler {
         builder.symbol("vo_gc_alloc", vo_runtime::jit_api::vo_gc_alloc as *const u8);
         builder.symbol("vo_gc_write_barrier", vo_runtime::jit_api::vo_gc_write_barrier as *const u8);
         builder.symbol("vo_call_vm", vo_runtime::jit_api::vo_call_vm as *const u8);
+        builder.symbol("vo_call_closure", vo_runtime::jit_api::vo_call_closure as *const u8);
+        builder.symbol("vo_call_iface", vo_runtime::jit_api::vo_call_iface as *const u8);
+        builder.symbol("vo_str_new", vo_runtime::jit_api::vo_str_new as *const u8);
+        builder.symbol("vo_str_len", vo_runtime::jit_api::vo_str_len as *const u8);
+        builder.symbol("vo_str_index", vo_runtime::jit_api::vo_str_index as *const u8);
+        builder.symbol("vo_str_concat", vo_runtime::jit_api::vo_str_concat as *const u8);
+        builder.symbol("vo_str_slice", vo_runtime::jit_api::vo_str_slice as *const u8);
+        builder.symbol("vo_str_eq", vo_runtime::jit_api::vo_str_eq as *const u8);
+        builder.symbol("vo_str_cmp", vo_runtime::jit_api::vo_str_cmp as *const u8);
+        builder.symbol("vo_str_decode_rune", vo_runtime::jit_api::vo_str_decode_rune as *const u8);
+        builder.symbol("vo_map_new", vo_runtime::jit_api::vo_map_new as *const u8);
+        builder.symbol("vo_map_len", vo_runtime::jit_api::vo_map_len as *const u8);
+        builder.symbol("vo_map_get", vo_runtime::jit_api::vo_map_get as *const u8);
+        builder.symbol("vo_map_set", vo_runtime::jit_api::vo_map_set as *const u8);
+        builder.symbol("vo_map_delete", vo_runtime::jit_api::vo_map_delete as *const u8);
+        builder.symbol("vo_ptr_clone", vo_runtime::jit_api::vo_ptr_clone as *const u8);
 
         let module = JITModule::new(builder);
         let ctx = module.make_context();
@@ -303,11 +319,159 @@ impl JitCompiler {
             &call_vm_sig,
         )?;
         
+        // vo_gc_alloc(gc, meta, slots) -> GcRef (u64)
+        let gc_alloc_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type)); // gc: *mut Gc
+            sig.params.push(AbiParam::new(types::I32)); // meta: u32
+            sig.params.push(AbiParam::new(types::I32)); // slots: u32
+            sig.returns.push(AbiParam::new(types::I64)); // GcRef
+            sig
+        };
+        let gc_alloc_id = self.module.declare_function(
+            "vo_gc_alloc",
+            cranelift_module::Linkage::Import,
+            &gc_alloc_sig,
+        )?;
+        
+        // vo_call_closure(ctx, closure_ref, args, arg_count, ret, ret_count) -> JitResult
+        let call_closure_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type)); // ctx
+            sig.params.push(AbiParam::new(types::I64)); // closure_ref
+            sig.params.push(AbiParam::new(ptr_type)); // args
+            sig.params.push(AbiParam::new(types::I32)); // arg_count
+            sig.params.push(AbiParam::new(ptr_type)); // ret
+            sig.params.push(AbiParam::new(types::I32)); // ret_count
+            sig.returns.push(AbiParam::new(types::I32)); // JitResult
+            sig
+        };
+        let call_closure_id = self.module.declare_function(
+            "vo_call_closure",
+            cranelift_module::Linkage::Import,
+            &call_closure_sig,
+        )?;
+        
+        // vo_call_iface(ctx, slot0, slot1, method_idx, args, arg_count, ret, ret_count, func_id) -> JitResult
+        let call_iface_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type)); // ctx
+            sig.params.push(AbiParam::new(types::I64)); // iface_slot0
+            sig.params.push(AbiParam::new(types::I64)); // iface_slot1
+            sig.params.push(AbiParam::new(types::I32)); // method_idx
+            sig.params.push(AbiParam::new(ptr_type)); // args
+            sig.params.push(AbiParam::new(types::I32)); // arg_count
+            sig.params.push(AbiParam::new(ptr_type)); // ret
+            sig.params.push(AbiParam::new(types::I32)); // ret_count
+            sig.params.push(AbiParam::new(types::I32)); // func_id (pre-resolved)
+            sig.returns.push(AbiParam::new(types::I32)); // JitResult
+            sig
+        };
+        let call_iface_id = self.module.declare_function(
+            "vo_call_iface",
+            cranelift_module::Linkage::Import,
+            &call_iface_sig,
+        )?;
+        
+        // Declare string helper functions
+        let str_new_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type)); // gc
+            sig.params.push(AbiParam::new(ptr_type)); // data
+            sig.params.push(AbiParam::new(types::I64)); // len
+            sig.returns.push(AbiParam::new(types::I64)); // GcRef
+            sig
+        };
+        let str_new_id = self.module.declare_function("vo_str_new", cranelift_module::Linkage::Import, &str_new_sig)?;
+        
+        let str_len_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(types::I64)); // s
+            sig.returns.push(AbiParam::new(types::I64)); // len
+            sig
+        };
+        let str_len_id = self.module.declare_function("vo_str_len", cranelift_module::Linkage::Import, &str_len_sig)?;
+        
+        let str_index_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(types::I64)); // s
+            sig.params.push(AbiParam::new(types::I64)); // idx
+            sig.returns.push(AbiParam::new(types::I64)); // byte
+            sig
+        };
+        let str_index_id = self.module.declare_function("vo_str_index", cranelift_module::Linkage::Import, &str_index_sig)?;
+        
+        let str_concat_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type)); // gc
+            sig.params.push(AbiParam::new(types::I64)); // a
+            sig.params.push(AbiParam::new(types::I64)); // b
+            sig.returns.push(AbiParam::new(types::I64)); // result
+            sig
+        };
+        let str_concat_id = self.module.declare_function("vo_str_concat", cranelift_module::Linkage::Import, &str_concat_sig)?;
+        
+        let str_slice_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type)); // gc
+            sig.params.push(AbiParam::new(types::I64)); // s
+            sig.params.push(AbiParam::new(types::I64)); // lo
+            sig.params.push(AbiParam::new(types::I64)); // hi
+            sig.returns.push(AbiParam::new(types::I64)); // result
+            sig
+        };
+        let str_slice_id = self.module.declare_function("vo_str_slice", cranelift_module::Linkage::Import, &str_slice_sig)?;
+        
+        let str_eq_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(types::I64)); // a
+            sig.params.push(AbiParam::new(types::I64)); // b
+            sig.returns.push(AbiParam::new(types::I64)); // result
+            sig
+        };
+        let str_eq_id = self.module.declare_function("vo_str_eq", cranelift_module::Linkage::Import, &str_eq_sig)?;
+        
+        let str_cmp_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(types::I64)); // a
+            sig.params.push(AbiParam::new(types::I64)); // b
+            sig.returns.push(AbiParam::new(types::I32)); // result
+            sig
+        };
+        let str_cmp_id = self.module.declare_function("vo_str_cmp", cranelift_module::Linkage::Import, &str_cmp_sig)?;
+        
+        let str_decode_rune_sig = {
+            let mut sig = Signature::new(self.module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(types::I64)); // s
+            sig.params.push(AbiParam::new(types::I64)); // pos
+            sig.returns.push(AbiParam::new(types::I64)); // (rune << 32) | width
+            sig
+        };
+        let str_decode_rune_id = self.module.declare_function("vo_str_decode_rune", cranelift_module::Linkage::Import, &str_decode_rune_sig)?;
+        
         // 5. Build function IR using FunctionCompiler
         let mut func_ctx = FunctionBuilderContext::new();
         {
             let safepoint_func = self.module.declare_func_in_func(safepoint_id, &mut self.ctx.func);
             let call_vm_func = self.module.declare_func_in_func(call_vm_id, &mut self.ctx.func);
+            let gc_alloc_func = self.module.declare_func_in_func(gc_alloc_id, &mut self.ctx.func);
+            let call_closure_func = self.module.declare_func_in_func(call_closure_id, &mut self.ctx.func);
+            let call_iface_func = self.module.declare_func_in_func(call_iface_id, &mut self.ctx.func);
+            
+            let str_funcs = crate::compiler::StringFuncs {
+                str_new: Some(self.module.declare_func_in_func(str_new_id, &mut self.ctx.func)),
+                str_len: Some(self.module.declare_func_in_func(str_len_id, &mut self.ctx.func)),
+                str_index: Some(self.module.declare_func_in_func(str_index_id, &mut self.ctx.func)),
+                str_concat: Some(self.module.declare_func_in_func(str_concat_id, &mut self.ctx.func)),
+                str_slice: Some(self.module.declare_func_in_func(str_slice_id, &mut self.ctx.func)),
+                str_eq: Some(self.module.declare_func_in_func(str_eq_id, &mut self.ctx.func)),
+                str_cmp: Some(self.module.declare_func_in_func(str_cmp_id, &mut self.ctx.func)),
+                str_decode_rune: Some(self.module.declare_func_in_func(str_decode_rune_id, &mut self.ctx.func)),
+            };
+            
+            let map_funcs = crate::compiler::MapFuncs::default();
+            let misc_funcs = crate::compiler::MiscFuncs::default();
+            
             let compiler = FunctionCompiler::new(
                 &mut self.ctx.func,
                 &mut func_ctx,
@@ -315,6 +479,12 @@ impl JitCompiler {
                 vo_module,
                 Some(safepoint_func),
                 Some(call_vm_func),
+                Some(gc_alloc_func),
+                Some(call_closure_func),
+                Some(call_iface_func),
+                str_funcs,
+                map_funcs,
+                misc_funcs,
             );
             let stack_map = compiler.compile()?;
             
@@ -401,6 +571,8 @@ mod tests {
                 vm: std::ptr::null_mut(),
                 fiber: std::ptr::null_mut(),
                 call_vm_fn: None, // No VM callback in unit tests
+                itabs: std::ptr::null(),
+                itab_lookup_fn: None,
             }
         }
     }

@@ -19,6 +19,20 @@ use vo_jit::JitCompiler;
 #[cfg(feature = "jit")]
 use vo_runtime::jit_api::JitResult;
 
+/// Itab lookup trampoline for JIT -> VM itab lookup.
+#[cfg(feature = "jit")]
+extern "C" fn itab_lookup_trampoline(
+    itabs: *const std::ffi::c_void,
+    itab_id: u32,
+    method_idx: u32,
+) -> u32 {
+    unsafe {
+        let itabs = itabs as *const crate::bytecode::Itab;
+        let itab = &*itabs.add(itab_id as usize);
+        itab.methods[method_idx as usize]
+    }
+}
+
 /// VM call trampoline for JIT -> VM calls.
 /// This function is called by vo_call_vm when JIT code needs to call another function.
 #[cfg(feature = "jit")]
@@ -276,6 +290,8 @@ impl Vm {
             vm: self as *mut _ as *mut std::ffi::c_void,
             fiber: fiber_ptr as *mut std::ffi::c_void,
             call_vm_fn: Some(vm_call_trampoline),
+            itabs: self.state.itab_cache.itabs_ptr(),
+            itab_lookup_fn: Some(itab_lookup_trampoline),
         };
         
         // Call JIT function
