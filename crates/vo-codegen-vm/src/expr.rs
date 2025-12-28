@@ -287,9 +287,62 @@ pub fn compile_expr_to(
 
         // === Try unwrap (?) ===
         ExprKind::TryUnwrap(inner) => {
-            // Compile inner expression, then check for error
-            // For now, just compile the inner expression
-            compile_expr_to(inner, dst, ctx, func, info)?;
+            // ? operator: check error and propagate if non-nil
+            // Inner expression returns (values..., error) tuple
+            // If error != nil, fail with that error
+            // If error == nil, result is the values without error
+            
+            let inner_type = info.expr_type(inner.id);
+            let inner_slots = info.type_slot_count(inner_type);
+            
+            // Compile inner expression to temp
+            let inner_start = func.alloc_temp(inner_slots);
+            compile_expr_to(inner, inner_start, ctx, func, info)?;
+            
+            // Get error type info (last element, always interface = 2 slots)
+            let error_slots = 2u16;
+            let error_start = inner_start + inner_slots - error_slots;
+            
+            // Check if error is nil: IsNil checks if slot0 == 0
+            let is_nil_reg = func.alloc_temp(1);
+            func.emit_op(Opcode::IsNil, is_nil_reg, error_start, 0);
+            
+            // If error is nil, skip the fail path
+            let skip_fail_jump = func.emit_jump(Opcode::JumpIf, is_nil_reg);
+            
+            // === Fail path: error != nil ===
+            // Get function's return types and emit fail-style return
+            let ret_types: Vec<_> = func.return_types().to_vec();
+            let mut total_ret_slots = 0u16;
+            for ret_type in &ret_types {
+                total_ret_slots += info.type_slot_count(*ret_type);
+            }
+            
+            let ret_start = func.alloc_temp(total_ret_slots);
+            
+            // Initialize all slots to zero/nil
+            for i in 0..total_ret_slots {
+                func.emit_op(Opcode::LoadNil, ret_start + i, 0, 0);
+            }
+            
+            // Copy the error to the last return slot(s)
+            if !ret_types.is_empty() {
+                let ret_error_slots = info.type_slot_count(*ret_types.last().unwrap());
+                let ret_error_start = ret_start + total_ret_slots - ret_error_slots;
+                func.emit_copy(ret_error_start, error_start, ret_error_slots);
+            }
+            
+            // flags bit 0 = 1 indicates error return (for errdefer)
+            func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
+            
+            // === Success path: error == nil ===
+            func.patch_jump(skip_fail_jump, func.current_pc());
+            
+            // Copy non-error values to dst
+            let value_slots = inner_slots - error_slots;
+            if value_slots > 0 {
+                func.emit_copy(dst, inner_start, value_slots);
+            }
         }
 
         // === Call expression ===

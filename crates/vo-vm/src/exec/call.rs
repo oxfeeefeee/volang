@@ -106,6 +106,8 @@ pub fn exec_return(
     if let Some(ref mut state) = fiber.defer_state {
         // A defer just finished, check if more to execute
         if let Some(entry) = state.pending.pop() {
+            // Pop the current defer frame before calling next defer
+            fiber.pop_frame();
             // Execute next defer
             return call_defer_entry(fiber, &entry, module);
         } else {
@@ -114,6 +116,9 @@ pub fn exec_return(
             let caller_ret_reg = state.caller_ret_reg;
             let caller_ret_count = state.caller_ret_count;
             fiber.defer_state = None;
+
+            // Pop the defer frame before writing to caller's registers
+            fiber.pop_frame();
 
             if fiber.frames.is_empty() {
                 return ExecResult::Done;

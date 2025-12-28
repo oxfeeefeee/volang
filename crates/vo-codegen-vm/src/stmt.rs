@@ -908,7 +908,8 @@ fn compile_stmt_with_label(
                 compile_value_to(&fail_stmt.error, error_start, error_type, ctx, func, info)?;
             }
             
-            func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
+            // flags bit 0 = 1 indicates error return (for errdefer)
+            func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
         }
 
         // === Goto ===

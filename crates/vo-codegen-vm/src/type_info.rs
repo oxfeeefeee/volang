@@ -55,6 +55,16 @@ impl<'a> TypeInfoWrapper<'a> {
         matches!(&self.tc_objs().types[underlying], Type::Tuple(_))
     }
 
+    /// Get the number of elements in a tuple type
+    pub fn tuple_len(&self, type_key: TypeKey) -> usize {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Tuple(tuple) = &self.tc_objs().types[underlying] {
+            tuple.vars().len()
+        } else {
+            panic!("tuple_len: not a tuple type")
+        }
+    }
+
     pub fn expr_type_raw(&self, expr_id: ExprId) -> TypeKey {
         self.project.type_info.types.get(&expr_id)
             .map(|tv| tv.typ)

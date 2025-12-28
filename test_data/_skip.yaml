@@ -277,11 +277,10 @@ skips:
   - file: fail_stmt.vo
     skip: [jit]
   - file: question_operator.vo
-    skip: [vm, jit]
-    reason: "? operator PanicUnwound issue - separate from global var fix"
+    skip: [jit]
   - file: errdefer_stmt.vo
     skip: [vm, jit]
-    reason: "errdefer PanicUnwound issue - separate from global var fix"
+    reason: "errdefer method call codegen not implemented"
   # Debug nil interface test
   - file: debug_nil_interface.vo
     skip: [jit]
