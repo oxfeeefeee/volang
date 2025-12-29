@@ -293,6 +293,21 @@ pub fn type_slot_types(type_key: TypeKey, tc_objs: &TCObjects) -> Vec<SlotType> 
     }
 }
 
+/// Calculate the byte size for heap array/slice elements.
+/// Packed types (bool, int8-32, float32) use actual byte size.
+/// Other types use slot-based storage (slots * 8).
+pub fn elem_bytes_for_heap(elem_type: TypeKey, tc_objs: &TCObjects) -> usize {
+    let vk = type_value_kind(elem_type, tc_objs);
+    match vk {
+        // Packed: primitive types with size < 8 bytes
+        ValueKind::Bool | ValueKind::Int8 | ValueKind::Uint8 => 1,
+        ValueKind::Int16 | ValueKind::Uint16 => 2,
+        ValueKind::Int32 | ValueKind::Uint32 | ValueKind::Float32 => 4,
+        // Slot-based: all other types
+        _ => type_slot_count(elem_type, tc_objs) as usize * 8,
+    }
+}
+
 /// Convert a type to its ValueKind.
 pub fn type_value_kind(type_key: TypeKey, tc_objs: &TCObjects) -> ValueKind {
     let underlying = typ::underlying_type(type_key, tc_objs);

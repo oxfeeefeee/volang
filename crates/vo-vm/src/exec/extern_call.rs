@@ -30,15 +30,17 @@ pub fn exec_call_extern(
 
     let frame = fiber.frames.last().expect("no active frame");
     let bp = frame.bp;
+    let dst = inst.a;
 
     // Call through ExternRegistry using ExternCall API
+    // ret_start = dst so return value goes to the right register
     let result = registry.call(
         extern_id,
         &mut fiber.stack,
         bp,
         arg_start,
         arg_count,
-        arg_start, // ret_start same as arg_start (reuses argument slots)
+        dst,
         gc,
     );
 

@@ -1475,18 +1475,33 @@ fn compile_builtin_call(
             if info.is_slice(type_key) {
                     // make([]T, len) or make([]T, len, cap)
                     let elem_slots = info.slice_elem_slots(type_key);
-                    let len_reg = if call.args.len() > 1 {
-                        compile_expr(&call.args[1], _ctx, func, info)?
+                    let elem_bytes = info.slice_elem_bytes(type_key);
+                    let elem_type = info.slice_elem_type(type_key);
+                    let elem_slot_types = info.slice_elem_slot_types(type_key);
+                    let elem_vk = info.type_value_kind(elem_type);
+                    let elem_meta_idx = _ctx.get_or_create_value_meta_with_kind(Some(elem_type), elem_slots, &elem_slot_types, Some(elem_vk));
+                    
+                    // Load elem_meta into register
+                    let meta_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
+                    
+                    // len and cap in consecutive registers
+                    let len_cap_reg = func.alloc_temp(2);
+                    if call.args.len() > 1 {
+                        compile_expr_to(&call.args[1], len_cap_reg, _ctx, func, info)?;
                     } else {
-                        func.alloc_temp(1)
-                    };
-                    let cap_reg = if call.args.len() > 2 {
-                        compile_expr(&call.args[2], _ctx, func, info)?
+                        func.emit_op(Opcode::LoadInt, len_cap_reg, 0, 0);
+                    }
+                    if call.args.len() > 2 {
+                        compile_expr_to(&call.args[2], len_cap_reg + 1, _ctx, func, info)?;
                     } else {
-                        len_reg
-                    };
-                    // SliceNew: a=dst, b=len, c=cap, flags=elem_slots
-                    func.emit_with_flags(Opcode::SliceNew, elem_slots as u8, dst, len_reg, cap_reg);
+                        // cap = len
+                        func.emit_op(Opcode::Copy, len_cap_reg + 1, len_cap_reg, 0);
+                    }
+                    
+                    // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_bytes
+                    let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+                    func.emit_with_flags(Opcode::SliceNew, flags, dst, meta_reg, len_cap_reg);
                 } else if info.is_map(type_key) {
                     // make(map[K]V)
                     func.emit_op(Opcode::MapNew, dst, 0, 0);
@@ -1519,13 +1534,25 @@ fn compile_builtin_call(
                 return Err(CodegenError::Internal("append requires at least 2 args".to_string()));
             }
             let slice_reg = compile_expr(&call.args[0], _ctx, func, info)?;
-            let elem_reg = compile_expr(&call.args[1], _ctx, func, info)?;
             
             let slice_type = info.expr_type(call.args[0].id);
             let elem_slots = info.slice_elem_slots(slice_type);
+            let elem_bytes = info.slice_elem_bytes(slice_type);
+            let elem_type = info.slice_elem_type(slice_type);
+            let elem_slot_types = info.type_slot_types(elem_type);
+            let elem_vk = info.type_value_kind(elem_type);
             
-            // SliceAppend: a=dst, b=slice, c=elem, flags=elem_slots
-            func.emit_with_flags(Opcode::SliceAppend, elem_slots as u8, dst, slice_reg, elem_reg);
+            // Get elem_meta as raw u32 value
+            let elem_meta_idx = _ctx.get_or_create_value_meta_with_kind(Some(elem_type), elem_slots, &elem_slot_types, Some(elem_vk));
+            
+            // SliceAppend: a=dst, b=slice, c=meta_and_elem, flags=elem_bytes
+            // c: [elem_meta (1 slot)], c+1..: [elem (elem_slots)]
+            let meta_and_elem_reg = func.alloc_temp(1 + elem_slots);
+            func.emit_op(Opcode::LoadConst, meta_and_elem_reg, elem_meta_idx, 0);
+            compile_expr_to(&call.args[1], meta_and_elem_reg + 1, _ctx, func, info)?;
+            
+            let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+            func.emit_with_flags(Opcode::SliceAppend, flags, dst, slice_reg, meta_and_elem_reg);
         }
         "copy" => {
             // copy(dst, src) - use extern for now
@@ -1653,30 +1680,34 @@ fn compile_composite_lit(
         // Slice literal: []T{e1, e2, ...}
         // Create slice with make, then set elements
         let elem_slots = info.slice_elem_slots(type_key);
+        let elem_bytes = info.slice_elem_bytes(type_key);
         let len = lit.elems.len();
         
-        // Get element meta
+        // Get element meta with correct ValueKind
+        let elem_type = info.slice_elem_type(type_key);
         let elem_slot_types = info.slice_elem_slot_types(type_key);
-        let elem_meta_idx = ctx.get_or_create_value_meta(None, elem_slots, &elem_slot_types);
+        let elem_vk = info.type_value_kind(elem_type);
+        let elem_meta_idx = ctx.get_or_create_value_meta_with_kind(Some(elem_type), elem_slots, &elem_slot_types, Some(elem_vk));
         
         // Load elem_meta into register
         let meta_reg = func.alloc_temp(1);
         func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
         
-        // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_slots
+        // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_bytes
         // c and c+1 hold len and cap
         let len_cap_reg = func.alloc_temp(2);
         let (b, c) = crate::type_info::encode_i32(len as i32);
         func.emit_op(Opcode::LoadInt, len_cap_reg, b, c);      // len
         func.emit_op(Opcode::LoadInt, len_cap_reg + 1, b, c);  // cap = len
-        func.emit_with_flags(Opcode::SliceNew, elem_slots as u8, dst, meta_reg, len_cap_reg);
+        let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+        func.emit_with_flags(Opcode::SliceNew, flags, dst, meta_reg, len_cap_reg);
         
         // Set each element
         for (i, elem) in lit.elems.iter().enumerate() {
             let val_reg = compile_expr(&elem.value, ctx, func, info)?;
             let idx_reg = func.alloc_temp(1);
             func.emit_op(Opcode::LoadInt, idx_reg, i as u16, 0);
-            func.emit_with_flags(Opcode::SliceSet, elem_slots as u8, dst, idx_reg, val_reg);
+            func.emit_with_flags(Opcode::SliceSet, flags, dst, idx_reg, val_reg);
         }
     } else if info.is_map(type_key) {
         // Map literal: map[K]V{k1: v1, k2: v2, ...}

@@ -20,10 +20,10 @@ use crate::type_info::TypeInfoWrapper;
 pub enum ContainerKind {
     /// Stack-allocated array: base_slot + index * elem_slots
     StackArray { base_slot: u16, elem_slots: u16 },
-    /// Heap-allocated array: ArrayGet/ArraySet
-    HeapArray { elem_slots: u16 },
-    /// Slice: SliceGet/SliceSet
-    Slice { elem_slots: u16 },
+    /// Heap-allocated array: ArrayGet/ArraySet with elem_bytes
+    HeapArray { elem_bytes: u16 },
+    /// Slice: SliceGet/SliceSet with elem_bytes
+    Slice { elem_bytes: u16 },
     /// Map: MapGet/MapSet with meta encoding
     Map { key_slots: u16, val_slots: u16 },
     /// String: StrIndex (read-only)
@@ -134,6 +134,7 @@ pub fn resolve_lvalue(
             
             if info.is_array(container_type) {
                 let elem_slots = info.array_elem_slots(container_type);
+                let elem_bytes = info.array_elem_bytes(container_type) as u16;
                 
                 // Check if stack or heap array using StorageKind
                 let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
@@ -147,14 +148,14 @@ pub fn resolve_lvalue(
                     }
                     crate::func::ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, .. }) => {
                         Ok(LValue::Index {
-                            kind: ContainerKind::HeapArray { elem_slots },
+                            kind: ContainerKind::HeapArray { elem_bytes },
                             container_reg: gcref_slot,
                             index_reg,
                         })
                     }
                     crate::func::ExprSource::Location(StorageKind::HeapArray { gcref_slot, .. }) => {
                         Ok(LValue::Index {
-                            kind: ContainerKind::HeapArray { elem_slots },
+                            kind: ContainerKind::HeapArray { elem_bytes },
                             container_reg: gcref_slot,
                             index_reg,
                         })
@@ -163,7 +164,7 @@ pub fn resolve_lvalue(
                         // Compile container expression
                         let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
                         Ok(LValue::Index {
-                            kind: ContainerKind::HeapArray { elem_slots },
+                            kind: ContainerKind::HeapArray { elem_bytes },
                             container_reg,
                             index_reg,
                         })
@@ -171,9 +172,9 @@ pub fn resolve_lvalue(
                 }
             } else if info.is_slice(container_type) {
                 let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-                let elem_slots = info.slice_elem_slots(container_type);
+                let elem_bytes = info.slice_elem_bytes(container_type) as u16;
                 Ok(LValue::Index {
-                    kind: ContainerKind::Slice { elem_slots },
+                    kind: ContainerKind::Slice { elem_bytes },
                     container_reg,
                     index_reg,
                 })
@@ -251,11 +252,13 @@ pub fn emit_lvalue_load(
                         func.emit_with_flags(Opcode::SlotGetN, *elem_slots as u8, dst, *base_slot, *index_reg);
                     }
                 }
-                ContainerKind::HeapArray { elem_slots } => {
-                    func.emit_with_flags(Opcode::ArrayGet, *elem_slots as u8, dst, *container_reg, *index_reg);
+                ContainerKind::HeapArray { elem_bytes } => {
+                    let flags = crate::type_info::elem_bytes_to_flags(*elem_bytes as usize);
+                    func.emit_with_flags(Opcode::ArrayGet, flags, dst, *container_reg, *index_reg);
                 }
-                ContainerKind::Slice { elem_slots } => {
-                    func.emit_with_flags(Opcode::SliceGet, *elem_slots as u8, dst, *container_reg, *index_reg);
+                ContainerKind::Slice { elem_bytes } => {
+                    let flags = crate::type_info::elem_bytes_to_flags(*elem_bytes as usize);
+                    func.emit_with_flags(Opcode::SliceGet, flags, dst, *container_reg, *index_reg);
                 }
                 ContainerKind::Map { key_slots, val_slots } => {
                     // MapGet: a=dst, b=map, c=meta_and_key
@@ -323,11 +326,13 @@ pub fn emit_lvalue_store(
                         func.emit_with_flags(Opcode::SlotSetN, *elem_slots as u8, *base_slot, *index_reg, src);
                     }
                 }
-                ContainerKind::HeapArray { elem_slots } => {
-                    func.emit_with_flags(Opcode::ArraySet, *elem_slots as u8, *container_reg, *index_reg, src);
+                ContainerKind::HeapArray { elem_bytes } => {
+                    let flags = crate::type_info::elem_bytes_to_flags(*elem_bytes as usize);
+                    func.emit_with_flags(Opcode::ArraySet, flags, *container_reg, *index_reg, src);
                 }
-                ContainerKind::Slice { elem_slots } => {
-                    func.emit_with_flags(Opcode::SliceSet, *elem_slots as u8, *container_reg, *index_reg, src);
+                ContainerKind::Slice { elem_bytes } => {
+                    let flags = crate::type_info::elem_bytes_to_flags(*elem_bytes as usize);
+                    func.emit_with_flags(Opcode::SliceSet, flags, *container_reg, *index_reg, src);
                 }
                 ContainerKind::Map { key_slots, val_slots } => {
                     // MapSet: a=map, b=meta_and_key, c=val
@@ -362,8 +367,8 @@ pub fn lvalue_slots(lv: &LValue) -> u16 {
         LValue::Field { slots, .. } => *slots,
         LValue::Index { kind, .. } => match kind {
             ContainerKind::StackArray { elem_slots, .. } => *elem_slots,
-            ContainerKind::HeapArray { elem_slots } => *elem_slots,
-            ContainerKind::Slice { elem_slots } => *elem_slots,
+            ContainerKind::HeapArray { elem_bytes } => ((*elem_bytes + 7) / 8) as u16, // ceil to slots
+            ContainerKind::Slice { elem_bytes } => ((*elem_bytes + 7) / 8) as u16, // ceil to slots
             ContainerKind::Map { val_slots, .. } => *val_slots,
             ContainerKind::String => 1,
         },

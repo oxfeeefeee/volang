@@ -1179,60 +1179,102 @@ impl FunctionCompiler<'_> {
     }
 
     pub(crate) fn translate_array_get(&mut self, inst: &Instruction) {
-        // ArrayGet: a = dst, b = arr, c = idx, flags = elem_slots
+        // ArrayGet: a = dst, b = arr, c = idx, flags = elem_bytes (0 = read from header, not supported in JIT)
         use vo_runtime::objects::array::HEADER_SLOTS;
         
         let arr = self.read_var(inst.b);
         let idx = self.read_var(inst.c);
-        let elem_slots = inst.flags as usize;
+        let elem_bytes = inst.flags as usize;
+        if elem_bytes == 0 {
+            // flags=0 means elem_bytes > 255, not supported in JIT inline
+            // This should rarely happen in practice
+            panic!("JIT: ArrayGet with flags=0 not supported");
+        }
+        let elem_slots = (elem_bytes + 7) / 8;
         
-        // Calculate offset: (HEADER_SLOTS + idx * elem_slots) * 8
-        let elem_slots_val = self.builder.ins().iconst(types::I64, elem_slots as i64);
-        let slot_offset = self.builder.ins().imul(idx, elem_slots_val);
-        let header_offset = self.builder.ins().iconst(types::I64, HEADER_SLOTS as i64);
-        let total_offset = self.builder.ins().iadd(header_offset, slot_offset);
-        let byte_offset = self.builder.ins().imul_imm(total_offset, 8);
+        // Calculate byte offset: HEADER_SLOTS * 8 + idx * elem_bytes
+        let header_bytes = self.builder.ins().iconst(types::I64, (HEADER_SLOTS * 8) as i64);
+        let elem_bytes_val = self.builder.ins().iconst(types::I64, elem_bytes as i64);
+        let elem_byte_offset = self.builder.ins().imul(idx, elem_bytes_val);
+        let byte_offset = self.builder.ins().iadd(header_bytes, elem_byte_offset);
         
-        // Load each element slot
-        for i in 0..elem_slots {
-            let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
-            let addr = self.builder.ins().iadd(arr, slot_byte_offset);
-            let val = self.builder.ins().load(
-                types::I64,
-                cranelift_codegen::ir::MemFlags::trusted(),
-                addr,
-                0,
-            );
-            self.write_var(inst.a + i as u16, val);
+        if elem_bytes <= 8 {
+            // Single element: load with appropriate size
+            let addr = self.builder.ins().iadd(arr, byte_offset);
+            let val = match elem_bytes {
+                1 => {
+                    let v8 = self.builder.ins().load(types::I8, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                    self.builder.ins().uextend(types::I64, v8)
+                }
+                2 => {
+                    let v16 = self.builder.ins().load(types::I16, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                    self.builder.ins().uextend(types::I64, v16)
+                }
+                4 => {
+                    let v32 = self.builder.ins().load(types::I32, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                    self.builder.ins().uextend(types::I64, v32)
+                }
+                _ => self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), addr, 0),
+            };
+            self.write_var(inst.a, val);
+        } else {
+            // Multi-slot: load slot by slot
+            for i in 0..elem_slots {
+                let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
+                let addr = self.builder.ins().iadd(arr, slot_byte_offset);
+                let val = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                self.write_var(inst.a + i as u16, val);
+            }
         }
     }
 
     pub(crate) fn translate_array_set(&mut self, inst: &Instruction) {
-        // ArraySet: a = arr, b = idx, c = src, flags = elem_slots
+        // ArraySet: a = arr, b = idx, c = src, flags = elem_bytes (0 = read from header, not supported in JIT)
         use vo_runtime::objects::array::HEADER_SLOTS;
         
         let arr = self.read_var(inst.a);
         let idx = self.read_var(inst.b);
-        let elem_slots = inst.flags as usize;
+        let elem_bytes = inst.flags as usize;
+        if elem_bytes == 0 {
+            panic!("JIT: ArraySet with flags=0 not supported");
+        }
+        let elem_slots = (elem_bytes + 7) / 8;
         
-        // Calculate offset: (HEADER_SLOTS + idx * elem_slots) * 8
-        let elem_slots_val = self.builder.ins().iconst(types::I64, elem_slots as i64);
-        let slot_offset = self.builder.ins().imul(idx, elem_slots_val);
-        let header_offset = self.builder.ins().iconst(types::I64, HEADER_SLOTS as i64);
-        let total_offset = self.builder.ins().iadd(header_offset, slot_offset);
-        let byte_offset = self.builder.ins().imul_imm(total_offset, 8);
+        // Calculate byte offset: HEADER_SLOTS * 8 + idx * elem_bytes
+        let header_bytes = self.builder.ins().iconst(types::I64, (HEADER_SLOTS * 8) as i64);
+        let elem_bytes_val = self.builder.ins().iconst(types::I64, elem_bytes as i64);
+        let elem_byte_offset = self.builder.ins().imul(idx, elem_bytes_val);
+        let byte_offset = self.builder.ins().iadd(header_bytes, elem_byte_offset);
         
-        // Store each element slot
-        for i in 0..elem_slots {
-            let val = self.read_var(inst.c + i as u16);
-            let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
-            let addr = self.builder.ins().iadd(arr, slot_byte_offset);
-            self.builder.ins().store(
-                cranelift_codegen::ir::MemFlags::trusted(),
-                val,
-                addr,
-                0,
-            );
+        if elem_bytes <= 8 {
+            // Single element: store with appropriate size
+            let val = self.read_var(inst.c);
+            let addr = self.builder.ins().iadd(arr, byte_offset);
+            match elem_bytes {
+                1 => {
+                    let v8 = self.builder.ins().ireduce(types::I8, val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), v8, addr, 0);
+                }
+                2 => {
+                    let v16 = self.builder.ins().ireduce(types::I16, val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), v16, addr, 0);
+                }
+                4 => {
+                    let v32 = self.builder.ins().ireduce(types::I32, val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), v32, addr, 0);
+                }
+                _ => {
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, addr, 0);
+                }
+            }
+        } else {
+            // Multi-slot: store slot by slot
+            for i in 0..elem_slots {
+                let val = self.read_var(inst.c + i as u16);
+                let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
+                let addr = self.builder.ins().iadd(arr, slot_byte_offset);
+                self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, addr, 0);
+            }
         }
     }
 
@@ -1241,7 +1283,7 @@ impl FunctionCompiler<'_> {
     // =========================================================================
 
     pub(crate) fn translate_slice_new(&mut self, inst: &Instruction) {
-        // SliceNew: a = dst, b = elem_meta_slot, c = len_slot (cap at c+1), flags = elem_slots
+        // SliceNew: a = dst, b = elem_meta_slot, c = len_slot (cap at c+1), flags = elem_bytes
         let slice_new_func = match self.slice_funcs.slice_new {
             Some(f) => f,
             None => return,
@@ -1250,74 +1292,119 @@ impl FunctionCompiler<'_> {
         let gc_ptr = self.load_gc_ptr();
         let meta_raw = self.read_var(inst.b);
         let meta_i32 = self.builder.ins().ireduce(types::I32, meta_raw);
-        let elem_slots = self.builder.ins().iconst(types::I32, inst.flags as i64);
+        let elem_bytes = self.builder.ins().iconst(types::I32, inst.flags as i64);
         let len = self.read_var(inst.c);
         let cap = self.read_var(inst.c + 1);
         
-        let call = self.builder.ins().call(slice_new_func, &[gc_ptr, meta_i32, elem_slots, len, cap]);
+        let call = self.builder.ins().call(slice_new_func, &[gc_ptr, meta_i32, elem_bytes, len, cap]);
         let slice_ref = self.builder.inst_results(call)[0];
         
         self.write_var(inst.a, slice_ref);
     }
 
     pub(crate) fn translate_slice_get(&mut self, inst: &Instruction) {
-        // SliceGet: a = dst, b = slice, c = idx, flags = elem_slots
-        // SliceData layout (from slice.rs): array(0), start(1), len(2), cap(3) - 4 slots
+        // SliceGet: a = dst, b = slice, c = idx, flags = elem_bytes (0 = read from header, not supported in JIT)
         use vo_runtime::objects::slice::{FIELD_ARRAY, FIELD_START};
         use vo_runtime::objects::array::HEADER_SLOTS as ARRAY_HEADER_SLOTS;
         
         let s = self.read_var(inst.b);
         let idx = self.read_var(inst.c);
-        let elem_slots = inst.flags as usize;
+        let elem_bytes = inst.flags as usize;
+        if elem_bytes == 0 {
+            panic!("JIT: SliceGet with flags=0 not supported");
+        }
+        let elem_slots = (elem_bytes + 7) / 8;
         
         // Load array ref and start from SliceData
         let arr = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), s, (FIELD_ARRAY * 8) as i32);
         let start = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), s, (FIELD_START * 8) as i32);
         
-        // Calculate offset in array: (start + idx) * elem_slots + ArrayHeader
+        // Calculate byte offset: ARRAY_HEADER_SLOTS * 8 + (start + idx) * elem_bytes
         let total_idx = self.builder.ins().iadd(start, idx);
-        let elem_slots_val = self.builder.ins().iconst(types::I64, elem_slots as i64);
-        let slot_offset = self.builder.ins().imul(total_idx, elem_slots_val);
-        let header_offset = self.builder.ins().iconst(types::I64, ARRAY_HEADER_SLOTS as i64);
-        let final_offset = self.builder.ins().iadd(header_offset, slot_offset);
-        let byte_offset = self.builder.ins().imul_imm(final_offset, 8);
+        let header_bytes = self.builder.ins().iconst(types::I64, (ARRAY_HEADER_SLOTS * 8) as i64);
+        let elem_bytes_val = self.builder.ins().iconst(types::I64, elem_bytes as i64);
+        let elem_byte_offset = self.builder.ins().imul(total_idx, elem_bytes_val);
+        let byte_offset = self.builder.ins().iadd(header_bytes, elem_byte_offset);
         
-        // Load each element slot
-        for i in 0..elem_slots {
-            let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
-            let addr = self.builder.ins().iadd(arr, slot_byte_offset);
-            let val = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
-            self.write_var(inst.a + i as u16, val);
+        if elem_bytes <= 8 {
+            let addr = self.builder.ins().iadd(arr, byte_offset);
+            let val = match elem_bytes {
+                1 => {
+                    let v8 = self.builder.ins().load(types::I8, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                    self.builder.ins().uextend(types::I64, v8)
+                }
+                2 => {
+                    let v16 = self.builder.ins().load(types::I16, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                    self.builder.ins().uextend(types::I64, v16)
+                }
+                4 => {
+                    let v32 = self.builder.ins().load(types::I32, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                    self.builder.ins().uextend(types::I64, v32)
+                }
+                _ => self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), addr, 0),
+            };
+            self.write_var(inst.a, val);
+        } else {
+            for i in 0..elem_slots {
+                let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
+                let addr = self.builder.ins().iadd(arr, slot_byte_offset);
+                let val = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), addr, 0);
+                self.write_var(inst.a + i as u16, val);
+            }
         }
     }
 
     pub(crate) fn translate_slice_set(&mut self, inst: &Instruction) {
-        // SliceSet: a = slice, b = idx, c = src, flags = elem_slots
+        // SliceSet: a = slice, b = idx, c = src, flags = elem_bytes (0 = read from header, not supported in JIT)
         use vo_runtime::objects::slice::{FIELD_ARRAY, FIELD_START};
         use vo_runtime::objects::array::HEADER_SLOTS as ARRAY_HEADER_SLOTS;
         
         let s = self.read_var(inst.a);
         let idx = self.read_var(inst.b);
-        let elem_slots = inst.flags as usize;
+        let elem_bytes = inst.flags as usize;
+        if elem_bytes == 0 {
+            panic!("JIT: SliceSet with flags=0 not supported");
+        }
+        let elem_slots = (elem_bytes + 7) / 8;
         
         // Load array ref and start from SliceData
         let arr = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), s, (FIELD_ARRAY * 8) as i32);
         let start = self.builder.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), s, (FIELD_START * 8) as i32);
         
-        // Calculate offset
+        // Calculate byte offset: ARRAY_HEADER_SLOTS * 8 + (start + idx) * elem_bytes
         let total_idx = self.builder.ins().iadd(start, idx);
-        let elem_slots_val = self.builder.ins().iconst(types::I64, elem_slots as i64);
-        let slot_offset = self.builder.ins().imul(total_idx, elem_slots_val);
-        let header_offset = self.builder.ins().iconst(types::I64, ARRAY_HEADER_SLOTS as i64);
-        let final_offset = self.builder.ins().iadd(header_offset, slot_offset);
-        let byte_offset = self.builder.ins().imul_imm(final_offset, 8);
+        let header_bytes = self.builder.ins().iconst(types::I64, (ARRAY_HEADER_SLOTS * 8) as i64);
+        let elem_bytes_val = self.builder.ins().iconst(types::I64, elem_bytes as i64);
+        let elem_byte_offset = self.builder.ins().imul(total_idx, elem_bytes_val);
+        let byte_offset = self.builder.ins().iadd(header_bytes, elem_byte_offset);
         
-        // Store each element slot
-        for i in 0..elem_slots {
-            let val = self.read_var(inst.c + i as u16);
-            let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
-            let addr = self.builder.ins().iadd(arr, slot_byte_offset);
-            self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, addr, 0);
+        if elem_bytes <= 8 {
+            let val = self.read_var(inst.c);
+            let addr = self.builder.ins().iadd(arr, byte_offset);
+            match elem_bytes {
+                1 => {
+                    let v8 = self.builder.ins().ireduce(types::I8, val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), v8, addr, 0);
+                }
+                2 => {
+                    let v16 = self.builder.ins().ireduce(types::I16, val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), v16, addr, 0);
+                }
+                4 => {
+                    let v32 = self.builder.ins().ireduce(types::I32, val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), v32, addr, 0);
+                }
+                _ => {
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, addr, 0);
+                }
+            }
+        } else {
+            for i in 0..elem_slots {
+                let val = self.read_var(inst.c + i as u16);
+                let slot_byte_offset = self.builder.ins().iadd_imm(byte_offset, (i * 8) as i64);
+                let addr = self.builder.ins().iadd(arr, slot_byte_offset);
+                self.builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, addr, 0);
+            }
         }
     }
 
@@ -1402,7 +1489,8 @@ impl FunctionCompiler<'_> {
     }
 
     pub(crate) fn translate_slice_append(&mut self, inst: &Instruction) {
-        // SliceAppend: a = dst, b = slice, c = val_src, d = elem_meta_slot, flags = elem_slots
+        // SliceAppend: a=dst, b=slice, c=meta_and_elem, flags=elem_bytes
+        // c: [elem_meta (1 slot)], c+1..: [elem (elem_slots)]
         let slice_append_func = match self.slice_funcs.slice_append {
             Some(f) => f,
             None => return,
@@ -1410,12 +1498,13 @@ impl FunctionCompiler<'_> {
         
         let gc_ptr = self.load_gc_ptr();
         let s = self.read_var(inst.b);
-        let elem_slots = inst.flags as usize;
+        let elem_bytes = inst.flags as usize;
+        let elem_slots = (elem_bytes + 7) / 8;
         
-        // Read elem_meta from inst.d (encoded differently, check instruction format)
-        // For now, assume elem_meta is 0 (needs to be fixed based on actual instruction encoding)
-        let elem_meta = self.builder.ins().iconst(types::I32, 0);
-        let elem_slots_val = self.builder.ins().iconst(types::I32, elem_slots as i64);
+        // Read elem_meta from c (first slot of meta_and_elem)
+        let elem_meta_i64 = self.read_var(inst.c);
+        let elem_meta = self.builder.ins().ireduce(types::I32, elem_meta_i64);
+        let elem_bytes_val = self.builder.ins().iconst(types::I32, elem_bytes as i64);
         
         // Allocate stack space for value
         let val_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
@@ -1424,15 +1513,15 @@ impl FunctionCompiler<'_> {
             0,
         ));
         
-        // Copy value to stack
+        // Copy value to stack (elem starts at c+1)
         for i in 0..elem_slots {
-            let val = self.read_var(inst.c + i as u16);
+            let val = self.read_var(inst.c + 1 + i as u16);
             self.builder.ins().stack_store(val, val_slot, (i * 8) as i32);
         }
         
         let val_ptr = self.builder.ins().stack_addr(types::I64, val_slot, 0);
         
-        let call = self.builder.ins().call(slice_append_func, &[gc_ptr, elem_meta, elem_slots_val, s, val_ptr]);
+        let call = self.builder.ins().call(slice_append_func, &[gc_ptr, elem_meta, elem_bytes_val, s, val_ptr]);
         let result = self.builder.inst_results(call)[0];
         self.write_var(inst.a, result);
     }

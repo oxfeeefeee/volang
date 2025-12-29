@@ -3,7 +3,7 @@
 //! Layout: GcHeader + ArrayHeader + [elements...]
 //! - GcHeader: kind=Array, meta_id=0 (Array doesn't need its own meta_id)
 //! - ArrayHeader: len (usize), elem_meta (ValueMeta), elem_bytes (u32) - 2 slots
-//! - Elements: len * elem_slots slots
+//! - Elements: packed by elem_bytes (1/2/4/8+ bytes per element)
 
 use crate::gc::{Gc, GcRef};
 use vo_common_core::types::{ValueKind, ValueMeta};
@@ -30,14 +30,18 @@ impl ArrayHeader {
     }
 }
 
-pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: usize, length: usize) -> GcRef {
-    let total_slots = HEADER_SLOTS + length * elem_slots;
+/// Create a new array with packed element storage.
+/// elem_bytes: actual byte size per element (1/2/4/8 for packed, slots*8 for slot-based)
+pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_bytes: usize, length: usize) -> GcRef {
+    let data_bytes = length * elem_bytes;
+    let data_slots = (data_bytes + 7) / 8; // round up to slot boundary
+    let total_slots = HEADER_SLOTS + data_slots;
     let array_meta = ValueMeta::new(0, ValueKind::Array);
     let arr = gc.alloc(array_meta, total_slots as u16);
     let header = ArrayHeader::as_mut(arr);
     header.len = length;
     header.elem_meta = elem_meta;
-    header.elem_bytes = (elem_slots * 8) as u32;
+    header.elem_bytes = elem_bytes as u32;
     arr
 }
 
@@ -66,40 +70,151 @@ pub fn elem_bytes(arr: GcRef) -> usize {
     ArrayHeader::as_ref(arr).elem_bytes as usize
 }
 
+
+/// Return byte pointer to data area (after header)
+#[inline]
+fn data_ptr_bytes(arr: GcRef) -> *mut u8 {
+    unsafe { (arr as *mut u8).add(HEADER_SLOTS * 8) }
+}
+
+/// Legacy slot-based pointer (for compatibility during transition)
 #[inline]
 fn data_ptr(arr: GcRef) -> *mut u64 {
     unsafe { arr.add(HEADER_SLOTS) }
 }
 
+/// Read single element (returns u64, small types zero-extended)
 #[inline]
-pub fn get(arr: GcRef, offset: usize) -> u64 {
-    unsafe { *data_ptr(arr).add(offset) }
-}
-
-#[inline]
-pub fn set(arr: GcRef, offset: usize, val: u64) {
-    unsafe { *data_ptr(arr).add(offset) = val }
-}
-
-pub fn get_n(arr: GcRef, offset: usize, dest: &mut [u64]) {
-    let ptr = unsafe { data_ptr(arr).add(offset) };
-    for (i, d) in dest.iter_mut().enumerate() {
-        *d = unsafe { *ptr.add(i) };
-    }
-}
-
-pub fn set_n(arr: GcRef, offset: usize, src: &[u64]) {
-    let ptr = unsafe { data_ptr(arr).add(offset) };
-    for (i, &s) in src.iter().enumerate() {
-        unsafe { *ptr.add(i) = s };
-    }
-}
-
-pub fn copy_range(src: GcRef, src_offset: usize, dst: GcRef, dst_offset: usize, slot_count: usize) {
-    let src_ptr = unsafe { data_ptr(src).add(src_offset) };
-    let dst_ptr = unsafe { data_ptr(dst).add(dst_offset) };
+pub fn get(arr: GcRef, idx: usize, elem_bytes: usize) -> u64 {
+    let byte_offset = idx * elem_bytes;
+    let ptr = data_ptr_bytes(arr);
     unsafe {
-        core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, slot_count);
+        match elem_bytes {
+            1 => *ptr.add(byte_offset) as u64,
+            2 => *(ptr.add(byte_offset) as *const u16) as u64,
+            4 => *(ptr.add(byte_offset) as *const u32) as u64,
+            _ => *(ptr.add(byte_offset) as *const u64),
+        }
+    }
+}
+
+/// Read single element with automatic type-aware conversion
+/// - Signed integers: sign extension
+/// - Float32: f32 → f64 conversion
+/// - Others: zero extension
+#[inline]
+pub fn get_auto(arr: GcRef, idx: usize, elem_bytes: usize) -> u64 {
+    let byte_offset = idx * elem_bytes;
+    let ptr = data_ptr_bytes(arr);
+    let vk = elem_kind(arr);
+    unsafe {
+        match vk {
+            // Signed integers: sign extension
+            ValueKind::Int8 => *ptr.add(byte_offset) as i8 as i64 as u64,
+            ValueKind::Int16 => *(ptr.add(byte_offset) as *const i16) as i64 as u64,
+            ValueKind::Int32 => *(ptr.add(byte_offset) as *const i32) as i64 as u64,
+            // Float32: f32 → f64 conversion
+            ValueKind::Float32 => {
+                let f = *(ptr.add(byte_offset) as *const f32);
+                (f as f64).to_bits()
+            }
+            // Others: zero extension or direct read
+            _ => match elem_bytes {
+                1 => *ptr.add(byte_offset) as u64,
+                2 => *(ptr.add(byte_offset) as *const u16) as u64,
+                4 => *(ptr.add(byte_offset) as *const u32) as u64,
+                _ => *(ptr.add(byte_offset) as *const u64),
+            }
+        }
+    }
+}
+
+/// Write single element (val is u64, small types truncated)
+#[inline]
+pub fn set(arr: GcRef, idx: usize, val: u64, elem_bytes: usize) {
+    let byte_offset = idx * elem_bytes;
+    let ptr = data_ptr_bytes(arr);
+    unsafe {
+        match elem_bytes {
+            1 => *ptr.add(byte_offset) = val as u8,
+            2 => *(ptr.add(byte_offset) as *mut u16) = val as u16,
+            4 => *(ptr.add(byte_offset) as *mut u32) = val as u32,
+            _ => *(ptr.add(byte_offset) as *mut u64) = val,
+        }
+    }
+}
+
+/// Write single element with automatic type-aware conversion
+/// - Float32: f64 → f32 conversion
+/// - Others: truncation
+#[inline]
+pub fn set_auto(arr: GcRef, idx: usize, val: u64, elem_bytes: usize) {
+    let byte_offset = idx * elem_bytes;
+    let ptr = data_ptr_bytes(arr);
+    let vk = elem_kind(arr);
+    unsafe {
+        match vk {
+            // Float32: f64 → f32 conversion
+            ValueKind::Float32 => {
+                let f = f64::from_bits(val) as f32;
+                *(ptr.add(byte_offset) as *mut f32) = f;
+            }
+            // Others: truncation
+            _ => match elem_bytes {
+                1 => *ptr.add(byte_offset) = val as u8,
+                2 => *(ptr.add(byte_offset) as *mut u16) = val as u16,
+                4 => *(ptr.add(byte_offset) as *mut u32) = val as u32,
+                _ => *(ptr.add(byte_offset) as *mut u64) = val,
+            }
+        }
+    }
+}
+
+/// Read element to dest (supports packed and multi-slot)
+pub fn get_n(arr: GcRef, idx: usize, dest: &mut [u64], elem_bytes: usize) {
+    let byte_offset = idx * elem_bytes;
+    let ptr = unsafe { data_ptr_bytes(arr).add(byte_offset) };
+    match elem_bytes {
+        1 => dest[0] = unsafe { *ptr } as u64,
+        2 => dest[0] = unsafe { *(ptr as *const u16) } as u64,
+        4 => dest[0] = unsafe { *(ptr as *const u32) } as u64,
+        _ => {
+            // slot-based: copy all slots
+            let elem_slots = (elem_bytes + 7) / 8;
+            let slot_ptr = ptr as *const u64;
+            for i in 0..elem_slots {
+                dest[i] = unsafe { *slot_ptr.add(i) };
+            }
+        }
+    }
+}
+
+/// Write element from src (supports packed and multi-slot)
+pub fn set_n(arr: GcRef, idx: usize, src: &[u64], elem_bytes: usize) {
+    let byte_offset = idx * elem_bytes;
+    let ptr = unsafe { data_ptr_bytes(arr).add(byte_offset) };
+    match elem_bytes {
+        1 => unsafe { *ptr = src[0] as u8 },
+        2 => unsafe { *(ptr as *mut u16) = src[0] as u16 },
+        4 => unsafe { *(ptr as *mut u32) = src[0] as u32 },
+        _ => {
+            // slot-based: copy all slots
+            let elem_slots = (elem_bytes + 7) / 8;
+            let slot_ptr = ptr as *mut u64;
+            for i in 0..elem_slots {
+                unsafe { *slot_ptr.add(i) = src[i] };
+            }
+        }
+    }
+}
+
+/// Copy element range (by elem_bytes)
+pub fn copy_range(src: GcRef, src_idx: usize, dst: GcRef, dst_idx: usize, count: usize, elem_bytes: usize) {
+    let src_ptr = unsafe { data_ptr_bytes(src).add(src_idx * elem_bytes) };
+    let dst_ptr = unsafe { data_ptr_bytes(dst).add(dst_idx * elem_bytes) };
+    let byte_count = count * elem_bytes;
+    unsafe {
+        core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, byte_count);
     }
 }
 

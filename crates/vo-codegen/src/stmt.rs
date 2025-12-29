@@ -88,12 +88,13 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         type_key: TypeKey,
     ) -> Result<StorageKind, CodegenError> {
         let elem_slots = self.info.array_elem_slots(type_key);
+        let elem_bytes = self.info.array_elem_bytes(type_key);
         let gcref_slot = self.func.define_local_heap_array(sym, elem_slots);
 
         let arr_len = self.info.array_len(type_key);
         let elem_meta_idx = self.ctx.get_or_create_array_elem_meta(type_key, self.info);
 
-        // emit ArrayNew: a=dst, b=elem_meta_idx, c=len, flags=elem_slots
+        // emit ArrayNew: a=dst, b=elem_meta_idx, c=len, flags=elem_bytes
         let meta_reg = self.func.alloc_temp(1);
         self.func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
 
@@ -101,7 +102,8 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         let (b, c) = encode_i32(arr_len as i32);
         self.func.emit_op(Opcode::LoadInt, len_reg, b, c);
 
-        self.func.emit_with_flags(Opcode::ArrayNew, elem_slots as u8, gcref_slot, meta_reg, len_reg);
+        let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+        self.func.emit_with_flags(Opcode::ArrayNew, flags, gcref_slot, meta_reg, len_reg);
 
         Ok(StorageKind::HeapArray { gcref_slot, elem_slots })
     }
@@ -675,6 +677,7 @@ fn compile_stmt_with_label(
                     
                     if info.is_array(range_type) {
                         let es = info.array_elem_slots(range_type);
+                        let eb = info.array_elem_bytes(range_type);
                         let et = info.array_elem_type(range_type);
                         let len = info.array_len(range_type) as i64;
                         let src = crate::expr::get_expr_source(expr, sc.ctx, sc.func, sc.info);
@@ -689,14 +692,19 @@ fn compile_stmt_with_label(
                         let lp = IndexLoop::begin(sc.func, ls, label);
                         lp.emit_key(sc.func, key.as_ref().map(|_| ks));
                         if value.is_some() {
-                            let op = if stk { Opcode::SlotGetN } else { Opcode::ArrayGet };
-                            sc.func.emit_with_flags(op, es as u8, vs, if stk { base } else { reg }, lp.idx_slot);
+                            // Stack array uses elem_slots, heap array uses elem_bytes
+                            let (op, flags) = if stk {
+                                (Opcode::SlotGetN, es as u8)
+                            } else {
+                                (Opcode::ArrayGet, crate::type_info::elem_bytes_to_flags(eb))
+                            };
+                            sc.func.emit_with_flags(op, flags, vs, if stk { base } else { reg }, lp.idx_slot);
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
                         
                     } else if info.is_slice(range_type) {
-                        let es = info.slice_elem_slots(range_type);
+                        let eb = info.slice_elem_bytes(range_type);
                         let et = info.slice_elem_type(range_type);
                         let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
                         let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
@@ -705,7 +713,10 @@ fn compile_stmt_with_label(
                         sc.func.emit_op(Opcode::SliceLen, ls, reg, 0);
                         let lp = IndexLoop::begin(sc.func, ls, label);
                         lp.emit_key(sc.func, key.as_ref().map(|_| ks));
-                        if value.is_some() { sc.func.emit_with_flags(Opcode::SliceGet, es as u8, vs, reg, lp.idx_slot); }
+                        if value.is_some() {
+                            let flags = crate::type_info::elem_bytes_to_flags(eb);
+                            sc.func.emit_with_flags(Opcode::SliceGet, flags, vs, reg, lp.idx_slot);
+                        }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
                         

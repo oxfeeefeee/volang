@@ -27,16 +27,17 @@ use slice::{FIELD_ARRAY as SLICE_FIELD_ARRAY, FIELD_START as SLICE_FIELD_START,
 use string::{FIELD_ARRAY as STRING_FIELD_ARRAY, FIELD_START as STRING_FIELD_START,
              FIELD_LEN as STRING_FIELD_LEN};
 
-macro_rules! array_get {
-    ($arr:expr, $offset:expr) => {
-        unsafe { *$arr.add(ARRAY_DATA_OFFSET + $offset) }
-    };
-}
-
+/// Write single element to packed array (val is u64, small types truncated)
 macro_rules! array_set {
-    ($arr:expr, $offset:expr, $val:expr) => {
-        unsafe { *$arr.add(ARRAY_DATA_OFFSET + $offset) = $val }
-    };
+    ($arr:expr, $idx:expr, $val:expr, $elem_bytes:expr) => {{
+        let byte_ptr = unsafe { ($arr as *mut u8).add(ARRAY_DATA_OFFSET * 8 + $idx * $elem_bytes) };
+        match $elem_bytes {
+            1 => unsafe { *byte_ptr = $val as u8 },
+            2 => unsafe { *(byte_ptr as *mut u16) = $val as u16 },
+            4 => unsafe { *(byte_ptr as *mut u32) = $val as u32 },
+            _ => unsafe { *(byte_ptr as *mut u64) = $val },
+        }
+    }};
 }
 
 macro_rules! slice_array {
@@ -63,19 +64,13 @@ macro_rules! slice_cap {
     };
 }
 
-macro_rules! slice_get {
-    ($s:expr, $offset:expr) => {{
-        let arr = slice_array!($s);
-        let start = slice_start!($s);
-        array_get!(arr, start + $offset)
-    }};
-}
-
+/// Write single element to slice (val is u64, small types truncated)
 macro_rules! slice_set {
-    ($s:expr, $offset:expr, $val:expr) => {{
+    ($s:expr, $idx:expr, $val:expr, $elem_bytes:expr) => {{
         let arr = slice_array!($s);
         let start = slice_start!($s);
-        array_set!(arr, start + $offset, $val)
+        // start is element index
+        array_set!(arr, start + $idx, $val, $elem_bytes)
     }};
 }
 
@@ -1017,24 +1012,50 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::ArrayGet => {
+                    // flags = elem_bytes (0 means read from header)
                     let arr = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
                     let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
-                    let elem_slots = inst.flags as usize;
-                    let offset = idx * elem_slots;
+                    let elem_bytes = if inst.flags == 0 {
+                        array::elem_bytes(arr)
+                    } else {
+                        inst.flags as usize
+                    };
+                    let elem_slots = (elem_bytes + 7) / 8;
                     let dst_start = bp + inst.a as usize;
-                    for i in 0..elem_slots {
-                        stack_set!(fiber.stack, dst_start + i, array_get!(arr, offset + i));
+                    if elem_bytes <= 8 {
+                        // Single slot: use get_auto for automatic sign extension
+                        stack_set!(fiber.stack, dst_start, array::get_auto(arr, idx, elem_bytes));
+                    } else {
+                        // Multi-slot: read slot by slot (no sign extension needed)
+                        for i in 0..elem_slots {
+                            let byte_off = idx * elem_bytes + i * 8;
+                            let ptr = unsafe { (arr as *const u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *const u64 };
+                            stack_set!(fiber.stack, dst_start + i, unsafe { *ptr });
+                        }
                     }
                     ExecResult::Continue
                 }
                 Opcode::ArraySet => {
+                    // flags = elem_bytes (0 means read from header)
                     let arr = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
                     let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
-                    let elem_slots = inst.flags as usize;
-                    let offset = idx * elem_slots;
+                    let elem_bytes = if inst.flags == 0 {
+                        array::elem_bytes(arr)
+                    } else {
+                        inst.flags as usize
+                    };
+                    let elem_slots = (elem_bytes + 7) / 8;
                     let src_start = bp + inst.c as usize;
-                    for i in 0..elem_slots {
-                        array_set!(arr, offset + i, stack_get!(fiber.stack, src_start + i));
+                    if elem_bytes <= 8 {
+                        // Single slot: use set_auto for automatic type conversion
+                        array::set_auto(arr, idx, stack_get!(fiber.stack, src_start), elem_bytes);
+                    } else {
+                        // Multi-slot: write slot by slot
+                        for i in 0..elem_slots {
+                            let byte_off = idx * elem_bytes + i * 8;
+                            let ptr = unsafe { (arr as *mut u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *mut u64 };
+                            unsafe { *ptr = stack_get!(fiber.stack, src_start + i) };
+                        }
                     }
                     ExecResult::Continue
                 }
@@ -1045,24 +1066,53 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::SliceGet => {
+                    // flags = elem_bytes (0 means read from header)
                     let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
                     let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
-                    let elem_slots = inst.flags as usize;
-                    let offset = idx * elem_slots;
+                    let arr = slice_array!(s);
+                    let start = slice_start!(s);
+                    let elem_bytes = if inst.flags == 0 {
+                        array::elem_bytes(arr)
+                    } else {
+                        inst.flags as usize
+                    };
+                    let elem_slots = (elem_bytes + 7) / 8;
                     let dst_start = bp + inst.a as usize;
-                    for i in 0..elem_slots {
-                        stack_set!(fiber.stack, dst_start + i, slice_get!(s, offset + i));
+                    if elem_bytes <= 8 {
+                        // Single slot: use get_auto for automatic sign extension
+                        stack_set!(fiber.stack, dst_start, slice::get_auto(arr, start, idx, elem_bytes));
+                    } else {
+                        // Multi-slot: read slot by slot (no sign extension needed)
+                        for i in 0..elem_slots {
+                            let byte_off = (start + idx) * elem_bytes + i * 8;
+                            let ptr = unsafe { (arr as *const u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *const u64 };
+                            stack_set!(fiber.stack, dst_start + i, unsafe { *ptr });
+                        }
                     }
                     ExecResult::Continue
                 }
                 Opcode::SliceSet => {
+                    // flags = elem_bytes (0 means read from header)
                     let s = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
                     let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
-                    let elem_slots = inst.flags as usize;
-                    let offset = idx * elem_slots;
+                    let arr = slice_array!(s);
+                    let start = slice_start!(s);
+                    let elem_bytes = if inst.flags == 0 {
+                        array::elem_bytes(arr)
+                    } else {
+                        inst.flags as usize
+                    };
+                    let elem_slots = (elem_bytes + 7) / 8;
                     let src_start = bp + inst.c as usize;
-                    for i in 0..elem_slots {
-                        slice_set!(s, offset + i, stack_get!(fiber.stack, src_start + i));
+                    if elem_bytes <= 8 {
+                        // Single slot: use set_auto for automatic type conversion
+                        slice::set_auto(arr, start, idx, stack_get!(fiber.stack, src_start), elem_bytes);
+                    } else {
+                        for i in 0..elem_slots {
+                            let byte_off = (start + idx) * elem_bytes + i * 8;
+                            let ptr = unsafe { (arr as *mut u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *mut u64 };
+                            unsafe { *ptr = stack_get!(fiber.stack, src_start + i) };
+                        }
                     }
                     ExecResult::Continue
                 }
@@ -1605,22 +1655,34 @@ fn exec_inst_inline(
         Opcode::ArrayGet => {
             let arr = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
             let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
-            let elem_slots = inst.flags as usize;
-            let offset = idx * elem_slots;
+            let elem_bytes = if inst.flags == 0 { array::elem_bytes(arr) } else { inst.flags as usize };
+            let elem_slots = (elem_bytes + 7) / 8;
             let dst_start = bp + inst.a as usize;
-            for i in 0..elem_slots {
-                stack_set!(fiber.stack, dst_start + i, array_get!(arr, offset + i));
+            if elem_bytes <= 8 {
+                stack_set!(fiber.stack, dst_start, array::get_auto(arr, idx, elem_bytes));
+            } else {
+                for i in 0..elem_slots {
+                    let byte_off = idx * elem_bytes + i * 8;
+                    let ptr = unsafe { (arr as *const u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *const u64 };
+                    stack_set!(fiber.stack, dst_start + i, unsafe { *ptr });
+                }
             }
             ExecResult::Continue
         }
         Opcode::ArraySet => {
             let arr = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
             let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
-            let elem_slots = inst.flags as usize;
-            let offset = idx * elem_slots;
+            let elem_bytes = if inst.flags == 0 { array::elem_bytes(arr) } else { inst.flags as usize };
+            let elem_slots = (elem_bytes + 7) / 8;
             let src_start = bp + inst.c as usize;
-            for i in 0..elem_slots {
-                array_set!(arr, offset + i, stack_get!(fiber.stack, src_start + i));
+            if elem_bytes <= 8 {
+                array::set_auto(arr, idx, stack_get!(fiber.stack, src_start), elem_bytes);
+            } else {
+                for i in 0..elem_slots {
+                    let byte_off = idx * elem_bytes + i * 8;
+                    let ptr = unsafe { (arr as *mut u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *mut u64 };
+                    unsafe { *ptr = stack_get!(fiber.stack, src_start + i) };
+                }
             }
             ExecResult::Continue
         }
@@ -1629,22 +1691,38 @@ fn exec_inst_inline(
         Opcode::SliceGet => {
             let s = stack_get!(fiber.stack, bp + inst.b as usize) as GcRef;
             let idx = stack_get!(fiber.stack, bp + inst.c as usize) as usize;
-            let elem_slots = inst.flags as usize;
-            let offset = idx * elem_slots;
+            let arr = slice_array!(s);
+            let start = slice_start!(s);
+            let elem_bytes = if inst.flags == 0 { array::elem_bytes(arr) } else { inst.flags as usize };
+            let elem_slots = (elem_bytes + 7) / 8;
             let dst_start = bp + inst.a as usize;
-            for i in 0..elem_slots {
-                stack_set!(fiber.stack, dst_start + i, slice_get!(s, offset + i));
+            if elem_bytes <= 8 {
+                stack_set!(fiber.stack, dst_start, slice::get_auto(arr, start, idx, elem_bytes));
+            } else {
+                for i in 0..elem_slots {
+                    let byte_off = (start + idx) * elem_bytes + i * 8;
+                    let ptr = unsafe { (arr as *const u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *const u64 };
+                    stack_set!(fiber.stack, dst_start + i, unsafe { *ptr });
+                }
             }
             ExecResult::Continue
         }
         Opcode::SliceSet => {
             let s = stack_get!(fiber.stack, bp + inst.a as usize) as GcRef;
             let idx = stack_get!(fiber.stack, bp + inst.b as usize) as usize;
-            let elem_slots = inst.flags as usize;
-            let offset = idx * elem_slots;
+            let arr = slice_array!(s);
+            let start = slice_start!(s);
+            let elem_bytes = if inst.flags == 0 { array::elem_bytes(arr) } else { inst.flags as usize };
+            let elem_slots = (elem_bytes + 7) / 8;
             let src_start = bp + inst.c as usize;
-            for i in 0..elem_slots {
-                slice_set!(s, offset + i, stack_get!(fiber.stack, src_start + i));
+            if elem_bytes <= 8 {
+                slice::set_auto(arr, start, idx, stack_get!(fiber.stack, src_start), elem_bytes);
+            } else {
+                for i in 0..elem_slots {
+                    let byte_off = (start + idx) * elem_bytes + i * 8;
+                    let ptr = unsafe { (arr as *mut u8).add(ARRAY_DATA_OFFSET * 8 + byte_off) as *mut u64 };
+                    unsafe { *ptr = stack_get!(fiber.stack, src_start + i) };
+                }
             }
             ExecResult::Continue
         }

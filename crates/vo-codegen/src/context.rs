@@ -494,12 +494,13 @@ impl CodegenContext {
         array_type: TypeKey,
         info: &crate::type_info::TypeInfoWrapper,
     ) -> u16 {
-        // Get element type info
+        // Get element type info with correct ValueKind
+        let elem_type = info.array_elem_type(array_type);
         let elem_slots = info.array_elem_slots(array_type);
         let elem_slot_types = info.array_elem_slot_types(array_type);
+        let elem_vk = info.type_value_kind(elem_type);
         
-        // Reuse get_or_create_value_meta for element type
-        self.get_or_create_value_meta(None, elem_slots, &elem_slot_types)
+        self.get_or_create_value_meta_with_kind(Some(elem_type), elem_slots, &elem_slot_types, Some(elem_vk))
     }
 
     // === Closure ID ===

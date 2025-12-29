@@ -13,8 +13,8 @@ pub fn exec_slice_new(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
     let elem_meta = ValueMeta::from_raw(meta_raw);
     let len = fiber.read_reg(inst.c) as usize;
     let cap = fiber.read_reg(inst.c + 1) as usize;
-    let elem_slots = inst.flags as usize;
-    let s = slice::create(gc, elem_meta, elem_slots, len, cap);
+    let elem_bytes = inst.flags as usize; // flags is now elem_bytes
+    let s = slice::create(gc, elem_meta, elem_bytes, len, cap);
     fiber.write_reg(inst.a, s as u64);
 }
 
@@ -52,18 +52,18 @@ pub fn exec_slice_slice(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
 #[inline]
 pub fn exec_slice_append(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
     let s = fiber.read_reg(inst.b) as GcRef;
-    let elem_slots = inst.flags as usize;
-    let elem_meta = if s.is_null() {
-        ValueMeta::from_raw(0)
-    } else {
-        slice::elem_meta(s)
-    };
-
+    let elem_bytes = inst.flags as usize; // flags is now elem_bytes
+    let elem_slots = (elem_bytes + 7) / 8;
+    
+    // c points to meta_and_elem: [elem_meta (1 slot)][elem (elem_slots)]
+    // Read elem_meta from c, elem from c+1
+    let elem_meta = ValueMeta::from_raw(fiber.read_reg(inst.c) as u32);
+    
     let frame = fiber.frames.last().expect("no active frame");
     let bp = frame.bp;
-    let src_start = bp + inst.c as usize;
+    let src_start = bp + inst.c as usize + 1; // elem starts at c+1
 
     let val: &[u64] = &fiber.stack[src_start..src_start + elem_slots];
-    let result = slice::append(gc, elem_meta, elem_slots, s, val);
+    let result = slice::append(gc, elem_meta, elem_bytes, s, val);
     fiber.write_reg(inst.a, result as u64);
 }

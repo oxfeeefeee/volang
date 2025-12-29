@@ -638,31 +638,32 @@ pub extern "C" fn vo_chan_new(gc: *mut Gc, elem_meta: u32, elem_slots: u32, cap:
 // Array Helpers
 // =============================================================================
 
-/// Create a new array.
-/// Returns GcRef to array data (after ArrayHeader).
+/// Create a new array with packed element storage.
+/// elem_bytes: actual byte size per element (1/2/4/8 for packed, slots*8 for slot-based)
 #[no_mangle]
-pub extern "C" fn vo_array_new(gc: *mut Gc, elem_meta: u32, elem_slots: u32, len: u64) -> u64 {
+pub extern "C" fn vo_array_new(gc: *mut Gc, elem_meta: u32, elem_bytes: u32, len: u64) -> u64 {
     use crate::objects::array;
     use crate::ValueMeta;
     unsafe {
         let gc = &mut *gc;
-        array::create(gc, ValueMeta::from_raw(elem_meta), elem_slots as usize, len as usize) as u64
+        array::create(gc, ValueMeta::from_raw(elem_meta), elem_bytes as usize, len as usize) as u64
     }
 }
 
-/// Get element from array.
-/// Returns the value at arr[slot_offset].
+/// Get element from array with automatic sign extension.
+/// idx is element index, elem_bytes is byte size per element.
 #[no_mangle]
-pub extern "C" fn vo_array_get(arr: u64, slot_offset: u64) -> u64 {
+pub extern "C" fn vo_array_get(arr: u64, idx: u64, elem_bytes: u64) -> u64 {
     use crate::objects::array;
-    array::get(arr as crate::gc::GcRef, slot_offset as usize)
+    array::get_auto(arr as crate::gc::GcRef, idx as usize, elem_bytes as usize)
 }
 
-/// Set element in array.
+/// Set element in array with automatic type conversion.
+/// idx is element index, elem_bytes is byte size per element.
 #[no_mangle]
-pub extern "C" fn vo_array_set(arr: u64, slot_offset: u64, val: u64) {
+pub extern "C" fn vo_array_set(arr: u64, idx: u64, val: u64, elem_bytes: u64) {
     use crate::objects::array;
-    array::set(arr as crate::gc::GcRef, slot_offset as usize, val);
+    array::set_auto(arr as crate::gc::GcRef, idx as usize, val, elem_bytes as usize);
 }
 
 /// Get array length.
@@ -677,14 +678,15 @@ pub extern "C" fn vo_array_len(arr: u64) -> u64 {
 // Slice Helpers
 // =============================================================================
 
-/// Create a new slice.
+/// Create a new slice with packed element storage.
+/// elem_bytes: actual byte size per element (1/2/4/8 for packed, slots*8 for slot-based)
 #[no_mangle]
-pub extern "C" fn vo_slice_new(gc: *mut Gc, elem_meta: u32, elem_slots: u32, len: u64, cap: u64) -> u64 {
+pub extern "C" fn vo_slice_new(gc: *mut Gc, elem_meta: u32, elem_bytes: u32, len: u64, cap: u64) -> u64 {
     use crate::objects::slice;
     use crate::ValueMeta;
     unsafe {
         let gc = &mut *gc;
-        slice::create(gc, ValueMeta::from_raw(elem_meta), elem_slots as usize, len as usize, cap as usize) as u64
+        slice::create(gc, ValueMeta::from_raw(elem_meta), elem_bytes as usize, len as usize, cap as usize) as u64
     }
 }
 
@@ -702,18 +704,26 @@ pub extern "C" fn vo_slice_cap(s: u64) -> u64 {
     slice::cap(s as crate::gc::GcRef) as u64
 }
 
-/// Get element from slice.
+/// Get element from slice with automatic sign extension.
+/// idx is element index, elem_bytes is byte size per element.
 #[no_mangle]
-pub extern "C" fn vo_slice_get(s: u64, slot_offset: u64) -> u64 {
-    use crate::objects::slice;
-    slice::get(s as crate::gc::GcRef, slot_offset as usize)
+pub extern "C" fn vo_slice_get(s: u64, idx: u64, elem_bytes: u64) -> u64 {
+    use crate::objects::{slice, array};
+    let s_ref = s as crate::gc::GcRef;
+    let arr = slice::array_ref(s_ref);
+    let start = slice::start(s_ref);
+    array::get_auto(arr, start + idx as usize, elem_bytes as usize)
 }
 
-/// Set element in slice.
+/// Set element in slice with automatic type conversion.
+/// idx is element index, elem_bytes is byte size per element.
 #[no_mangle]
-pub extern "C" fn vo_slice_set(s: u64, slot_offset: u64, val: u64) {
-    use crate::objects::slice;
-    slice::set(s as crate::gc::GcRef, slot_offset as usize, val);
+pub extern "C" fn vo_slice_set(s: u64, idx: u64, val: u64, elem_bytes: u64) {
+    use crate::objects::{slice, array};
+    let s_ref = s as crate::gc::GcRef;
+    let arr = slice::array_ref(s_ref);
+    let start = slice::start(s_ref);
+    array::set_auto(arr, start + idx as usize, val, elem_bytes as usize);
 }
 
 /// Create a sub-slice (two-index: s[lo:hi]).
@@ -737,15 +747,17 @@ pub extern "C" fn vo_slice_slice3(gc: *mut Gc, s: u64, lo: u64, hi: u64, max: u6
 }
 
 /// Append single element to slice.
-/// val_ptr points to elem_slots u64 values.
+/// elem_bytes: actual byte size per element
+/// val_ptr points to ceil(elem_bytes/8) u64 values.
 #[no_mangle]
-pub extern "C" fn vo_slice_append(gc: *mut Gc, elem_meta: u32, elem_slots: u32, s: u64, val_ptr: *const u64) -> u64 {
+pub extern "C" fn vo_slice_append(gc: *mut Gc, elem_meta: u32, elem_bytes: u32, s: u64, val_ptr: *const u64) -> u64 {
     use crate::objects::slice;
     use crate::ValueMeta;
     unsafe {
         let gc = &mut *gc;
-        let val = core::slice::from_raw_parts(val_ptr, elem_slots as usize);
-        slice::append(gc, ValueMeta::from_raw(elem_meta), elem_slots as usize, s as crate::gc::GcRef, val) as u64
+        let val_slots = ((elem_bytes as usize) + 7) / 8;
+        let val = core::slice::from_raw_parts(val_ptr, val_slots);
+        slice::append(gc, ValueMeta::from_raw(elem_meta), elem_bytes as usize, s as crate::gc::GcRef, val) as u64
     }
 }
 
@@ -887,6 +899,43 @@ unsafe fn write_iface_assert_success(
 }
 
 // =============================================================================
+// Slice Copy
+// =============================================================================
+
+/// Copy elements from src slice to dst slice (for JIT).
+/// Returns the number of elements copied (min of dst len and src len).
+#[no_mangle]
+pub extern "C" fn vo_copy(dst: u64, src: u64) -> u64 {
+    use crate::objects::{slice, array};
+    use crate::gc::GcRef;
+    
+    if dst == 0 || src == 0 {
+        return 0;
+    }
+    
+    let dst_ref = dst as GcRef;
+    let src_ref = src as GcRef;
+    
+    let dst_len = slice::len(dst_ref);
+    let src_len = slice::len(src_ref);
+    let copy_len = dst_len.min(src_len);
+    
+    if copy_len == 0 {
+        return 0;
+    }
+    
+    let dst_arr = slice::array_ref(dst_ref);
+    let elem_bytes = array::elem_bytes(dst_arr);
+    let dst_start = slice::start(dst_ref);
+    let src_start = slice::start(src_ref);
+    let src_arr = slice::array_ref(src_ref);
+    
+    array::copy_range(src_arr, src_start, dst_arr, dst_start, copy_len, elem_bytes);
+    
+    copy_len as u64
+}
+
+// =============================================================================
 // Symbol Registration
 // =============================================================================
 
@@ -938,5 +987,6 @@ pub fn get_runtime_symbols() -> &'static [(&'static str, *const u8)] {
         ("vo_map_set", vo_map_set as *const u8),
         ("vo_map_delete", vo_map_delete as *const u8),
         ("vo_map_iter_get", vo_map_iter_get as *const u8),
+        ("vo_copy", vo_copy as *const u8),
     ]
 }

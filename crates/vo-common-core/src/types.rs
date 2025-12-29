@@ -138,6 +138,14 @@ impl ValueKind {
         self.is_integer() || self.is_float()
     }
 
+    /// Check if this is a signed integer type that needs sign extension when widening
+    /// Uses range check: Int=2, Int8=3, Int16=4, Int32=5, Int64=6
+    #[inline]
+    pub fn is_signed_int(&self) -> bool {
+        let v = *self as u8;
+        v >= 2 && v <= 6
+    }
+
     pub fn elem_bytes(&self) -> usize {
         match self {
             Self::Bool | Self::Int8 | Self::Uint8 => 1,

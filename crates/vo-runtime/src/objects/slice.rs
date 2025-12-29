@@ -35,8 +35,10 @@ impl SliceData {
     }
 }
 
-pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: usize, length: usize, capacity: usize) -> GcRef {
-    let arr = array::create(gc, elem_meta, elem_slots, capacity);
+/// Create a new slice with packed element storage.
+/// elem_bytes: actual byte size per element (1/2/4/8 for packed, slots*8 for slot-based)
+pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_bytes: usize, length: usize, capacity: usize) -> GcRef {
+    let arr = array::create(gc, elem_meta, elem_bytes, capacity);
     from_array_range(gc, arr, 0, length, capacity)
 }
 
@@ -71,12 +73,29 @@ pub fn elem_meta_id(s: GcRef) -> u32 { array::elem_meta_id(array_ref(s)) }
 pub fn elem_meta(s: GcRef) -> ValueMeta { array::elem_meta(array_ref(s)) }
 
 #[inline]
-pub fn get(s: GcRef, offset: usize) -> u64 { array::get(array_ref(s), start(s) + offset) }
+pub fn get(s: GcRef, idx: usize, elem_bytes: usize) -> u64 {
+    // start is element index
+    array::get(array_ref(s), start(s) + idx, elem_bytes)
+}
 #[inline]
-pub fn set(s: GcRef, offset: usize, val: u64) { array::set(array_ref(s), start(s) + offset, val); }
+pub fn get_auto(arr: GcRef, start: usize, idx: usize, elem_bytes: usize) -> u64 {
+    array::get_auto(arr, start + idx, elem_bytes)
+}
+#[inline]
+pub fn set(s: GcRef, idx: usize, val: u64, elem_bytes: usize) {
+    array::set(array_ref(s), start(s) + idx, val, elem_bytes);
+}
+#[inline]
+pub fn set_auto(arr: GcRef, start: usize, idx: usize, val: u64, elem_bytes: usize) {
+    array::set_auto(arr, start + idx, val, elem_bytes);
+}
 
-pub fn get_n(s: GcRef, offset: usize, dest: &mut [u64]) { array::get_n(array_ref(s), start(s) + offset, dest); }
-pub fn set_n(s: GcRef, offset: usize, src: &[u64]) { array::set_n(array_ref(s), start(s) + offset, src); }
+pub fn get_n(s: GcRef, idx: usize, dest: &mut [u64], elem_bytes: usize) {
+    array::get_n(array_ref(s), start(s) + idx, dest, elem_bytes);
+}
+pub fn set_n(s: GcRef, idx: usize, src: &[u64], elem_bytes: usize) {
+    array::set_n(array_ref(s), start(s) + idx, src, elem_bytes);
+}
 
 /// Two-index slice: s[new_start:new_end] - capacity extends to original cap
 pub fn slice_of(gc: &mut Gc, s: GcRef, new_start: usize, new_end: usize) -> GcRef {
@@ -90,25 +109,27 @@ pub fn slice_of_with_cap(gc: &mut Gc, s: GcRef, new_start: usize, new_end: usize
     from_array_range(gc, data.array, data.start + new_start, new_end - new_start, max - new_start)
 }
 
-pub fn append(gc: &mut Gc, em: ValueMeta, es: usize, s: GcRef, val: &[u64]) -> GcRef {
+/// Append single element to slice.
+/// elem_bytes: actual byte size per element
+pub fn append(gc: &mut Gc, em: ValueMeta, elem_bytes: usize, s: GcRef, val: &[u64]) -> GcRef {
     if s.is_null() {
-        let new_arr = array::create(gc, em, es, 4);
-        array::set_n(new_arr, 0, val);
+        let new_arr = array::create(gc, em, elem_bytes, 4);
+        array::set_n(new_arr, 0, val, elem_bytes);
         return from_array_range(gc, new_arr, 0, 1, 4);
     }
     let data = SliceData::as_ref(s);
     let cur_len = data.len;
     let cur_cap = data.cap;
     if cur_len < cur_cap {
-        array::set_n(data.array, (data.start + cur_len) * es, val);
+        array::set_n(data.array, data.start + cur_len, val, elem_bytes);
         SliceData::as_mut(s).len = cur_len + 1;
         s
     } else {
         let new_cap = if cur_cap == 0 { 4 } else { cur_cap * 2 };
         let aem = elem_meta(s);
-        let new_arr = array::create(gc, aem, es, new_cap);
-        array::copy_range(data.array, data.start * es, new_arr, 0, cur_len * es);
-        array::set_n(new_arr, cur_len * es, val);
+        let new_arr = array::create(gc, aem, elem_bytes, new_cap);
+        array::copy_range(data.array, data.start, new_arr, 0, cur_len, elem_bytes);
+        array::set_n(new_arr, cur_len, val, elem_bytes);
         from_array_range(gc, new_arr, 0, cur_len + 1, new_cap)
     }
 }

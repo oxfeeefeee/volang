@@ -118,3 +118,41 @@ static __VO_BUILTIN_ASSERT: ExternEntryWithGc = ExternEntryWithGc {
     name: "vo_assert",
     func: builtin_assert,
 };
+
+fn builtin_copy(call: &mut ExternCallWithGc) -> ExternResult {
+    use crate::objects::{slice, array};
+    
+    let dst = call.arg_ref(0);
+    let src = call.arg_ref(1);
+    
+    if dst.is_null() || src.is_null() {
+        call.ret_i64(0, 0);
+        return ExternResult::Ok;
+    }
+    
+    let dst_len = slice::len(dst);
+    let src_len = slice::len(src);
+    let copy_len = dst_len.min(src_len);
+    
+    if copy_len == 0 {
+        call.ret_i64(0, 0);
+        return ExternResult::Ok;
+    }
+    
+    let dst_arr = slice::array_ref(dst);
+    let elem_bytes = array::elem_bytes(dst_arr);
+    let dst_start = slice::start(dst);
+    let src_start = slice::start(src);
+    let src_arr = slice::array_ref(src);
+    
+    array::copy_range(src_arr, src_start, dst_arr, dst_start, copy_len, elem_bytes);
+    
+    call.ret_i64(0, copy_len as i64);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_GC)]
+static __VO_BUILTIN_COPY: ExternEntryWithGc = ExternEntryWithGc {
+    name: "vo_copy",
+    func: builtin_copy,
+};

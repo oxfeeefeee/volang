@@ -76,14 +76,22 @@ pub fn scan_object(gc: &mut Gc, obj: GcRef, struct_metas: &[StructMeta]) {
 
 fn scan_array(gc: &mut Gc, obj: GcRef) {
     let elem_kind = array::elem_kind(obj);
+    // Packed types (bool, int8-32, float32) don't contain GcRefs
     if !elem_kind.may_contain_gc_refs() { return; }
     
-    let gc_header = Gc::header(obj);
-    let total_slots = gc_header.slots as usize;
-    let data_slots = total_slots.saturating_sub(array::HEADER_SLOTS);
-    for i in 0..data_slots {
-        let child = array::get(obj, i);
-        if child != 0 { gc.mark_gray(child as GcRef); }
+    // For types that may contain GcRefs, elem_bytes is always multiple of 8
+    let len = array::len(obj);
+    let elem_bytes = array::elem_bytes(obj);
+    let elem_slots = elem_bytes / 8;
+    
+    for idx in 0..len {
+        for slot in 0..elem_slots {
+            // Read slot at byte offset: idx * elem_bytes + slot * 8
+            let byte_off = idx * elem_bytes + slot * 8;
+            let ptr = unsafe { (obj as *const u8).add(array::HEADER_SLOTS * 8 + byte_off) as *const u64 };
+            let child = unsafe { *ptr };
+            if child != 0 { gc.mark_gray(child as GcRef); }
+        }
     }
 }
 

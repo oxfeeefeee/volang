@@ -349,6 +349,28 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
+    /// Get array element type
+    pub fn array_elem_type(&self, type_key: TypeKey) -> TypeKey {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Array(a) = &self.tc_objs().types[underlying] {
+            a.elem()
+        } else {
+            panic!("array_elem_type: not an array type")
+        }
+    }
+
+    /// Get array element heap bytes (for packed array storage)
+    pub fn array_elem_bytes(&self, type_key: TypeKey) -> usize {
+        let elem_type = self.array_elem_type(type_key);
+        vo_analysis::check::type_info::elem_bytes_for_heap(elem_type, self.tc_objs())
+    }
+
+    /// Get slice element heap bytes (for packed array storage)
+    pub fn slice_elem_bytes(&self, type_key: TypeKey) -> usize {
+        let elem_type = self.slice_elem_type(type_key);
+        vo_analysis::check::type_info::elem_bytes_for_heap(elem_type, self.tc_objs())
+    }
+
     /// Get map key and value types
     pub fn map_key_val_types(&self, type_key: TypeKey) -> (TypeKey, TypeKey) {
         let underlying = typ::underlying_type(type_key, self.tc_objs());
@@ -374,16 +396,6 @@ impl<'a> TypeInfoWrapper<'a> {
             a.len().expect("array must have length")
         } else {
             panic!("array_len: not an array type")
-        }
-    }
-
-    /// Get array element type
-    pub fn array_elem_type(&self, type_key: TypeKey) -> TypeKey {
-        let underlying = typ::underlying_type(type_key, self.tc_objs());
-        if let Type::Array(a) = &self.tc_objs().types[underlying] {
-            a.elem()
-        } else {
-            panic!("array_elem_type: not an array type")
         }
     }
 
@@ -531,4 +543,11 @@ pub fn encode_func_id(func_idx: u32) -> (u16, u8) {
     let low = (func_idx & 0xFFFF) as u16;
     let high = ((func_idx >> 16) & 0xFF) as u8;
     (low, high)
+}
+
+/// Convert elem_bytes to flags for instructions.
+/// If elem_bytes > 255, returns 0 (runtime will read from header).
+#[inline]
+pub fn elem_bytes_to_flags(elem_bytes: usize) -> u8 {
+    if elem_bytes > 255 { 0 } else { elem_bytes as u8 }
 }
