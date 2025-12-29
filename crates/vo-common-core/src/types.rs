@@ -187,3 +187,35 @@ impl SlotType {
         matches!(self, SlotType::Interface1)
     }
 }
+
+// =============================================================================
+// Element Access Flags (for ArrayGet/Set, SliceGet/Set)
+// =============================================================================
+//
+// flags format:
+//   0       = dynamic (elem_bytes > 127, read from header at runtime)
+//   1-8     = direct read, zero extension (bool, uint8, uint16, uint32, int64, uint64, float64)
+//   129     = int8, sign extension (128 + 1)
+//   130     = int16, sign extension (128 + 2)
+//   132     = int32, sign extension (128 + 4)
+//   133     = float32, f32→f64 conversion (128 + 5)
+//   9-127   = multi-slot struct/array (elem_bytes, direct copy)
+//
+// This encoding allows VM/JIT to use a single match without function calls.
+
+pub const ELEM_FLAG_INT8: u8 = 129;    // 128 + 1
+pub const ELEM_FLAG_INT16: u8 = 130;   // 128 + 2
+pub const ELEM_FLAG_INT32: u8 = 132;   // 128 + 4
+pub const ELEM_FLAG_FLOAT32: u8 = 133; // 128 + 5
+
+/// Convert elem_bytes and ValueKind to flags for instructions.
+#[inline]
+pub fn elem_flags(elem_bytes: usize, vk: ValueKind) -> u8 {
+    match vk {
+        ValueKind::Int8 => ELEM_FLAG_INT8,
+        ValueKind::Int16 => ELEM_FLAG_INT16,
+        ValueKind::Int32 => ELEM_FLAG_INT32,
+        ValueKind::Float32 => ELEM_FLAG_FLOAT32,
+        _ => if elem_bytes > 127 { 0 } else { elem_bytes as u8 }
+    }
+}

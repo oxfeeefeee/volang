@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 vo-common = { path = "../vo-common" }
+vo-common-core = { path = "../vo-common-core" }
 vo-runtime = { path = "../vo-runtime" }
 vo-syntax = { path = "../vo-syntax" }
 vo-analysis = { path = "../vo-analysis" }

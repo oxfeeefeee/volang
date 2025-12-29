@@ -933,6 +933,7 @@ version = "0.1.0"
 dependencies = [
  "vo-analysis",
  "vo-common",
+ "vo-common-core",
  "vo-runtime",
  "vo-syntax",
  "vo-vm",

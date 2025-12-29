@@ -89,12 +89,14 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
     ) -> Result<StorageKind, CodegenError> {
         let elem_slots = self.info.array_elem_slots(type_key);
         let elem_bytes = self.info.array_elem_bytes(type_key);
+        let elem_type = self.info.array_elem_type(type_key);
+        let elem_vk = self.info.type_value_kind(elem_type);
         let gcref_slot = self.func.define_local_heap_array(sym, elem_slots);
 
         let arr_len = self.info.array_len(type_key);
         let elem_meta_idx = self.ctx.get_or_create_array_elem_meta(type_key, self.info);
 
-        // emit ArrayNew: a=dst, b=elem_meta_idx, c=len, flags=elem_bytes
+        // emit ArrayNew: a=dst, b=elem_meta_idx, c=len, flags=elem_flags
         let meta_reg = self.func.alloc_temp(1);
         self.func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
 
@@ -102,7 +104,7 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         let (b, c) = encode_i32(arr_len as i32);
         self.func.emit_op(Opcode::LoadInt, len_reg, b, c);
 
-        let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+        let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
         self.func.emit_with_flags(Opcode::ArrayNew, flags, gcref_slot, meta_reg, len_reg);
 
         Ok(StorageKind::HeapArray { gcref_slot, elem_slots })
@@ -685,6 +687,7 @@ fn compile_stmt_with_label(
                             ExprSource::Location(StorageKind::StackValue { slot, .. }) => (0, true, slot),
                             _ => (crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?, false, 0),
                         };
+                        let evk = info.type_value_kind(et);
                         let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
                                         range_var_slot(&mut sc, value.as_ref(), et, *define)?);
                         let ls = sc.func.alloc_temp(1);
@@ -696,7 +699,7 @@ fn compile_stmt_with_label(
                             let (op, flags) = if stk {
                                 (Opcode::SlotGetN, es as u8)
                             } else {
-                                (Opcode::ArrayGet, crate::type_info::elem_bytes_to_flags(eb))
+                                (Opcode::ArrayGet, vo_common_core::elem_flags(eb, evk))
                             };
                             sc.func.emit_with_flags(op, flags, vs, if stk { base } else { reg }, lp.idx_slot);
                         }
@@ -706,6 +709,7 @@ fn compile_stmt_with_label(
                     } else if info.is_slice(range_type) {
                         let eb = info.slice_elem_bytes(range_type);
                         let et = info.slice_elem_type(range_type);
+                        let evk = info.type_value_kind(et);
                         let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
                         let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
                                         range_var_slot(&mut sc, value.as_ref(), et, *define)?);
@@ -714,7 +718,7 @@ fn compile_stmt_with_label(
                         let lp = IndexLoop::begin(sc.func, ls, label);
                         lp.emit_key(sc.func, key.as_ref().map(|_| ks));
                         if value.is_some() {
-                            let flags = crate::type_info::elem_bytes_to_flags(eb);
+                            let flags = vo_common_core::elem_flags(eb, evk);
                             sc.func.emit_with_flags(Opcode::SliceGet, flags, vs, reg, lp.idx_slot);
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;

@@ -476,6 +476,14 @@ impl<'a> TypeInfoWrapper<'a> {
         type_layout::is_float(type_key, self.tc_objs())
     }
 
+    /// Check if type is float32
+    pub fn is_float32(&self, type_key: TypeKey) -> bool {
+        matches!(
+            &self.tc_objs().types[type_key],
+            Type::Basic(b) if b.typ() == typ::BasicType::Float32
+        )
+    }
+
     /// Check if type is an unsigned integer type
     pub fn is_unsigned(&self, type_key: TypeKey) -> bool {
         type_layout::is_unsigned(type_key, self.tc_objs())
@@ -545,9 +553,5 @@ pub fn encode_func_id(func_idx: u32) -> (u16, u8) {
     (low, high)
 }
 
-/// Convert elem_bytes to flags for instructions.
-/// If elem_bytes > 255, returns 0 (runtime will read from header).
-#[inline]
-pub fn elem_bytes_to_flags(elem_bytes: usize) -> u8 {
-    if elem_bytes > 255 { 0 } else { elem_bytes as u8 }
-}
+// Re-export elem_flags from vo-common-core
+pub use vo_common_core::{elem_flags, ELEM_FLAG_INT8, ELEM_FLAG_INT16, ELEM_FLAG_INT32, ELEM_FLAG_FLOAT32};

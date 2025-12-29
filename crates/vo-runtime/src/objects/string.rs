@@ -44,7 +44,7 @@ pub fn create(gc: &mut Gc, bytes: &[u8]) -> GcRef {
     }
     
     let arr = array::create(gc, ValueMeta::new(0, ValueKind::Uint8), 1, bytes.len());
-    let data_ptr = array::as_bytes_mut(arr);
+    let data_ptr = array::data_ptr_bytes(arr);
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, bytes.len()); }
     
     let s = gc.alloc(ValueMeta::new(0, ValueKind::String), DATA_SLOTS);
@@ -72,7 +72,7 @@ pub fn start(s: GcRef) -> usize { StringData::as_ref(s).start as usize }
 pub fn as_bytes(s: GcRef) -> &'static [u8] {
     if s.is_null() { return &[]; }
     let data = StringData::as_ref(s);
-    let ptr = unsafe { array::as_bytes(data.array).add(data.start as usize) };
+    let ptr = unsafe { array::data_ptr_bytes(data.array).add(data.start as usize) };
     unsafe { core::slice::from_raw_parts(ptr, data.len as usize) }
 }
 

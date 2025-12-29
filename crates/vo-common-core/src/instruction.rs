@@ -213,13 +213,15 @@ pub enum Opcode {
     ConvF2I,
     ConvI32I64,
     ConvI64I32,
+    ConvF64F32,
+    ConvF32F64,
 
     // Sentinel for invalid/unknown opcodes
     Invalid = 255,
 }
 
 impl Opcode {
-    const MAX_VALID: u8 = Self::ConvI64I32 as u8;  // Update if adding opcodes after ConvI64I32
+    const MAX_VALID: u8 = Self::ConvF32F64 as u8;  // Update if adding opcodes after ConvF32F64
 
     #[inline]
     pub fn from_u8(v: u8) -> Self {

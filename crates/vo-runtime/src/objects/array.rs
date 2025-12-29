@@ -72,15 +72,9 @@ pub fn elem_bytes(arr: GcRef) -> usize {
 
 
 /// Return byte pointer to data area (after header)
-#[inline]
-fn data_ptr_bytes(arr: GcRef) -> *mut u8 {
+#[inline(always)]
+pub fn data_ptr_bytes(arr: GcRef) -> *mut u8 {
     unsafe { (arr as *mut u8).add(HEADER_SLOTS * 8) }
-}
-
-/// Legacy slot-based pointer (for compatibility during transition)
-#[inline]
-fn data_ptr(arr: GcRef) -> *mut u64 {
-    unsafe { arr.add(HEADER_SLOTS) }
 }
 
 /// Read single element (returns u64, small types zero-extended)
@@ -178,13 +172,11 @@ pub fn get_n(arr: GcRef, idx: usize, dest: &mut [u64], elem_bytes: usize) {
         1 => dest[0] = unsafe { *ptr } as u64,
         2 => dest[0] = unsafe { *(ptr as *const u16) } as u64,
         4 => dest[0] = unsafe { *(ptr as *const u32) } as u64,
+        8 => dest[0] = unsafe { core::ptr::read_unaligned(ptr as *const u64) },
         _ => {
-            // slot-based: copy all slots
-            let elem_slots = (elem_bytes + 7) / 8;
-            let slot_ptr = ptr as *const u64;
-            for i in 0..elem_slots {
-                dest[i] = unsafe { *slot_ptr.add(i) };
-            }
+            // multi-slot: copy byte by byte to avoid alignment issues
+            let dest_bytes = dest.as_mut_ptr() as *mut u8;
+            unsafe { core::ptr::copy_nonoverlapping(ptr, dest_bytes, elem_bytes) };
         }
     }
 }
@@ -197,13 +189,11 @@ pub fn set_n(arr: GcRef, idx: usize, src: &[u64], elem_bytes: usize) {
         1 => unsafe { *ptr = src[0] as u8 },
         2 => unsafe { *(ptr as *mut u16) = src[0] as u16 },
         4 => unsafe { *(ptr as *mut u32) = src[0] as u32 },
+        8 => unsafe { core::ptr::write_unaligned(ptr as *mut u64, src[0]) },
         _ => {
-            // slot-based: copy all slots
-            let elem_slots = (elem_bytes + 7) / 8;
-            let slot_ptr = ptr as *mut u64;
-            for i in 0..elem_slots {
-                unsafe { *slot_ptr.add(i) = src[i] };
-            }
+            // multi-slot: copy byte by byte to avoid alignment issues
+            let src_bytes = src.as_ptr() as *const u8;
+            unsafe { core::ptr::copy_nonoverlapping(src_bytes, ptr, elem_bytes) };
         }
     }
 }
@@ -216,12 +206,4 @@ pub fn copy_range(src: GcRef, src_idx: usize, dst: GcRef, dst_idx: usize, count:
     unsafe {
         core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, byte_count);
     }
-}
-
-pub fn as_bytes(arr: GcRef) -> *const u8 {
-    data_ptr(arr) as *const u8
-}
-
-pub fn as_bytes_mut(arr: GcRef) -> *mut u8 {
-    data_ptr(arr) as *mut u8
 }

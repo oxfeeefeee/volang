@@ -146,8 +146,20 @@ pub fn compile_expr_to(
             // For comparison ops, expr type is bool, so we need operand type
             let operand_type = info.expr_type(bin.left.id);
             let is_float = info.is_float(operand_type);
+            let is_float32 = info.is_float32(operand_type);
             let is_string = info.is_string(operand_type);
             let is_unsigned = info.is_unsigned(operand_type);
+
+            // float32 arithmetic: convert f32 bits -> f64, operate, convert back
+            let (actual_left, actual_right) = if is_float32 {
+                let tmp_left = func.alloc_temp(1);
+                let tmp_right = func.alloc_temp(1);
+                func.emit_op(Opcode::ConvF32F64, tmp_left, left_reg, 0);
+                func.emit_op(Opcode::ConvF32F64, tmp_right, right_reg, 0);
+                (tmp_left, tmp_right)
+            } else {
+                (left_reg, right_reg)
+            };
 
             let opcode = match (&bin.op, is_float, is_string, is_unsigned) {
                 (BinaryOp::Add, false, false, _) => Opcode::AddI,
@@ -197,7 +209,14 @@ pub fn compile_expr_to(
                 _ => return Err(CodegenError::UnsupportedExpr(format!("binary op {:?}", bin.op))),
             };
 
-            func.emit_op(opcode, dst, left_reg, right_reg);
+            func.emit_op(opcode, dst, actual_left, actual_right);
+            
+            // float32 arithmetic result: convert f64 back to f32 bits
+            // (comparison results are bool, don't need conversion)
+            let is_arith = matches!(bin.op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div);
+            if is_float32 && is_arith {
+                func.emit_op(Opcode::ConvF64F32, dst, dst, 0);
+            }
         }
 
         // === Unary operations ===
@@ -687,11 +706,31 @@ fn compile_conversion(
     let dst_is_float = info.is_float(dst_type);
     
     if src_is_int && dst_is_float {
-        // ConvI2F
+        // ConvI2F: int -> f64, then maybe f64 -> f32
         func.emit_op(Opcode::ConvI2F, dst, src_reg, 0);
+        if info.is_float32(dst_type) {
+            func.emit_op(Opcode::ConvF64F32, dst, dst, 0);
+        }
     } else if src_is_float && dst_is_int {
-        // ConvF2I
-        func.emit_op(Opcode::ConvF2I, dst, src_reg, 0);
+        // ConvF2I: maybe f32 -> f64, then f64 -> int
+        if info.is_float32(src_type) {
+            let tmp = func.alloc_temp(1);
+            func.emit_op(Opcode::ConvF32F64, tmp, src_reg, 0);
+            func.emit_op(Opcode::ConvF2I, dst, tmp, 0);
+        } else {
+            func.emit_op(Opcode::ConvF2I, dst, src_reg, 0);
+        }
+    } else if src_is_float && dst_is_float {
+        // Float to float conversion
+        let src_is_f32 = info.is_float32(src_type);
+        let dst_is_f32 = info.is_float32(dst_type);
+        if src_is_f32 && !dst_is_f32 {
+            func.emit_op(Opcode::ConvF32F64, dst, src_reg, 0);
+        } else if !src_is_f32 && dst_is_f32 {
+            func.emit_op(Opcode::ConvF64F32, dst, src_reg, 0);
+        } else {
+            func.emit_op(Opcode::Copy, dst, src_reg, 0);
+        }
     } else if src_is_int && dst_is_int {
         // Int to int conversion - check sizes
         let src_bits = info.int_bits(src_type);
@@ -1499,8 +1538,8 @@ fn compile_builtin_call(
                         func.emit_op(Opcode::Copy, len_cap_reg + 1, len_cap_reg, 0);
                     }
                     
-                    // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_bytes
-                    let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+                    // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_flags
+                    let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
                     func.emit_with_flags(Opcode::SliceNew, flags, dst, meta_reg, len_cap_reg);
                 } else if info.is_map(type_key) {
                     // make(map[K]V)
@@ -1551,7 +1590,7 @@ fn compile_builtin_call(
             func.emit_op(Opcode::LoadConst, meta_and_elem_reg, elem_meta_idx, 0);
             compile_expr_to(&call.args[1], meta_and_elem_reg + 1, _ctx, func, info)?;
             
-            let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+            let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
             func.emit_with_flags(Opcode::SliceAppend, flags, dst, slice_reg, meta_and_elem_reg);
         }
         "copy" => {
@@ -1699,7 +1738,7 @@ fn compile_composite_lit(
         let (b, c) = crate::type_info::encode_i32(len as i32);
         func.emit_op(Opcode::LoadInt, len_cap_reg, b, c);      // len
         func.emit_op(Opcode::LoadInt, len_cap_reg + 1, b, c);  // cap = len
-        let flags = crate::type_info::elem_bytes_to_flags(elem_bytes);
+        let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
         func.emit_with_flags(Opcode::SliceNew, flags, dst, meta_reg, len_cap_reg);
         
         // Set each element
@@ -1837,11 +1876,19 @@ fn compile_const_value(
         Value::Float(f) => {
             let idx = ctx.const_float(*f);
             func.emit_op(Opcode::LoadConst, dst, idx, 0);
+            // Convert f64 bits to f32 bits if target is float32
+            if info.is_float32(target_type) {
+                func.emit_op(Opcode::ConvF64F32, dst, dst, 0);
+            }
         }
         Value::Rat(_r) => {
             let f = vo_analysis::constant::float64_val(val).0;
             let idx = ctx.const_float(f);
             func.emit_op(Opcode::LoadConst, dst, idx, 0);
+            // Convert f64 bits to f32 bits if target is float32
+            if info.is_float32(target_type) {
+                func.emit_op(Opcode::ConvF64F32, dst, dst, 0);
+            }
         }
         Value::Str(s) => {
             let idx = ctx.const_string(s);

@@ -449,6 +449,8 @@ impl<'a> FunctionCompiler<'a> {
             Opcode::ConvF2I => self.translate_conv_f2i(inst),
             Opcode::ConvI32I64 => self.translate_conv_i32_i64(inst),
             Opcode::ConvI64I32 => self.translate_conv_i64_i32(inst),
+            Opcode::ConvF64F32 => self.translate_conv_f64_f32(inst),
+            Opcode::ConvF32F64 => self.translate_conv_f32_f64(inst),
             
             Opcode::Panic => self.translate_panic(inst),
             

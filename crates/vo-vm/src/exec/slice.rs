@@ -52,7 +52,14 @@ pub fn exec_slice_slice(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
 #[inline]
 pub fn exec_slice_append(fiber: &mut Fiber, inst: &Instruction, gc: &mut Gc) {
     let s = fiber.read_reg(inst.b) as GcRef;
-    let elem_bytes = inst.flags as usize; // flags is now elem_bytes
+    // flags: 0=dynamic, 1-8=direct, 129=int8, 130=int16, 132=int32, 133=float32
+    let elem_bytes = match inst.flags {
+        129 => 1,   // int8
+        130 => 2,   // int16
+        132 => 4,   // int32
+        133 => 4,   // float32
+        f => f as usize,
+    };
     let elem_slots = (elem_bytes + 7) / 8;
     
     // c points to meta_and_elem: [elem_meta (1 slot)][elem (elem_slots)]
