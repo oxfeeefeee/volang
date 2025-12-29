@@ -279,6 +279,11 @@ impl<'a> TypeInfoWrapper<'a> {
     pub fn obj_type(&self, obj: ObjKey, msg: &str) -> TypeKey {
         self.tc_objs().lobjs[obj].typ().expect(msg)
     }
+    
+    /// Try to get object's type. Returns None if object has no type.
+    pub fn try_obj_type(&self, obj: ObjKey) -> Option<TypeKey> {
+        self.tc_objs().lobjs[obj].typ()
+    }
 
     /// Get object's name
     pub fn obj_name(&self, obj: ObjKey) -> &str {

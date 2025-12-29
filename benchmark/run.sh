@@ -36,6 +36,11 @@ check_deps() {
     fi
 }
 
+# Check if java is available
+has_java() {
+    command -v java >/dev/null 2>&1 && command -v javac >/dev/null 2>&1
+}
+
 # Check if lua is available
 has_lua() {
     command -v lua >/dev/null 2>&1
@@ -65,6 +70,7 @@ run_benchmark() {
     local go_file=$(find "$dir" -name "*.go" | head -1)
     local lua_file=$(find "$dir" -name "*.lua" | head -1)
     local py_file=$(find "$dir" -name "*.py" | head -1)
+    local java_file=$(find "$dir" -name "*.java" | head -1)
     
     local cmds=()
     local names=()
@@ -103,6 +109,15 @@ run_benchmark() {
     if [ -f "$py_file" ]; then
         cmds+=("python3 '$py_file'")
         names+=("Python")
+    fi
+    
+    # Java (compile and run)
+    if [ -f "$java_file" ] && has_java; then
+        local java_class=$(basename "$java_file" .java)
+        if javac -d "$dir" "$java_file" 2>/dev/null; then
+            cmds+=("java -cp '$dir' '$java_class'")
+            names+=("Java")
+        fi
     fi
     
     # Build hyperfine command

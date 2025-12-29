@@ -25,23 +25,68 @@ pub struct MethodResolution {
 }
 
 /// Get ExprSource for an expression - determines where the value comes from.
+/// This is the single source of truth for "can we use an existing slot?"
 pub fn get_expr_source(
     expr: &Expr,
     ctx: &CodegenContext,
     func: &FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> ExprSource {
-    if let ExprKind::Ident(ident) = &expr.kind {
-        // Check local variable - storage is already computed
-        if let Some(local) = func.lookup_local(ident.symbol) {
-            return ExprSource::Location(local.storage);
+    match &expr.kind {
+        // Variable reference
+        ExprKind::Ident(ident) => {
+            // Check local variable
+            if let Some(local) = func.lookup_local(ident.symbol) {
+                return ExprSource::Location(local.storage);
+            }
+            // Check global variable
+            if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
+                if let Some(type_key) = info.try_obj_type(info.get_use(ident)) {
+                    let slots = info.type_slot_count(type_key);
+                    return ExprSource::Location(StorageKind::Global { index: global_idx as u16, slots });
+                }
+            }
         }
-        // Check global variable
-        if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
-            let type_key = info.obj_type(info.get_use(ident), "global var must have type");
-            let slots = info.type_slot_count(type_key);
-            return ExprSource::Location(StorageKind::Global { index: global_idx as u16, slots });
+        
+        // Struct field access: base.field
+        ExprKind::Selector(sel) => {
+            // Skip if no type info (compile-time constants)
+            let Some(tv) = info.project.type_info.types.get(&expr.id) else {
+                return ExprSource::NeedsCompile;
+            };
+            let field_slots = info.type_slot_count(tv.typ);
+            
+            // Skip pointer receivers (need dereference)
+            let Some(recv_tv) = info.project.type_info.types.get(&sel.expr.id) else {
+                return ExprSource::NeedsCompile;
+            };
+            if info.is_pointer(recv_tv.typ) {
+                return ExprSource::NeedsCompile;
+            }
+            
+            // Check if base is a stack variable
+            if let ExprSource::Location(StorageKind::StackValue { slot: base_slot, .. }) = 
+                get_expr_source(&sel.expr, ctx, func, info) 
+            {
+                // Compute field offset
+                if let Some(field_name) = info.project.interner.resolve(sel.sel.symbol) {
+                    let (offset, _) = info.get_selection(expr.id)
+                        .map(|sel_info| info.compute_field_offset_from_indices(recv_tv.typ, sel_info.indices()))
+                        .unwrap_or_else(|| info.struct_field_offset(recv_tv.typ, field_name));
+                    return ExprSource::Location(StorageKind::StackValue { 
+                        slot: base_slot + offset, 
+                        slots: field_slots 
+                    });
+                }
+            }
         }
+        
+        // Parenthesized expression: recurse
+        ExprKind::Paren(inner) => {
+            return get_expr_source(inner, ctx, func, info);
+        }
+        
+        _ => {}
     }
     ExprSource::NeedsCompile
 }
@@ -65,20 +110,16 @@ pub fn compile_expr(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<u16, CodegenError> {
-    // Fast path: check if expression already has a usable location
-    match get_expr_source(expr, ctx, func, info) {
-        ExprSource::Location(StorageKind::StackValue { slot, slots: 1 }) => {
-            // Single-slot stack variable: return directly, no allocation needed
-            return Ok(slot);
+    // Check if expression already has a usable location (single-slot only)
+    if let ExprSource::Location(storage) = get_expr_source(expr, ctx, func, info) {
+        match storage {
+            StorageKind::StackValue { slot, slots: 1 } => return Ok(slot),
+            StorageKind::Reference { slot } => return Ok(slot),
+            _ => {}
         }
-        ExprSource::Location(StorageKind::Reference { slot }) => {
-            // Reference types (slice/map/chan): GcRef is the value, return directly
-            return Ok(slot);
-        }
-        _ => {}
     }
     
-    // Standard path: allocate temp and compile
+    // Need to compute: allocate temp and compile
     let slots = info.expr_slots(expr.id);
     let dst = func.alloc_temp(slots);
     compile_expr_to(expr, dst, ctx, func, info)?;

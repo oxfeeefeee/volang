@@ -35,3 +35,8 @@ tarpaulin-report.html
 /.windsurf
 /.ref
 /benchmark/results
+benchmark/matrix/go_bench
+benchmark/matrix2/go_bench
+*.class
+benchmark/binary-trees/go_bench
+benchmark/fibonacci/go_bench
