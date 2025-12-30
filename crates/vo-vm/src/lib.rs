@@ -8,7 +8,6 @@ pub mod scheduler;
 pub mod itab;
 pub mod vm;
 pub mod exec;
-pub mod hot_counter;
 mod gc_roots;
 
 #[cfg(feature = "jit")]
