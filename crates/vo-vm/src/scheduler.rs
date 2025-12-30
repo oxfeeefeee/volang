@@ -7,6 +7,15 @@ use std::collections::VecDeque;
 
 use crate::fiber::{Fiber, FiberStatus};
 
+/// High bit flag to distinguish trampoline fibers from regular fibers.
+pub const TRAMPOLINE_FIBER_FLAG: u32 = 0x8000_0000;
+
+/// Check if a fiber ID is a trampoline fiber.
+#[inline]
+pub fn is_trampoline_fiber(id: u32) -> bool {
+    id & TRAMPOLINE_FIBER_FLAG != 0
+}
+
 #[derive(Debug)]
 pub struct Scheduler {
     /// Fibers indexed by id (id == index).
@@ -15,6 +24,11 @@ pub struct Scheduler {
     free_slots: Vec<u32>,
     pub ready_queue: VecDeque<u32>,
     pub current: Option<u32>,
+    
+    /// Trampoline fibers for JIT->VM calls (separate ID space with high bit set).
+    pub trampoline_fibers: Vec<Fiber>,
+    /// Free slots in trampoline_fibers pool.
+    trampoline_free_slots: Vec<u32>,
 }
 
 impl Scheduler {
@@ -24,7 +38,51 @@ impl Scheduler {
             free_slots: Vec::new(),
             ready_queue: VecDeque::new(),
             current: None,
+            trampoline_fibers: Vec::new(),
+            trampoline_free_slots: Vec::new(),
         }
+    }
+    
+    /// Acquire a trampoline fiber for JIT->VM calls.
+    /// Returns fiber ID with high bit set.
+    pub fn acquire_trampoline_fiber(&mut self) -> u32 {
+        let index = if let Some(slot) = self.trampoline_free_slots.pop() {
+            // Reuse existing fiber
+            let fiber = &mut self.trampoline_fibers[slot as usize];
+            fiber.reset();
+            slot
+        } else {
+            // Create new fiber
+            let index = self.trampoline_fibers.len() as u32;
+            let mut fiber = Fiber::new(TRAMPOLINE_FIBER_FLAG | index);
+            fiber.status = FiberStatus::Running;
+            self.trampoline_fibers.push(fiber);
+            index
+        };
+        TRAMPOLINE_FIBER_FLAG | index
+    }
+    
+    /// Release a trampoline fiber back to the pool.
+    pub fn release_trampoline_fiber(&mut self, id: u32) {
+        debug_assert!(is_trampoline_fiber(id));
+        let index = id & !TRAMPOLINE_FIBER_FLAG;
+        self.trampoline_free_slots.push(index);
+    }
+    
+    /// Get trampoline fiber by ID.
+    #[inline]
+    pub fn trampoline_fiber(&self, id: u32) -> &Fiber {
+        debug_assert!(is_trampoline_fiber(id));
+        let index = (id & !TRAMPOLINE_FIBER_FLAG) as usize;
+        &self.trampoline_fibers[index]
+    }
+    
+    /// Get mutable trampoline fiber by ID.
+    #[inline]
+    pub fn trampoline_fiber_mut(&mut self, id: u32) -> &mut Fiber {
+        debug_assert!(is_trampoline_fiber(id));
+        let index = (id & !TRAMPOLINE_FIBER_FLAG) as usize;
+        &mut self.trampoline_fibers[index]
     }
 
     /// Spawn a new fiber, returns its id.

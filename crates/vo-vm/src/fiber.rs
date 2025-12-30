@@ -89,6 +89,17 @@ impl Fiber {
             panic_value: None,
         }
     }
+    
+    /// Reset fiber for reuse (trampoline fiber pool).
+    pub fn reset(&mut self) {
+        self.status = FiberStatus::Running;
+        self.stack.clear();
+        self.frames.clear();
+        self.defer_stack.clear();
+        self.defer_state = None;
+        self.select_state = None;
+        self.panic_value = None;
+    }
 
     pub fn push_frame(&mut self, func_id: u32, local_slots: u16, ret_reg: u16, ret_count: u16) {
         let bp = self.stack.len();

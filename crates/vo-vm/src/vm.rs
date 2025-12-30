@@ -207,177 +207,6 @@ fn build_jit_ctx(
     }
 }
 
-/// Pure VM interpretation of a function call.
-/// This is the fallback when JIT version is not available.
-#[cfg(feature = "jit")]
-fn vm_interpret_call(
-    vm: &mut Vm,
-    func_id: u32,
-    args: *const u64,
-    arg_count: u32,
-    ret: *mut u64,
-    ret_count: u32,
-    module: &Module,
-) -> JitResult {
-    let func = &module.functions[func_id as usize];
-    
-    // Create a temporary fiber for the call
-    let mut fiber = Fiber::new(0);
-    fiber.stack.resize(func.local_slots as usize, 0);
-    
-    // Copy args to fiber stack
-    for i in 0..arg_count as usize {
-        fiber.stack[i] = unsafe { *args.add(i) };
-    }
-    
-    // Push initial frame
-    fiber.frames.push(crate::fiber::CallFrame {
-        func_id,
-        pc: 0,
-        bp: 0,
-        ret_reg: 0,
-        ret_count: ret_count as u16,
-    });
-    
-    // Track if we've saved return values from the original function
-    let mut saved_ret_vals: Option<Vec<u64>> = None;
-    
-    // Execute until done
-    loop {
-        // Get current frame
-        let frame = match fiber.frames.last_mut() {
-            Some(f) => f,
-            None => break,
-        };
-        
-        let current_func = &module.functions[frame.func_id as usize];
-        if frame.pc >= current_func.code.len() {
-            break;
-        }
-        
-        let inst = current_func.code[frame.pc];
-        let frame_func_id = frame.func_id;
-        frame.pc += 1;
-        
-        
-        // For Return instruction: save return values before exec_return modifies stack
-        // Save when returning from the INITIAL frame (bp == 0) and not in defer execution
-        if inst.opcode() == crate::instruction::Opcode::Return && fiber.defer_state.is_none() {
-            let frame_bp = fiber.frames.last().map(|f| f.bp).unwrap_or(0);
-            
-            // Only save when returning from the initial frame (the one we created)
-            if frame_bp == 0 {
-                let ret_start = inst.a as usize;
-                let ret_count_from_inst = inst.b as usize;
-                
-                // Bounds check before reading
-                let mut vals = Vec::with_capacity(ret_count_from_inst);
-                for i in 0..ret_count_from_inst {
-                    let idx = ret_start + i;
-                    if idx < fiber.stack.len() {
-                        vals.push(fiber.stack[idx]);
-                    }
-                }
-                saved_ret_vals = Some(vals);
-            }
-        }
-        
-        let bp = fiber.frames.last().map(|f| f.bp).unwrap_or(0);
-        let result = exec_inst_inline(vm, &mut fiber, &inst, frame_func_id, bp, module);
-        
-        match result {
-            ExecResult::Continue => {}
-            ExecResult::Return => {
-                if fiber.frames.is_empty() {
-                    break;
-                }
-            }
-            ExecResult::Done => break,
-            ExecResult::Panic => return JitResult::Panic,
-            ExecResult::Osr(osr_func_id, backedge_pc, loop_header_pc) => {
-                // Handle OSR outside the recursive call stack
-                if let Some(jit_mgr) = vm.jit_mgr.as_mut() {
-                    use crate::jit_bridge::OsrResult;
-                    let osr_action = crate::jit_bridge::try_osr_compile(jit_mgr, osr_func_id, backedge_pc, loop_header_pc);
-                    
-                    let osr_func = match osr_action {
-                        OsrResult::Ready(ptr) => Some(ptr),
-                        OsrResult::ShouldCompile => {
-                            let func_def = &module.functions[osr_func_id as usize];
-                            jit_mgr.compile_osr(osr_func_id, loop_header_pc, func_def, module).ok()
-                        }
-                        OsrResult::NotHot => None,
-                    };
-                    
-                    if let Some(osr_ptr) = osr_func {
-                        // Execute OSR
-                        let func_def = &module.functions[osr_func_id as usize];
-                        let local_slots = func_def.local_slots as usize;
-                        let ret_slots = func_def.ret_slots as usize;
-                        let frame = fiber.frames.last().unwrap();
-                        let osr_bp = frame.bp;
-                        let ret_reg = frame.ret_reg as usize;
-                        
-                        let mut locals: Vec<u64> = fiber.stack[osr_bp..osr_bp + local_slots].to_vec();
-                        let mut ret_buf: Vec<u64> = vec![0; ret_slots];
-                        
-                        let func_table_ptr = jit_mgr.func_table_ptr();
-                        let func_table_len = jit_mgr.func_table_len() as u32;
-                        let safepoint_flag = false;
-                        let mut panic_flag = false;
-                        let vm_ptr = vm as *mut _ as *mut std::ffi::c_void;
-                        let module_ptr = module as *const _ as *const std::ffi::c_void;
-                        
-                        let mut ctx = build_jit_ctx(
-                            &mut vm.state, func_table_ptr, func_table_len,
-                            vm_ptr, std::ptr::null_mut(), module_ptr,
-                            &safepoint_flag, &mut panic_flag,
-                        );
-                        
-                        let jit_result = crate::jit_bridge::call_jit_function(osr_ptr, &mut ctx, &mut locals, &mut ret_buf);
-                        
-                        match jit_result {
-                            JitResult::Ok => {
-                                fiber.frames.pop();
-                                if fiber.frames.is_empty() {
-                                    // Save return values for vm_interpret_call to return
-                                    for (i, val) in ret_buf.iter().enumerate() {
-                                        if i < ret_slots && i < fiber.stack.len() {
-                                            fiber.stack[i] = *val;
-                                        }
-                                    }
-                                    saved_ret_vals = Some(ret_buf[..ret_slots.min(ret_buf.len())].to_vec());
-                                    break;
-                                }
-                                // Write to caller frame
-                                let caller_bp = fiber.frames.last().unwrap().bp;
-                                for (i, val) in ret_buf.iter().enumerate() {
-                                    if i < ret_slots {
-                                        fiber.stack[caller_bp + ret_reg + i] = *val;
-                                    }
-                                }
-                            }
-                            JitResult::Panic => return JitResult::Panic,
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    
-    // Copy saved return values to output buffer
-    if let Some(vals) = saved_ret_vals {
-        for (i, val) in vals.iter().enumerate() {
-            if i < ret_count as usize {
-                unsafe { *ret.add(i) = *val };
-            }
-        }
-    }
-    
-    JitResult::Ok
-}
-
 /// VM call trampoline for JIT -> VM calls.
 /// This is the **unified entry point** for all function calls from JIT code.
 /// It delegates to JitManager which selects the best version (JIT or VM).
@@ -443,8 +272,122 @@ extern "C" fn vm_call_trampoline(
         }
     }
     
-    // 3. Fall back to VM interpretation
-    vm_interpret_call(vm, func_id, args, arg_count, ret, ret_count, module)
+    // 3. Fall back to VM interpretation using trampoline fiber
+    let func_def = &module.functions[func_id as usize];
+    let local_slots = func_def.local_slots;
+    let param_slots = func_def.param_slots as usize;
+    
+    // Acquire a trampoline fiber from the pool
+    let trampoline_id = vm.scheduler.acquire_trampoline_fiber();
+    
+    {
+        let fiber = vm.scheduler.trampoline_fiber_mut(trampoline_id);
+        
+        // Setup initial frame
+        fiber.push_frame(func_id, local_slots, 0, ret_count as u16);
+        
+        // Copy arguments
+        for i in 0..param_slots.min(arg_count as usize) {
+            fiber.stack[i] = unsafe { *args.add(i) };
+        }
+    }
+    
+    // Run the fiber until completion
+    let result = loop {
+        let exec_result = vm.run_fiber(trampoline_id);
+        match exec_result {
+            ExecResult::Done => break JitResult::Ok,
+            ExecResult::Panic => break JitResult::Panic,
+            ExecResult::Osr(osr_func_id, backedge_pc, loop_header_pc) => {
+                // Handle OSR
+                if let Some(jit_mgr) = vm.jit_mgr.as_mut() {
+                    use crate::jit_bridge::OsrResult;
+                    let osr_action = crate::jit_bridge::try_osr_compile(jit_mgr, osr_func_id, backedge_pc, loop_header_pc);
+                    
+                    let osr_func = match osr_action {
+                        OsrResult::Ready(ptr) => Some(ptr),
+                        OsrResult::ShouldCompile => {
+                            let osr_func_def = &module.functions[osr_func_id as usize];
+                            jit_mgr.compile_osr(osr_func_id, loop_header_pc, osr_func_def, module).ok()
+                        }
+                        OsrResult::NotHot => None,
+                    };
+                    
+                    if let Some(osr_ptr) = osr_func {
+                        let osr_func_def = &module.functions[osr_func_id as usize];
+                        let osr_local_slots = osr_func_def.local_slots as usize;
+                        let osr_ret_slots = osr_func_def.ret_slots as usize;
+                        
+                        let fiber = vm.scheduler.trampoline_fiber_mut(trampoline_id);
+                        let frame = fiber.frames.last().unwrap();
+                        let osr_bp = frame.bp;
+                        let osr_ret_reg = frame.ret_reg as usize;
+                        
+                        let mut locals: Vec<u64> = fiber.stack[osr_bp..osr_bp + osr_local_slots].to_vec();
+                        let mut ret_buf: Vec<u64> = vec![0; osr_ret_slots];
+                        
+                        let func_table_ptr = jit_mgr.func_table_ptr();
+                        let func_table_len = jit_mgr.func_table_len() as u32;
+                        let safepoint_flag = false;
+                        let mut panic_flag = false;
+                        let vm_ptr = vm as *mut _ as *mut std::ffi::c_void;
+                        let module_ptr = module as *const _ as *const std::ffi::c_void;
+                        
+                        let mut ctx = build_jit_ctx(
+                            &mut vm.state, func_table_ptr, func_table_len,
+                            vm_ptr, std::ptr::null_mut(), module_ptr,
+                            &safepoint_flag, &mut panic_flag,
+                        );
+                        
+                        let jit_result = crate::jit_bridge::call_jit_function(osr_ptr, &mut ctx, &mut locals, &mut ret_buf);
+                        
+                        let fiber = vm.scheduler.trampoline_fiber_mut(trampoline_id);
+                        match jit_result {
+                            JitResult::Ok => {
+                                fiber.frames.pop();
+                                if fiber.frames.is_empty() {
+                                    // Copy return values
+                                    for (i, val) in ret_buf.iter().enumerate() {
+                                        if i < osr_ret_slots {
+                                            fiber.stack[i] = *val;
+                                        }
+                                    }
+                                    break JitResult::Ok;
+                                }
+                                // Write to caller frame
+                                let caller_bp = fiber.frames.last().unwrap().bp;
+                                for (i, val) in ret_buf.iter().enumerate() {
+                                    if i < osr_ret_slots {
+                                        fiber.stack[caller_bp + osr_ret_reg + i] = *val;
+                                    }
+                                }
+                            }
+                            JitResult::Panic => break JitResult::Panic,
+                        }
+                    }
+                }
+                // Continue execution
+            }
+            _ => {
+                // Continue for other results
+            }
+        }
+    };
+    
+    // Copy return values
+    if result == JitResult::Ok {
+        let fiber = vm.scheduler.trampoline_fiber(trampoline_id);
+        for i in 0..(ret_count as usize) {
+            if i < fiber.stack.len() {
+                unsafe { *ret.add(i) = fiber.stack[i] };
+            }
+        }
+    }
+    
+    // Release the trampoline fiber back to the pool
+    vm.scheduler.release_trampoline_fiber(trampoline_id);
+    
+    result
 }
 
 /// Time slice: number of instructions before forced yield check.
@@ -577,21 +520,36 @@ impl Vm {
 #[cfg(feature = "jit")]
 impl vo_runtime::jit_api::JitCallContext for Vm {
     fn read_args(&self, fiber_id: u32, arg_start: u16, arg_count: usize) -> Vec<u64> {
-        let fiber = &self.scheduler.fibers[fiber_id as usize];
+        use crate::scheduler::is_trampoline_fiber;
+        let fiber = if is_trampoline_fiber(fiber_id) {
+            self.scheduler.trampoline_fiber(fiber_id)
+        } else {
+            &self.scheduler.fibers[fiber_id as usize]
+        };
         (0..arg_count)
             .map(|i| fiber.read_reg(arg_start + i as u16))
             .collect()
     }
     
     fn write_returns(&mut self, fiber_id: u32, ret_start: u16, values: &[u64]) {
-        let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+        use crate::scheduler::is_trampoline_fiber;
+        let fiber = if is_trampoline_fiber(fiber_id) {
+            self.scheduler.trampoline_fiber_mut(fiber_id)
+        } else {
+            &mut self.scheduler.fibers[fiber_id as usize]
+        };
         for (i, val) in values.iter().enumerate() {
             fiber.write_reg(ret_start + i as u16, *val);
         }
     }
     
     fn read_locals(&self, fiber_id: u32, bp: usize, local_count: usize) -> Vec<u64> {
-        let fiber = &self.scheduler.fibers[fiber_id as usize];
+        use crate::scheduler::is_trampoline_fiber;
+        let fiber = if is_trampoline_fiber(fiber_id) {
+            self.scheduler.trampoline_fiber(fiber_id)
+        } else {
+            &self.scheduler.fibers[fiber_id as usize]
+        };
         fiber.stack[bp..bp + local_count].to_vec()
     }
     
@@ -601,10 +559,15 @@ impl vo_runtime::jit_api::JitCallContext for Vm {
         safepoint_flag: *const bool,
         panic_flag: *mut bool,
     ) -> vo_runtime::jit_api::JitContext {
+        use crate::scheduler::is_trampoline_fiber;
         let jit_mgr = self.jit_mgr.as_ref().unwrap();
         let func_table_ptr = jit_mgr.func_table_ptr();
         let func_table_len = jit_mgr.func_table_len() as u32;
-        let fiber_ptr = &mut self.scheduler.fibers[fiber_id as usize] as *mut Fiber as *mut std::ffi::c_void;
+        let fiber_ptr = if is_trampoline_fiber(fiber_id) {
+            self.scheduler.trampoline_fiber_mut(fiber_id) as *mut Fiber as *mut std::ffi::c_void
+        } else {
+            &mut self.scheduler.fibers[fiber_id as usize] as *mut Fiber as *mut std::ffi::c_void
+        };
         let vm_ptr = self as *mut _ as *mut std::ffi::c_void;
         let module_ptr = self.module.as_ref().map(|m| m as *const _ as *const std::ffi::c_void).unwrap_or(std::ptr::null());
         
@@ -690,7 +653,12 @@ impl Vm {
         // Handle result (VM-specific: pop frame, write to caller)
         match result {
             JitResult::Ok => {
-                let fiber = &mut self.scheduler.fibers[fiber_id as usize];
+                use crate::scheduler::is_trampoline_fiber;
+                let fiber = if is_trampoline_fiber(fiber_id) {
+                    self.scheduler.trampoline_fiber_mut(fiber_id)
+                } else {
+                    &mut self.scheduler.fibers[fiber_id as usize]
+                };
                 let frame = fiber.frames.pop()?;
                 
                 if fiber.frames.is_empty() {
@@ -793,17 +761,26 @@ impl Vm {
     }
 
     /// Run a fiber for up to TIME_SLICE instructions.
+    /// Supports both regular fibers and trampoline fibers (distinguished by high bit).
     fn run_fiber(&mut self, fiber_id: u32) -> ExecResult {
+        use crate::scheduler::is_trampoline_fiber;
+        
         let module_ptr = match &self.module {
             Some(m) => m as *const Module,
             None => return ExecResult::Done,
         };
         // SAFETY: module_ptr is valid for the duration of run_fiber.
         let module = unsafe { &*module_ptr };
+        
+        let is_trampoline = is_trampoline_fiber(fiber_id);
 
         // Cache fiber pointer outside the loop
         // SAFETY: fiber_ptr is valid as long as we don't reallocate fibers vec (only GoStart does)
-        let mut fiber_ptr = &mut self.scheduler.fibers[fiber_id as usize] as *mut Fiber;
+        let mut fiber_ptr = if is_trampoline {
+            self.scheduler.trampoline_fiber_mut(fiber_id) as *mut Fiber
+        } else {
+            &mut self.scheduler.fibers[fiber_id as usize] as *mut Fiber
+        };
         let mut fiber = unsafe { &mut *fiber_ptr };
 
         // SAFETY: We manually manage borrows via raw pointers to avoid borrow checker conflicts.
@@ -1547,6 +1524,9 @@ impl Vm {
                     }
                 }
                 Opcode::ChanRecv => {
+                    if is_trampoline {
+                        panic!("ChanRecv not supported in trampoline fiber");
+                    }
                     match exec::exec_chan_recv(stack, bp, fiber_id, &inst) {
                         exec::ChanResult::Continue => ExecResult::Continue,
                         exec::ChanResult::Yield => {
@@ -1565,6 +1545,9 @@ impl Vm {
                     }
                 }
                 Opcode::ChanClose => {
+                    if is_trampoline {
+                        panic!("ChanClose not supported in trampoline fiber");
+                    }
                     match exec::exec_chan_close(&stack, bp, &inst) {
                         exec::ChanResult::WakeMultiple(ids) => {
                             for id in ids { self.scheduler.wake(id); }
@@ -1574,20 +1557,32 @@ impl Vm {
                     ExecResult::Continue
                 }
 
-                // Select operations
+                // Select operations - not supported in trampoline fibers
                 Opcode::SelectBegin => {
+                    if is_trampoline {
+                        panic!("SelectBegin not supported in trampoline fiber");
+                    }
                     exec::exec_select_begin(&mut fiber.select_state, &inst);
                     ExecResult::Continue
                 }
                 Opcode::SelectSend => {
+                    if is_trampoline {
+                        panic!("SelectSend not supported in trampoline fiber");
+                    }
                     exec::exec_select_send(&mut fiber.select_state, &inst);
                     ExecResult::Continue
                 }
                 Opcode::SelectRecv => {
+                    if is_trampoline {
+                        panic!("SelectRecv not supported in trampoline fiber");
+                    }
                     exec::exec_select_recv(&mut fiber.select_state, &inst);
                     ExecResult::Continue
                 }
                 Opcode::SelectExec => {
+                    if is_trampoline {
+                        panic!("SelectExec not supported in trampoline fiber");
+                    }
                     exec::exec_select_exec(stack, bp, &mut fiber.select_state, &inst)
                 }
 
@@ -1678,7 +1673,12 @@ impl Vm {
             match result {
                 ExecResult::Continue => continue,
                 ExecResult::Return => {
-                    if self.scheduler.fibers[fiber_id as usize].frames.is_empty() {
+                    let frames_empty = if is_trampoline {
+                        self.scheduler.trampoline_fiber(fiber_id).frames.is_empty()
+                    } else {
+                        self.scheduler.fibers[fiber_id as usize].frames.is_empty()
+                    };
+                    if frames_empty {
                         return ExecResult::Done;
                     }
                     // Re-fetch frame_ptr and related variables after Call/Return/Defer
@@ -1694,638 +1694,6 @@ impl Vm {
 
 }
 
-/// Inline instruction execution for vm_call_trampoline (JIT->VM calls).
-/// This is a standalone function to avoid code duplication with run_fiber.
-/// All function calls within this execution go through vm_call_trampoline
-/// to ensure unified version selection.
-#[cfg(feature = "jit")]
-fn exec_inst_inline(
-    vm: &mut Vm,
-    fiber: &mut Fiber,
-    inst: &Instruction,
-    func_id: u32,
-    bp: usize,
-    module: &Module,
-) -> ExecResult {
-    // Create local stack reference for this function
-    let stack = &mut fiber.stack;
-    match inst.opcode() {
-        Opcode::Nop => ExecResult::Continue,
-        Opcode::LoadInt => {
-            let val = inst.imm32() as i64 as u64;
-            stack_set!(stack, bp + inst.a as usize, val);
-            ExecResult::Continue
-        }
-        Opcode::LoadConst => {
-            exec::exec_load_const(stack, bp, inst, &module.constants);
-            ExecResult::Continue
-        }
-        Opcode::Copy => {
-            let val = stack_get!(stack, bp + inst.b as usize);
-            stack_set!(stack, bp + inst.a as usize, val);
-            ExecResult::Continue
-        }
-        Opcode::CopyN => { exec::exec_copy_n(stack, bp, inst); ExecResult::Continue }
-        Opcode::SlotGet => { exec::exec_slot_get(stack, bp, inst); ExecResult::Continue }
-        Opcode::SlotSet => { exec::exec_slot_set(stack, bp, inst); ExecResult::Continue }
-        Opcode::SlotGetN => { exec::exec_slot_get_n(stack, bp, inst); ExecResult::Continue }
-        Opcode::SlotSetN => { exec::exec_slot_set_n(stack, bp, inst); ExecResult::Continue }
-        Opcode::GlobalGet => { exec::exec_global_get(stack, bp, inst, &vm.state.globals); ExecResult::Continue }
-        Opcode::GlobalGetN => { exec::exec_global_get_n(stack, bp, inst, &vm.state.globals); ExecResult::Continue }
-        Opcode::GlobalSet => { exec::exec_global_set(&stack, bp, inst, &mut vm.state.globals); ExecResult::Continue }
-        Opcode::GlobalSetN => { exec::exec_global_set_n(&stack, bp, inst, &mut vm.state.globals); ExecResult::Continue }
-        Opcode::PtrNew => { exec::exec_ptr_new(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::PtrGet => { exec::exec_ptr_get(stack, bp, inst); ExecResult::Continue }
-        Opcode::PtrSet => { exec::exec_ptr_set(&stack, bp, inst); ExecResult::Continue }
-        Opcode::PtrGetN => { exec::exec_ptr_get_n(stack, bp, inst); ExecResult::Continue }
-        Opcode::PtrSetN => { exec::exec_ptr_set_n(&stack, bp, inst); ExecResult::Continue }
-        // Integer arithmetic
-        Opcode::AddI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_add(b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::SubI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_sub(b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::MulI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_mul(b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::DivI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::ModI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::NegI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_neg() as u64);
-            ExecResult::Continue
-        }
-        // Float arithmetic
-        Opcode::AddF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a + b).to_bits());
-            ExecResult::Continue
-        }
-        Opcode::SubF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a - b).to_bits());
-            ExecResult::Continue
-        }
-        Opcode::MulF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a * b).to_bits());
-            ExecResult::Continue
-        }
-        Opcode::DivF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a / b).to_bits());
-            ExecResult::Continue
-        }
-        Opcode::NegF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            stack_set!(stack, bp + inst.a as usize, (-a).to_bits());
-            ExecResult::Continue
-        }
-        // Integer comparison
-        Opcode::EqI => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize);
-            stack_set!(stack, bp + inst.a as usize, (a == b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::NeI => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize);
-            stack_set!(stack, bp + inst.a as usize, (a != b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::LtI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, (a < b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::LeI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, (a <= b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::GtI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, (a > b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::GeI => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, (a >= b) as u64);
-            ExecResult::Continue
-        }
-        // Float comparison
-        Opcode::EqF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a == b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::NeF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a != b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::LtF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a < b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::LeF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a <= b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::GtF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a > b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::GeF => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-            stack_set!(stack, bp + inst.a as usize, (a >= b) as u64);
-            ExecResult::Continue
-        }
-        // Bitwise
-        Opcode::And => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize);
-            stack_set!(stack, bp + inst.a as usize, a & b);
-            ExecResult::Continue
-        }
-        Opcode::Or => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize);
-            stack_set!(stack, bp + inst.a as usize, a | b);
-            ExecResult::Continue
-        }
-        Opcode::Xor => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize);
-            stack_set!(stack, bp + inst.a as usize, a ^ b);
-            ExecResult::Continue
-        }
-        Opcode::AndNot => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize);
-            stack_set!(stack, bp + inst.a as usize, a & !b);
-            ExecResult::Continue
-        }
-        Opcode::Not => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            stack_set!(stack, bp + inst.a as usize, !a);
-            ExecResult::Continue
-        }
-        Opcode::Shl => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize) as u32;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_shl(b));
-            ExecResult::Continue
-        }
-        Opcode::ShrS => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            let b = stack_get!(stack, bp + inst.c as usize) as u32;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_shr(b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::ShrU => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            let b = stack_get!(stack, bp + inst.c as usize) as u32;
-            stack_set!(stack, bp + inst.a as usize, a.wrapping_shr(b));
-            ExecResult::Continue
-        }
-        Opcode::BoolNot => {
-            let a = stack_get!(stack, bp + inst.b as usize);
-            stack_set!(stack, bp + inst.a as usize, (a == 0) as u64);
-            ExecResult::Continue
-        }
-        // Jump with OSR check (returns Osr result instead of executing inline)
-        Opcode::Jump => {
-            let offset = inst.imm32();
-            let backedge_pc = fiber.frames.last().map(|f| f.pc).unwrap_or(0);
-            let loop_header_pc = (backedge_pc as i64 + offset as i64 - 1) as usize;
-            fiber.frames.last_mut().unwrap().pc = loop_header_pc;
-            
-            // Check for back-edge and request OSR
-            if loop_header_pc < backedge_pc {
-                return ExecResult::Osr(func_id, backedge_pc, loop_header_pc);
-            }
-            ExecResult::Continue
-        }
-        Opcode::JumpIf => {
-            let cond = stack_get!(stack, bp + inst.a as usize);
-            if cond != 0 {
-                let offset = inst.imm32();
-                let backedge_pc = fiber.frames.last().map(|f| f.pc).unwrap_or(0);
-                let loop_header_pc = (backedge_pc as i64 + offset as i64 - 1) as usize;
-                fiber.frames.last_mut().unwrap().pc = loop_header_pc;
-                
-                if loop_header_pc < backedge_pc {
-                    return ExecResult::Osr(func_id, backedge_pc, loop_header_pc);
-                }
-            }
-            ExecResult::Continue
-        }
-        Opcode::JumpIfNot => {
-            let cond = stack_get!(stack, bp + inst.a as usize);
-            if cond == 0 {
-                let offset = inst.imm32();
-                let backedge_pc = fiber.frames.last().map(|f| f.pc).unwrap_or(0);
-                let loop_header_pc = (backedge_pc as i64 + offset as i64 - 1) as usize;
-                fiber.frames.last_mut().unwrap().pc = loop_header_pc;
-                
-                if loop_header_pc < backedge_pc {
-                    return ExecResult::Osr(func_id, backedge_pc, loop_header_pc);
-                }
-            }
-            ExecResult::Continue
-        }
-        // Call - check JitManager for version selection, use push-frame for VM
-        Opcode::Call => {
-            let target_func_id = (inst.a as u32) | ((inst.flags as u32) << 16);
-            let arg_start = inst.b as usize;
-            let arg_slots = (inst.c >> 8) as usize;
-            let ret_slots = (inst.c & 0xFF) as usize;
-            
-            // Ask JitManager for decision
-            if let Some(jit_mgr) = vm.jit_mgr.as_mut() {
-                // Record call and try to compile if hot
-                if jit_mgr.record_call(target_func_id) {
-                    let target_func = &module.functions[target_func_id as usize];
-                    let _ = jit_mgr.compile_full(target_func_id, target_func, module);
-                }
-                
-                // If JIT version exists, call it directly
-                if let Some(jit_func) = jit_mgr.get_entry(target_func_id) {
-                    // Prepare args
-                    let mut args: Vec<u64> = (0..arg_slots)
-                        .map(|i| stack[bp + arg_start + i])
-                        .collect();
-                    let mut ret_buf: Vec<u64> = vec![0; ret_slots];
-                    
-                    let func_table_ptr = jit_mgr.func_table_ptr();
-                    let func_table_len = jit_mgr.func_table_len() as u32;
-                    let safepoint_flag = false;
-                    let mut panic_flag = false;
-                    let vm_ptr = vm as *mut _ as *mut std::ffi::c_void;
-                    let module_ptr = module as *const _ as *const std::ffi::c_void;
-                    
-                    let mut ctx = build_jit_ctx(
-                        &mut vm.state, func_table_ptr, func_table_len,
-                        vm_ptr, std::ptr::null_mut(), module_ptr,
-                        &safepoint_flag, &mut panic_flag,
-                    );
-                    
-                    let result = crate::jit_bridge::call_jit_function(jit_func, &mut ctx, &mut args, &mut ret_buf);
-                    
-                    // Write return values back to stack
-                    for (i, val) in ret_buf.iter().enumerate() {
-                        stack[bp + arg_start + i] = *val;
-                    }
-                    
-                    return match result {
-                        JitResult::Ok => ExecResult::Continue,
-                        JitResult::Panic => ExecResult::Panic,
-                    };
-                }
-            }
-            
-            // No JIT version, use push-frame (let vm_interpret_call loop handle it)
-            exec::exec_call(stack, &mut fiber.frames, inst, module)
-        }
-        Opcode::CallExtern => exec::exec_call_extern(stack, bp, inst, &module.externs, &vm.state.extern_registry, &mut vm.state.gc),
-        Opcode::CallClosure => exec::exec_call_closure(stack, &mut fiber.frames, inst, module),
-        Opcode::CallIface => exec::exec_call_iface(stack, &mut fiber.frames, inst, module, &vm.state.itab_cache),
-        Opcode::Return => {
-            let func = &module.functions[func_id as usize];
-            let is_error_return = (inst.flags & 1) != 0;
-            exec::exec_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.defer_state, inst, func, module, is_error_return)
-        }
-        // String
-        Opcode::StrNew => { exec::exec_str_new(stack, bp, inst, &module.constants, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::StrLen => {
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let len = if s.is_null() { 0 } else { string_len!(s) };
-            stack_set!(stack, bp + inst.a as usize, len as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrIndex => {
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-            let byte = string_index!(s, idx);
-            stack_set!(stack, bp + inst.a as usize, byte as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrConcat => { exec::exec_str_concat(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::StrSlice => { exec::exec_str_slice(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::StrEq => {
-            let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-            stack_set!(stack, bp + inst.a as usize, string::eq(a, b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrNe => {
-            let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-            stack_set!(stack, bp + inst.a as usize, string::ne(a, b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrLt => {
-            let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-            stack_set!(stack, bp + inst.a as usize, string::lt(a, b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrLe => {
-            let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-            stack_set!(stack, bp + inst.a as usize, string::le(a, b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrGt => {
-            let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-            stack_set!(stack, bp + inst.a as usize, string::gt(a, b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrGe => {
-            let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-            stack_set!(stack, bp + inst.a as usize, string::ge(a, b) as u64);
-            ExecResult::Continue
-        }
-        Opcode::StrDecodeRune => {
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let pos = stack_get!(stack, bp + inst.c as usize) as usize;
-            let (rune, width) = string::decode_rune_at(s, pos);
-            stack_set!(stack, bp + inst.a as usize, rune as u64);
-            stack_set!(stack, bp + inst.a as usize + 1, width as u64);
-            ExecResult::Continue
-        }
-        // Array
-        Opcode::ArrayNew => { exec::exec_array_new(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::ArrayGet => {
-            // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-            let arr = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-            let dst = bp + inst.a as usize;
-            let off = idx as isize;
-            let base = array::data_ptr_bytes(arr);
-            let val = match inst.flags {
-                1 => unsafe { *base.offset(off) as u64 },
-                2 => unsafe { *(base.offset(off * 2) as *const u16) as u64 },
-                4 => unsafe { *(base.offset(off * 4) as *const u32) as u64 },
-                8 => unsafe { *(base.offset(off * 8) as *const u64) },
-                129 => unsafe { *base.offset(off) as i8 as i64 as u64 },
-                130 => unsafe { *(base.offset(off * 2) as *const i16) as i64 as u64 },
-                132 => unsafe { *(base.offset(off * 4) as *const i32) as i64 as u64 },
-                0x44 => unsafe { *(base.offset(off * 4) as *const u32) as u64 },
-                0 => {
-                    // dynamic: elem_bytes in c+1 register
-                    let elem_bytes = stack_get!(stack, bp + inst.c as usize + 1) as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                        stack_set!(stack, dst + i, unsafe { *ptr });
-                    }
-                    return ExecResult::Continue;
-                }
-                _ => {
-                    let elem_bytes = inst.flags as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                        stack_set!(stack, dst + i, unsafe { *ptr });
-                    }
-                    return ExecResult::Continue;
-                }
-            };
-            stack_set!(stack, dst, val);
-            ExecResult::Continue
-        }
-        Opcode::ArraySet => {
-            // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-            let arr = stack_get!(stack, bp + inst.a as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.b as usize) as usize;
-            let src = bp + inst.c as usize;
-            let off = idx as isize;
-            let base = array::data_ptr_bytes(arr);
-            let val = stack_get!(stack, src);
-            match inst.flags {
-                1 | 129 => unsafe { *base.offset(off) = val as u8 },
-                2 | 130 => unsafe { *(base.offset(off * 2) as *mut u16) = val as u16 },
-                4 | 132 => unsafe { *(base.offset(off * 4) as *mut u32) = val as u32 },
-                0x44 => unsafe { *(base.offset(off * 4) as *mut u32) = val as u32 },
-                8 => unsafe { *(base.offset(off * 8) as *mut u64) = val },
-                0 => {
-                    // dynamic: elem_bytes in b+1 register
-                    let elem_bytes = stack_get!(stack, bp + inst.b as usize + 1) as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                        unsafe { *ptr = stack_get!(stack, src + i) };
-                    }
-                }
-                _ => {
-                    let elem_bytes = inst.flags as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                        unsafe { *ptr = stack_get!(stack, src + i) };
-                    }
-                }
-            }
-            ExecResult::Continue
-        }
-        Opcode::ArrayAddr => {
-            let arr = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-            let elem_bytes = inst.flags as usize;
-            let base = array::data_ptr_bytes(arr);
-            let addr = unsafe { base.add(idx * elem_bytes) } as u64;
-            stack_set!(stack, bp + inst.a as usize, addr);
-            ExecResult::Continue
-        }
-        // Slice
-        Opcode::SliceNew => { exec::exec_slice_new(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::SliceGet => {
-            // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-            let base = slice_data_ptr!(s);
-            let dst = bp + inst.a as usize;
-            let val = match inst.flags {
-                1 => unsafe { *base.add(idx) as u64 },
-                2 => unsafe { *(base.add(idx * 2) as *const u16) as u64 },
-                4 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
-                8 => unsafe { *(base.add(idx * 8) as *const u64) },
-                129 => unsafe { *base.add(idx) as i8 as i64 as u64 },
-                130 => unsafe { *(base.add(idx * 2) as *const i16) as i64 as u64 },
-                132 => unsafe { *(base.add(idx * 4) as *const i32) as i64 as u64 },
-                0x44 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
-                0 => {
-                    // dynamic: elem_bytes in c+1 register
-                    let elem_bytes = stack_get!(stack, bp + inst.c as usize + 1) as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                        stack_set!(stack, dst + i, unsafe { *ptr });
-                    }
-                    return ExecResult::Continue;
-                }
-                _ => {
-                    let elem_bytes = inst.flags as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                        stack_set!(stack, dst + i, unsafe { *ptr });
-                    }
-                    return ExecResult::Continue;
-                }
-            };
-            stack_set!(stack, dst, val);
-            ExecResult::Continue
-        }
-        Opcode::SliceSet => {
-            // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-            let s = stack_get!(stack, bp + inst.a as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.b as usize) as usize;
-            let base = slice_data_ptr!(s);
-            let src = bp + inst.c as usize;
-            let val = stack_get!(stack, src);
-            match inst.flags {
-                1 | 129 => unsafe { *base.add(idx) = val as u8 },
-                2 | 130 => unsafe { *(base.add(idx * 2) as *mut u16) = val as u16 },
-                4 | 132 => unsafe { *(base.add(idx * 4) as *mut u32) = val as u32 },
-                0x44 => unsafe { *(base.add(idx * 4) as *mut u32) = val as u32 },
-                8 => unsafe { *(base.add(idx * 8) as *mut u64) = val },
-                0 => {
-                    // dynamic: elem_bytes in b+1 register
-                    let elem_bytes = stack_get!(stack, bp + inst.b as usize + 1) as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                        unsafe { *ptr = stack_get!(stack, src + i) };
-                    }
-                }
-                _ => {
-                    let elem_bytes = inst.flags as usize;
-                    for i in 0..(elem_bytes + 7) / 8 {
-                        let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                        unsafe { *ptr = stack_get!(stack, src + i) };
-                    }
-                }
-            }
-            ExecResult::Continue
-        }
-        Opcode::SliceLen => {
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let len = if s.is_null() { 0 } else { slice_len!(s) };
-            stack_set!(stack, bp + inst.a as usize, len as u64);
-            ExecResult::Continue
-        }
-        Opcode::SliceCap => {
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let cap = if s.is_null() { 0 } else { slice_cap!(s) };
-            stack_set!(stack, bp + inst.a as usize, cap as u64);
-            ExecResult::Continue
-        }
-        Opcode::SliceSlice => { exec::exec_slice_slice(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::SliceAppend => { exec::exec_slice_append(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::SliceAddr => {
-            let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-            let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-            let elem_bytes = inst.flags as usize;
-            let base = slice_data_ptr!(s);
-            let addr = unsafe { base.add(idx * elem_bytes) } as u64;
-            stack_set!(stack, bp + inst.a as usize, addr);
-            ExecResult::Continue
-        }
-        // Map
-        Opcode::MapNew => { exec::exec_map_new(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::MapGet => { exec::exec_map_get(stack, bp, inst); ExecResult::Continue }
-        Opcode::MapSet => { exec::exec_map_set(&stack, bp, inst); ExecResult::Continue }
-        Opcode::MapDelete => { exec::exec_map_delete(&stack, bp, inst); ExecResult::Continue }
-        Opcode::MapLen => { exec::exec_map_len(stack, bp, inst); ExecResult::Continue }
-        Opcode::MapIterGet => { exec::exec_map_iter_get(stack, bp, inst); ExecResult::Continue }
-        // Channel - not supported in JIT trampoline
-        Opcode::ChanNew => { exec::exec_chan_new(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::ChanSend | Opcode::ChanRecv | Opcode::ChanClose => ExecResult::Panic,
-        // Select - not supported in JIT trampoline
-        Opcode::SelectBegin | Opcode::SelectSend | Opcode::SelectRecv | Opcode::SelectExec => ExecResult::Panic,
-        // Closure
-        Opcode::ClosureNew => { exec::exec_closure_new(stack, bp, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::ClosureGet => { exec::exec_closure_get(stack, bp, inst); ExecResult::Continue }
-        // GoStart - not supported in JIT trampoline
-        Opcode::GoStart => ExecResult::Panic,
-        // Defer
-        Opcode::DeferPush => { exec::exec_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::ErrDeferPush => { exec::exec_err_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, inst, &mut vm.state.gc); ExecResult::Continue }
-        Opcode::Panic => exec::exec_panic(&stack, bp, &mut fiber.panic_value, inst),
-        Opcode::Recover => { exec::exec_recover(stack, bp, &mut fiber.panic_value, inst); ExecResult::Continue }
-        // Interface
-        Opcode::IfaceAssign => { exec::exec_iface_assign(stack, bp, inst, &mut vm.state.gc, &mut vm.state.itab_cache, module); ExecResult::Continue }
-        Opcode::IfaceAssert => exec::exec_iface_assert(stack, bp, inst, &mut vm.state.itab_cache, module),
-        // Conversion
-        Opcode::ConvI2F => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, (a as f64).to_bits());
-            ExecResult::Continue
-        }
-        Opcode::ConvF2I => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            stack_set!(stack, bp + inst.a as usize, a as i64 as u64);
-            ExecResult::Continue
-        }
-        Opcode::ConvI32I64 => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i32;
-            stack_set!(stack, bp + inst.a as usize, a as i64 as u64);
-            ExecResult::Continue
-        }
-        Opcode::ConvI64I32 => {
-            let a = stack_get!(stack, bp + inst.b as usize) as i64;
-            stack_set!(stack, bp + inst.a as usize, a as i32 as u64);
-            ExecResult::Continue
-        }
-        Opcode::ConvF64F32 => {
-            let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-            stack_set!(stack, bp + inst.a as usize, (a as f32).to_bits() as u64);
-            ExecResult::Continue
-        }
-        Opcode::ConvF32F64 => {
-            let a = f32::from_bits(stack_get!(stack, bp + inst.b as usize) as u32);
-            stack_set!(stack, bp + inst.a as usize, (a as f64).to_bits());
-            ExecResult::Continue
-        }
-        Opcode::Invalid => ExecResult::Panic,
-    }
-}
 
 impl Default for Vm {
     fn default() -> Self {
