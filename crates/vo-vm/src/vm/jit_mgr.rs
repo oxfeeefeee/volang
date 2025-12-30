@@ -8,9 +8,8 @@
 use std::collections::HashMap;
 
 use vo_runtime::bytecode::{FunctionDef, Module as VoModule};
-use vo_runtime::jit_api::{JitContext, JitResult};
 
-use crate::{JitCompiler, JitError, JitFunc};
+use vo_jit::{JitCompiler, JitError, JitFunc};
 
 // =============================================================================
 // Configuration

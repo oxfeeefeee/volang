@@ -20,11 +20,9 @@
 
 mod compiler;
 mod gc_tracking;
-mod manager;
 mod translate;
 pub use compiler::FunctionCompiler;
 pub use gc_tracking::{GcRefTracker, StackMap};
-pub use manager::{JitManager, JitConfig, CompileState, FunctionJitInfo, OsrResult};
 
 use std::collections::HashMap;
 
