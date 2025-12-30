@@ -3,73 +3,23 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use vo_runtime::gc::{Gc, GcRef};
-use vo_runtime::objects::{array, slice, string};
+use vo_runtime::gc::GcRef;
+use vo_runtime::objects::{array, string};
 
-// Reuse layout constants from vo-runtime
-use array::HEADER_SLOTS as ARRAY_DATA_OFFSET;
-use slice::{FIELD_DATA_PTR as SLICE_FIELD_DATA_PTR, FIELD_LEN as SLICE_FIELD_LEN, FIELD_CAP as SLICE_FIELD_CAP};
-use string::{FIELD_ARRAY as STRING_FIELD_ARRAY, FIELD_START as STRING_FIELD_START, FIELD_LEN as STRING_FIELD_LEN};
+mod helpers;
+mod types;
 
-// =============================================================================
-// Stack access helpers (inline functions for easy module splitting)
-// =============================================================================
+pub use helpers::{stack_get, stack_set};
+pub use types::{ExecResult, VmError, VmState, TIME_SLICE};
 
-/// Unchecked stack read - SAFETY: caller ensures idx is within bounds
-#[inline(always)]
-pub fn stack_get(stack: &[u64], idx: usize) -> u64 {
-    unsafe { *stack.get_unchecked(idx) }
-}
-
-/// Unchecked stack write - SAFETY: caller ensures idx is within bounds
-#[inline(always)]
-pub fn stack_set(stack: &mut [u64], idx: usize, val: u64) {
-    unsafe { *stack.get_unchecked_mut(idx) = val }
-}
-
-// =============================================================================
-// Slice/String field access (inline functions)
-// =============================================================================
-
-#[inline(always)]
-fn slice_data_ptr(s: GcRef) -> *mut u8 {
-    unsafe { *((s as *const u64).add(SLICE_FIELD_DATA_PTR)) as *mut u8 }
-}
-
-#[inline(always)]
-fn slice_len(s: GcRef) -> usize {
-    unsafe { *((s as *const u64).add(SLICE_FIELD_LEN)) as usize }
-}
-
-#[inline(always)]
-fn slice_cap(s: GcRef) -> usize {
-    unsafe { *((s as *const u64).add(SLICE_FIELD_CAP)) as usize }
-}
-
-#[inline(always)]
-fn string_len(s: GcRef) -> usize {
-    unsafe { *((s as *const u32).add(STRING_FIELD_LEN)) as usize }
-}
-
-#[inline(always)]
-fn string_index(s: GcRef, idx: usize) -> u8 {
-    let arr = unsafe { *((s as *const u64).add(STRING_FIELD_ARRAY) as *const GcRef) };
-    let start = unsafe { *((s as *const u32).add(STRING_FIELD_START)) as usize };
-    unsafe { *((arr.add(ARRAY_DATA_OFFSET) as *const u8).add(start + idx)) }
-}
+use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index};
 
 use crate::bytecode::Module;
-use crate::exec::{self, ExternRegistry};
+use crate::exec;
 use crate::fiber::Fiber;
 use crate::instruction::{Instruction, Opcode};
 use crate::itab::ItabCache;
 use crate::scheduler::Scheduler;
-
-#[cfg(feature = "jit")]
-use vo_jit::JitFunc;
-
-#[cfg(feature = "jit")]
-use vo_runtime::jit_api::{JitResult, JitContext};
 
 #[cfg(feature = "jit")]
 mod jit_glue;
@@ -79,64 +29,6 @@ pub mod jit_mgr;
 
 #[cfg(feature = "jit")]
 pub use jit_mgr::{JitManager, JitConfig, OsrResult};
-
-#[cfg(feature = "jit")]
-use jit_glue::build_jit_ctx;
-
-/// Time slice: number of instructions before forced yield check.
-const TIME_SLICE: u32 = 1000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecResult {
-    Continue,
-    Return,
-    Yield,
-    Block,  // Channel blocking - don't re-queue, wait for wake
-    Panic,
-    Done,
-    /// OSR request: (func_id, backedge_pc, loop_header_pc)
-    Osr(u32, usize, usize),
-}
-
-#[derive(Debug)]
-pub enum VmError {
-    NoEntryFunction,
-    InvalidFunctionId(u32),
-    StackOverflow,
-    StackUnderflow,
-    InvalidOpcode(u8),
-    DivisionByZero,
-    IndexOutOfBounds,
-    NilPointerDereference,
-    TypeAssertionFailed,
-    PanicUnwound,
-    SendOnClosedChannel,
-}
-
-/// VM mutable state that can be borrowed independently from scheduler.
-pub struct VmState {
-    pub gc: Gc,
-    pub globals: Vec<u64>,
-    pub itab_cache: ItabCache,
-    pub extern_registry: ExternRegistry,
-}
-
-impl VmState {
-    pub fn new() -> Self {
-        Self {
-            gc: Gc::new(),
-            globals: Vec::new(),
-            itab_cache: ItabCache::new(),
-            extern_registry: ExternRegistry::new(),
-        }
-    }
-}
-
-impl Default for VmState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 pub struct Vm {
     pub module: Option<Module>,
