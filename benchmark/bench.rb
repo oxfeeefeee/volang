@@ -9,6 +9,7 @@ class BenchmarkRunner
     @project_root = File.dirname(@script_dir)
     @results_dir = File.join(@script_dir, 'results')
     @run_all_langs = false
+    @vo_mode = false
   end
 
   def run(args)
@@ -22,6 +23,12 @@ class BenchmarkRunner
     when 'list'
       list_benchmarks
     when 'all'
+      check_deps
+      build_vo
+      run_all_benchmarks
+      calculate_scores
+    when 'vo'
+      @vo_mode = true
       check_deps
       build_vo
       run_all_benchmarks
@@ -47,6 +54,9 @@ class BenchmarkRunner
     args.delete_if do |arg|
       if arg == '--all-langs'
         @run_all_langs = true
+        true
+      elsif arg == '--vo-mode'
+        @vo_mode = true
         true
       else
         false
@@ -85,6 +95,7 @@ class BenchmarkRunner
       
       Commands:
         all              Run all benchmarks and generate report (default)
+        vo               Run only Vo (VM + JIT) and C benchmarks
         list             List available benchmarks
         score            Analyze existing results without running benchmarks
         <benchmark>      Run a specific benchmark (e.g., fibonacci, quicksort)
@@ -92,12 +103,15 @@ class BenchmarkRunner
       
       Options:
         --all-langs      Include Python and Ruby in benchmarks (disabled by default)
+        --vo-mode        Only run Vo and C (same as 'vo' command)
       
       Examples:
         ./bench.rb                    # Run all benchmarks
+        ./bench.rb vo                 # Run only Vo and C benchmarks
         ./bench.rb list               # List available benchmarks
         ./bench.rb fibonacci          # Run fibonacci benchmark only
         ./bench.rb --all-langs all    # Run all benchmarks including Python/Ruby
+        ./bench.rb --vo-mode all      # Run all benchmarks but only Vo and C
         ./bench.rb score              # Analyze existing results
       
       Languages tested (by default):
@@ -163,8 +177,8 @@ class BenchmarkRunner
       names << 'Vo-JIT'
     end
     
-    # Go (pre-compile)
-    if go_file
+    # Go (pre-compile) - skip in vo mode
+    if go_file && !@vo_mode
       go_bin = File.join(dir, 'go_bench')
       if system("go build -o #{go_bin} #{go_file} 2>/dev/null")
         cmds << "'#{go_bin}'"
@@ -172,32 +186,32 @@ class BenchmarkRunner
       end
     end
     
-    # Lua
-    if lua_file && command_exists?('lua')
+    # Lua - skip in vo mode
+    if lua_file && command_exists?('lua') && !@vo_mode
       cmds << "lua '#{lua_file}'"
       names << 'Lua'
     end
     
-    # LuaJIT
-    if lua_file && command_exists?('luajit')
+    # LuaJIT - skip in vo mode
+    if lua_file && command_exists?('luajit') && !@vo_mode
       cmds << "luajit '#{lua_file}'"
       names << 'LuaJIT'
     end
     
-    # Python (only if --all-langs)
-    if py_file && @run_all_langs
+    # Python (only if --all-langs) - skip in vo mode
+    if py_file && @run_all_langs && !@vo_mode
       cmds << "python3 '#{py_file}'"
       names << 'Python'
     end
     
-    # Ruby (only if --all-langs)
-    if rb_file && command_exists?('ruby') && @run_all_langs
+    # Ruby (only if --all-langs) - skip in vo mode
+    if rb_file && command_exists?('ruby') && @run_all_langs && !@vo_mode
       cmds << "ruby '#{rb_file}'"
       names << 'Ruby'
     end
     
-    # Java (compile and run)
-    if java_file && command_exists?('java') && command_exists?('javac')
+    # Java (compile and run) - skip in vo mode
+    if java_file && command_exists?('java') && command_exists?('javac') && !@vo_mode
       java_class = File.basename(java_file, '.java')
       if system("javac -d #{dir} #{java_file} 2>/dev/null")
         cmds << "java -cp '#{dir}' '#{java_class}'"

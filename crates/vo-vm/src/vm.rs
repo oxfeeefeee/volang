@@ -3,104 +3,59 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-/// Unchecked stack read - SAFETY: caller ensures bp + offset is within bounds
-macro_rules! stack_get {
-    ($stack:expr, $idx:expr) => {
-        unsafe { *$stack.get_unchecked($idx) }
-    };
-}
-
-/// Unchecked stack write - SAFETY: caller ensures bp + offset is within bounds
-macro_rules! stack_set {
-    ($stack:expr, $idx:expr, $val:expr) => {
-        unsafe { *$stack.get_unchecked_mut($idx) = $val }
-    };
-}
-
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::{array, slice, string};
 
 // Reuse layout constants from vo-runtime
 use array::HEADER_SLOTS as ARRAY_DATA_OFFSET;
-use slice::{FIELD_ARRAY as SLICE_FIELD_ARRAY, FIELD_DATA_PTR as SLICE_FIELD_DATA_PTR,
-            FIELD_LEN as SLICE_FIELD_LEN, FIELD_CAP as SLICE_FIELD_CAP};
-use string::{FIELD_ARRAY as STRING_FIELD_ARRAY, FIELD_START as STRING_FIELD_START,
-             FIELD_LEN as STRING_FIELD_LEN};
+use slice::{FIELD_DATA_PTR as SLICE_FIELD_DATA_PTR, FIELD_LEN as SLICE_FIELD_LEN, FIELD_CAP as SLICE_FIELD_CAP};
+use string::{FIELD_ARRAY as STRING_FIELD_ARRAY, FIELD_START as STRING_FIELD_START, FIELD_LEN as STRING_FIELD_LEN};
 
-/// Write single element to packed array (val is u64, small types truncated)
-macro_rules! array_set {
-    ($arr:expr, $idx:expr, $val:expr, $elem_bytes:expr) => {{
-        let byte_ptr = unsafe { ($arr as *mut u8).add(ARRAY_DATA_OFFSET * 8 + $idx * $elem_bytes) };
-        match $elem_bytes {
-            1 => unsafe { *byte_ptr = $val as u8 },
-            2 => unsafe { *(byte_ptr as *mut u16) = $val as u16 },
-            4 => unsafe { *(byte_ptr as *mut u32) = $val as u32 },
-            _ => unsafe { *(byte_ptr as *mut u64) = $val },
-        }
-    }};
+// =============================================================================
+// Stack access helpers (inline functions for easy module splitting)
+// =============================================================================
+
+/// Unchecked stack read - SAFETY: caller ensures idx is within bounds
+#[inline(always)]
+pub fn stack_get(stack: &[u64], idx: usize) -> u64 {
+    unsafe { *stack.get_unchecked(idx) }
 }
 
-macro_rules! slice_array {
-    ($s:expr) => {
-        unsafe { *(($s as *const u64).add(SLICE_FIELD_ARRAY) as *const GcRef) }
-    };
+/// Unchecked stack write - SAFETY: caller ensures idx is within bounds
+#[inline(always)]
+pub fn stack_set(stack: &mut [u64], idx: usize, val: u64) {
+    unsafe { *stack.get_unchecked_mut(idx) = val }
 }
 
-macro_rules! slice_data_ptr {
-    ($s:expr) => {
-        unsafe { *(($s as *const u64).add(SLICE_FIELD_DATA_PTR)) as *mut u8 }
-    };
+// =============================================================================
+// Slice/String field access (inline functions)
+// =============================================================================
+
+#[inline(always)]
+fn slice_data_ptr(s: GcRef) -> *mut u8 {
+    unsafe { *((s as *const u64).add(SLICE_FIELD_DATA_PTR)) as *mut u8 }
 }
 
-macro_rules! slice_len {
-    ($s:expr) => {
-        unsafe { *(($s as *const u64).add(SLICE_FIELD_LEN)) as usize }
-    };
+#[inline(always)]
+fn slice_len(s: GcRef) -> usize {
+    unsafe { *((s as *const u64).add(SLICE_FIELD_LEN)) as usize }
 }
 
-macro_rules! slice_cap {
-    ($s:expr) => {
-        unsafe { *(($s as *const u64).add(SLICE_FIELD_CAP)) as usize }
-    };
+#[inline(always)]
+fn slice_cap(s: GcRef) -> usize {
+    unsafe { *((s as *const u64).add(SLICE_FIELD_CAP)) as usize }
 }
 
-/// Write single element to slice (val is u64, small types truncated)
-macro_rules! slice_set {
-    ($s:expr, $idx:expr, $val:expr, $elem_bytes:expr) => {{
-        let ptr = unsafe { slice_data_ptr!($s).add($idx * $elem_bytes) };
-        match $elem_bytes {
-            1 => unsafe { *ptr = $val as u8 },
-            2 => unsafe { *(ptr as *mut u16) = $val as u16 },
-            4 => unsafe { *(ptr as *mut u32) = $val as u32 },
-            _ => unsafe { *(ptr as *mut u64) = $val },
-        }
-    }};
+#[inline(always)]
+fn string_len(s: GcRef) -> usize {
+    unsafe { *((s as *const u32).add(STRING_FIELD_LEN)) as usize }
 }
 
-macro_rules! string_array {
-    ($s:expr) => {
-        unsafe { *(($s as *const u64).add(STRING_FIELD_ARRAY) as *const GcRef) }
-    };
-}
-
-macro_rules! string_start {
-    ($s:expr) => {
-        unsafe { *(($s as *const u32).add(STRING_FIELD_START)) as usize }
-    };
-}
-
-macro_rules! string_len {
-    ($s:expr) => {
-        unsafe { *(($s as *const u32).add(STRING_FIELD_LEN)) as usize }
-    };
-}
-
-macro_rules! string_index {
-    ($s:expr, $idx:expr) => {{
-        let arr = string_array!($s);
-        let start = string_start!($s);
-        unsafe { *((arr.add(ARRAY_DATA_OFFSET) as *const u8).add(start + $idx)) }
-    }};
+#[inline(always)]
+fn string_index(s: GcRef, idx: usize) -> u8 {
+    let arr = unsafe { *((s as *const u64).add(STRING_FIELD_ARRAY) as *const GcRef) };
+    let start = unsafe { *((s as *const u32).add(STRING_FIELD_START)) as usize };
+    unsafe { *((arr.add(ARRAY_DATA_OFFSET) as *const u8).add(start + idx)) }
 }
 
 use crate::bytecode::Module;
@@ -820,7 +775,7 @@ impl Vm {
 
                 Opcode::LoadInt => {
                     let val = inst.imm32() as i64 as u64;
-                    stack_set!(stack, bp + inst.a as usize, val);
+                    stack_set(stack, bp + inst.a as usize, val);
                     ExecResult::Continue
                 }
                 Opcode::LoadConst => {
@@ -829,8 +784,8 @@ impl Vm {
                 }
 
                 Opcode::Copy => {
-                    let val = stack_get!(stack, bp + inst.b as usize);
-                    stack_set!(stack, bp + inst.a as usize, val);
+                    let val = stack_get(stack, bp + inst.b as usize);
+                    stack_set(stack, bp + inst.a as usize, val);
                     ExecResult::Continue
                 }
                 Opcode::CopyN => {
@@ -894,199 +849,199 @@ impl Vm {
 
                 // Integer arithmetic - inline for hot path
                 Opcode::AddI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_add(b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_add(b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::SubI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_sub(b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_sub(b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::MulI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_mul(b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_mul(b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::DivI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::ModI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::NegI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_neg() as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_neg() as u64);
                     ExecResult::Continue
                 }
 
                 // Float arithmetic
                 Opcode::AddF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a + b).to_bits());
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a + b).to_bits());
                     ExecResult::Continue
                 }
                 Opcode::SubF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a - b).to_bits());
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a - b).to_bits());
                     ExecResult::Continue
                 }
                 Opcode::MulF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a * b).to_bits());
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a * b).to_bits());
                     ExecResult::Continue
                 }
                 Opcode::DivF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a / b).to_bits());
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a / b).to_bits());
                     ExecResult::Continue
                 }
                 Opcode::NegF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    stack_set!(stack, bp + inst.a as usize, (-a).to_bits());
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    stack_set(stack, bp + inst.a as usize, (-a).to_bits());
                     ExecResult::Continue
                 }
 
                 // Integer comparison - inline
                 Opcode::EqI => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize);
-                    stack_set!(stack, bp + inst.a as usize, (a == b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, (a == b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::NeI => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize);
-                    stack_set!(stack, bp + inst.a as usize, (a != b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, (a != b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::LtI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, (a < b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, (a < b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::LeI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, (a <= b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, (a <= b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::GtI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, (a > b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, (a > b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::GeI => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, (a >= b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, (a >= b) as u64);
                     ExecResult::Continue
                 }
 
                 // Float comparison
                 Opcode::EqF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a == b) as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a == b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::NeF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a != b) as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a != b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::LtF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a < b) as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a < b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::LeF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a <= b) as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a <= b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::GtF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a > b) as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a > b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::GeF => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    let b = f64::from_bits(stack_get!(stack, bp + inst.c as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a >= b) as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    let b = f64::from_bits(stack_get(stack, bp + inst.c as usize));
+                    stack_set(stack, bp + inst.a as usize, (a >= b) as u64);
                     ExecResult::Continue
                 }
 
                 // Bitwise - inline
                 Opcode::And => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize);
-                    stack_set!(stack, bp + inst.a as usize, a & b);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, a & b);
                     ExecResult::Continue
                 }
                 Opcode::Or => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize);
-                    stack_set!(stack, bp + inst.a as usize, a | b);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, a | b);
                     ExecResult::Continue
                 }
                 Opcode::Xor => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize);
-                    stack_set!(stack, bp + inst.a as usize, a ^ b);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, a ^ b);
                     ExecResult::Continue
                 }
                 Opcode::AndNot => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize);
-                    stack_set!(stack, bp + inst.a as usize, a & !b);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, a & !b);
                     ExecResult::Continue
                 }
                 Opcode::Not => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    stack_set!(stack, bp + inst.a as usize, !a);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    stack_set(stack, bp + inst.a as usize, !a);
                     ExecResult::Continue
                 }
                 Opcode::Shl => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize) as u32;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_shl(b));
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize) as u32;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_shl(b));
                     ExecResult::Continue
                 }
                 Opcode::ShrS => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get!(stack, bp + inst.c as usize) as u32;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_shr(b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    let b = stack_get(stack, bp + inst.c as usize) as u32;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::ShrU => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    let b = stack_get!(stack, bp + inst.c as usize) as u32;
-                    stack_set!(stack, bp + inst.a as usize, a.wrapping_shr(b));
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize) as u32;
+                    stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b));
                     ExecResult::Continue
                 }
                 Opcode::BoolNot => {
-                    let a = stack_get!(stack, bp + inst.b as usize);
-                    stack_set!(stack, bp + inst.a as usize, (a == 0) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    stack_set(stack, bp + inst.a as usize, (a == 0) as u64);
                     ExecResult::Continue
                 }
 
@@ -1116,7 +1071,7 @@ impl Vm {
                 }
                 #[cfg(feature = "jit")]
                 Opcode::JumpIf => {
-                    let cond = stack_get!(stack, bp + inst.a as usize);
+                    let cond = stack_get(stack, bp + inst.a as usize);
                     if cond != 0 {
                         let offset = inst.imm32();
                         let backedge_pc = frame.pc;
@@ -1133,7 +1088,7 @@ impl Vm {
                 }
                 #[cfg(not(feature = "jit"))]
                 Opcode::JumpIf => {
-                    let cond = stack_get!(stack, bp + inst.a as usize);
+                    let cond = stack_get(stack, bp + inst.a as usize);
                     if cond != 0 {
                         let offset = inst.imm32();
                         let frame = fiber.current_frame_mut().unwrap();
@@ -1143,7 +1098,7 @@ impl Vm {
                 }
                 #[cfg(feature = "jit")]
                 Opcode::JumpIfNot => {
-                    let cond = stack_get!(stack, bp + inst.a as usize);
+                    let cond = stack_get(stack, bp + inst.a as usize);
                     if cond == 0 {
                         let offset = inst.imm32();
                         let backedge_pc = frame.pc;
@@ -1160,7 +1115,7 @@ impl Vm {
                 }
                 #[cfg(not(feature = "jit"))]
                 Opcode::JumpIfNot => {
-                    let cond = stack_get!(stack, bp + inst.a as usize);
+                    let cond = stack_get(stack, bp + inst.a as usize);
                     if cond == 0 {
                         let offset = inst.imm32();
                         let frame = fiber.current_frame_mut().unwrap();
@@ -1213,16 +1168,16 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::StrLen => {
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let len = if s.is_null() { 0 } else { string_len!(s) };
-                    stack_set!(stack, bp + inst.a as usize, len as u64);
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let len = if s.is_null() { 0 } else { string_len(s) };
+                    stack_set(stack, bp + inst.a as usize, len as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrIndex => {
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-                    let byte = string_index!(s, idx);
-                    stack_set!(stack, bp + inst.a as usize, byte as u64);
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.c as usize) as usize;
+                    let byte = string_index(s, idx);
+                    stack_set(stack, bp + inst.a as usize, byte as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrConcat => {
@@ -1234,47 +1189,47 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::StrEq => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-                    stack_set!(stack, bp + inst.a as usize, string::eq(a, b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get(stack, bp + inst.c as usize) as GcRef;
+                    stack_set(stack, bp + inst.a as usize, string::eq(a, b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrNe => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-                    stack_set!(stack, bp + inst.a as usize, string::ne(a, b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get(stack, bp + inst.c as usize) as GcRef;
+                    stack_set(stack, bp + inst.a as usize, string::ne(a, b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrLt => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-                    stack_set!(stack, bp + inst.a as usize, string::lt(a, b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get(stack, bp + inst.c as usize) as GcRef;
+                    stack_set(stack, bp + inst.a as usize, string::lt(a, b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrLe => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-                    stack_set!(stack, bp + inst.a as usize, string::le(a, b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get(stack, bp + inst.c as usize) as GcRef;
+                    stack_set(stack, bp + inst.a as usize, string::le(a, b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrGt => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-                    stack_set!(stack, bp + inst.a as usize, string::gt(a, b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get(stack, bp + inst.c as usize) as GcRef;
+                    stack_set(stack, bp + inst.a as usize, string::gt(a, b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrGe => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let b = stack_get!(stack, bp + inst.c as usize) as GcRef;
-                    stack_set!(stack, bp + inst.a as usize, string::ge(a, b) as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let b = stack_get(stack, bp + inst.c as usize) as GcRef;
+                    stack_set(stack, bp + inst.a as usize, string::ge(a, b) as u64);
                     ExecResult::Continue
                 }
                 Opcode::StrDecodeRune => {
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let pos = stack_get!(stack, bp + inst.c as usize) as usize;
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let pos = stack_get(stack, bp + inst.c as usize) as usize;
                     let (rune, width) = string::decode_rune_at(s, pos);
-                    stack_set!(stack, bp + inst.a as usize, rune as u64);
-                    stack_set!(stack, bp + inst.a as usize + 1, width as u64);
+                    stack_set(stack, bp + inst.a as usize, rune as u64);
+                    stack_set(stack, bp + inst.a as usize + 1, width as u64);
                     ExecResult::Continue
                 }
 
@@ -1285,8 +1240,8 @@ impl Vm {
                 }
                 Opcode::ArrayGet => {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-                    let arr = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.c as usize) as usize;
+                    let arr = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.c as usize) as usize;
                     let dst = bp + inst.a as usize;
                     let off = idx as isize;
                     let base = array::data_ptr_bytes(arr);
@@ -1301,10 +1256,10 @@ impl Vm {
                         0x44 => unsafe { *(base.offset(off * 4) as *const u32) as u64 },
                         0 => {
                             // dynamic: elem_bytes in c+1 register
-                            let elem_bytes = stack_get!(stack, bp + inst.c as usize + 1) as usize;
+                            let elem_bytes = stack_get(stack, bp + inst.c as usize + 1) as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                                stack_set!(stack, dst + i, unsafe { *ptr });
+                                stack_set(stack, dst + i, unsafe { *ptr });
                             }
                             return ExecResult::Continue;
                         }
@@ -1312,22 +1267,22 @@ impl Vm {
                             let elem_bytes = inst.flags as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                                stack_set!(stack, dst + i, unsafe { *ptr });
+                                stack_set(stack, dst + i, unsafe { *ptr });
                             }
                             return ExecResult::Continue;
                         }
                     };
-                    stack_set!(stack, dst, val);
+                    stack_set(stack, dst, val);
                     ExecResult::Continue
                 }
                 Opcode::ArraySet => {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-                    let arr = stack_get!(stack, bp + inst.a as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.b as usize) as usize;
+                    let arr = stack_get(stack, bp + inst.a as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.b as usize) as usize;
                     let src = bp + inst.c as usize;
                     let off = idx as isize;
                     let base = array::data_ptr_bytes(arr);
-                    let val = stack_get!(stack, src);
+                    let val = stack_get(stack, src);
                     match inst.flags {
                         1 | 129 => unsafe { *base.offset(off) = val as u8 },
                         2 | 130 => unsafe { *(base.offset(off * 2) as *mut u16) = val as u16 },
@@ -1336,17 +1291,17 @@ impl Vm {
                         8 => unsafe { *(base.offset(off * 8) as *mut u64) = val },
                         0 => {
                             // dynamic: elem_bytes in b+1 register
-                            let elem_bytes = stack_get!(stack, bp + inst.b as usize + 1) as usize;
+                            let elem_bytes = stack_get(stack, bp + inst.b as usize + 1) as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                                unsafe { *ptr = stack_get!(stack, src + i) };
+                                unsafe { *ptr = stack_get(stack, src + i) };
                             }
                         }
                         _ => {
                             let elem_bytes = inst.flags as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                                unsafe { *ptr = stack_get!(stack, src + i) };
+                                unsafe { *ptr = stack_get(stack, src + i) };
                             }
                         }
                     }
@@ -1354,12 +1309,12 @@ impl Vm {
                 }
                 Opcode::ArrayAddr => {
                     // Get element address: a=dst, b=array_gcref, c=index, flags=elem_bytes
-                    let arr = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.c as usize) as usize;
+                    let arr = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.c as usize) as usize;
                     let elem_bytes = inst.flags as usize;
                     let base = array::data_ptr_bytes(arr);
                     let addr = unsafe { base.add(idx * elem_bytes) } as u64;
-                    stack_set!(stack, bp + inst.a as usize, addr);
+                    stack_set(stack, bp + inst.a as usize, addr);
                     ExecResult::Continue
                 }
 
@@ -1370,9 +1325,9 @@ impl Vm {
                 }
                 Opcode::SliceGet => {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.c as usize) as usize;
-                    let base = slice_data_ptr!(s);
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.c as usize) as usize;
+                    let base = slice_data_ptr(s);
                     let dst = bp + inst.a as usize;
                     let val = match inst.flags {
                         1 => unsafe { *base.add(idx) as u64 },
@@ -1385,10 +1340,10 @@ impl Vm {
                         0x44 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
                         0 => {
                             // dynamic: elem_bytes in c+1 register
-                            let elem_bytes = stack_get!(stack, bp + inst.c as usize + 1) as usize;
+                            let elem_bytes = stack_get(stack, bp + inst.c as usize + 1) as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                                stack_set!(stack, dst + i, unsafe { *ptr });
+                                stack_set(stack, dst + i, unsafe { *ptr });
                             }
                             return ExecResult::Continue;
                         }
@@ -1396,21 +1351,21 @@ impl Vm {
                             let elem_bytes = inst.flags as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                                stack_set!(stack, dst + i, unsafe { *ptr });
+                                stack_set(stack, dst + i, unsafe { *ptr });
                             }
                             return ExecResult::Continue;
                         }
                     };
-                    stack_set!(stack, dst, val);
+                    stack_set(stack, dst, val);
                     ExecResult::Continue
                 }
                 Opcode::SliceSet => {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
-                    let s = stack_get!(stack, bp + inst.a as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.b as usize) as usize;
-                    let base = slice_data_ptr!(s);
+                    let s = stack_get(stack, bp + inst.a as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.b as usize) as usize;
+                    let base = slice_data_ptr(s);
                     let src = bp + inst.c as usize;
-                    let val = stack_get!(stack, src);
+                    let val = stack_get(stack, src);
                     match inst.flags {
                         1 | 129 => unsafe { *base.add(idx) = val as u8 },
                         2 | 130 => unsafe { *(base.add(idx * 2) as *mut u16) = val as u16 },
@@ -1419,32 +1374,32 @@ impl Vm {
                         8 => unsafe { *(base.add(idx * 8) as *mut u64) = val },
                         0 => {
                             // dynamic: elem_bytes in b+1 register
-                            let elem_bytes = stack_get!(stack, bp + inst.b as usize + 1) as usize;
+                            let elem_bytes = stack_get(stack, bp + inst.b as usize + 1) as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                                unsafe { *ptr = stack_get!(stack, src + i) };
+                                unsafe { *ptr = stack_get(stack, src + i) };
                             }
                         }
                         _ => {
                             let elem_bytes = inst.flags as usize;
                             for i in 0..(elem_bytes + 7) / 8 {
                                 let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                                unsafe { *ptr = stack_get!(stack, src + i) };
+                                unsafe { *ptr = stack_get(stack, src + i) };
                             }
                         }
                     }
                     ExecResult::Continue
                 }
                 Opcode::SliceLen => {
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let len = if s.is_null() { 0 } else { slice_len!(s) };
-                    stack_set!(stack, bp + inst.a as usize, len as u64);
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let len = if s.is_null() { 0 } else { slice_len(s) };
+                    stack_set(stack, bp + inst.a as usize, len as u64);
                     ExecResult::Continue
                 }
                 Opcode::SliceCap => {
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let cap = if s.is_null() { 0 } else { slice_cap!(s) };
-                    stack_set!(stack, bp + inst.a as usize, cap as u64);
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let cap = if s.is_null() { 0 } else { slice_cap(s) };
+                    stack_set(stack, bp + inst.a as usize, cap as u64);
                     ExecResult::Continue
                 }
                 Opcode::SliceSlice => {
@@ -1457,12 +1412,12 @@ impl Vm {
                 }
                 Opcode::SliceAddr => {
                     // Get element address: a=dst, b=slice_reg, c=index, flags=elem_bytes
-                    let s = stack_get!(stack, bp + inst.b as usize) as GcRef;
-                    let idx = stack_get!(stack, bp + inst.c as usize) as usize;
+                    let s = stack_get(stack, bp + inst.b as usize) as GcRef;
+                    let idx = stack_get(stack, bp + inst.c as usize) as usize;
                     let elem_bytes = inst.flags as usize;
-                    let base = slice_data_ptr!(s);
+                    let base = slice_data_ptr(s);
                     let addr = unsafe { base.add(idx * elem_bytes) } as u64;
-                    stack_set!(stack, bp + inst.a as usize, addr);
+                    stack_set(stack, bp + inst.a as usize, addr);
                     ExecResult::Continue
                 }
 
@@ -1629,33 +1584,33 @@ impl Vm {
 
                 // Type conversion - inline
                 Opcode::ConvI2F => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, (a as f64).to_bits());
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, (a as f64).to_bits());
                     ExecResult::Continue
                 }
                 Opcode::ConvF2I => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    stack_set!(stack, bp + inst.a as usize, a as i64 as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    stack_set(stack, bp + inst.a as usize, a as i64 as u64);
                     ExecResult::Continue
                 }
                 Opcode::ConvI32I64 => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i32;
-                    stack_set!(stack, bp + inst.a as usize, a as i64 as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i32;
+                    stack_set(stack, bp + inst.a as usize, a as i64 as u64);
                     ExecResult::Continue
                 }
                 Opcode::ConvI64I32 => {
-                    let a = stack_get!(stack, bp + inst.b as usize) as i64;
-                    stack_set!(stack, bp + inst.a as usize, a as i32 as u64);
+                    let a = stack_get(stack, bp + inst.b as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, a as i32 as u64);
                     ExecResult::Continue
                 }
                 Opcode::ConvF64F32 => {
-                    let a = f64::from_bits(stack_get!(stack, bp + inst.b as usize));
-                    stack_set!(stack, bp + inst.a as usize, (a as f32).to_bits() as u64);
+                    let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
+                    stack_set(stack, bp + inst.a as usize, (a as f32).to_bits() as u64);
                     ExecResult::Continue
                 }
                 Opcode::ConvF32F64 => {
-                    let a = f32::from_bits(stack_get!(stack, bp + inst.b as usize) as u32);
-                    stack_set!(stack, bp + inst.a as usize, (a as f64).to_bits());
+                    let a = f32::from_bits(stack_get(stack, bp + inst.b as usize) as u32);
+                    stack_set(stack, bp + inst.a as usize, (a as f64).to_bits());
                     ExecResult::Continue
                 }
 
