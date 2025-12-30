@@ -1,0 +1,102 @@
+package main
+
+const StatusPending = 0
+const StatusCompleted = 2
+
+type Task struct {
+	id       int
+	priority int
+	status   int
+	duration int
+}
+
+type TaskQueue struct {
+	tasks     []Task
+	completed int
+	totalTime int
+}
+
+func newTaskQueue() *TaskQueue {
+	return &TaskQueue{
+		tasks:     []Task{},
+		completed: 0,
+		totalTime: 0,
+	}
+}
+
+func (q *TaskQueue) addTask(id, priority, duration int) {
+	task := Task{
+		id:       id,
+		priority: priority,
+		status:   StatusPending,
+		duration: duration,
+	}
+	q.tasks = append(q.tasks, task)
+}
+
+func (q *TaskQueue) findHighestPriority() int {
+	bestIdx := -1
+	bestPriority := -1
+	n := len(q.tasks)
+	for i := 0; i < n; i++ {
+		t := &q.tasks[i]
+		if t.status == StatusPending {
+			if t.priority > bestPriority {
+				bestPriority = t.priority
+				bestIdx = i
+			}
+		}
+	}
+	return bestIdx
+}
+
+func (q *TaskQueue) processTask(idx int) bool {
+	if idx < 0 || idx >= len(q.tasks) {
+		return false
+	}
+	q.tasks[idx].status = StatusCompleted
+	q.completed++
+	q.totalTime += q.tasks[idx].duration
+	return true
+}
+
+func (q *TaskQueue) runUntilEmpty() int {
+	iterations := 0
+	for {
+		idx := q.findHighestPriority()
+		if idx < 0 {
+			break
+		}
+		q.processTask(idx)
+		iterations++
+	}
+	return iterations
+}
+
+func main() {
+	totalCompleted := 0
+	totalTime := 0
+	
+	rounds := 10
+	tasksPerRound := 10
+	
+	for round := 0; round < rounds; round++ {
+		q := newTaskQueue()
+		
+		for i := 0; i < tasksPerRound; i++ {
+			priority := i % 3
+			duration := (i * 7 + round) % 50
+			q.addTask(round*tasksPerRound+i, priority, duration)
+		}
+		
+		q.runUntilEmpty()
+		
+		totalCompleted += q.completed
+		totalTime += q.totalTime
+	}
+	
+	println(totalCompleted)
+	println(totalTime)
+}
+// expect: 100
+// expect: 2050

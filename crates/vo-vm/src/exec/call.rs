@@ -174,6 +174,12 @@ pub fn exec_return(
             pop_frame(stack, frames);
 
             if frames.is_empty() {
+                // Top-level return (e.g., trampoline fiber) - write return values to stack start
+                let write_count = caller_ret_count.min(ret_vals.len());
+                stack.resize(write_count, 0);
+                for i in 0..write_count {
+                    stack[i] = ret_vals[i];
+                }
                 return ExecResult::Done;
             }
 
@@ -213,6 +219,11 @@ pub fn exec_return(
         pop_frame(stack, frames);
         
         if frames.is_empty() {
+            // Top-level return (e.g., trampoline fiber) - write return values to stack start
+            stack.resize(write_count.min(4), 0);
+            for i in 0..write_count.min(4) {
+                stack[i] = ret_buf[i];
+            }
             return ExecResult::Done;
         }
         
