@@ -28,6 +28,7 @@ use clap::{Parser, Subcommand, Args};
 use commands::run::StdMode;
 
 mod bytecode_tests;
+mod output;
 mod commands;
 mod printer;
 

@@ -7,12 +7,18 @@ use vo_module::{ModFile, VfsConfig};
 use vo_codegen::compile_project;
 use vo_vm::vm::Vm;
 use super::run::StdMode;
+use crate::output::TAG_OK;
 
 /// Build and run a Vo project.
 ///
 /// # Arguments
 /// * `path` - Path to project directory (default: current directory)
 /// * `std_mode` - Stdlib mode: "core" or "full"
+///
+/// # Output Tags (for script parsing)
+/// * `[VO:OK]` - Execution completed successfully
+/// * `[VO:PANIC:message]` - Program panicked
+/// * `[VO:ERROR:message]` - Compilation/analysis error
 ///
 /// # Examples
 /// ```text
@@ -58,7 +64,7 @@ pub fn run(path: &str, std_mode: StdMode) -> Result<(), Box<dyn std::error::Erro
     let mut vm = Vm::new();
     vm.load(module.clone());
     match vm.run() {
-        Ok(()) => println!("\n✓ Execution completed"),
+        Ok(()) => println!("{}", TAG_OK),
         Err(e) => return Err(format!("panic: {:?}", e).into()),
     }
     Ok(())

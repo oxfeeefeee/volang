@@ -420,7 +420,7 @@ fn compile_stmt_with_label(
                         continue;
                     }
 
-                    let is_def = info.project.type_info.defs.contains_key(&name.id);
+                    let is_def = info.is_def(name);
                     if is_def {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
@@ -442,7 +442,7 @@ fn compile_stmt_with_label(
                         .map(|v| info.expr_type(v.id))
                         .expect("short var must have value");
 
-                    let is_def = info.project.type_info.defs.contains_key(&name.id);
+                    let is_def = info.is_def(name);
                     if is_def {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
@@ -556,10 +556,10 @@ fn compile_stmt_with_label(
                 let optimized = if ret.values.len() == 1 && ret_types.len() == 1 {
                     let result = &ret.values[0];
                     let ret_type = ret_types[0];
-                    let expr_type = info.project.type_info.types.get(&result.id).map(|tv| tv.typ);
+                    let expr_type = info.expr_type(result.id);
                     
                     // Only optimize if types match (no interface conversion needed)
-                    if expr_type == Some(ret_type) {
+                    if expr_type == ret_type {
                         if let ExprSource::Location(StorageKind::StackValue { slot, slots }) = 
                             get_expr_source(result, ctx, func, info) 
                         {

@@ -24,6 +24,17 @@ pub struct MethodResolution {
     pub defining_type: Option<TypeKey>,
 }
 
+/// Check if a selector expression is a package-qualified name (e.g., task.PriorityHigh)
+/// Package names have no expression type recorded in type_info.
+fn is_pkg_qualified_name(sel: &vo_syntax::ast::SelectorExpr, info: &TypeInfoWrapper) -> bool {
+    if let ExprKind::Ident(ident) = &sel.expr.kind {
+        let obj = info.get_use(ident);
+        info.obj_is_pkg(obj)
+    } else {
+        false
+    }
+}
+
 /// Get ExprSource for an expression - determines where the value comes from.
 /// This is the single source of truth for "can we use an existing slot?"
 pub fn get_expr_source(
@@ -50,17 +61,17 @@ pub fn get_expr_source(
         
         // Struct field access: base.field
         ExprKind::Selector(sel) => {
-            // Skip if no type info (compile-time constants)
-            let Some(tv) = info.project.type_info.types.get(&expr.id) else {
+            // Package-qualified names have no type for the package identifier
+            if is_pkg_qualified_name(sel, info) {
                 return ExprSource::NeedsCompile;
-            };
-            let field_slots = info.type_slot_count(tv.typ);
+            }
+            
+            let expr_type = info.expr_type(expr.id);
+            let field_slots = info.type_slot_count(expr_type);
             
             // Skip pointer receivers (need dereference)
-            let Some(recv_tv) = info.project.type_info.types.get(&sel.expr.id) else {
-                return ExprSource::NeedsCompile;
-            };
-            if info.is_pointer(recv_tv.typ) {
+            let recv_type = info.expr_type(sel.expr.id);
+            if info.is_pointer(recv_type) {
                 return ExprSource::NeedsCompile;
             }
             
@@ -71,8 +82,8 @@ pub fn get_expr_source(
                 // Compute field offset
                 if let Some(field_name) = info.project.interner.resolve(sel.sel.symbol) {
                     let (offset, _) = info.get_selection(expr.id)
-                        .map(|sel_info| info.compute_field_offset_from_indices(recv_tv.typ, sel_info.indices()))
-                        .unwrap_or_else(|| info.struct_field_offset(recv_tv.typ, field_name));
+                        .map(|sel_info| info.compute_field_offset_from_indices(recv_type, sel_info.indices()))
+                        .unwrap_or_else(|| info.struct_field_offset(recv_type, field_name));
                     return ExprSource::Location(StorageKind::StackValue { 
                         slot: base_slot + offset, 
                         slots: field_slots 
@@ -460,17 +471,60 @@ fn compile_short_circuit(
 
 fn compile_selector(
     expr: &Expr,
-    _sel: &vo_syntax::ast::SelectorExpr,
+    sel: &vo_syntax::ast::SelectorExpr,
     dst: u16,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Package-qualified names (e.g., task.PriorityHigh) - package names have no type
+    if is_pkg_qualified_name(sel, info) {
+        return compile_pkg_qualified_name(expr, sel, dst, ctx, func, info);
+    }
+    
     // Use unified LValue system for all field access patterns
     // This handles: x.field, p.field, slice[i].field, a.b[i].c, etc.
     let lv = crate::lvalue::resolve_lvalue(expr, ctx, func, info)?;
     crate::lvalue::emit_lvalue_load(&lv, dst, ctx, func);
     Ok(())
+}
+
+/// Compile a package-qualified name (e.g., pkg.Const, pkg.Var, pkg.Func)
+fn compile_pkg_qualified_name(
+    expr: &Expr,
+    sel: &vo_syntax::ast::SelectorExpr,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // Get the object that sel.sel refers to (package member always has use record)
+    let obj = info.get_use(&sel.sel);
+    let lobj = &info.project.tc_objs.lobjs[obj];
+    
+    match lobj.entity_type() {
+        vo_analysis::obj::EntityType::Const { val } => {
+            // Package constant: compile as constant value
+            let type_key = info.expr_type(expr.id);
+            compile_const_value(val, dst, type_key, ctx, func, info)
+        }
+        vo_analysis::obj::EntityType::Var(_) => {
+            // Package global variable: load from global
+            let global_idx = ctx.get_global_index(sel.sel.symbol)
+                .ok_or_else(|| CodegenError::VariableNotFound(format!("{:?}", sel.sel.symbol)))?;
+            let type_key = info.expr_type(expr.id);
+            let slots = info.type_slot_count(type_key);
+            let storage = crate::func::StorageKind::Global { index: global_idx as u16, slots };
+            func.emit_storage_load(storage, dst);
+            Ok(())
+        }
+        vo_analysis::obj::EntityType::Func { .. } => {
+            // Package function: this shouldn't happen in value context
+            // Function calls are handled separately
+            Err(CodegenError::Internal("package function in value context".to_string()))
+        }
+        _ => Err(CodegenError::Internal(format!("unexpected entity type for package member: {:?}", sel.sel.symbol))),
+    }
 }
 
 // === Index (array/slice access) ===
@@ -786,9 +840,7 @@ fn compile_func_lit(
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
     // Get closure captures from type info
-    let captures = info.project.type_info.closure_captures.get(&expr.id)
-        .cloned()
-        .unwrap_or_default();
+    let captures = info.closure_captures(expr.id);
     
     // Generate a unique name for the closure function
     let closure_name = format!("closure_{}", ctx.next_closure_id());

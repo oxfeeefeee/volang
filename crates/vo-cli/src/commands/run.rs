@@ -11,6 +11,7 @@ use vo_vm::vm::Vm;
 use vo_syntax::parser;
 use crate::printer::AstPrinter;
 use crate::bytecode_text;
+use crate::output::{TAG_OK, format_panic, format_error};
 
 /// Execution mode for running programs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -116,7 +117,7 @@ fn print_ast_only(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         for d in diag.iter() {
             eprintln!("{}", d.message);
         }
-        println!("[VO:ERROR:parse error]");
+        println!("{}", format_error("parse error"));
         return Err("parse error".into());
     }
     
@@ -163,7 +164,7 @@ fn compile_source_file(path: &Path) -> Result<Module, Box<dyn std::error::Error>
     };
     
     if file_set.files.is_empty() {
-        println!("[VO:ERROR:no .vo files found]");
+        println!("{}", format_error("no .vo files found"));
         return Err("no .vo files found".into());
     }
     
@@ -176,15 +177,15 @@ fn compile_source_file(path: &Path) -> Result<Module, Box<dyn std::error::Error>
             let emitter = DiagnosticEmitter::new(source_map);
             eprintln!(); // blank line before errors
             emitter.emit_all(diags);
-            println!("[VO:ERROR:type check failed: {} error(s)]", diags.error_count());
+            println!("{}", format_error(&format!("type check failed: {} error(s)", diags.error_count())));
         } else {
-            println!("[VO:ERROR:{}]", e);
+            println!("{}", format_error(&e.to_string()));
         }
         format!("analysis error: {}", e)
     })?;
     
     let module = compile_project(&project).map_err(|e| {
-        println!("[VO:ERROR:{:?}]", e);
+        println!("{}", format_error(&format!("{:?}", e)));
         format!("codegen error: {:?}", e)
     })?;
     
@@ -198,11 +199,11 @@ fn run_vm(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error::
     
     match vm.run() {
         Ok(()) => {
-            println!("[VO:OK]");
+            println!("{}", TAG_OK);
             Ok(())
         }
         Err(e) => {
-            println!("[VO:PANIC:{:?}]", e);
+            println!("{}", format_panic(&format!("{:?}", e)));
             Err(format!("panic: {:?}", e).into())
         }
     }
@@ -235,11 +236,11 @@ fn run_jit(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error:
     
     match vm.run() {
         Ok(()) => {
-            println!("[VO:OK]");
+            println!("{}", TAG_OK);
             Ok(())
         }
         Err(e) => {
-            println!("[VO:PANIC:{:?}]", e);
+            println!("{}", format_panic(&format!("{:?}", e)));
             Err(format!("panic: {:?}", e).into())
         }
     }

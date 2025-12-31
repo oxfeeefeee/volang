@@ -134,11 +134,20 @@ impl FileSet {
         }
     }
     
-    /// Collect all .vo files from a directory recursively.
+    /// Collect .vo files from a directory (non-recursive).
+    /// Subdirectories are treated as separate packages and loaded via import.
     pub fn collect<F: FileSystem>(fs: &F, root: &Path) -> io::Result<Self> {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let mut file_set = Self::new(root.clone());
-        file_set.collect_dir(fs, &root)?;
+        
+        // Only collect .vo files in the root directory (not subdirectories)
+        for entry in fs.read_dir(&root)? {
+            if !fs.is_dir(&entry) && entry.extension().map_or(false, |e| e == "vo") {
+                let content = fs.read_file(&entry)?;
+                file_set.files.insert(entry, content);
+            }
+        }
+        
         Ok(file_set)
     }
     
@@ -151,18 +160,6 @@ impl FileSet {
         let content = fs.read_file(&file_path)?;
         file_set.files.insert(file_path, content);
         Ok(file_set)
-    }
-    
-    fn collect_dir<F: FileSystem>(&mut self, fs: &F, dir: &Path) -> io::Result<()> {
-        for entry in fs.read_dir(dir)? {
-            if fs.is_dir(&entry) {
-                self.collect_dir(fs, &entry)?;
-            } else if entry.extension().map_or(false, |e| e == "vo") {
-                let content = fs.read_file(&entry)?;
-                self.files.insert(entry, content);
-            }
-        }
-        Ok(())
     }
     
     /// Get files grouped by their parent directory (package).

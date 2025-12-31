@@ -185,66 +185,82 @@ fn collect_declarations(
     ctx: &mut CodegenContext,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Collect all files: main package + imported packages
-    let all_files: Vec<&vo_syntax::ast::File> = project.files.iter()
-        .chain(project.imported_files.values().flatten())
-        .collect();
+    // First collect main package declarations (using main type_info)
+    for file in &project.files {
+        collect_file_declarations(file, project, ctx, info)?;
+    }
     
-    // Register all function names first (so calls can find them)
-    for file in all_files {
-        for decl in &file.decls {
-            match decl {
-                Decl::Func(func_decl) => {
-                    // Skip extern functions (no body) - they use CallExtern
-                    if func_decl.body.is_none() {
-                        continue;
-                    }
-                    
-                    // Skip init() functions - they can have multiple declarations with same name
-                    // and will be handled specially during compilation
-                    let func_name = project.interner.resolve(func_decl.name.symbol).unwrap_or("");
-                    if func_decl.receiver.is_none() && func_name == "init" {
-                        continue;
-                    }
-                    
-                    // Check if this is a method (has receiver)
-                    let (recv_type, is_pointer_recv) = if let Some(recv) = &func_decl.receiver {
-                        let base_type = info.obj_type(info.get_use(&recv.ty), "method receiver must have type");
-                        (Some(base_type), recv.is_pointer)
-                    } else {
-                        (None, false)
-                    };
-                    
-                    ctx.declare_func(recv_type, is_pointer_recv, func_decl.name.symbol);
-                }
-                Decl::Var(var_decl) => {
-                    // Register global variables (so functions can reference them)
-                    for spec in &var_decl.specs {
-                        for (i, name) in spec.names.iter().enumerate() {
-                            let type_key = if let Some(ty) = &spec.ty {
-                                info.type_expr_type(ty.id)
-                            } else if i < spec.values.len() {
-                                info.expr_type(spec.values[i].id)
-                            } else {
-                                panic!("global var must have type annotation or initializer")
-                            };
-                            
-                            let slots = info.type_slot_count(type_key);
-                            let value_kind = info.type_value_kind(type_key) as u8;
-                            ctx.register_global(
-                                name.symbol,
-                                vo_vm::bytecode::GlobalDef {
-                                    name: project.interner.resolve(name.symbol).unwrap_or("?").to_string(),
-                                    slots,
-                                    value_kind,
-                                    meta_id: 0,
-                                },
-                            );
-                        }
-                    }
-                }
-                _ => {}
+    // Then collect imported package declarations (using their respective type_info)
+    for (pkg_path, files) in &project.imported_files {
+        if let Some(pkg_type_info) = project.imported_type_infos.get(pkg_path) {
+            let pkg_info = TypeInfoWrapper::for_package(project, pkg_type_info);
+            for file in files {
+                collect_file_declarations(file, project, ctx, &pkg_info)?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn collect_file_declarations(
+    file: &vo_syntax::ast::File,
+    project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    for decl in &file.decls {
+        match decl {
+            Decl::Func(func_decl) => {
+                // Skip extern functions (no body) - they use CallExtern
+                if func_decl.body.is_none() {
+                    continue;
+                }
+                
+                // Skip init() functions - they can have multiple declarations with same name
+                // and will be handled specially during compilation
+                let func_name = project.interner.resolve(func_decl.name.symbol).unwrap_or("");
+                if func_decl.receiver.is_none() && func_name == "init" {
+                    continue;
+                }
+                
+                // Check if this is a method (has receiver)
+                let (recv_type, is_pointer_recv) = if let Some(recv) = &func_decl.receiver {
+                    let base_type = info.method_receiver_base_type(func_decl)
+                        .expect("method receiver must have type");
+                    (Some(base_type), recv.is_pointer)
+                } else {
+                    (None, false)
+                };
+                
+                ctx.declare_func(recv_type, is_pointer_recv, func_decl.name.symbol);
+            }
+            Decl::Var(var_decl) => {
+                // Register global variables (so functions can reference them)
+                for spec in &var_decl.specs {
+                    for (i, name) in spec.names.iter().enumerate() {
+                        let type_key = if let Some(ty) = &spec.ty {
+                            info.type_expr_type(ty.id)
+                        } else if i < spec.values.len() {
+                            info.expr_type(spec.values[i].id)
+                        } else {
+                            panic!("global var must have type annotation or initializer")
+                        };
+                        
+                        let slots = info.type_slot_count(type_key);
+                        let value_kind = info.type_value_kind(type_key) as u8;
+                        ctx.register_global(
+                            name.symbol,
+                            vo_vm::bytecode::GlobalDef {
+                                name: project.interner.resolve(name.symbol).unwrap_or("?").to_string(),
+                                slots,
+                                value_kind,
+                                meta_id: 0,
+                            },
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -311,8 +327,9 @@ fn compile_file_functions(
             
             // If this is a method, record the mapping
             if let Some(recv) = &func_decl.receiver {
-                // recv.ty is the struct type (e.g., MyNum), recv.is_pointer indicates if it's *T
-                let recv_type = info.obj_type(info.get_use(&recv.ty), "method receiver must have type");
+                // Get receiver base type from function signature
+                let recv_type = info.method_receiver_base_type(func_decl)
+                    .expect("method receiver must have type");
                 {
                     let method_name = project.interner.resolve(func_decl.name.symbol)
                         .unwrap_or("?").to_string();
@@ -743,7 +760,7 @@ fn compile_init_and_entry(
     let mut init_builder = FuncBuilder::new("__init__");
     
     // Initialize global variables in dependency order (from type checker analysis)
-    for initializer in &info.project.type_info.init_order {
+    for initializer in info.init_order() {
         // Each initializer has lhs (variables) and rhs (expression)
         // For now, handle single variable assignment (most common case)
         if initializer.lhs.len() == 1 {

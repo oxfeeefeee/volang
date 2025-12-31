@@ -45,7 +45,7 @@ impl<'a> TypeInfoWrapper<'a> {
     pub fn expr_type(&self, expr_id: ExprId) -> TypeKey {
         self.type_info().types.get(&expr_id)
             .map(|tv| tv.typ)
-            .expect("expression must have type during codegen")
+            .unwrap_or_else(|| panic!("expression {:?} must have type during codegen", expr_id))
     }
 
     /// Get the i-th element type from a tuple type (for comma-ok expressions)
@@ -117,6 +117,23 @@ impl<'a> TypeInfoWrapper<'a> {
     /// Check if object is a package name
     pub fn obj_is_pkg(&self, obj: ObjKey) -> bool {
         self.tc_objs().lobjs[obj].entity_type().is_pkg_name()
+    }
+
+    /// Check if identifier is a definition (vs re-assignment)
+    pub fn is_def(&self, ident: &Ident) -> bool {
+        self.type_info().defs.contains_key(&ident.id)
+    }
+
+    /// Get closure captures for a function literal expression
+    pub fn closure_captures(&self, expr_id: ExprId) -> Vec<vo_analysis::objects::ObjKey> {
+        self.type_info().closure_captures.get(&expr_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Get global variable initialization order (only valid for main package)
+    pub fn init_order(&self) -> &[vo_analysis::check::Initializer] {
+        &self.type_info().init_order
     }
 
     /// Get the package path for a package identifier
@@ -304,6 +321,24 @@ impl<'a> TypeInfoWrapper<'a> {
     /// Try to get object's type. Returns None if object has no type.
     pub fn try_obj_type(&self, obj: ObjKey) -> Option<TypeKey> {
         self.tc_objs().lobjs[obj].typ()
+    }
+
+    /// Get method receiver's base type from function declaration.
+    /// For `func (r T) Method()` returns type of T.
+    /// For `func (r *T) Method()` returns type of T (not *T).
+    pub fn method_receiver_base_type(&self, func_decl: &vo_syntax::ast::FuncDecl) -> Option<TypeKey> {
+        let func_obj = self.get_def(&func_decl.name);
+        let func_type = self.tc_objs().lobjs[func_obj].typ()?;
+        let sig = self.as_signature(func_type);
+        let recv_obj = (*sig.recv())?;
+        let recv_type = self.tc_objs().lobjs[recv_obj].typ()?;
+        // If pointer receiver, get the base type
+        let underlying = typ::underlying_type(recv_type, self.tc_objs());
+        if let Type::Pointer(p) = &self.tc_objs().types[underlying] {
+            Some(p.base())
+        } else {
+            Some(recv_type)
+        }
     }
 
     /// Get object's name

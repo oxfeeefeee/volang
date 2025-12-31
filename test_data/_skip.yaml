@@ -125,8 +125,6 @@ skips:
     skip: [vm, jit]
     reason: "type check failed"
   - file: proj_taskman/
-    skip: [vm, jit]
-    reason: "type check failed"
   - file: qualified_embed_iface.vo
   - file: range_string.vo
   - file: rect_only.vo
