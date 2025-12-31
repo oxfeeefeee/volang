@@ -32,32 +32,42 @@ impl VfsConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 // Try common locations for stdlib
+                // We check for "fmt/" subdir to verify it's a real stdlib, not just a coincidentally named dir
+                let is_valid_stdlib = |p: &Path| p.is_dir() && p.join("fmt").is_dir();
+                
                 // 1. Project dir's "stdlib" folder
                 let in_project = project_dir.join("stdlib");
-                if in_project.is_dir() {
+                if is_valid_stdlib(&in_project) {
                     return in_project;
                 }
                 // 2. Parent dir's "stdlib" (for examples/)
                 if let Some(parent) = project_dir.parent() {
                     let in_parent = parent.join("stdlib");
-                    if in_parent.is_dir() {
+                    if is_valid_stdlib(&in_parent) {
                         return in_parent;
                     }
                     // 3. Grandparent (for examples/subdir/)
                     if let Some(grandparent) = parent.parent() {
                         let in_grandparent = grandparent.join("stdlib");
-                        if in_grandparent.is_dir() {
+                        if is_valid_stdlib(&in_grandparent) {
                             return in_grandparent;
+                        }
+                        // 4. Great-grandparent (for test_data/stdlib/)
+                        if let Some(great_grandparent) = grandparent.parent() {
+                            let in_great = great_grandparent.join("stdlib");
+                            if is_valid_stdlib(&in_great) {
+                                return in_great;
+                            }
                         }
                     }
                 }
-                // 4. Relative to executable
+                // 5. Relative to executable
                 if let Ok(exe) = std::env::current_exe() {
                     if let Some(exe_dir) = exe.parent() {
                         // Check ../stdlib (development) and ../lib/vo/stdlib (installed)
                         for rel in &["../../../stdlib", "../../stdlib", "../stdlib", "../lib/vo/stdlib"] {
                             let p = exe_dir.join(rel);
-                            if p.is_dir() {
+                            if is_valid_stdlib(&p) {
                                 return p;
                             }
                         }

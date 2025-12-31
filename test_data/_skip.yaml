@@ -150,8 +150,6 @@ skips:
     skip: [vm, jit]
     reason: "stdlib not ready"
   - file: stdlib/bytes.vo
-    skip: [vm, jit]
-    reason: "stdlib not ready"
   - file: stdlib/errors.vo
     skip: [vm, jit]
     reason: "stdlib not ready"

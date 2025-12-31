@@ -248,7 +248,10 @@ impl VoType {
             VoType::String => "&str",
             VoType::Any => "any",
             VoType::Pointer(_) => "GcRef",
-            VoType::Slice(_) => "GcRef",
+            VoType::Slice(inner) => match inner.as_ref() {
+                VoType::Uint8 => "&[u8]",
+                _ => "GcRef",
+            },
             VoType::Array(_, _) => "GcRef",
             VoType::Map(_, _) => "GcRef",
             VoType::Chan(_, _) => "GcRef",

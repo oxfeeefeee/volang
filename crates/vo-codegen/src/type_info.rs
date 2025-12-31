@@ -12,13 +12,24 @@ use vo_syntax::ast::ExprId;
 use vo_runtime::SlotType;
 
 /// Wrapper around Project for codegen queries.
+/// 
+/// Each package has its own TypeInfo (because ExprId/IdentId are local to each package).
+/// When compiling a package, use the TypeInfoWrapper for that package.
 pub struct TypeInfoWrapper<'a> {
     pub project: &'a Project,
+    /// The type_info for the package being compiled.
+    type_info: &'a vo_analysis::check::TypeInfo,
 }
 
 impl<'a> TypeInfoWrapper<'a> {
-    pub fn new(project: &'a Project) -> Self {
-        Self { project }
+    /// Create a TypeInfoWrapper for the main package.
+    pub fn for_main_package(project: &'a Project) -> Self {
+        Self { project, type_info: &project.type_info }
+    }
+    
+    /// Create a TypeInfoWrapper for an imported package.
+    pub fn for_package(project: &'a Project, type_info: &'a vo_analysis::check::TypeInfo) -> Self {
+        Self { project, type_info }
     }
 
     fn tc_objs(&self) -> &TCObjects {
@@ -26,13 +37,13 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     fn type_info(&self) -> &vo_analysis::check::TypeInfo {
-        &self.project.type_info
+        self.type_info
     }
 
     // === Expression type queries ===
 
     pub fn expr_type(&self, expr_id: ExprId) -> TypeKey {
-        self.project.type_info.types.get(&expr_id)
+        self.type_info().types.get(&expr_id)
             .map(|tv| tv.typ)
             .expect("expression must have type during codegen")
     }
@@ -66,7 +77,7 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     pub fn expr_type_raw(&self, expr_id: ExprId) -> TypeKey {
-        self.project.type_info.types.get(&expr_id)
+        self.type_info().types.get(&expr_id)
             .map(|tv| tv.typ)
             .expect("expression must have type during codegen")
     }
@@ -76,9 +87,19 @@ impl<'a> TypeInfoWrapper<'a> {
     }
 
     pub fn type_expr_type(&self, type_expr_id: vo_syntax::ast::TypeExprId) -> TypeKey {
-        self.project.type_info.type_exprs.get(&type_expr_id)
+        self.type_info().type_exprs.get(&type_expr_id)
             .copied()
             .expect("type expression must have type during codegen")
+    }
+    
+    /// Get constant value for an expression (if it's a constant)
+    pub fn const_value(&self, expr_id: ExprId) -> Option<&vo_analysis::ConstValue> {
+        let tv = self.type_info().types.get(&expr_id)?;
+        if let vo_analysis::operand::OperandMode::Constant(val) = &tv.mode {
+            Some(val)
+        } else {
+            None
+        }
     }
 
     // === Definition/Use queries ===
@@ -557,9 +578,3 @@ pub fn encode_func_id(func_idx: u32) -> (u16, u8) {
     let high = ((func_idx >> 16) & 0xFF) as u8;
     (low, high)
 }
-
-// Re-export elem_flags from vo-common-core
-pub use vo_common_core::{
-    elem_flags, ELEM_FLAG_SIGN_BIT, ELEM_FLAG_FLOAT_BIT, ELEM_FLAG_BYTES_MASK,
-    ELEM_FLAG_INT8, ELEM_FLAG_INT16, ELEM_FLAG_INT32, ELEM_FLAG_FLOAT32,
-};

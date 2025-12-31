@@ -1082,7 +1082,22 @@ fn compile_call(
             return Ok(());
         }
         
-        return Err(CodegenError::Internal("function not found".to_string()));
+        // Extern function (no body, e.g., bytes.Index called from bytes.Contains)
+        if !ctx.is_vo_function(ident.symbol) {
+            let func_name = info.project.interner.resolve(ident.symbol)
+                .ok_or_else(|| CodegenError::Internal("cannot resolve function name".to_string()))?;
+            let obj_key = info.get_use(ident);
+            let pkg_key = info.project.tc_objs.lobjs[obj_key].pkg();
+            let pkg_path = pkg_key
+                .map(|pk| info.project.tc_objs.pkgs[pk].path().to_string())
+                .unwrap_or_else(|| "main".to_string());
+            let extern_name = format!("{}_{}", pkg_path.replace("/", "_"), func_name);
+            return compile_extern_call(call, &extern_name, dst, ctx, func, info);
+        }
+        
+        // Unknown function - error
+        let func_name = info.project.interner.resolve(ident.symbol).unwrap_or("?");
+        return Err(CodegenError::Internal(format!("unknown function: {}", func_name)));
     }
     
     // Non-ident function call (e.g., expression returning a closure)
@@ -1258,10 +1273,32 @@ fn compile_method_call(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // 1. Check for extern package call (e.g., fmt.Println)
-    if let ExprKind::Ident(_) = &sel.expr.kind {
-        if let Ok(extern_name) = get_extern_name(sel, info) {
-            return compile_extern_call(call, &extern_name, dst, ctx, func, info);
+    // 1. Check for package function call (e.g., bytes.Contains, fmt.Println)
+    if let ExprKind::Ident(pkg_ident) = &sel.expr.kind {
+        // Check if it's a package reference
+        if info.package_path(pkg_ident).is_some() {
+            // Check if it's a Vo function (has body) or extern (no body)
+            if ctx.is_vo_function(sel.sel.symbol) {
+                // Vo function - use normal Call
+                let func_idx = ctx.get_function_index(sel.sel.symbol).unwrap();
+                let ret_slots = info.type_slot_count(info.expr_type(expr.id));
+                let func_type = info.expr_type(call.func.id);
+                let is_variadic = info.is_variadic(func_type);
+                let (args_start, total_arg_slots) = compile_call_args(call, is_variadic, ctx, func, info)?;
+                
+                let c = crate::type_info::encode_call_args(total_arg_slots, ret_slots);
+                let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
+                func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
+                
+                if ret_slots > 0 && dst != args_start {
+                    func.emit_copy(dst, args_start, ret_slots);
+                }
+                return Ok(());
+            }
+            // Extern function - use CallExtern
+            if let Ok(extern_name) = get_extern_name(sel, info) {
+                return compile_extern_call(call, &extern_name, dst, ctx, func, info);
+            }
         }
     }
 
@@ -1900,12 +1937,7 @@ fn compile_composite_lit(
 
 /// Get constant value from type info
 fn get_const_value<'a>(expr_id: vo_syntax::ast::ExprId, info: &'a TypeInfoWrapper) -> Option<&'a vo_analysis::ConstValue> {
-    let tv = info.project.type_info.types.get(&expr_id)?;
-    if let vo_analysis::operand::OperandMode::Constant(val) = &tv.mode {
-        Some(val)
-    } else {
-        None
-    }
+    info.const_value(expr_id)
 }
 
 /// Compile a constant value to the destination slot

@@ -23,7 +23,7 @@ use vo_vm::bytecode::Module;
 
 /// Compile a type-checked project to VM bytecode.
 pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
-    let info = TypeInfoWrapper::new(project);
+    let info = TypeInfoWrapper::for_main_package(project);
     let pkg_name = "main"; // TODO: get from project
     let mut ctx = CodegenContext::new(pkg_name);
     
@@ -185,11 +185,21 @@ fn collect_declarations(
     ctx: &mut CodegenContext,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Collect all files: main package + imported packages
+    let all_files: Vec<&vo_syntax::ast::File> = project.files.iter()
+        .chain(project.imported_files.values().flatten())
+        .collect();
+    
     // Register all function names first (so calls can find them)
-    for file in &project.files {
+    for file in all_files {
         for decl in &file.decls {
             match decl {
                 Decl::Func(func_decl) => {
+                    // Skip extern functions (no body) - they use CallExtern
+                    if func_decl.body.is_none() {
+                        continue;
+                    }
+                    
                     // Skip init() functions - they can have multiple declarations with same name
                     // and will be handled specially during compilation
                     let func_name = project.interner.resolve(func_decl.name.symbol).unwrap_or("");
@@ -249,42 +259,17 @@ fn compile_functions(
     // (recv_type, method_name, func_id, is_pointer_receiver, signature)
     let mut method_mappings: Vec<(vo_analysis::objects::TypeKey, String, u32, bool, vo_runtime::RuntimeType)> = Vec::new();
     
-    // Iterate all files and compile function declarations
+    // First compile main package files (using main type_info)
     for file in &project.files {
-        for decl in &file.decls {
-            if let Decl::Func(func_decl) = decl {
-                let func_name = project.interner.resolve(func_decl.name.symbol)
-                    .unwrap_or("unknown");
-                let func_id = compile_func_decl(func_decl, ctx, info)?;
-                
-                // Check if this is an init() function (no receiver, name is "init")
-                if func_decl.receiver.is_none() && func_name == "init" {
-                    ctx.register_init_function(func_id);
-                }
-                
-                // If this is a method, record the mapping
-                if let Some(recv) = &func_decl.receiver {
-                    // recv.ty is the struct type (e.g., MyNum), recv.is_pointer indicates if it's *T
-                    let recv_type = info.obj_type(info.get_use(&recv.ty), "method receiver must have type");
-                    {
-                        let method_name = project.interner.resolve(func_decl.name.symbol)
-                            .unwrap_or("?").to_string();
-                        
-                        // Generate method signature (RuntimeType::Func)
-                        let signature = generate_method_signature(func_decl, info, &project.interner, ctx);
-                        
-                        // For value receiver methods, generate a wrapper that accepts GcRef
-                        // and dereferences it before calling the original method
-                        let iface_func_id = if !recv.is_pointer {
-                            generate_value_receiver_wrapper(ctx, info, func_decl, func_id, recv_type)?
-                        } else {
-                            func_id
-                        };
-                        
-                        // Register the wrapper (or original for pointer receiver) for interface dispatch
-                        method_mappings.push((recv_type, method_name, iface_func_id, recv.is_pointer, signature));
-                    }
-                }
+        compile_file_functions(file, project, ctx, info, &mut method_mappings)?;
+    }
+    
+    // Then compile imported package files (using their respective type_info)
+    for (pkg_path, files) in &project.imported_files {
+        if let Some(pkg_type_info) = project.imported_type_infos.get(pkg_path) {
+            let pkg_info = TypeInfoWrapper::for_package(project, pkg_type_info);
+            for file in files {
+                compile_file_functions(file, project, ctx, &pkg_info, &mut method_mappings)?;
             }
         }
     }
@@ -298,6 +283,57 @@ fn compile_functions(
     // Build pending itabs now that methods are registered
     ctx.finalize_itabs();
     
+    Ok(())
+}
+
+fn compile_file_functions(
+    file: &vo_syntax::ast::File,
+    project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+    method_mappings: &mut Vec<(vo_analysis::objects::TypeKey, String, u32, bool, vo_runtime::RuntimeType)>,
+) -> Result<(), CodegenError> {
+    for decl in &file.decls {
+        if let Decl::Func(func_decl) = decl {
+            // Skip extern functions (no body) - they use CallExtern
+            if func_decl.body.is_none() {
+                continue;
+            }
+            
+            let func_name = project.interner.resolve(func_decl.name.symbol)
+                .unwrap_or("unknown");
+            let func_id = compile_func_decl(func_decl, ctx, info)?;
+            
+            // Check if this is an init() function (no receiver, name is "init")
+            if func_decl.receiver.is_none() && func_name == "init" {
+                ctx.register_init_function(func_id);
+            }
+            
+            // If this is a method, record the mapping
+            if let Some(recv) = &func_decl.receiver {
+                // recv.ty is the struct type (e.g., MyNum), recv.is_pointer indicates if it's *T
+                let recv_type = info.obj_type(info.get_use(&recv.ty), "method receiver must have type");
+                {
+                    let method_name = project.interner.resolve(func_decl.name.symbol)
+                        .unwrap_or("?").to_string();
+                    
+                    // Generate method signature (RuntimeType::Func)
+                    let signature = generate_method_signature(func_decl, info, &project.interner, ctx);
+                    
+                    // For value receiver methods, generate a wrapper that accepts GcRef
+                    // and dereferences it before calling the original method
+                    let iface_func_id = if !recv.is_pointer {
+                        generate_value_receiver_wrapper(ctx, info, func_decl, func_id, recv_type)?
+                    } else {
+                        func_id
+                    };
+                    
+                    // Register the wrapper (or original for pointer receiver) for interface dispatch
+                    method_mappings.push((recv_type, method_name, iface_func_id, recv.is_pointer, signature));
+                }
+            }
+        }
+    }
     Ok(())
 }
 

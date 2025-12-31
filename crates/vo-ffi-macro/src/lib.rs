@@ -354,6 +354,9 @@ fn type_to_string(ty: &Type) -> String {
                 format!("&{}", type_to_string(&r.elem))
             }
         }
+        Type::Slice(s) => {
+            format!("[{}]", type_to_string(&s.elem))
+        }
         _ => "?".to_string(),
     }
 }
@@ -366,6 +369,11 @@ fn types_compatible(rust: &str, vo: &str) -> bool {
     
     // Handle reference types
     if vo == "&str" && rust == "&str" {
+        return true;
+    }
+    
+    // Handle byte slice
+    if vo == "&[u8]" && rust == "&[u8]" {
         return true;
     }
     
@@ -781,6 +789,17 @@ fn generate_arg_read(ty: &Type, slot: u16) -> syn::Result<(TokenStream2, bool, u
                     return Ok((quote! { call.arg_str(#slot) }, true, 1));
                 }
             }
+            // Check for &[u8] slice type
+            if let Type::Slice(slice_type) = &*type_ref.elem {
+                if let Type::Path(inner) = &*slice_type.elem {
+                    let ident = inner.path.segments.last()
+                        .map(|s| s.ident.to_string())
+                        .unwrap_or_default();
+                    if ident == "u8" {
+                        return Ok((quote! { call.arg_bytes(#slot) }, true, 1));
+                    }
+                }
+            }
             Err(syn::Error::new_spanned(ty, "unsupported reference type"))
         }
         _ => Err(syn::Error::new_spanned(ty, "unsupported parameter type")),
@@ -815,6 +834,10 @@ fn generate_ret_write(ret: &ReturnType) -> syn::Result<TokenStream2> {
                         }
                         "String" => {
                             Ok(quote! { call.ret_str(0, &__result); })
+                        }
+                        "Vec" => {
+                            // Check if it's Vec<u8>
+                            Ok(quote! { call.ret_bytes(0, &__result); })
                         }
                         _ => Err(syn::Error::new_spanned(ty, format!("unsupported return type: {}", ident))),
                     }

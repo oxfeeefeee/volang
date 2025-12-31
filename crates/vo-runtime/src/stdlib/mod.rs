@@ -9,3 +9,4 @@
 pub mod fmt;
 pub mod builtin;
 pub mod math;
+pub mod bytes;

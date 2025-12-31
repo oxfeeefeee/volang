@@ -113,10 +113,14 @@ pub struct Project {
     pub packages: Vec<PackageKey>,
     /// Main package key.
     pub main_package: PackageKey,
-    /// Type checking results.
+    /// Type checking results for main package.
     pub type_info: crate::check::TypeInfo,
     /// Parsed files from the main package.
     pub files: Vec<File>,
+    /// Parsed files from all imported packages (package path -> files).
+    pub imported_files: HashMap<String, Vec<File>>,
+    /// Type checking results for imported packages (package path -> type_info).
+    pub imported_type_infos: HashMap<String, crate::check::TypeInfo>,
 }
 
 impl Project {
@@ -165,6 +169,10 @@ struct ProjectState {
     checked_packages: Vec<PackageKey>,
     /// Type checking results from main package.
     type_info: Option<crate::check::TypeInfo>,
+    /// Parsed files from imported packages (package path -> files).
+    imported_files: HashMap<String, Vec<File>>,
+    /// Type checking results from imported packages (package path -> type_info).
+    imported_type_infos: HashMap<String, crate::check::TypeInfo>,
 }
 
 /// Analyze a project starting from the given source files.
@@ -192,6 +200,8 @@ pub fn analyze_project_with_options(
         in_progress: HashSet::new(),
         checked_packages: Vec::new(),
         type_info: None,
+        imported_files: HashMap::new(),
+        imported_type_infos: HashMap::new(),
     }));
     
     // Create the main package
@@ -254,6 +264,8 @@ pub fn analyze_project_with_options(
         main_package: main_pkg_key,
         type_info: final_state.type_info.unwrap_or_default(),
         files: parsed_files,
+        imported_files: final_state.imported_files,
+        imported_type_infos: final_state.imported_type_infos,
     })
 }
 
@@ -299,6 +311,8 @@ pub fn analyze_single_file_with_options(
         main_package: main_pkg_key,
         type_info: checker.result,
         files: vec![file],
+        imported_files: HashMap::new(),
+        imported_type_infos: HashMap::new(),
     })
 }
 
@@ -468,7 +482,7 @@ impl Importer for ProjectImporter<'_> {
         };
         
         // Type check the package (recursively handles its imports)
-        let check_result = {
+        let (check_result, pkg_type_info) = {
             let mut state_ref = self.state.borrow_mut();
             let mut checker = Checker::new(pkg_key, state_ref.interner.clone());
             std::mem::swap(&mut checker.tc_objs, &mut state_ref.tc_objs);
@@ -480,7 +494,7 @@ impl Importer for ProjectImporter<'_> {
             
             let mut state_ref = self.state.borrow_mut();
             std::mem::swap(&mut checker.tc_objs, &mut state_ref.tc_objs);
-            result
+            (result, checker.result)
         };
         
         // Remove from in progress
@@ -493,6 +507,10 @@ impl Importer for ProjectImporter<'_> {
                     // Cache the result and record package
                     state.cache.insert(import_path.to_string(), pkg_key);
                     state.checked_packages.push(pkg_key);
+                    // Save parsed files for codegen
+                    state.imported_files.insert(import_path.to_string(), parsed_files);
+                    // Save type info for codegen
+                    state.imported_type_infos.insert(import_path.to_string(), pkg_type_info);
                 }
                 Err(_) => {
                     return ImportResult::Err(format!("type check failed for {}", import_path));

@@ -341,6 +341,12 @@ impl CodegenContext {
     pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
         self.func_indices.get(&(None, false, name)).copied()
     }
+    
+    /// Check if a function is a compiled Vo function (not extern).
+    /// Extern functions have no body and are not registered in func_indices.
+    pub fn is_vo_function(&self, name: Symbol) -> bool {
+        self.func_indices.contains_key(&(None, false, name))
+    }
 
     /// Define a function: replace placeholder with real definition.
     pub fn define_func(&mut self, func: FunctionDef, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) -> u32 {

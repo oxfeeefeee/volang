@@ -24,7 +24,8 @@ use alloc::vec::Vec;
 use linkme::distributed_slice;
 
 use crate::gc::{Gc, GcRef};
-use crate::objects::string;
+use crate::objects::{string, slice, array};
+use vo_common_core::types::{ValueKind, ValueMeta};
 
 /// Extern function execution result.
 #[derive(Debug, Clone)]
@@ -272,6 +273,19 @@ impl<'a> ExternCallWithGc<'a> {
         }
     }
 
+    /// Read argument as byte slice (zero-copy borrow).
+    #[inline]
+    pub fn arg_bytes(&self, n: u16) -> &[u8] {
+        let ptr = self.call.arg_ref(n);
+        if ptr.is_null() {
+            &[]
+        } else {
+            let data_ptr = slice::data_ptr(ptr);
+            let len = slice::len(ptr);
+            unsafe { core::slice::from_raw_parts(data_ptr, len) }
+        }
+    }
+
     // ==================== Return Value Writing (delegated) ====================
 
     #[inline]
@@ -298,6 +312,24 @@ impl<'a> ExternCallWithGc<'a> {
     #[inline]
     pub fn alloc_str(&mut self, s: &str) -> GcRef {
         string::from_rust_str(self.gc, s)
+    }
+
+    /// Allocate and return a new byte slice.
+    #[inline]
+    pub fn ret_bytes(&mut self, n: u16, data: &[u8]) {
+        let ptr = self.alloc_bytes(data);
+        self.call.ret_ref(n, ptr);
+    }
+
+    /// Allocate a new byte slice.
+    #[inline]
+    pub fn alloc_bytes(&mut self, data: &[u8]) -> GcRef {
+        let len = data.len();
+        let elem_meta = ValueMeta::new(0, ValueKind::Uint8);
+        let s = slice::create(self.gc, elem_meta, 1, len, len);
+        let dst = slice::data_ptr(s);
+        unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), dst, len) };
+        s
     }
 }
 
