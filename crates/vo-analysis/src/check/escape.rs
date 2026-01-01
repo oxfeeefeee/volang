@@ -46,8 +46,8 @@ struct EscapeAnalyzer<'a> {
     closure_captures: HashMap<ExprId, Vec<ObjKey>>,
     /// Current function scope (None for package-level code)
     func_scope: Option<ScopeKey>,
-    /// Current closure ExprId being analyzed (for recording captures)
-    current_closure: Option<ExprId>,
+    /// Stack of closure ExprIds being analyzed (for nested closure captures)
+    closure_stack: Vec<ExprId>,
 }
 
 impl<'a> EscapeAnalyzer<'a> {
@@ -58,7 +58,7 @@ impl<'a> EscapeAnalyzer<'a> {
             escaped: HashSet::new(),
             closure_captures: HashMap::new(),
             func_scope: None,
-            current_closure: None,
+            closure_stack: Vec::new(),
         }
     }
 
@@ -292,16 +292,15 @@ impl<'a> EscapeAnalyzer<'a> {
             ExprKind::FuncLit(func) => {
                 let closure_scope = self.type_info.scopes.get(&func.sig.span).copied();
                 let saved_scope = self.func_scope;
-                let saved_closure = self.current_closure;
                 
                 self.func_scope = closure_scope;
-                self.current_closure = Some(expr.id);
+                self.closure_stack.push(expr.id);
                 self.closure_captures.insert(expr.id, Vec::new());
                 
                 self.visit_block(&func.body);
                 
                 self.func_scope = saved_scope;
-                self.current_closure = saved_closure;
+                self.closure_stack.pop();
             }
 
             // 4. Variable reference → check if captured by closure
@@ -310,8 +309,9 @@ impl<'a> EscapeAnalyzer<'a> {
                     if let Some(&obj) = self.type_info.uses.get(&ident.id) {
                         if self.is_captured(obj, func_scope) {
                             self.escaped.insert(obj);
-                            // Record capture for current closure
-                            if let Some(closure_id) = self.current_closure {
+                            // Record capture for ALL closures in the stack
+                            // Inner closure captures must propagate to outer closures
+                            for &closure_id in &self.closure_stack {
                                 if let Some(captures) = self.closure_captures.get_mut(&closure_id) {
                                     if !captures.contains(&obj) {
                                         captures.push(obj);

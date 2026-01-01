@@ -183,9 +183,10 @@ pub fn compile_expr_to(
                         // Get captured variable's type to determine how to read the value
                         let type_key = info.obj_type(info.get_use(ident), "captured var must have type");
                         
-                        // Arrays use [GcHeader][ArrayHeader][elems] layout - the GcRef IS the array
-                        // Struct/primitive/interface use [GcHeader][data] layout - need PtrGet to read
-                        if !info.is_array(type_key) {
+                        // Reference types (slice, map, string, channel, pointer, closure) and arrays
+                        // are already GcRefs - the captured value IS the reference, no PtrGet needed.
+                        // Struct/primitive/interface use [GcHeader][data] layout - need PtrGet to read.
+                        if !info.is_array(type_key) && !info.is_reference_type(type_key) {
                             let value_slots = info.type_slot_count(type_key);
                             func.emit_ptr_get(dst, dst, 0, value_slots);
                         }
@@ -895,12 +896,17 @@ fn compile_func_lit(
     for (i, obj_key) in captures.iter().enumerate() {
         let var_name = info.obj_name(*obj_key);
         if let Some(sym) = info.project.interner.get(var_name) {
+            let offset = 1 + i as u16;
+            
             if let Some(local) = parent_func.lookup_local(sym) {
-                // Use PtrSet to write directly to closure's capture slot
-                // offset = 1 (ClosureHeader) + capture_index
-                // Captures are always GcRefs (HeapBoxed storage)
-                let offset = 1 + i as u16;
+                // Variable is a local in parent - copy its GcRef
                 parent_func.emit_ptr_set_with_barrier(dst, offset, local.storage.slot(), 1, true);
+            } else if let Some(capture) = parent_func.lookup_capture(sym) {
+                // Variable is a capture in parent - get it via ClosureGet first
+                let capture_index = capture.index;
+                let temp = parent_func.alloc_temp(1);
+                parent_func.emit_op(Opcode::ClosureGet, temp, capture_index, 0);
+                parent_func.emit_ptr_set_with_barrier(dst, offset, temp, 1, true);
             }
         }
     }
