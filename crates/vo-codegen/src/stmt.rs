@@ -1877,7 +1877,13 @@ pub fn compile_iface_assign(
         // Use RuntimeType for structural equality in rttid lookup
         let rt = crate::type_key_to_runtime_type_simple(src_type, info, &info.project.interner, ctx);
         let rttid = ctx.intern_rttid(rt);
-        let named_type_id = ctx.get_named_type_id(src_type);
+        // For pointer types, get the base type's named_type_id (methods are on the base type)
+        let base_type = if info.is_pointer(src_type) {
+            info.pointer_base(src_type)
+        } else {
+            src_type
+        };
+        let named_type_id = ctx.get_named_type_id(base_type);
         ctx.register_iface_assign_const_concrete(rttid, named_type_id, iface_meta_id)
     };
     

@@ -194,10 +194,8 @@ skips:
   - file: question_operator.vo
   - file: errdefer_stmt.vo
   - file: debug_nil_interface.vo
-  # GC tests with other bugs (not closure-related)
-  - file: gc_interface_dynamic.vo
-    skip: [vm, jit]
-    reason: "itab index out of bounds - interface dispatch bug"
+  - file: debug_iface.vo
+  # GC tests with other bugs (not interface-related)
   - file: gc_map_stress.vo
     skip: [vm, jit]
     reason: "lvalue.rs panic - map codegen bug"

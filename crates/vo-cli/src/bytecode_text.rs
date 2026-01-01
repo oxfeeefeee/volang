@@ -67,6 +67,15 @@ pub fn format_text(module: &Module) -> String {
         out.push('\n');
     }
 
+    // Itabs
+    if !module.itabs.is_empty() {
+        out.push_str("## Itabs\n");
+        for (i, itab) in module.itabs.iter().enumerate() {
+            out.push_str(&format!("# [{}] methods: {:?}\n", i, itab.methods));
+        }
+        out.push('\n');
+    }
+
     // Constants
     if !module.constants.is_empty() {
         out.push_str("## Constants\n");
@@ -227,9 +236,20 @@ fn format_instruction(instr: &Instruction) -> String {
             let ret_slots = c & 0xFF;
             format!("Call          func_{}, args=r{}, arg_slots={}, ret_slots={}", func_id, b, arg_slots, ret_slots)
         }
+        // CallExtern: a=result_start, b=extern_id, c=arg_slots
         Opcode::CallExtern => format!("CallExtern    r{}, extern_{}, args={}", a, b, c),
-        Opcode::CallClosure => format!("CallClosure   r{}, r{}, args={}", a, b, c),
-        Opcode::CallIface => format!("CallIface     r{}, r{}, method={}, args={}", a, b, c, flags),
+        // CallClosure: a=closure_reg, b=args_start, c=(arg_slots<<8|ret_slots)
+        Opcode::CallClosure => {
+            let arg_slots = c >> 8;
+            let ret_slots = c & 0xFF;
+            format!("CallClosure   r{}, r{}, arg_slots={}, ret_slots={}", a, b, arg_slots, ret_slots)
+        }
+        // CallIface: a=iface_slot, b=args_start, c=(arg_slots<<8|ret_slots), flags=method_idx
+        Opcode::CallIface => {
+            let arg_slots = c >> 8;
+            let ret_slots = c & 0xFF;
+            format!("CallIface     r{}, r{}, method={}, arg_slots={}, ret_slots={}", a, b, flags, arg_slots, ret_slots)
+        }
         Opcode::Return => {
             if a == 0 && b == 0 {
                 "Return".to_string()
@@ -253,19 +273,33 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::StrDecodeRune => format!("StrDecodeRune r{}, r{}, r{}", a, b, c),
 
         // ARRAY
-        Opcode::ArrayNew => format!("ArrayNew      r{}, len=r{}, elem_slots={}", a, b, flags),
-        Opcode::ArrayGet => format!("ArrayGet      r{}, r{}[r{}], elem_slots={}", a, b, c, flags),
-        Opcode::ArraySet => format!("ArraySet      r{}[r{}], r{}, elem_slots={}", a, b, c, flags),
+        // ArrayNew: a=dst, b=meta_reg, c=len_reg, flags=elem_bytes_encoding
+        Opcode::ArrayNew => format!("ArrayNew      r{}, meta=r{}, len=r{}, flags={}", a, b, c, flags),
+        // ArrayGet: a=dst, b=array, c=idx, flags=elem_bytes_encoding
+        Opcode::ArrayGet => format!("ArrayGet      r{}, r{}[r{}], flags={}", a, b, c, flags),
+        // ArraySet: a=array, b=idx, c=val, flags=elem_bytes_encoding
+        Opcode::ArraySet => format!("ArraySet      r{}[r{}], r{}, flags={}", a, b, c, flags),
         Opcode::ArrayAddr => format!("ArrayAddr     r{}, r{}[r{}], elem_bytes={}", a, b, c, flags),
 
         // SLICE
-        Opcode::SliceNew => format!("SliceNew      r{}, r{}, lo=r{}, hi=r{}", a, b, c, flags),
+        // SliceNew: a=dst, b=meta_reg, c=len_reg (len at c, cap at c+1), flags=elem_bytes_encoding
+        Opcode::SliceNew => format!("SliceNew      r{}, meta=r{}, len=r{}, flags={}", a, b, c, flags),
+        // SliceGet: a=dst, b=slice, c=idx, flags=elem_bytes_encoding
         Opcode::SliceGet => format!("SliceGet      r{}, r{}[r{}], elem_slots={}", a, b, c, flags),
+        // SliceSet: a=slice, b=idx, c=val, flags=elem_bytes_encoding
         Opcode::SliceSet => format!("SliceSet      r{}[r{}], r{}, elem_slots={}", a, b, c, flags),
         Opcode::SliceLen => format!("SliceLen      r{}, r{}", a, b),
         Opcode::SliceCap => format!("SliceCap      r{}, r{}", a, b),
-        Opcode::SliceSlice => format!("SliceSlice    r{}, r{}, lo=r{}, hi=r{}", a, b, c, flags),
-        Opcode::SliceAppend => format!("SliceAppend   r{}, r{}, r{}, elem_slots={}", a, b, c, flags),
+        // SliceSlice: a=dst, b=src, c=lo_reg (lo at c, hi at c+1), flags=mode
+        Opcode::SliceSlice => {
+            let is_array = (flags & 1) != 0;
+            let has_max = (flags & 2) != 0;
+            let src_type = if is_array { "array" } else { "slice" };
+            let max_str = if has_max { ", has_max" } else { "" };
+            format!("SliceSlice    r{}, r{}[r{}:], src={}{}", a, b, c, src_type, max_str)
+        }
+        // SliceAppend: a=dst, b=slice, c=meta_reg, flags=elem_bytes_encoding
+        Opcode::SliceAppend => format!("SliceAppend   r{}, r{}, meta=r{}, flags={}", a, b, c, flags),
         Opcode::SliceAddr => format!("SliceAddr     r{}, r{}[r{}], elem_bytes={}", a, b, c, flags),
 
         // MAP
@@ -293,8 +327,13 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::SelectExec => format!("SelectExec    r{}", a),
 
         // CLOSURE
-        Opcode::ClosureNew => format!("ClosureNew    r{}, func_{}, captures={}", a, b, c),
-        Opcode::ClosureGet => format!("ClosureGet    r{}, r{}[{}]", a, b, c),
+        // ClosureNew: a=dst, b=func_id_low, c=capture_count, flags=func_id_high
+        Opcode::ClosureNew => {
+            let func_id = b as u32 | ((flags as u32) << 16);
+            format!("ClosureNew    r{}, func_{}, captures={}", a, func_id, c)
+        }
+        // ClosureGet: a=dst, b=capture_index (closure ref is always at r0)
+        Opcode::ClosureGet => format!("ClosureGet    r{}, capture[{}]", a, b),
 
         // GO
         // a=func_id_low/closure_reg, b=args_start, c=arg_slots, flags bit0=is_closure
@@ -332,7 +371,8 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::Recover => format!("Recover       r{}", a),
 
         // IFACE
-        Opcode::IfaceAssign => format!("IfaceAssign   r{}, r{}, iface_meta={}, vk={}", a, b, c, flags),
+        // IfaceAssign: a=dst(2 slots), b=src, c=const_idx, flags=value_kind
+        Opcode::IfaceAssign => format!("IfaceAssign   r{}, r{}, const={}, vk={}", a, b, c, flags),
         Opcode::IfaceAssert => format!("IfaceAssert   r{}, r{}, target_meta={}, flags={}", a, b, c, flags),
 
         // CONV

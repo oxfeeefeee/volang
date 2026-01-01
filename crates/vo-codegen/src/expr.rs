@@ -1685,7 +1685,29 @@ fn compile_builtin_call(
                     func.emit_with_flags(Opcode::SliceNew, flags, dst, meta_reg, len_cap_reg);
                 } else if info.is_map(type_key) {
                     // make(map[K]V)
-                    func.emit_op(Opcode::MapNew, dst, 0, 0);
+                    // MapNew: a=dst, b=packed_meta, c=slots
+                    let (key_slots, val_slots) = info.map_key_val_slots(type_key);
+                    let key_slot_types = info.map_key_slot_types(type_key);
+                    let val_slot_types = info.map_val_slot_types(type_key);
+                    let key_vk = info.map_key_value_kind(type_key);
+                    let val_vk = info.map_val_value_kind(type_key);
+                    let key_meta_idx = _ctx.get_or_create_value_meta_with_kind(None, key_slots, &key_slot_types, Some(key_vk));
+                    let val_meta_idx = _ctx.get_or_create_value_meta_with_kind(None, val_slots, &val_slot_types, Some(val_vk));
+                    
+                    // Pack key_meta and val_meta into one register: (key_meta << 32) | val_meta
+                    let key_meta_reg = func.alloc_temp(1);
+                    let val_meta_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadConst, key_meta_reg, key_meta_idx, 0);
+                    func.emit_op(Opcode::LoadConst, val_meta_reg, val_meta_idx, 0);
+                    
+                    let packed_reg = func.alloc_temp(1);
+                    let shift_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadInt, shift_reg, 32, 0);
+                    func.emit_op(Opcode::Shl, packed_reg, key_meta_reg, shift_reg);
+                    func.emit_op(Opcode::Or, packed_reg, packed_reg, val_meta_reg);
+                    
+                    let slots_arg = crate::type_info::encode_map_new_slots(key_slots, val_slots);
+                    func.emit_op(Opcode::MapNew, dst, packed_reg, slots_arg);
                 } else if info.is_chan(type_key) {
                     // make(chan T) or make(chan T, cap)
                     let cap_reg = if call.args.len() > 1 {
@@ -1901,7 +1923,14 @@ fn compile_composite_lit(
         
         // Set each element
         for (i, elem) in lit.elems.iter().enumerate() {
-            let val_reg = compile_expr(&elem.value, ctx, func, info)?;
+            // For interface element type, need to convert concrete value to interface
+            let val_reg = if info.is_interface(elem_type) {
+                let iface_reg = func.alloc_temp(elem_slots);
+                crate::stmt::compile_iface_assign(iface_reg, &elem.value, elem_type, ctx, func, info)?;
+                iface_reg
+            } else {
+                compile_expr(&elem.value, ctx, func, info)?
+            };
             if flags == 0 {
                 // Dynamic case: put index and elem_bytes in consecutive registers
                 let idx_and_eb = func.alloc_temp(2);

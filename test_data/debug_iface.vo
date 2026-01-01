@@ -1,0 +1,77 @@
+// Debug interface issue
+package main
+
+type Stringer interface {
+	String() string
+}
+
+type Person struct {
+	Name string
+	Age  int
+}
+
+func (p *Person) String() string {
+	return p.Name
+}
+
+type Company struct {
+	Name     string
+	Employees []string
+}
+
+func (c *Company) String() string {
+	return c.Name
+}
+
+func main() {
+	// Test 1: basic
+	p := &Person{Name: "Alice", Age: 30}
+	var s Stringer = p
+	assert(s.String() == "Alice")
+	println("Test 1 passed")
+	
+	// Test 2: slice of interfaces
+	items := []Stringer{
+		&Person{Name: "Bob", Age: 25},
+		&Person{Name: "Charlie", Age: 35},
+	}
+	assert(items[0].String() == "Bob")
+	assert(items[1].String() == "Charlie")
+	println("Test 2 passed")
+	
+	// Test 3: Interface with struct containing slice
+	c := &Company{
+		Name:     "Acme",
+		Employees: []string{"Alice", "Bob"},
+	}
+	var s2 Stringer = c
+	assert(s2.String() == "Acme")
+	println("Test 3 passed")
+	
+	// Test 4: Reassign interface
+	s = &Person{Name: "Dave", Age: 40}
+	assert(s.String() == "Dave")
+	println("Test 4 passed")
+	
+	// Test 5: Interface in map - simplified
+	m := make(map[string]Stringer)
+	println("Test 5a: map created")
+	
+	// Create person and interface separately  
+	p2 := &Person{Name: "Eve", Age: 28}
+	println("Test 5b: person created")
+	var iface Stringer = p2
+	println("Test 5c: interface created")
+	assert(iface.String() == "Eve")
+	println("Test 5d: direct interface call works")
+	
+	m["first"] = iface
+	println("Test 5e: interface inserted to map")
+	
+	v1 := m["first"]
+	println("Test 5f: interface retrieved from map")
+	assert(v1.String() == "Eve")
+	println("Test 5 passed")
+	
+	println("debug_iface: PASSED")
+}
