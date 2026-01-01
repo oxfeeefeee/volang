@@ -1,14 +1,12 @@
 //! JIT compiler for Vo bytecode using Cranelift.
 
 mod func_compiler;
-mod gc_tracking;
 pub mod loop_analysis;
 mod loop_compiler;
 mod translate;
 mod translator;
 
 pub use func_compiler::FunctionCompiler;
-pub use gc_tracking::{GcRefTracker, StackMap};
 pub use loop_analysis::LoopInfo;
 pub use loop_compiler::{CompiledLoop, LoopCompiler, LoopFunc, LOOP_RESULT_PANIC};
 pub use translator::{HelperFuncs, IrEmitter, TranslateResult};
@@ -71,7 +69,6 @@ impl From<cranelift_codegen::CodegenError> for JitError {
 pub struct CompiledFunction {
     pub code_ptr: *const u8,
     pub code_size: usize,
-    pub stack_map: StackMap,
     pub param_slots: u16,
     pub ret_slots: u16,
 }
@@ -658,7 +655,7 @@ impl JitCompiler {
         let mut func_ctx = FunctionBuilderContext::new();
         let helpers = self.get_helper_refs();
         let compiler = FunctionCompiler::new(&mut self.ctx.func, &mut func_ctx, func, vo_module, helpers);
-        let stack_map = compiler.compile()?;
+        compiler.compile()?;
         
         self.module.define_function(func_id_cl, &mut self.ctx)?;
         self.module.clear_context(&mut self.ctx);
@@ -666,7 +663,7 @@ impl JitCompiler {
         
         let code_ptr = self.module.get_finalized_function(func_id_cl);
         let compiled = CompiledFunction {
-            code_ptr, code_size: 0, stack_map,
+            code_ptr, code_size: 0,
             param_slots: func.param_slots, ret_slots: func.ret_slots,
         };
         self.cache.insert(func_id, compiled);
@@ -700,14 +697,14 @@ impl JitCompiler {
         let mut func_ctx = FunctionBuilderContext::new();
         let helpers = self.get_helper_refs();
         let compiler = LoopCompiler::new(&mut self.ctx.func, &mut func_ctx, func, vo_module, loop_info, helpers);
-        let stack_map = compiler.compile()?;
+        compiler.compile()?;
         
         self.module.define_function(func_id_cl, &mut self.ctx)?;
         self.module.clear_context(&mut self.ctx);
         self.module.finalize_definitions()?;
         
         let code_ptr = self.module.get_finalized_function(func_id_cl);
-        let compiled = CompiledLoop { code_ptr, loop_info: loop_info.clone(), stack_map };
+        let compiled = CompiledLoop { code_ptr, loop_info: loop_info.clone() };
         self.cache.insert_loop(func_id, begin_pc, compiled);
         Ok(())
     }

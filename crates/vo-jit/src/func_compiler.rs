@@ -8,9 +8,6 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 
 use vo_runtime::bytecode::{FunctionDef, Module as VoModule};
 use vo_runtime::instruction::{Instruction, Opcode};
-use vo_runtime::SlotType;
-
-use crate::gc_tracking::{GcRefTracker, StackMap};
 use crate::translate::translate_inst;
 use crate::translator::{HelperFuncs, IrEmitter, TranslateResult};
 use crate::JitError;
@@ -19,7 +16,6 @@ pub struct FunctionCompiler<'a> {
     builder: FunctionBuilder<'a>,
     func_def: &'a FunctionDef,
     vo_module: &'a VoModule,
-    gc_tracker: GcRefTracker,
     vars: Vec<Variable>,
     blocks: HashMap<usize, Block>,
     entry_block: Block,
@@ -44,7 +40,6 @@ impl<'a> FunctionCompiler<'a> {
             builder,
             func_def,
             vo_module,
-            gc_tracker: GcRefTracker::new(),
             vars: Vec::new(),
             blocks: HashMap::new(),
             entry_block,
@@ -54,7 +49,7 @@ impl<'a> FunctionCompiler<'a> {
         }
     }
 
-    pub fn compile(mut self) -> Result<StackMap, JitError> {
+    pub fn compile(mut self) -> Result<(), JitError> {
         self.declare_variables();
         self.scan_jump_targets();
         
@@ -83,7 +78,7 @@ impl<'a> FunctionCompiler<'a> {
         self.builder.seal_all_blocks();
         self.builder.finalize();
         
-        Ok(self.gc_tracker.build_stack_map())
+        Ok(())
     }
 
     fn declare_variables(&mut self) {
@@ -94,12 +89,6 @@ impl<'a> FunctionCompiler<'a> {
             let var = Variable::from_u32(i as u32);
             self.builder.declare_var(var, types::I64);
             self.vars.push(var);
-            
-            if i < self.func_def.slot_types.len() {
-                if self.func_def.slot_types[i] == SlotType::GcRef {
-                    self.gc_tracker.mark_gc_ref(i as u16);
-                }
-            }
         }
     }
 

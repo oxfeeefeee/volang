@@ -8,9 +8,6 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 
 use vo_runtime::bytecode::{FunctionDef, Module as VoModule};
 use vo_runtime::instruction::{Instruction, Opcode};
-use vo_runtime::SlotType;
-
-use crate::gc_tracking::{GcRefTracker, StackMap};
 use crate::loop_analysis::LoopInfo;
 use crate::translate::translate_inst;
 use crate::translator::{HelperFuncs, IrEmitter, TranslateResult};
@@ -23,7 +20,6 @@ pub type LoopFunc = extern "C" fn(*mut crate::JitContext, *mut u64) -> u32;
 pub struct CompiledLoop {
     pub code_ptr: *const u8,
     pub loop_info: LoopInfo,
-    pub stack_map: StackMap,
 }
 
 unsafe impl Send for CompiledLoop {}
@@ -34,7 +30,6 @@ pub struct LoopCompiler<'a> {
     func_def: &'a FunctionDef,
     vo_module: &'a VoModule,
     loop_info: &'a LoopInfo,
-    gc_tracker: GcRefTracker,
     vars: Vec<Variable>,
     blocks: HashMap<usize, Block>,
     entry_block: Block,
@@ -65,7 +60,6 @@ impl<'a> LoopCompiler<'a> {
             func_def,
             vo_module,
             loop_info,
-            gc_tracker: GcRefTracker::new(),
             vars: Vec::new(),
             blocks: HashMap::new(),
             entry_block,
@@ -78,7 +72,7 @@ impl<'a> LoopCompiler<'a> {
         }
     }
 
-    pub fn compile(mut self) -> Result<StackMap, JitError> {
+    pub fn compile(mut self) -> Result<(), JitError> {
         self.declare_variables();
         self.scan_jump_targets();
         
@@ -126,7 +120,7 @@ impl<'a> LoopCompiler<'a> {
         self.builder.seal_all_blocks();
         self.builder.finalize();
         
-        Ok(self.gc_tracker.build_stack_map())
+        Ok(())
     }
 
     fn declare_variables(&mut self) {
@@ -137,12 +131,6 @@ impl<'a> LoopCompiler<'a> {
             let var = Variable::from_u32(i as u32);
             self.builder.declare_var(var, types::I64);
             self.vars.push(var);
-            
-            if i < self.func_def.slot_types.len() {
-                if self.func_def.slot_types[i] == SlotType::GcRef {
-                    self.gc_tracker.mark_gc_ref(i as u16);
-                }
-            }
         }
     }
 
