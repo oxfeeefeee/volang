@@ -69,6 +69,10 @@ impl ByteWriter {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
 
+    fn write_u64(&mut self, v: u64) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+
     fn write_f64(&mut self, v: f64) {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
@@ -90,6 +94,188 @@ impl ByteWriter {
         for item in vec {
             write_item(self, item);
         }
+    }
+}
+
+// RuntimeType serialization tags
+const RT_BASIC: u8 = 0;
+const RT_NAMED: u8 = 1;
+const RT_POINTER: u8 = 2;
+const RT_ARRAY: u8 = 3;
+const RT_SLICE: u8 = 4;
+const RT_MAP: u8 = 5;
+const RT_CHAN: u8 = 6;
+const RT_FUNC: u8 = 7;
+const RT_STRUCT: u8 = 8;
+const RT_INTERFACE: u8 = 9;
+const RT_TUPLE: u8 = 10;
+
+fn write_runtime_type(w: &mut ByteWriter, rt: &RuntimeType) {
+    use crate::runtime_type::{ChanDir, InterfaceMethod, StructField};
+    
+    match rt {
+        RuntimeType::Basic(vk) => {
+            w.write_u8(RT_BASIC);
+            w.write_u8(*vk as u8);
+        }
+        RuntimeType::Named(id) => {
+            w.write_u8(RT_NAMED);
+            w.write_u32(*id);
+        }
+        RuntimeType::Pointer(inner) => {
+            w.write_u8(RT_POINTER);
+            write_runtime_type(w, inner);
+        }
+        RuntimeType::Array { len, elem } => {
+            w.write_u8(RT_ARRAY);
+            w.write_u64(*len);
+            write_runtime_type(w, elem);
+        }
+        RuntimeType::Slice(elem) => {
+            w.write_u8(RT_SLICE);
+            write_runtime_type(w, elem);
+        }
+        RuntimeType::Map { key, val } => {
+            w.write_u8(RT_MAP);
+            write_runtime_type(w, key);
+            write_runtime_type(w, val);
+        }
+        RuntimeType::Chan { dir, elem } => {
+            w.write_u8(RT_CHAN);
+            w.write_u8(*dir as u8);
+            write_runtime_type(w, elem);
+        }
+        RuntimeType::Func { params, results, variadic } => {
+            w.write_u8(RT_FUNC);
+            w.write_u8(*variadic as u8);
+            w.write_u32(params.len() as u32);
+            for p in params {
+                write_runtime_type(w, p);
+            }
+            w.write_u32(results.len() as u32);
+            for r in results {
+                write_runtime_type(w, r);
+            }
+        }
+        RuntimeType::Struct { fields } => {
+            w.write_u8(RT_STRUCT);
+            w.write_u32(fields.len() as u32);
+            for f in fields {
+                w.write_u32(f.name.as_u32());
+                write_runtime_type(w, &f.typ);
+                w.write_u32(f.tag.as_u32());
+                w.write_u8(f.embedded as u8);
+                w.write_u32(f.pkg.as_u32());
+            }
+        }
+        RuntimeType::Interface { methods } => {
+            w.write_u8(RT_INTERFACE);
+            w.write_u32(methods.len() as u32);
+            for m in methods {
+                w.write_u32(m.name.as_u32());
+                write_runtime_type(w, &m.sig);
+            }
+        }
+        RuntimeType::Tuple(types) => {
+            w.write_u8(RT_TUPLE);
+            w.write_u32(types.len() as u32);
+            for t in types {
+                write_runtime_type(w, t);
+            }
+        }
+    }
+}
+
+fn read_runtime_type(r: &mut ByteReader) -> Result<RuntimeType, SerializeError> {
+    use crate::runtime_type::{ChanDir, InterfaceMethod, StructField};
+    use crate::symbol::Symbol;
+    use crate::types::ValueKind;
+    use num_enum::TryFromPrimitive;
+    
+    let tag = r.read_u8()?;
+    match tag {
+        RT_BASIC => {
+            let vk = r.read_u8()?;
+            Ok(RuntimeType::Basic(ValueKind::try_from_primitive(vk).unwrap_or(ValueKind::Void)))
+        }
+        RT_NAMED => {
+            let id = r.read_u32()?;
+            Ok(RuntimeType::Named(id))
+        }
+        RT_POINTER => {
+            let inner = read_runtime_type(r)?;
+            Ok(RuntimeType::Pointer(Box::new(inner)))
+        }
+        RT_ARRAY => {
+            let len = r.read_u64()?;
+            let elem = read_runtime_type(r)?;
+            Ok(RuntimeType::Array { len, elem: Box::new(elem) })
+        }
+        RT_SLICE => {
+            let elem = read_runtime_type(r)?;
+            Ok(RuntimeType::Slice(Box::new(elem)))
+        }
+        RT_MAP => {
+            let key = read_runtime_type(r)?;
+            let val = read_runtime_type(r)?;
+            Ok(RuntimeType::Map { key: Box::new(key), val: Box::new(val) })
+        }
+        RT_CHAN => {
+            let dir = r.read_u8()?;
+            let elem = read_runtime_type(r)?;
+            let dir = match dir {
+                1 => ChanDir::Send,
+                2 => ChanDir::Recv,
+                _ => ChanDir::Both,
+            };
+            Ok(RuntimeType::Chan { dir, elem: Box::new(elem) })
+        }
+        RT_FUNC => {
+            let variadic = r.read_u8()? != 0;
+            let param_count = r.read_u32()? as usize;
+            let mut params = Vec::with_capacity(param_count);
+            for _ in 0..param_count {
+                params.push(read_runtime_type(r)?);
+            }
+            let result_count = r.read_u32()? as usize;
+            let mut results = Vec::with_capacity(result_count);
+            for _ in 0..result_count {
+                results.push(read_runtime_type(r)?);
+            }
+            Ok(RuntimeType::Func { params, results, variadic })
+        }
+        RT_STRUCT => {
+            let field_count = r.read_u32()? as usize;
+            let mut fields = Vec::with_capacity(field_count);
+            for _ in 0..field_count {
+                let name = Symbol::from_raw(r.read_u32()?);
+                let typ = read_runtime_type(r)?;
+                let tag = Symbol::from_raw(r.read_u32()?);
+                let embedded = r.read_u8()? != 0;
+                let pkg = Symbol::from_raw(r.read_u32()?);
+                fields.push(StructField::new(name, typ, tag, embedded, pkg));
+            }
+            Ok(RuntimeType::Struct { fields })
+        }
+        RT_INTERFACE => {
+            let method_count = r.read_u32()? as usize;
+            let mut methods = Vec::with_capacity(method_count);
+            for _ in 0..method_count {
+                let name = Symbol::from_raw(r.read_u32()?);
+                let sig = read_runtime_type(r)?;
+                methods.push(InterfaceMethod::new(name, sig));
+            }
+            Ok(RuntimeType::Interface { methods })
+        }
+        RT_TUPLE => {
+            let type_count = r.read_u32()? as usize;
+            let mut types = Vec::with_capacity(type_count);
+            for _ in 0..type_count {
+                types.push(read_runtime_type(r)?);
+            }
+            Ok(RuntimeType::Tuple(types))
+        }
+        _ => Ok(RuntimeType::Basic(crate::types::ValueKind::Void)),
     }
 }
 
@@ -216,6 +402,10 @@ impl Module {
             w.write_vec(&itab.methods, |w, func_id| w.write_u32(*func_id));
         });
 
+        w.write_vec(&self.runtime_types, |w, rt| {
+            write_runtime_type(w, rt);
+        });
+
         w.write_vec(&self.constants, |w, c| match c {
             Constant::Nil => w.write_u8(0),
             Constant::Bool(b) => {
@@ -340,6 +530,8 @@ impl Module {
             Ok(Itab { methods })
         })?;
 
+        let runtime_types = r.read_vec(|r| read_runtime_type(r))?;
+
         let constants = r.read_vec(|r| {
             let tag = r.read_u8()?;
             match tag {
@@ -415,7 +607,7 @@ impl Module {
             struct_metas,
             interface_metas,
             named_type_metas,
-            runtime_types: Vec::new(),  // TODO: serialize runtime_types
+            runtime_types,
             itabs,
             constants,
             globals,
