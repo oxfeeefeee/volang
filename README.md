@@ -1,99 +1,68 @@
 # Vo Programming Language
 
-Vo is a statically typed, Go-like programming language with multiple compilation backends.
+> **Alpha (2026.1.1)** — 100% pure vibe coding in ~20 days.
+
+Vo is a statically typed, Go-like programming language implemented in Rust (by AI, under my supervision).
 
 ## Overview
 
-Vo provides familiar Go syntax with simplified error handling and flexible compilation targets.
+Vo aims to run Go-like code with a compact toolchain and multiple execution backends.
 
 ### Key Features
 
-- **Go-like syntax** - Familiar to Go programmers
+- **Go-like syntax** with a familiar developer experience
 - **Static typing** with local type inference
-- **Simplified error handling** - `fail`, `errdefer`, and `?` operator
-- **Multiple backends** - VM interpreter, JIT, native executables, WebAssembly
-- **No generics** - Simplified type system
-- **Goroutines & channels** - Concurrent programming support
+- **Error handling sugar** - `fail`, `errdefer`, and the `?` operator
+- **Concurrency** - goroutines and channels
+- **No generics** (keep the type system simple)
+- **Restricted pointers** - pointers are only allowed for struct types (no `*int`); no pointer arithmetic
+
+## Execution Backends / Status
+
+| Backend | Status | Notes |
+|--------|--------|------|
+| VM | 🚧 Functionality is mostly complete | Bytecode interpreter; still under active development/optimization |
+| JIT | 🚧 Functionality is mostly complete | Cranelift-based JIT; still under active development/optimization |
+| WASM | 📋 Planned | Not implemented yet |
+| AOT | 📋 Planned | Not implemented yet |
+
+## Performance (Table 1, reference only)
+
+*Note: results are from an informal / non-strict benchmarking environment. Numbers are not authoritative.*
+
+Relative time ranking (lower is faster, `1.0x` = fastest):
+
+| Rank | Language | Relative |
+|------|----------|----------|
+| 1 | C | 1.80x |
+| 2 | Go | 2.01x |
+| 3 | LuaJIT | 2.95x |
+| 4 | Java | 5.39x |
+| 5 | Vo-JIT | 5.69x |
+| 6 | Lua | 39.52x |
+| 7 | Vo-VM | 40.48x |
+| 8 | Ruby | 119.05x |
+| 9 | Python | 132.59x |
 
 ## Project Structure
 
 ```
-volang/
+vo/
 ├── crates/
-│   │
-│   │  # ─────────── Frontend ───────────
-│   ├── vo-common/           # Shared types, errors, spans
-│   ├── vo-syntax/           # Lexer, parser, AST
-│   ├── vo-analysis/         # Type checking, semantic analysis
-│   ├── vo-module/           # Module/package management
-│   │
-│   │  # ─────────── Code Generation ───────────
-│   ├── vo-codegen-vm/       # VM bytecode generation
-│   ├── vo-codegen-cranelift/# Shared Cranelift IR translation
-│   │
-│   │  # ─────────── VM ───────────
-│   ├── vo-vm/               # VM core (interpreter, bytecode)
-│   │
-│   │  # ─────────── Native Backends ───────────
-│   ├── vo-jit/              # JIT compilation (Cranelift)
-│   ├── vo-aot/              # AOT → native object files
-│   │
-│   │  # ─────────── Runtime ───────────
-│   ├── vo-runtime-core/     # Core runtime (GC, objects, FFI)
-│   ├── vo-runtime-native/   # Native runtime symbols (AOT/JIT)
-│   ├── vo-runtime-vm/       # VM runtime + native functions
-│   │
-│   │  # ─────────── Web ───────────
-│   ├── vo-web/              # WASM bindings (run Vo in browsers)
-│   │
-│   │  # ─────────── Tools ───────────
-│   ├── vo-cli/              # Command-line interface
-│   └── vo-tests/            # Integration tests
+│   ├── vo-syntax/        # lexer/parser/AST
+│   ├── vo-analysis/      # type checking, semantic analysis
+│   ├── vo-codegen/       # bytecode generation
+│   ├── vo-vm/            # bytecode VM
+│   ├── vo-jit/           # JIT (Cranelift)
+│   ├── vo-runtime/       # runtime (GC, builtins)
+│   ├── vo-runtime-native/# runtime symbols (native)
+│   ├── vo-module/        # module/package system
+│   └── vo-cli/           # CLI (vo)
 │
-├── stdlib/                   # Vo standard library
-│   ├── fmt/
-│   ├── strings/
-│   ├── bytes/
-│   ├── errors/
-│   └── encoding/
-│
-├── docs/                     # Documentation
-│   ├── design/               # Design docs (vm.md, gc.md, backends.md)
-│   ├── impl/                 # Implementation docs
-│   └── spec/                 # Language specification
-│
-└── examples/                 # Example programs
-```
-
-## Crate Dependencies
-
-```
-                              vo-cli
-                                 │
-            ┌────────────────────┼────────────────────┐
-            │                    │                    │
-            ▼                    ▼                    ▼
-     vo-codegen-vm         vo-jit              vo-aot
-            │                    │                    │
-            │                    └────────┬───────────┘
-            ▼                             ▼
-         vo-vm              vo-codegen-cranelift (shared)
-            │                             │
-            ▼                             ▼
-    vo-runtime-vm              vo-runtime-native
-            │                             │
-            └──────────┬──────────────────┘
-                       ▼
-               vo-runtime-core
-                       │
-                       ▼
-                 vo-analysis ◄──────── vo-module
-                       │
-                       ▼
-                  vo-syntax
-                       │
-                       ▼
-                  vo-common
+├── stdlib/               # standard library (selected packages)
+├── test_data/            # integration tests
+├── benchmark/            # benchmarks
+└── docs/                 # specs and design notes
 ```
 
 ## Building
@@ -105,28 +74,39 @@ cargo build --release
 ## Usage
 
 ```bash
-# Run a Vo program (VM interpreter)
-vo run program.vo
+# VM mode
+cargo run --bin vo -- run program.vo
 
-# Run with JIT compilation (planned)
-vo run --jit program.vo
+# JIT mode
+cargo run --bin vo -- run --mode=jit program.vo
 
-# Compile to native executable (planned)
-vo build program.vo
+# Print bytecode (debugging VM)
+cargo run --bin vo -- run program.vo --codegen
 ```
 
-### Web (WASM)
+## Development Scripts (`d.py`)
 
-Vo can run in browsers via WebAssembly using `vo-web`:
+```bash
+# All tests (VM + JIT)
+./d.py test
 
-```javascript
-import init, { VoVM, compile_and_run } from 'vo-web';
+# VM only
+./d.py test vm
 
-await init();
-const output = compile_and_run(`
-    package main
-    func main() { println("Hello from Vo!") }
-`);
+# JIT only
+./d.py test jit
+
+# GC verification tests only (enables VO_GC_DEBUG=1)
+./d.py test gc
+
+# Benchmarks
+./d.py bench
+./d.py bench vo
+./d.py bench score
+
+# Code statistics
+./d.py loc
+./d.py loc --with-tests
 ```
 
 ## Language Example
