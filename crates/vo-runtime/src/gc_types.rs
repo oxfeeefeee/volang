@@ -1,6 +1,6 @@
 //! GC object scanning by type.
 
-use crate::gc::{Gc, GcRef};
+use crate::gc::{scan_slots_by_types, Gc, GcRef};
 use crate::objects::{array, channel, closure, interface, map, slice, string};
 use vo_common_core::bytecode::StructMeta;
 use vo_common_core::types::{SlotType, ValueKind};
@@ -157,19 +157,7 @@ fn scan_map(gc: &mut Gc, obj: GcRef, struct_metas: &[StructMeta]) {
 /// Scan slots, using slot_types if available (for structs), otherwise treat all as GcRefs.
 fn scan_slots_with_types(gc: &mut Gc, slots: &[u64], slot_types: Option<&Vec<SlotType>>) {
     if let Some(types) = slot_types {
-        let mut i = 0;
-        while i < types.len() && i < slots.len() {
-            let st = types[i];
-            if st == SlotType::GcRef {
-                if slots[i] != 0 { gc.mark_gray(slots[i] as GcRef); }
-            } else if st == SlotType::Interface0 && i + 1 < slots.len() {
-                if interface::data_is_gc_ref(slots[i]) {
-                    if slots[i + 1] != 0 { gc.mark_gray(slots[i + 1] as GcRef); }
-                }
-                i += 1;
-            }
-            i += 1;
-        }
+        scan_slots_by_types(gc, slots, types);
     } else {
         // Reference types: all slots are GcRefs
         for &slot in slots {

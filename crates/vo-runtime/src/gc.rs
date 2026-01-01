@@ -614,3 +614,35 @@ impl Default for Gc {
         Self::new()
     }
 }
+
+/// Scan a slice of values using SlotTypes for GC marking.
+/// 
+/// This is the unified scanning function used by both VM root scanning
+/// and heap object scanning.
+#[inline]
+pub fn scan_slots_by_types(gc: &mut Gc, slots: &[u64], slot_types: &[crate::SlotType]) {
+    use crate::SlotType;
+    use crate::objects::interface;
+    
+    let mut i = 0;
+    while i < slot_types.len() && i < slots.len() {
+        match slot_types[i] {
+            SlotType::GcRef => {
+                if slots[i] != 0 {
+                    gc.mark_gray(slots[i] as GcRef);
+                }
+            }
+            SlotType::Interface0 => {
+                // Interface header slot - check if data slot contains GcRef
+                if i + 1 < slots.len() && interface::data_is_gc_ref(slots[i]) {
+                    if slots[i + 1] != 0 {
+                        gc.mark_gray(slots[i + 1] as GcRef);
+                    }
+                }
+                i += 1; // Skip data slot (Interface1)
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+}
