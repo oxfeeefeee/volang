@@ -161,6 +161,8 @@ struct ProjectState {
     interner: SymbolInterner,
     /// Source map for all parsed files.
     source_map: SourceMap,
+    /// ID state for multi-file parsing.
+    id_state: parser::IdState,
     /// Package cache: import_path -> PackageKey.
     cache: HashMap<String, PackageKey>,
     /// Packages currently being processed (for cycle detection).
@@ -196,6 +198,7 @@ pub fn analyze_project_with_options(
         tc_objs: TCObjects::new(),
         interner: SymbolInterner::new(),
         source_map: SourceMap::new(),
+        id_state: parser::IdState::default(),
         cache: HashMap::new(),
         in_progress: HashSet::new(),
         checked_packages: Vec::new(),
@@ -346,12 +349,14 @@ fn parse_files(files: &FileSet, state: &Rc<RefCell<ProjectState>>) -> Result<Vec
         let file_id = state_ref.source_map.add_file_with_path(file_name, path.clone(), content.as_str());
         let base = state_ref.source_map.file_base(file_id).unwrap_or(0);
         let interner = state_ref.interner.clone();
+        let id_state = state_ref.id_state.clone();
         drop(state_ref);
         
-        let (file, diags, new_interner) = parser::parse_with_interner(content, base, interner);
+        let (file, diags, new_interner, new_id_state) = parser::parse_with_state(content, base, interner, id_state);
         
         let mut state_ref = state.borrow_mut();
         state_ref.interner = new_interner;
+        state_ref.id_state = new_id_state;
         
         if diags.has_errors() {
             let mut msg = format!("{}: parse errors\n", path.display());
@@ -372,6 +377,7 @@ fn parse_vfs_package(
     state: &Rc<RefCell<ProjectState>>,
 ) -> Result<Vec<File>, AnalysisError> {
     let mut parsed_files = Vec::new();
+    let mut local_id_state = parser::IdState::default();
     
     for vfs_file in &vfs_pkg.files {
         let mut state_ref = state.borrow_mut();
@@ -384,7 +390,8 @@ fn parse_vfs_package(
         let interner = state_ref.interner.clone();
         drop(state_ref);
         
-        let (file, diags, new_interner) = parser::parse_with_interner(&vfs_file.content, base, interner);
+        let (file, diags, new_interner, new_id_state) = parser::parse_with_state(&vfs_file.content, base, interner, local_id_state);
+        local_id_state = new_id_state;
         
         let mut state_ref = state.borrow_mut();
         state_ref.interner = new_interner;

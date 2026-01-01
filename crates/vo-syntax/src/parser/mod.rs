@@ -25,6 +25,14 @@ use crate::token::{Token, TokenKind};
 /// Parse result type.
 pub type ParseResult<T> = Result<T, ()>;
 
+/// ID counters state for multi-file parsing.
+#[derive(Debug, Clone, Default)]
+pub struct IdState {
+    pub expr_id: u32,
+    pub type_expr_id: u32,
+    pub ident_id: u32,
+}
+
 /// The parser for Vo source code.
 pub struct Parser<'a> {
     /// Base offset for global positions.
@@ -43,12 +51,8 @@ pub struct Parser<'a> {
     diagnostics: DiagnosticSink,
     /// Whether composite literals are allowed (disabled in if/for/switch conditions).
     allow_composite_lit: bool,
-    /// Next expression ID to allocate.
-    next_expr_id: u32,
-    /// Next type expression ID to allocate.
-    next_type_expr_id: u32,
-    /// Next identifier ID to allocate.
-    next_ident_id: u32,
+    /// Next ID counters for expressions, type expressions, and identifiers.
+    next_ids: IdState,
 }
 
 impl<'a> Parser<'a> {
@@ -70,14 +74,17 @@ impl<'a> Parser<'a> {
             interner: SymbolInterner::new(),
             diagnostics: DiagnosticSink::new(),
             allow_composite_lit: true,
-            next_expr_id: 0,
-            next_type_expr_id: 0,
-            next_ident_id: 0,
+            next_ids: IdState::default(),
         }
     }
 
     /// Creates a new parser with a shared symbol interner.
     pub fn with_interner(source: &'a str, base: u32, interner: SymbolInterner) -> Self {
+        Self::with_interner_and_ids(source, base, interner, IdState::default())
+    }
+
+    /// Creates a new parser with shared interner and ID state (for multi-file packages).
+    pub fn with_interner_and_ids(source: &'a str, base: u32, interner: SymbolInterner, ids: IdState) -> Self {
         let mut lexer = Lexer::new(source, base);
         let current = lexer.next_token();
         let peek = lexer.next_token();
@@ -91,10 +98,13 @@ impl<'a> Parser<'a> {
             interner,
             diagnostics: DiagnosticSink::new(),
             allow_composite_lit: true,
-            next_expr_id: 0,
-            next_type_expr_id: 0,
-            next_ident_id: 0,
+            next_ids: ids,
         }
+    }
+
+    /// Returns the current ID state.
+    pub fn id_state(&self) -> IdState {
+        self.next_ids.clone()
     }
 
     /// Returns the diagnostics collected during parsing.
@@ -119,8 +129,8 @@ impl<'a> Parser<'a> {
 
     /// Allocates a new ExprId.
     pub(crate) fn alloc_expr_id(&mut self) -> ExprId {
-        let id = ExprId(self.next_expr_id);
-        self.next_expr_id += 1;
+        let id = ExprId(self.next_ids.expr_id);
+        self.next_ids.expr_id += 1;
         id
     }
 
@@ -135,8 +145,8 @@ impl<'a> Parser<'a> {
 
     /// Allocates a new TypeExprId.
     pub(crate) fn alloc_type_expr_id(&mut self) -> TypeExprId {
-        let id = TypeExprId(self.next_type_expr_id);
-        self.next_type_expr_id += 1;
+        let id = TypeExprId(self.next_ids.type_expr_id);
+        self.next_ids.type_expr_id += 1;
         id
     }
 
@@ -151,8 +161,8 @@ impl<'a> Parser<'a> {
 
     /// Allocates a new IdentId.
     fn alloc_ident_id(&mut self) -> IdentId {
-        let id = IdentId(self.next_ident_id);
-        self.next_ident_id += 1;
+        let id = IdentId(self.next_ids.ident_id);
+        self.next_ids.ident_id += 1;
         id
     }
 
@@ -629,6 +639,26 @@ pub fn parse_with_interner(
     let diagnostics = parser.take_diagnostics();
     let interner = parser.take_interner();
     (file, diagnostics, interner)
+}
+
+/// Parses source code with shared interner and ID state (for same-package multi-file).
+pub fn parse_with_state(
+    source: &str,
+    base: u32,
+    interner: SymbolInterner,
+    ids: IdState,
+) -> (File, DiagnosticSink, SymbolInterner, IdState) {
+    let mut parser = Parser::with_interner_and_ids(source, base, interner, ids);
+    let file = parser.parse_file().unwrap_or_else(|()| File {
+        package: None,
+        imports: Vec::new(),
+        decls: Vec::new(),
+        span: Span::dummy(),
+    });
+    let diagnostics = parser.take_diagnostics();
+    let ids = parser.id_state();
+    let interner = parser.take_interner();
+    (file, diagnostics, interner, ids)
 }
 
 #[cfg(test)]

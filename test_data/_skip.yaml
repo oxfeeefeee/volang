@@ -120,10 +120,7 @@ skips:
   - file: pointer_method_call.vo
   - file: proj_multifile/
     skip: [vm, jit]
-    reason: "literal has no const value"
-  - file: proj_qualified_embed/
-    skip: [vm, jit]
-    reason: "type check failed"
+    reason: "same-package multi-file, run with: vo run test_data/proj_multifile/"
   - file: proj_taskman/
   - file: qualified_embed_iface.vo
   - file: range_string.vo
