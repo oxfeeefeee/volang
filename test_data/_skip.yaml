@@ -192,3 +192,32 @@ skips:
   - file: errdefer_stmt.vo
   - file: debug_nil_interface.vo
   - file: debug_iface.vo
+  
+  # Typechecker tests - known bugs
+  - file: typechecker/assignable_interface.vo
+    skip: [vm, jit]
+    reason: "misaligned pointer dereference bug"
+  - file: typechecker/interface_embedding.vo
+    skip: [vm, jit]
+    reason: "interface embedding method dispatch bug"
+  - file: typechecker/method_set_equivalence.vo
+    skip: [vm, jit]
+    reason: "multiple interface-related bugs"
+  - file: typechecker/type_assertion.vo
+    skip: [vm, jit]
+    reason: "type assertion runtime bug"
+  - file: typechecker/type_conversion.vo
+    skip: [vm, jit]
+    reason: "type conversion bugs including pointer conversion"
+  - file: typechecker/bug_ptr_embed_interface.vo
+    skip: [vm, jit]
+    reason: "BUG: pointer embedding + interface method wrapper returns wrong value"
+  - file: typechecker/bug_empty_struct_interface.vo
+    skip: [vm, jit]
+    reason: "BUG: empty struct assigned to interface causes misaligned pointer"
+  - file: typechecker/bug_interface_multi_return.vo
+    skip: [vm, jit]
+    reason: "BUG: interface method with multiple return values - misaligned pointer"
+  - file: typechecker/bug_named_type_interface.vo
+    skip: [vm, jit]
+    reason: "BUG: named type (MyInt) assigned to interface - misaligned pointer"

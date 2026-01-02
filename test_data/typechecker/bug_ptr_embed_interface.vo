@@ -1,0 +1,39 @@
+package main
+
+// BUG: Pointer embedding + interface method wrapper
+// When *PointerEmbedder is assigned to an interface, calling methods through
+// the interface returns wrong values because the interface method wrapper
+// doesn't correctly dereference the embedded pointer.
+
+type Base struct {
+    value int
+}
+
+func (b Base) GetValue() int {
+    return b.value
+}
+
+type ValueGetter interface {
+    GetValue() int
+}
+
+type PointerEmbedder struct {
+    *Base
+    name string
+}
+
+func main() {
+    b := &Base{value: 50}
+    pe := &PointerEmbedder{Base: b, name: "test"}
+    
+    // Direct method call works
+    direct := pe.GetValue()
+    assert(direct == 50, "Direct call should return 50")
+    
+    // Interface call fails - this is the bug
+    var vg ValueGetter = pe
+    result := vg.GetValue()
+    assert(result == 50, "Interface call should return 50")
+    
+    println("bug_ptr_embed_interface: PASSED")
+}

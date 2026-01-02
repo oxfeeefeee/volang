@@ -292,14 +292,11 @@ fn compile_functions(
         }
     }
     
-    // Update NamedTypeMeta.methods with method func_ids
+    // Update NamedTypeMeta.methods with method func_ids (direct methods only)
     update_named_type_methods(ctx, &method_mappings, info);
     
-    // Propagate promoted methods from embedded fields
-    propagate_promoted_methods(ctx, info);
-    
-    // Build pending itabs now that methods are registered
-    ctx.finalize_itabs();
+    // Build pending itabs - uses lookup_field_or_method to find methods (including promoted)
+    ctx.finalize_itabs(&info.project.tc_objs);
     
     Ok(())
 }
@@ -321,6 +318,10 @@ fn compile_file_functions(
             let func_name = project.interner.resolve(func_decl.name.symbol)
                 .unwrap_or("unknown");
             let func_id = compile_func_decl(func_decl, ctx, info)?;
+            
+            // Register ObjKey -> func_id mapping for lookup_field_or_method in itab building
+            let func_obj_key = info.get_def(&func_decl.name);
+            ctx.register_objkey_func(func_obj_key, func_id);
             
             // Check if this is an init() function (no receiver, name is "init")
             if func_decl.receiver.is_none() && func_name == "init" {
@@ -346,6 +347,9 @@ fn compile_file_functions(
                     } else {
                         func_id
                     };
+                    
+                    // Register ObjKey -> iface_func_id mapping for itab building
+                    ctx.register_objkey_iface_func(func_obj_key, iface_func_id);
                     
                     // Register the wrapper (or original for pointer receiver) for interface dispatch
                     method_mappings.push((recv_type, method_name, iface_func_id, recv.is_pointer, signature));
@@ -514,64 +518,6 @@ pub fn type_key_to_runtime_type_simple(
             RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false }
         }
         _ => RuntimeType::Basic(ValueKind::Void),
-    }
-}
-
-/// Propagate promoted methods from embedded fields to outer types.
-/// For each struct type with embedded fields, copy the embedded type's methods
-/// to the outer type (if not already defined).
-fn propagate_promoted_methods(ctx: &mut CodegenContext, info: &TypeInfoWrapper) {
-    use vo_analysis::typ::Type;
-    
-    let tc_objs = &info.project.tc_objs;
-    
-    // Collect all named type keys with their IDs
-    let named_types: Vec<(vo_analysis::objects::TypeKey, u32)> = ctx.named_type_ids_iter().collect();
-    
-    for (named_type_key, outer_id) in named_types {
-        // Get underlying type
-        let underlying_key = vo_analysis::typ::underlying_type(named_type_key, tc_objs);
-        
-        // Check if underlying is a struct
-        if let Type::Struct(struct_detail) = &tc_objs.types[underlying_key] {
-            // Check each field for embedded fields
-            for &field_obj_key in struct_detail.fields() {
-                let field_obj = &tc_objs.lobjs[field_obj_key];
-                
-                // Check if this is an embedded field
-                if field_obj.entity_type().var_property().embedded {
-                    // Get the embedded field's type
-                    if let Some(field_type_key) = field_obj.typ() {
-                        // Get the named type of the embedded field (strip pointer if needed)
-                        let embed_type_key = if info.is_pointer(field_type_key) {
-                            info.pointer_base(field_type_key)
-                        } else {
-                            field_type_key
-                        };
-                        
-                        // Get embedded type's named_type_id and copy its methods
-                        if let Some(embed_id) = ctx.get_named_type_id(embed_type_key) {
-                            // Get methods from embedded type
-                            let methods_to_copy: Vec<(String, vo_vm::bytecode::MethodInfo)> = 
-                                ctx.get_named_type_methods(embed_id)
-                                    .into_iter()
-                                    .collect();
-                            
-                            // Copy methods to outer type (if not already present)
-                            for (method_name, method_info) in methods_to_copy {
-                                ctx.update_named_type_method_if_absent(
-                                    outer_id,
-                                    method_name,
-                                    method_info.func_id,
-                                    method_info.is_pointer_receiver,
-                                    method_info.signature.clone(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 

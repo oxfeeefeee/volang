@@ -1217,10 +1217,10 @@ fn compile_defer_method_call(
     let total_arg_slots = recv_slots + other_arg_slots;
     let args_start = alloc_args(func, total_arg_slots);
     
-    let embed_offset = crate::expr::compute_embed_offset(selection, is_promoted, base_type, info);
+    let embed = crate::expr::EmbedPath::from_selection(selection, is_promoted, base_type, info);
     crate::expr::emit_receiver(
         &sel.expr, args_start, recv_type, recv_storage,
-        resolution.expects_ptr_recv, actual_recv_type, embed_offset,
+        resolution.expects_ptr_recv, actual_recv_type, embed,
         ctx, func, info
     )?;
     
@@ -1877,14 +1877,14 @@ pub fn compile_iface_assign(
         // Use RuntimeType for structural equality in rttid lookup
         let rt = crate::type_key_to_runtime_type_simple(src_type, info, &info.project.interner, ctx);
         let rttid = ctx.intern_rttid(rt);
-        // For pointer types, get the base type's named_type_id (methods are on the base type)
+        // For pointer types, get the base type (methods are on the base type)
         let base_type = if info.is_pointer(src_type) {
             info.pointer_base(src_type)
         } else {
             src_type
         };
-        let named_type_id = ctx.get_named_type_id(base_type);
-        ctx.register_iface_assign_const_concrete(rttid, named_type_id, iface_meta_id)
+        // Pass type_key for lookup_field_or_method during itab building
+        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id)
     };
     
     let is_value_type = src_vk == vo_runtime::ValueKind::Struct || src_vk == vo_runtime::ValueKind::Array;

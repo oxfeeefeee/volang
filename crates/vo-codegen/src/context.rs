@@ -51,15 +51,18 @@ pub struct CodegenContext {
     /// RuntimeType -> rttid (structural equality)
     type_interner: TypeInterner,
 
-    /// ObjKey -> func_id
+    /// ObjKey -> func_id (original method)
     objkey_to_func: HashMap<ObjKey, u32>,
+    
+    /// ObjKey -> iface_func_id (wrapper for value receiver methods, or original for pointer receiver)
+    objkey_to_iface_func: HashMap<ObjKey, u32>,
 
     /// init functions (in declaration order)
     init_functions: Vec<u32>,
 
-    /// Pending itab builds: (rttid, named_type_id, iface_meta_id, const_idx)
+    /// Pending itab builds: (rttid, type_key, iface_meta_id, const_idx)
     /// These are processed after all methods are registered
-    pending_itabs: Vec<(u32, u32, u32, u16)>,
+    pending_itabs: Vec<(u32, TypeKey, u32, u16)>,
 }
 
 impl CodegenContext {
@@ -96,6 +99,7 @@ impl CodegenContext {
             named_type_ids: HashMap::new(),
             type_interner: TypeInterner::new(),
             objkey_to_func: HashMap::new(),
+            objkey_to_iface_func: HashMap::new(),
             init_functions: Vec::new(),
             pending_itabs: Vec::new(),
         }
@@ -157,6 +161,23 @@ impl CodegenContext {
     pub fn update_named_type_method_if_absent(&mut self, named_type_id: u32, method_name: String, func_id: u32, is_pointer_receiver: bool, signature: vo_runtime::RuntimeType) {
         if let Some(meta) = self.module.named_type_metas.get_mut(named_type_id as usize) {
             meta.methods.entry(method_name).or_insert(MethodInfo { func_id, is_pointer_receiver, signature });
+        }
+    }
+
+    /// Update a NamedTypeMeta's methods map only if the method is not already present.
+    /// Returns true if a new method was added, false if the method already existed.
+    pub fn update_named_type_method_if_absent_check(&mut self, named_type_id: u32, method_name: String, func_id: u32, is_pointer_receiver: bool, signature: vo_runtime::RuntimeType) -> bool {
+        if let Some(meta) = self.module.named_type_metas.get_mut(named_type_id as usize) {
+            use std::collections::hash_map::Entry;
+            match meta.methods.entry(method_name) {
+                Entry::Vacant(e) => {
+                    e.insert(MethodInfo { func_id, is_pointer_receiver, signature });
+                    true
+                }
+                Entry::Occupied(_) => false,
+            }
+        } else {
+            false
         }
     }
 
@@ -250,9 +271,9 @@ impl CodegenContext {
     /// Register constant for IfaceAssign with concrete type source.
     /// For non-empty interfaces, itab building is deferred until methods are registered.
     /// rttid: runtime type id for slot0
-    /// named_type_id: for itab building (only Named types have methods)
+    /// type_key: for itab building (used with lookup_field_or_method)
     /// Returns const_idx.
-    pub fn register_iface_assign_const_concrete(&mut self, rttid: u32, named_type_id: Option<u32>, iface_meta_id: u32) -> u16 {
+    pub fn register_iface_assign_const_concrete(&mut self, rttid: u32, type_key: Option<TypeKey>, iface_meta_id: u32) -> u16 {
         if iface_meta_id == 0 {
             // Empty interface: no itab needed
             let packed = ((rttid as i64) << 32) | 0;
@@ -261,9 +282,9 @@ impl CodegenContext {
             // Non-empty interface: defer itab building
             let packed = ((rttid as i64) << 32) | 0;
             let const_idx = self.add_const(Constant::Int(packed));
-            // Only Named types can have methods for itab
-            if let Some(ntid) = named_type_id {
-                self.pending_itabs.push((rttid, ntid, iface_meta_id, const_idx));
+            // Store type_key for lookup_field_or_method during itab building
+            if let Some(tk) = type_key {
+                self.pending_itabs.push((rttid, tk, iface_meta_id, const_idx));
             }
             const_idx
         }
@@ -277,34 +298,42 @@ impl CodegenContext {
     }
 
     /// Build pending itabs after all methods are registered.
-    /// Updates constants with correct itab_ids.
-    pub fn finalize_itabs(&mut self) {
+    /// Uses lookup_field_or_method to find methods (including promoted methods from embedded fields).
+    pub fn finalize_itabs(&mut self, tc_objs: &vo_analysis::objects::TCObjects) {
         let pending = std::mem::take(&mut self.pending_itabs);
-        for (rttid, named_type_id, iface_meta_id, const_idx) in pending {
-            let itab_id = self.build_itab(named_type_id, iface_meta_id);
-            // Update constant with correct itab_id (use rttid, not named_type_id)
+        for (rttid, type_key, iface_meta_id, const_idx) in pending {
+            let itab_id = self.build_itab(type_key, iface_meta_id, tc_objs);
             let packed = ((rttid as i64) << 32) | (itab_id as i64);
             self.module.constants[const_idx as usize] = Constant::Int(packed);
         }
     }
 
-    fn build_itab(&mut self, named_type_id: u32, iface_meta_id: u32) -> u32 {
-        let named_type = &self.module.named_type_metas[named_type_id as usize];
+    fn build_itab(&mut self, type_key: TypeKey, iface_meta_id: u32, tc_objs: &vo_analysis::objects::TCObjects) -> u32 {
         let iface_meta = &self.module.interface_metas[iface_meta_id as usize];
-
+        
+        // Get package from the type for unexported method lookup
+        let pkg = if let Some(named) = tc_objs.types[type_key].try_as_named() {
+            named.obj().and_then(|obj_key| tc_objs.lobjs[obj_key].pkg())
+        } else {
+            None
+        };
+        
         let methods: Vec<u32> = iface_meta
             .method_names
             .iter()
             .map(|name| {
-                named_type
-                    .methods
-                    .get(name)
-                    .unwrap_or_else(|| panic!(
-                        "method '{}' not found in named type '{}' (id={}). Available methods: {:?}",
-                        name, named_type.name, named_type_id,
-                        named_type.methods.keys().collect::<Vec<_>>()
-                    ))
-                    .func_id
+                // Use lookup_field_or_method to find method (handles promoted methods)
+                match vo_analysis::lookup::lookup_field_or_method(type_key, true, pkg, name, tc_objs) {
+                    vo_analysis::lookup::LookupResult::Entry(obj_key, _, _) => {
+                        // Use iface_func (wrapper for value receiver, original for pointer receiver)
+                        self.get_iface_func_by_objkey(obj_key)
+                            .unwrap_or_else(|| panic!(
+                                "method '{}' found but no iface_func_id registered for ObjKey {:?}",
+                                name, obj_key
+                            ))
+                    }
+                    _ => panic!("method '{}' not found in type {:?} for itab building", name, type_key),
+                }
             })
             .collect();
 
@@ -524,6 +553,15 @@ impl CodegenContext {
 
     pub fn get_func_by_objkey(&self, obj: ObjKey) -> Option<u32> {
         self.objkey_to_func.get(&obj).copied()
+    }
+
+    pub fn register_objkey_iface_func(&mut self, obj: ObjKey, iface_func_id: u32) {
+        self.objkey_to_iface_func.insert(obj, iface_func_id);
+    }
+
+    /// Get interface func_id for itab building (wrapper for value receiver, original for pointer receiver)
+    pub fn get_iface_func_by_objkey(&self, obj: ObjKey) -> Option<u32> {
+        self.objkey_to_iface_func.get(&obj).copied()
     }
 
     // === Init functions ===

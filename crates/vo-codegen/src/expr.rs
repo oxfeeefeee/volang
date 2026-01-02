@@ -739,12 +739,17 @@ fn compile_type_conversion(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Get source and target types
+    let dst_type = info.expr_type(conv_expr.id);
+    
+    // Interface conversion needs special handling
+    if info.is_interface(dst_type) {
+        return crate::stmt::compile_iface_assign(dst, src_expr, dst_type, ctx, func, info);
+    }
+    
     // Compile source expression
     let src_reg = compile_expr(src_expr, ctx, func, info)?;
-    
-    // Get source and target types
     let src_type = info.expr_type(src_expr.id);
-    let dst_type = info.expr_type(conv_expr.id);
     
     emit_type_conversion(src_reg, dst, src_type, dst_type, func, info);
     Ok(())
@@ -758,12 +763,17 @@ fn compile_conversion(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Get target type
+    let dst_type = info.expr_type(expr.id);
+    
+    // Interface conversion needs special handling
+    if info.is_interface(dst_type) {
+        return crate::stmt::compile_iface_assign(dst, &conv.expr, dst_type, ctx, func, info);
+    }
+    
     // Compile source expression
     let src_reg = compile_expr(&conv.expr, ctx, func, info)?;
-    
-    // Get source and target types
     let src_type = info.expr_type(conv.expr.id);
-    let dst_type = info.expr_type(expr.id);
     
     emit_type_conversion(src_reg, dst, src_type, dst_type, func, info);
     Ok(())
@@ -1242,28 +1252,52 @@ fn get_defining_type_from_selection(sel: &Selection, info: &TypeInfoWrapper) -> 
     })
 }
 
-/// Compute field offset for promoted method (embedded field access).
-pub fn compute_embed_offset(
-    selection: Option<&Selection>,
-    is_promoted: bool,
-    base_type: TypeKey,
-    info: &TypeInfoWrapper,
-) -> u16 {
-    let sel = match selection {
-        Some(s) if is_promoted && !s.indices().is_empty() => s,
-        _ => return 0,
-    };
-    
-    let mut offset = 0u16;
-    let mut current_type = base_type;
-    
-    // Walk through indices except the last one (which is the method itself)
-    for &idx in sel.indices().iter().take(sel.indices().len().saturating_sub(1)) {
-        let (field_offset, _) = info.struct_field_offset_by_index(current_type, idx);
-        offset += field_offset;
-        current_type = info.struct_field_type_by_index(current_type, idx);
+/// Embedding path info for promoted method calls.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EmbedPath {
+    /// Byte offset to the embedded field
+    pub offset: u16,
+    /// True if any embedded field in the path is a pointer type (*T embedding)
+    pub is_pointer: bool,
+}
+
+impl EmbedPath {
+    /// Compute embedding path from selection indices.
+    pub fn from_selection(
+        selection: Option<&Selection>,
+        is_promoted: bool,
+        base_type: TypeKey,
+        info: &TypeInfoWrapper,
+    ) -> Self {
+        let sel = match selection {
+            Some(s) if is_promoted && !s.indices().is_empty() => s,
+            _ => return Self::default(),
+        };
+        
+        let mut offset = 0u16;
+        let mut current_type = base_type;
+        let mut is_pointer = false;
+        
+        // Walk through indices except the last one (which is the method itself)
+        for &idx in sel.indices().iter().take(sel.indices().len().saturating_sub(1)) {
+            let field_type = info.struct_field_type_by_index(current_type, idx);
+            
+            if info.is_pointer(field_type) {
+                is_pointer = true;
+            }
+            
+            let (field_offset, _) = info.struct_field_offset_by_index(current_type, idx);
+            offset += field_offset;
+            
+            current_type = if info.is_pointer(field_type) {
+                info.pointer_base(field_type)
+            } else {
+                field_type
+            };
+        }
+        
+        Self { offset, is_pointer }
     }
-    offset
 }
 
 /// Emit code to pass receiver to method.
@@ -1271,6 +1305,7 @@ pub fn compute_embed_offset(
 /// Cases:
 /// - `expects_ptr_recv=true`: pass GcRef (variable must be heap-allocated)
 /// - `expects_ptr_recv=false`: pass value (copy from stack or dereference from heap)
+/// - `embed.is_pointer=true`: embedded field is a pointer, need extra dereference
 pub fn emit_receiver(
     sel_expr: &Expr,
     args_start: u16,
@@ -1278,14 +1313,18 @@ pub fn emit_receiver(
     recv_storage: Option<StorageKind>,
     expects_ptr_recv: bool,
     actual_recv_type: TypeKey,
-    embed_offset: u16,
+    embed: EmbedPath,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
     if expects_ptr_recv {
         // Method expects *T: pass GcRef directly
-        if let Some(gcref_slot) = recv_storage.as_ref().and_then(get_gcref_slot) {
+        if embed.is_pointer && embed.offset == 0 {
+            // Pointer embedding: the embedded field IS the pointer we need
+            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+            func.emit_copy(args_start, recv_reg, 1);
+        } else if let Some(gcref_slot) = recv_storage.as_ref().and_then(get_gcref_slot) {
             func.emit_copy(args_start, gcref_slot, 1);
         } else {
             let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
@@ -1296,24 +1335,41 @@ pub fn emit_receiver(
         let recv_is_ptr = info.is_pointer(recv_type);
         let value_slots = info.type_slot_count(actual_recv_type);
         
-        match recv_storage {
-            Some(StorageKind::HeapBoxed { gcref_slot, .. }) => {
-                // Heap boxed: directly read from GcRef slot
-                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, gcref_slot, embed_offset);
+        if embed.is_pointer {
+            // Pointer embedding: first get the embedded pointer, then dereference it
+            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+            if recv_is_ptr {
+                // recv is *OuterStruct, need to read embedded *T from it, then dereference
+                // Step 1: Read the embedded *T pointer from OuterStruct
+                let temp_ptr = func.alloc_temp(1);
+                func.emit_with_flags(Opcode::PtrGetN, 1, temp_ptr, recv_reg, embed.offset);
+                // Step 2: Dereference the embedded *T to get the value
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, temp_ptr, 0);
+            } else {
+                // recv is OuterStruct on stack, embedded *T is at recv_reg + embed.offset
+                let ptr_reg = recv_reg + embed.offset;  // Slot containing the embedded *T pointer
+                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, ptr_reg, 0);
             }
-            Some(StorageKind::HeapArray { gcref_slot, .. }) => {
-                // Heap array: directly read from GcRef slot
-                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, gcref_slot, embed_offset);
-            }
-            _ if recv_is_ptr => {
-                // Pointer receiver: compile_expr gives us the pointer, then dereference
-                let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
-                func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed_offset);
-            }
-            _ => {
-                // Stack variable or other: compile_expr gives us the value, just copy
-                let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
-                func.emit_copy(args_start, recv_reg + embed_offset, value_slots);
+        } else {
+            match recv_storage {
+                Some(StorageKind::HeapBoxed { gcref_slot, .. }) => {
+                    // Heap boxed: directly read from GcRef slot
+                    func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, gcref_slot, embed.offset);
+                }
+                Some(StorageKind::HeapArray { gcref_slot, .. }) => {
+                    // Heap array: directly read from GcRef slot
+                    func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, gcref_slot, embed.offset);
+                }
+                _ if recv_is_ptr => {
+                    // Pointer receiver: compile_expr gives us the pointer, then dereference
+                    let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+                    func.emit_with_flags(Opcode::PtrGetN, value_slots as u8, args_start, recv_reg, embed.offset);
+                }
+                _ => {
+                    // Stack variable or other: compile_expr gives us the value, just copy
+                    let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
+                    func.emit_copy(args_start, recv_reg + embed.offset, value_slots);
+                }
             }
         }
     }
@@ -1484,10 +1540,10 @@ fn compile_concrete_method(
     let args_start = func.alloc_temp(total_arg_slots.max(ret_slots));
     
     // Emit receiver
-    let embed_offset = compute_embed_offset(selection, is_promoted, base_type, info);
+    let embed = EmbedPath::from_selection(selection, is_promoted, base_type, info);
     emit_receiver(
         &sel.expr, args_start, recv_type, recv_storage,
-        resolution.expects_ptr_recv, actual_recv_type, embed_offset,
+        resolution.expects_ptr_recv, actual_recv_type, embed,
         ctx, func, info
     )?;
     
