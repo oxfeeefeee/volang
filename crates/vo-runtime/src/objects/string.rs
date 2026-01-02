@@ -91,56 +91,11 @@ pub const RUNE_ERROR: i32 = 0xFFFD;
 /// Decode a single UTF-8 rune from bytes.
 /// Returns (rune, width). For invalid UTF-8, returns (RUNE_ERROR, 1).
 fn decode_rune(bytes: &[u8]) -> (i32, usize) {
-    if bytes.is_empty() {
-        return (RUNE_ERROR, 0);
+    match core::str::from_utf8(bytes).ok().and_then(|s| s.chars().next()) {
+        Some(c) => (c as i32, c.len_utf8()),
+        None if !bytes.is_empty() => (RUNE_ERROR, 1),
+        None => (RUNE_ERROR, 0),
     }
-    
-    let b0 = bytes[0];
-    
-    // 1-byte (ASCII): 0xxxxxxx
-    if b0 < 0x80 {
-        return (b0 as i32, 1);
-    }
-    
-    // 2-byte: 110xxxxx 10xxxxxx
-    if b0 & 0xE0 == 0xC0 && bytes.len() >= 2 {
-        let b1 = bytes[1];
-        if b1 & 0xC0 == 0x80 {
-            let r = ((b0 as i32 & 0x1F) << 6) | (b1 as i32 & 0x3F);
-            if r >= 0x80 {
-                return (r, 2);
-            }
-        }
-    }
-    
-    // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
-    if b0 & 0xF0 == 0xE0 && bytes.len() >= 3 {
-        let b1 = bytes[1];
-        let b2 = bytes[2];
-        if b1 & 0xC0 == 0x80 && b2 & 0xC0 == 0x80 {
-            let r = ((b0 as i32 & 0x0F) << 12) | ((b1 as i32 & 0x3F) << 6) | (b2 as i32 & 0x3F);
-            if r >= 0x800 && !(0xD800..=0xDFFF).contains(&r) {
-                return (r, 3);
-            }
-        }
-    }
-    
-    // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-    if b0 & 0xF8 == 0xF0 && bytes.len() >= 4 {
-        let b1 = bytes[1];
-        let b2 = bytes[2];
-        let b3 = bytes[3];
-        if b1 & 0xC0 == 0x80 && b2 & 0xC0 == 0x80 && b3 & 0xC0 == 0x80 {
-            let r = ((b0 as i32 & 0x07) << 18) | ((b1 as i32 & 0x3F) << 12) 
-                  | ((b2 as i32 & 0x3F) << 6) | (b3 as i32 & 0x3F);
-            if r >= 0x10000 && r <= 0x10FFFF {
-                return (r, 4);
-            }
-        }
-    }
-    
-    // Invalid UTF-8: return replacement character and advance 1 byte
-    (RUNE_ERROR, 1)
 }
 
 pub fn concat(gc: &mut Gc, a: GcRef, b: GcRef) -> GcRef {
@@ -174,10 +129,16 @@ pub fn eq(a: GcRef, b: GcRef) -> bool {
 }
 
 pub fn ne(a: GcRef, b: GcRef) -> bool { !eq(a, b) }
-pub fn lt(a: GcRef, b: GcRef) -> bool { as_bytes(a) < as_bytes(b) }
-pub fn le(a: GcRef, b: GcRef) -> bool { as_bytes(a) <= as_bytes(b) }
-pub fn gt(a: GcRef, b: GcRef) -> bool { as_bytes(a) > as_bytes(b) }
-pub fn ge(a: GcRef, b: GcRef) -> bool { as_bytes(a) >= as_bytes(b) }
+
+macro_rules! str_cmp {
+    ($name:ident, $op:tt) => {
+        pub fn $name(a: GcRef, b: GcRef) -> bool { as_bytes(a) $op as_bytes(b) }
+    };
+}
+str_cmp!(lt, <);
+str_cmp!(le, <=);
+str_cmp!(gt, >);
+str_cmp!(ge, >=);
 
 pub fn cmp(a: GcRef, b: GcRef) -> i32 {
     match as_bytes(a).cmp(as_bytes(b)) {
@@ -185,4 +146,87 @@ pub fn cmp(a: GcRef, b: GcRef) -> i32 {
         core::cmp::Ordering::Equal => 0,
         core::cmp::Ordering::Greater => 1,
     }
+}
+
+/// Create string from a Rust String (takes ownership).
+pub fn new_from_string(gc: &mut Gc, s: String) -> GcRef {
+    create(gc, s.as_bytes())
+}
+
+/// Create string from a byte slice object (GcRef to SliceData).
+/// Shares the underlying array - no copy needed since string is immutable.
+pub fn from_slice(gc: &mut Gc, slice_ref: GcRef) -> GcRef {
+    if slice_ref.is_null() {
+        return core::ptr::null_mut();
+    }
+    let len = super::slice::len(slice_ref);
+    if len == 0 {
+        return core::ptr::null_mut();
+    }
+    // Get slice's underlying array and calculate start offset
+    let arr = super::slice::array_ref(slice_ref);
+    let arr_data_ptr = array::data_ptr_bytes(arr) as usize;
+    let slice_data_ptr = super::slice::data_ptr(slice_ref) as usize;
+    let start = (slice_data_ptr - arr_data_ptr) as u32;
+    
+    // Create string sharing the same underlying array
+    let s = gc.alloc(ValueMeta::new(0, ValueKind::String), DATA_SLOTS);
+    let data = StringData::as_mut(s);
+    data.array = arr;
+    data.start = start;
+    data.len = len as u32;
+    s
+}
+
+/// Convert string to []byte slice object. Returns slice GcRef.
+pub fn to_byte_slice_obj(gc: &mut Gc, s: GcRef) -> GcRef {
+    let bytes = as_bytes(s);
+    let len = bytes.len();
+    if len == 0 {
+        return core::ptr::null_mut();
+    }
+    let arr = array::create(gc, ValueMeta::new(0, ValueKind::Uint8), 1, len);
+    let data_ptr = array::data_ptr_bytes(arr);
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, len); }
+    super::slice::from_array_range(gc, arr, 0, len, len)
+}
+
+/// Create string from a rune slice object (GcRef to SliceData).
+pub fn from_rune_slice_obj(gc: &mut Gc, slice_ref: GcRef) -> GcRef {
+    if slice_ref.is_null() {
+        return core::ptr::null_mut();
+    }
+    let data_ptr = super::slice::data_ptr(slice_ref) as *const i32;
+    let len = super::slice::len(slice_ref);
+    if len == 0 {
+        return core::ptr::null_mut();
+    }
+    // Read runes and encode to UTF-8
+    let mut utf8_bytes = Vec::new();
+    for i in 0..len {
+        let rune = unsafe { *data_ptr.add(i) } as u32;
+        if let Some(c) = char::from_u32(rune) {
+            let mut buf = [0u8; 4];
+            let encoded = c.encode_utf8(&mut buf);
+            utf8_bytes.extend_from_slice(encoded.as_bytes());
+        } else {
+            utf8_bytes.extend_from_slice("\u{FFFD}".as_bytes());
+        }
+    }
+    create(gc, &utf8_bytes)
+}
+
+/// Convert string to []rune slice object. Returns slice GcRef.
+pub fn to_rune_slice_obj(gc: &mut Gc, s: GcRef) -> GcRef {
+    let str_data = as_str(s);
+    let len = str_data.chars().count();
+    if len == 0 {
+        return core::ptr::null_mut();
+    }
+    let arr = array::create(gc, ValueMeta::new(0, ValueKind::Int32), 4, len);
+    let data_ptr = array::data_ptr_bytes(arr) as *mut i32;
+    for (i, c) in str_data.chars().enumerate() {
+        unsafe { *data_ptr.add(i) = c as i32; }
+    }
+    super::slice::from_array_range(gc, arr, 0, len, len)
 }

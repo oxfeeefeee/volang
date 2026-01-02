@@ -240,8 +240,6 @@ pub enum Opcode {
     // === CONV: Type conversion ===
     ConvI2F,
     ConvF2I,
-    ConvI32I64,
-    ConvI64I32,
     ConvF64F32,
     ConvF32F64,
 
@@ -250,7 +248,7 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    const MAX_VALID: u8 = Self::ConvF32F64 as u8;  // Update if adding opcodes after ConvF32F64
+    const MAX_VALID: u8 = Self::ConvF32F64 as u8;
 
     #[inline]
     pub fn from_u8(v: u8) -> Self {

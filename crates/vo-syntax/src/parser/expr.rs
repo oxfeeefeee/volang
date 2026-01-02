@@ -248,8 +248,36 @@ impl<'a> Parser<'a> {
                 let span = Span::new(start, self.current.span.start);
                 Ok(self.make_expr(ExprKind::Binary(Box::new(BinaryExpr { left, op, right })), span))
             }
-            // Call expression
+            // Call expression or type conversion
             TokenKind::LParen => {
+                // Check if this is a pointer type conversion: (*T)(x)
+                // Pattern: Paren(Unary(Deref, Ident)) -> Conversion(Pointer(Ident), expr)
+                if let ExprKind::Paren(ref inner) = left.kind {
+                    if let ExprKind::Unary(ref unary) = inner.kind {
+                        if unary.op == UnaryOp::Deref {
+                            if let ExprKind::Ident(ref ident) = unary.operand.kind {
+                                // This is (*T)(x) pattern - parse as type conversion
+                                let ident_clone = ident.clone();
+                                let ident_span = ident.span;
+                                let left_span = left.span;
+                                self.advance();
+                                let expr = self.parse_expr()?;
+                                self.expect(TokenKind::RParen)?;
+                                let inner_type = self.make_type_expr(TypeExprKind::Ident(ident_clone), ident_span);
+                                let ptr_type = self.make_type_expr(
+                                    TypeExprKind::Pointer(Box::new(inner_type)),
+                                    left_span,
+                                );
+                                let span = Span::new(start, self.current.span.start);
+                                return Ok(self.make_expr(
+                                    ExprKind::Conversion(Box::new(ConversionExpr { ty: ptr_type, expr })),
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                }
+                
                 self.advance();
                 // Check if this is a make/new call which takes a type as first argument
                 let is_make_or_new = if let ExprKind::Ident(ref ident) = left.kind {

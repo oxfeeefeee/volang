@@ -155,3 +155,80 @@ static __VO_BUILTIN_COPY: ExternEntryWithGc = ExternEntryWithGc {
     name: "vo_copy",
     func: builtin_copy,
 };
+
+// ==================== String Conversion Functions ====================
+
+/// int -> string (unicode code point)
+fn conv_int_str(call: &mut ExternCallWithGc) -> ExternResult {
+    let code_point = call.arg_u64(0) as u32;
+    let s = if let Some(c) = char::from_u32(code_point) {
+        c.to_string()
+    } else {
+        "\u{FFFD}".to_string()
+    };
+    let gc_ref = crate::objects::string::new_from_string(call.gc(), s);
+    call.ret_ref(0, gc_ref);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_GC)]
+static __VO_CONV_INT_STR: ExternEntryWithGc = ExternEntryWithGc {
+    name: "vo_conv_int_str",
+    func: conv_int_str,
+};
+
+/// []byte -> string (shares underlying array)
+fn conv_bytes_str(call: &mut ExternCallWithGc) -> ExternResult {
+    let slice_ref = call.arg_ref(0);
+    let gc_ref = crate::objects::string::from_slice(call.gc(), slice_ref);
+    call.ret_ref(0, gc_ref);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_GC)]
+static __VO_CONV_BYTES_STR: ExternEntryWithGc = ExternEntryWithGc {
+    name: "vo_conv_bytes_str",
+    func: conv_bytes_str,
+};
+
+/// string -> []byte (must copy)
+fn conv_str_bytes(call: &mut ExternCallWithGc) -> ExternResult {
+    let str_ref = call.arg_ref(0);
+    let gc_ref = crate::objects::string::to_byte_slice_obj(call.gc(), str_ref);
+    call.ret_ref(0, gc_ref);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_GC)]
+static __VO_CONV_STR_BYTES: ExternEntryWithGc = ExternEntryWithGc {
+    name: "vo_conv_str_bytes",
+    func: conv_str_bytes,
+};
+
+/// []rune -> string
+fn conv_runes_str(call: &mut ExternCallWithGc) -> ExternResult {
+    let slice_ref = call.arg_ref(0);
+    let gc_ref = crate::objects::string::from_rune_slice_obj(call.gc(), slice_ref);
+    call.ret_ref(0, gc_ref);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_GC)]
+static __VO_CONV_RUNES_STR: ExternEntryWithGc = ExternEntryWithGc {
+    name: "vo_conv_runes_str",
+    func: conv_runes_str,
+};
+
+/// string -> []rune
+fn conv_str_runes(call: &mut ExternCallWithGc) -> ExternResult {
+    let str_ref = call.arg_ref(0);
+    let gc_ref = crate::objects::string::to_rune_slice_obj(call.gc(), str_ref);
+    call.ret_ref(0, gc_ref);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_GC)]
+static __VO_CONV_STR_RUNES: ExternEntryWithGc = ExternEntryWithGc {
+    name: "vo_conv_str_runes",
+    func: conv_str_runes,
+};

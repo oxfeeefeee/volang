@@ -739,22 +739,11 @@ fn compile_type_conversion(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Get source and target types
     let dst_type = info.expr_type(conv_expr.id);
-    
-    // Interface conversion needs special handling
-    if info.is_interface(dst_type) {
-        return crate::stmt::compile_iface_assign(dst, src_expr, dst_type, ctx, func, info);
-    }
-    
-    // Compile source expression
-    let src_reg = compile_expr(src_expr, ctx, func, info)?;
-    let src_type = info.expr_type(src_expr.id);
-    
-    emit_type_conversion(src_reg, dst, src_type, dst_type, func, info);
-    Ok(())
+    compile_conversion_impl(src_expr, dst, dst_type, ctx, func, info)
 }
 
+/// Compile type conversion from Conversion syntax: []T(x)
 fn compile_conversion(
     expr: &Expr,
     conv: &vo_syntax::ast::ConversionExpr,
@@ -763,24 +752,65 @@ fn compile_conversion(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Get target type
     let dst_type = info.expr_type(expr.id);
-    
-    // Interface conversion needs special handling
+    compile_conversion_impl(&conv.expr, dst, dst_type, ctx, func, info)
+}
+
+/// Unified implementation for all type conversions
+fn compile_conversion_impl(
+    src_expr: &Expr,
+    dst: u16,
+    dst_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // Interface conversion
     if info.is_interface(dst_type) {
-        return crate::stmt::compile_iface_assign(dst, &conv.expr, dst_type, ctx, func, info);
+        return crate::stmt::compile_iface_assign(dst, src_expr, dst_type, ctx, func, info);
     }
     
-    // Compile source expression
-    let src_reg = compile_expr(&conv.expr, ctx, func, info)?;
-    let src_type = info.expr_type(conv.expr.id);
+    let src_reg = compile_expr(src_expr, ctx, func, info)?;
+    let src_type = info.expr_type(src_expr.id);
     
-    emit_type_conversion(src_reg, dst, src_type, dst_type, func, info);
+    // String conversion (extern call)
+    if emit_string_conversion(src_reg, dst, src_type, dst_type, ctx, func, info) {
+        return Ok(());
+    }
+    
+    // Numeric/other conversion (opcodes)
+    emit_numeric_conversion(src_reg, dst, src_type, dst_type, func, info);
     Ok(())
 }
 
-/// Emit type conversion instructions
-fn emit_type_conversion(
+/// Emit string conversion via extern call. Returns true if handled.
+fn emit_string_conversion(
+    src_reg: u16,
+    dst: u16,
+    src_type: vo_analysis::objects::TypeKey,
+    dst_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> bool {
+    let extern_name = match (info.is_int(src_type), info.is_string(src_type), info.is_string(dst_type)) {
+        (true, _, true) => "vo_conv_int_str",
+        (_, _, true) if info.is_byte_slice(src_type) => "vo_conv_bytes_str",
+        (_, _, true) if info.is_rune_slice(src_type) => "vo_conv_runes_str",
+        (_, true, _) if info.is_byte_slice(dst_type) => "vo_conv_str_bytes",
+        (_, true, _) if info.is_rune_slice(dst_type) => "vo_conv_str_runes",
+        _ => return false,
+    };
+    
+    let extern_id = ctx.get_or_register_extern(extern_name);
+    let args_start = func.alloc_temp(1);
+    func.emit_op(Opcode::Copy, args_start, src_reg, 0);
+    func.emit_with_flags(Opcode::CallExtern, 1, dst, extern_id as u16, args_start);
+    true
+}
+
+/// Emit numeric type conversion instructions
+fn emit_numeric_conversion(
     src_reg: u16,
     dst: u16,
     src_type: vo_analysis::objects::TypeKey,
@@ -820,21 +850,22 @@ fn emit_type_conversion(
             func.emit_op(Opcode::Copy, dst, src_reg, 0);
         }
     } else if src_is_int && dst_is_int {
-        // Int to int conversion - check sizes
-        let src_bits = info.int_bits(src_type);
-        let dst_bits = info.int_bits(dst_type);
-        
-        if src_bits == 32 && dst_bits == 64 {
-            func.emit_op(Opcode::ConvI32I64, dst, src_reg, 0);
-        } else if src_bits == 64 && dst_bits == 32 {
-            func.emit_op(Opcode::ConvI64I32, dst, src_reg, 0);
+        // Int to int conversion - all integers stored in 64-bit slots, just copy
+        func.emit_op(Opcode::Copy, dst, src_reg, 0);
+    } else {
+        // Other conversions (named types with same underlying, etc) - just copy
+        let src_slots = info.type_slot_count(src_type);
+        let dst_slots = info.type_slot_count(dst_type);
+        if src_slots == dst_slots {
+            if src_slots == 1 {
+                func.emit_op(Opcode::Copy, dst, src_reg, 0);
+            } else {
+                func.emit_op(Opcode::CopyN, dst, src_reg, src_slots);
+            }
         } else {
-            // Same size or other cases - just copy
+            // Fallback - copy single slot
             func.emit_op(Opcode::Copy, dst, src_reg, 0);
         }
-    } else {
-        // Other conversions - just copy for now
-        func.emit_op(Opcode::Copy, dst, src_reg, 0);
     }
 }
 

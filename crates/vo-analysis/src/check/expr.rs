@@ -1258,7 +1258,7 @@ impl Checker {
                 if x.invalid() {
                     return;
                 }
-                self.convert_untyped(x, ty);
+                self.conversion(x, ty);
             }
             ExprKind::Receive(recv) => {
                 self.expr(x, recv);

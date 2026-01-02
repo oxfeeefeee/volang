@@ -613,6 +613,30 @@ impl<'a> TypeInfoWrapper<'a> {
             panic!("pointer_base: not a pointer type")
         }
     }
+
+    /// Check if type is []byte (slice of uint8/byte)
+    pub fn is_byte_slice(&self, type_key: TypeKey) -> bool {
+        self.is_slice_of(type_key, |b| b == typ::BasicType::Byte || b == typ::BasicType::Uint8)
+    }
+
+    /// Check if type is []rune (slice of int32/rune)
+    pub fn is_rune_slice(&self, type_key: TypeKey) -> bool {
+        self.is_slice_of(type_key, |b| b == typ::BasicType::Rune || b == typ::BasicType::Int32)
+    }
+
+    /// Check if type is a slice of basic type matching predicate
+    fn is_slice_of(&self, type_key: TypeKey, pred: impl Fn(typ::BasicType) -> bool) -> bool {
+        let underlying = typ::underlying_type(type_key, self.tc_objs());
+        if let Type::Slice(s) = &self.tc_objs().types[underlying] {
+            let elem_underlying = typ::underlying_type(s.elem(), self.tc_objs());
+            matches!(
+                &self.tc_objs().types[elem_underlying],
+                Type::Basic(b) if pred(b.typ())
+            )
+        } else {
+            false
+        }
+    }
 }
 
 /// Encode i32 as two u16 values (low, high)

@@ -1009,16 +1009,6 @@ impl Vm {
                     stack_set(stack, bp + inst.a as usize, a as i64 as u64);
                     ExecResult::Continue
                 }
-                Opcode::ConvI32I64 => {
-                    let a = stack_get(stack, bp + inst.b as usize) as i32;
-                    stack_set(stack, bp + inst.a as usize, a as i64 as u64);
-                    ExecResult::Continue
-                }
-                Opcode::ConvI64I32 => {
-                    let a = stack_get(stack, bp + inst.b as usize) as i64;
-                    stack_set(stack, bp + inst.a as usize, a as i32 as u64);
-                    ExecResult::Continue
-                }
                 Opcode::ConvF64F32 => {
                     let a = f64::from_bits(stack_get(stack, bp + inst.b as usize));
                     stack_set(stack, bp + inst.a as usize, (a as f32).to_bits() as u64);

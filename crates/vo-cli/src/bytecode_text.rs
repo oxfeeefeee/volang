@@ -378,8 +378,6 @@ fn format_instruction(instr: &Instruction) -> String {
         // CONV
         Opcode::ConvI2F => format!("ConvI2F       r{}, r{}", a, b),
         Opcode::ConvF2I => format!("ConvF2I       r{}, r{}", a, b),
-        Opcode::ConvI32I64 => format!("ConvI32I64    r{}, r{}", a, b),
-        Opcode::ConvI64I32 => format!("ConvI64I32    r{}, r{}", a, b),
         Opcode::ConvF64F32 => format!("ConvF64F32    r{}, r{}", a, b),
         Opcode::ConvF32F64 => format!("ConvF32F64    r{}, r{}", a, b),
 
