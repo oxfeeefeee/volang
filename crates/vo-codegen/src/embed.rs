@@ -166,6 +166,134 @@ pub fn is_interface_method_decl(obj_key: ObjKey, tc_objs: &TCObjects) -> bool {
     false
 }
 
+// =============================================================================
+// Unified Method Call Resolution
+// =============================================================================
+
+/// How to dispatch a method call.
+#[derive(Debug, Clone)]
+pub enum MethodDispatch {
+    /// Static call - func_id known at compile time
+    Static {
+        func_id: u32,
+        expects_ptr_recv: bool,
+    },
+    /// Interface dispatch - lookup method at runtime via itab
+    Interface {
+        method_idx: u32,
+    },
+    /// Embedded interface - load interface from struct field, then dispatch
+    EmbeddedInterface {
+        embed_offset: u16,
+        iface_type: TypeKey,
+        method_idx: u32,
+    },
+}
+
+/// Complete information for compiling a method call.
+#[derive(Debug, Clone)]
+pub struct MethodCallInfo {
+    /// How to dispatch
+    pub dispatch: MethodDispatch,
+    /// Embedding path to receiver (empty = direct)
+    pub embed_path: EmbedPathInfo,
+    /// Whether the original receiver expression is a pointer type
+    pub recv_is_pointer: bool,
+}
+
+/// Resolve a method call from Selection info.
+/// 
+/// This is the unified entry point for method call resolution.
+/// It handles all cases:
+/// - Direct method on type
+/// - Promoted method through struct embedding
+/// - Method from embedded interface
+/// - Interface method dispatch
+pub fn resolve_method_call(
+    recv_type: TypeKey,
+    method_name: &str,
+    method_sym: vo_common::Symbol,
+    selection: Option<&vo_analysis::selection::Selection>,
+    is_interface_recv: bool,
+    ctx: &mut crate::context::CodegenContext,
+    tc_objs: &TCObjects,
+) -> Option<MethodCallInfo> {
+    let recv_is_pointer = layout::is_pointer(recv_type, tc_objs);
+    let base_type = if recv_is_pointer {
+        let underlying = typ::underlying_type(recv_type, tc_objs);
+        if let Type::Pointer(p) = &tc_objs.types[underlying] {
+            p.base()
+        } else {
+            recv_type
+        }
+    } else {
+        recv_type
+    };
+    
+    // Case 1: Interface receiver - use interface dispatch
+    if is_interface_recv {
+        let method_idx = ctx.get_interface_method_index(recv_type, method_name, tc_objs);
+        return Some(MethodCallInfo {
+            dispatch: MethodDispatch::Interface { method_idx },
+            embed_path: EmbedPathInfo {
+                steps: Vec::new(),
+                total_offset: 0,
+                final_type: recv_type,
+                embedded_iface: None,
+            },
+            recv_is_pointer,
+        });
+    }
+    
+    // Get indices from selection
+    let indices = selection.map(|s| s.indices()).unwrap_or(&[]);
+    
+    // Analyze embedding path
+    let embed_path = analyze_embed_path(base_type, indices, tc_objs);
+    
+    // Case 2: Embedded interface - method comes from interface field
+    if let Some(embed_iface) = embed_path.embedded_iface {
+        let method_idx = ctx.get_interface_method_index(embed_iface.iface_type, method_name, tc_objs);
+        return Some(MethodCallInfo {
+            dispatch: MethodDispatch::EmbeddedInterface {
+                embed_offset: embed_iface.offset,
+                iface_type: embed_iface.iface_type,
+                method_idx,
+            },
+            embed_path,
+            recv_is_pointer,
+        });
+    }
+    
+    // Case 3: Concrete method (direct or promoted)
+    // Try to find method on final_type (after following embedding path)
+    let search_type = if embed_path.steps.is_empty() {
+        base_type
+    } else {
+        embed_path.final_type
+    };
+    
+    // Try value receiver
+    if let Some(func_id) = ctx.get_func_index(Some(search_type), false, method_sym) {
+        return Some(MethodCallInfo {
+            dispatch: MethodDispatch::Static { func_id, expects_ptr_recv: false },
+            embed_path,
+            recv_is_pointer,
+        });
+    }
+    
+    // Try pointer receiver
+    if let Some(func_id) = ctx.get_func_index(Some(search_type), true, method_sym) {
+        return Some(MethodCallInfo {
+            dispatch: MethodDispatch::Static { func_id, expects_ptr_recv: true },
+            embed_path,
+            recv_is_pointer,
+        });
+    }
+    
+    None
+}
+
 #[cfg(test)]
 mod tests {
     // Unit tests would go here
