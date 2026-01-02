@@ -31,7 +31,7 @@ pub enum VmError {
     IndexOutOfBounds,
     NilPointerDereference,
     TypeAssertionFailed,
-    PanicUnwound,
+    PanicUnwound(Option<String>),
     SendOnClosedChannel,
 }
 

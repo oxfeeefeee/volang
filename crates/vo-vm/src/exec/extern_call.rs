@@ -13,6 +13,8 @@ pub use vo_runtime::ffi::ExternRegistry;
 use vo_runtime::ffi::ExternResult;
 use vo_runtime::gc::Gc;
 
+use crate::fiber::Fiber;
+
 pub fn exec_call_extern(
     stack: &mut Vec<u64>,
     bp: usize,
@@ -20,6 +22,7 @@ pub fn exec_call_extern(
     externs: &[ExternDef],
     registry: &ExternRegistry,
     gc: &mut Gc,
+    fiber_panic_msg: &mut Option<String>,
 ) -> ExecResult {
     // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
     let extern_id = inst.b as u32;
@@ -47,6 +50,9 @@ pub fn exec_call_extern(
     match result {
         ExternResult::Ok => ExecResult::Continue,
         ExternResult::Yield => ExecResult::Yield,
-        ExternResult::Panic(_) => ExecResult::Panic,
+        ExternResult::Panic(msg) => {
+            *fiber_panic_msg = Some(msg);
+            ExecResult::Panic
+        }
     }
 }

@@ -76,6 +76,7 @@ pub struct Fiber {
     pub defer_state: Option<DeferState>,
     pub select_state: Option<SelectState>,
     pub panic_value: Option<GcRef>,
+    pub panic_msg: Option<String>,
 }
 
 impl Fiber {
@@ -89,6 +90,7 @@ impl Fiber {
             defer_state: None,
             select_state: None,
             panic_value: None,
+            panic_msg: None,
         }
     }
     
@@ -101,6 +103,7 @@ impl Fiber {
         self.defer_state = None;
         self.select_state = None;
         self.panic_value = None;
+        self.panic_msg = None;
     }
 
     pub fn push_frame(&mut self, func_id: u32, local_slots: u16, ret_reg: u16, ret_count: u16) {

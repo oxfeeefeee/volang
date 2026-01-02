@@ -7,7 +7,7 @@ use vo_analysis::{analyze_project, AnalysisError};
 use vo_module::VfsConfig;
 use vo_codegen::compile_project;
 use vo_vm::bytecode::Module;
-use vo_vm::vm::Vm;
+use vo_vm::vm::{Vm, VmError};
 use vo_syntax::parser;
 use crate::printer::AstPrinter;
 use crate::bytecode_text;
@@ -198,6 +198,14 @@ fn compile_source_file(path: &Path) -> Result<Module, Box<dyn std::error::Error>
     Ok(module)
 }
 
+fn format_vm_error(e: &VmError) -> String {
+    match e {
+        VmError::PanicUnwound(Some(msg)) => msg.clone(),
+        VmError::PanicUnwound(None) => "panic".to_string(),
+        other => format!("{:?}", other),
+    }
+}
+
 /// Run a module using the VM interpreter.
 fn run_vm(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error::Error>> {
     let mut vm = Vm::new();
@@ -209,8 +217,9 @@ fn run_vm(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error::
             Ok(())
         }
         Err(e) => {
-            println!("{}", format_panic(&format!("{:?}", e)));
-            Err(format!("panic: {:?}", e).into())
+            let msg = format_vm_error(&e);
+            println!("{}", format_panic(&msg));
+            Err(format!("panic: {}", msg).into())
         }
     }
 }
@@ -246,8 +255,9 @@ fn run_jit(module: Module, _std_mode: StdMode) -> Result<(), Box<dyn std::error:
             Ok(())
         }
         Err(e) => {
-            println!("{}", format_panic(&format!("{:?}", e)));
-            Err(format!("panic: {:?}", e).into())
+            let msg = format_vm_error(&e);
+            println!("{}", format_panic(&msg));
+            Err(format!("panic: {}", msg).into())
         }
     }
 }

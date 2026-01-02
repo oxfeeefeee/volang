@@ -176,10 +176,14 @@ impl Scheduler {
         None
     }
 
-    pub fn kill_current(&mut self) {
+    pub fn kill_current(&mut self) -> Option<String> {
         if let Some(id) = self.current {
+            let msg = self.fibers[id as usize].panic_msg.take();
             self.fibers[id as usize].status = FiberStatus::Dead;
             self.free_slots.push(id);
+            msg
+        } else {
+            None
         }
     }
 

@@ -160,8 +160,8 @@ impl Vm {
                     self.scheduler.block_current();
                 }
                 ExecResult::Panic => {
-                    self.scheduler.kill_current();
-                    return Err(VmError::PanicUnwound);
+                    let msg = self.scheduler.kill_current();
+                    return Err(VmError::PanicUnwound(msg));
                 }
                 ExecResult::Osr(_, _, _) => {
                     // OSR result should not propagate here from run_fiber
@@ -564,7 +564,7 @@ impl Vm {
                     exec::exec_call(stack, &mut fiber.frames, &inst, module)
                 }
                 Opcode::CallExtern => {
-                    exec::exec_call_extern(stack, bp, &inst, &module.externs, &self.state.extern_registry, &mut self.state.gc)
+                    exec::exec_call_extern(stack, bp, &inst, &module.externs, &self.state.extern_registry, &mut self.state.gc, &mut fiber.panic_msg)
                 }
                 Opcode::CallClosure => {
                     exec::exec_call_closure(stack, &mut fiber.frames, &inst, module)
