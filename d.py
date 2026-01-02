@@ -22,19 +22,27 @@ try:
     import yaml
     HAS_YAML = True
 except ImportError:
-    yaml = None
     HAS_YAML = False
 
 
-def parse_skip_yaml(path: Path) -> list[dict]:
-    """Simple parser for _skip.yaml without PyYAML dependency."""
+def parse_config_yaml(path: Path) -> list[dict]:
+    """Simple parser for _config.yaml without PyYAML dependency."""
     entries = []
     current_entry = None
+    in_tests = False
     
     with open(path, encoding='utf-8') as f:
         for line in f:
             stripped = line.rstrip()
             if not stripped or stripped.startswith('#'):
+                continue
+            
+            # Section header: "tests:"
+            if stripped == 'tests:':
+                in_tests = True
+                continue
+            
+            if not in_tests:
                 continue
             
             # New entry: "  - file: xxx"
@@ -49,9 +57,9 @@ def parse_skip_yaml(path: Path) -> list[dict]:
                 if skip_part.startswith('[') and skip_part.endswith(']'):
                     modes = [m.strip() for m in skip_part[1:-1].split(',')]
                     current_entry['skip'] = [m for m in modes if m]
-            # Expect error: "    expect_error: true"
-            elif current_entry and 'expect_error:' in stripped:
-                current_entry['expect_error'] = 'true' in stripped.lower()
+            # should_fail: true
+            elif current_entry and 'should_fail:' in stripped:
+                current_entry['should_fail'] = 'true' in stripped.lower()
     
     if current_entry:
         entries.append(current_entry)
@@ -82,7 +90,7 @@ if not sys.stdout.isatty():
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR  # d.py is now in project root
 TEST_DIR = PROJECT_ROOT / 'test_data'
-SKIP_CONFIG = TEST_DIR / '_skip.yaml'
+TEST_CONFIG = TEST_DIR / '_config.yaml'
 BENCHMARK_DIR = PROJECT_ROOT / 'benchmark'
 RESULTS_DIR = BENCHMARK_DIR / 'results'
 VO_BIN_DEBUG = PROJECT_ROOT / 'target' / 'debug' / 'vo'
@@ -115,7 +123,7 @@ def command_exists(cmd: str) -> bool:
 class TestRunner:
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
-        self.skip_config = self._load_skip_config()
+        self.config = self._load_config()
         self.vm_passed = 0
         self.vm_failed = 0
         self.vm_skipped = 0
@@ -124,34 +132,36 @@ class TestRunner:
         self.jit_skipped = 0
         self.failed_list: list[str] = []
 
-    def _load_skip_config(self) -> dict:
-        if not SKIP_CONFIG.exists():
+    def _load_config(self) -> dict:
+        """Load config, returns dict: file -> {skip: [], should_fail: bool}"""
+        if not TEST_CONFIG.exists():
             return {}
         
         if HAS_YAML:
-            with open(SKIP_CONFIG) as f:
+            with open(TEST_CONFIG) as f:
                 data = yaml.safe_load(f) or {}
-            entries = data.get('skips', []) if isinstance(data, dict) else data
+            entries = data.get('tests', []) if isinstance(data, dict) else []
         else:
-            entries = parse_skip_yaml(SKIP_CONFIG)
+            entries = parse_config_yaml(TEST_CONFIG)
         
         config = {}
         for entry in entries:
             if isinstance(entry, dict) and 'file' in entry:
                 config[entry['file']] = {
                     'skip': entry.get('skip', []),
-                    'expect_error': entry.get('expect_error', False)
+                    'should_fail': entry.get('should_fail', False),
                 }
+        
         return config
 
     def should_skip(self, file: str, mode: str) -> bool:
-        if file in self.skip_config:
-            return mode in self.skip_config[file].get('skip', [])
+        if file in self.config:
+            return mode in self.config[file].get('skip', [])
         return False
 
-    def expects_error(self, file: str) -> bool:
-        if file in self.skip_config:
-            return self.skip_config[file].get('expect_error', False)
+    def should_fail(self, file: str) -> bool:
+        if file in self.config:
+            return self.config[file].get('should_fail', False)
         return False
 
     def run(self, mode: str, single_file: Optional[str] = None):
@@ -186,9 +196,14 @@ class TestRunner:
             if is_gc_mode and not is_gc_file:
                 continue
 
-            expect_error = self.expects_error(rel_file)
+            should_fail = self.should_fail(rel_file)
             # Enable GC debug for gc_* files (in gc mode or when running individually)
             gc_debug = is_gc_mode and is_gc_file
+
+            # should_fail tests only run once (not per mode)
+            if should_fail:
+                self._run_should_fail_test(rel_file)
+                continue
 
             if run_vm:
                 if self.should_skip(rel_file, 'vm'):
@@ -196,7 +211,7 @@ class TestRunner:
                     if self.verbose:
                         print(f"  {Colors.YELLOW}⊘{Colors.NC} {rel_file} [vm skipped]")
                 else:
-                    self._run_test(rel_file, 'vm', expect_error, gc_debug)
+                    self._run_test(rel_file, 'vm', gc_debug)
 
             if run_jit:
                 if self.should_skip(rel_file, 'jit'):
@@ -204,26 +219,29 @@ class TestRunner:
                     if self.verbose:
                         print(f"  {Colors.YELLOW}⊘{Colors.NC} {rel_file} [jit skipped]")
                 else:
-                    self._run_test(rel_file, 'jit', expect_error, gc_debug)
+                    self._run_test(rel_file, 'jit', gc_debug)
 
         if not is_gc_mode:
             for proj_dir in sorted(TEST_DIR.glob('proj_*')):
                 if not proj_dir.is_dir():
                     continue
                 dir_name = proj_dir.name + '/'
-                expect_error = self.expects_error(dir_name)
+                should_fail = self.should_fail(dir_name)
+                if should_fail:
+                    self._run_should_fail_test(dir_name)
+                    continue
 
                 if run_vm:
                     if self.should_skip(dir_name, 'vm'):
                         self.vm_skipped += 1
                     else:
-                        self._run_test(dir_name, 'vm', expect_error, False)
+                        self._run_test(dir_name, 'vm', False)
 
                 if run_jit:
                     if self.should_skip(dir_name, 'jit'):
                         self.jit_skipped += 1
                     else:
-                        self._run_test(dir_name, 'jit', expect_error, False)
+                        self._run_test(dir_name, 'jit', False)
 
         self._print_results()
 
@@ -243,7 +261,39 @@ class TestRunner:
         code, stdout, stderr = run_cmd(cmd, env=env, capture=False)
         sys.exit(code)
 
-    def _run_test(self, file: str, mode: str, expect_error: bool, gc_debug: bool):
+    def _run_should_fail_test(self, file: str):
+        """Run a test that must fail at compile/type-check stage."""
+        if file.endswith('/'):
+            path = TEST_DIR / file.rstrip('/')
+        else:
+            path = TEST_DIR / file
+
+        cmd = [str(VO_BIN_DEBUG), 'run', str(path), '--mode=vm']
+
+        if self.verbose:
+            print(f"{Colors.DIM}Running (should_fail): {' '.join(cmd)}{Colors.NC}")
+
+        code, stdout, stderr = run_cmd(cmd)
+        output = stdout + stderr
+
+        # Check for compile/type-check errors
+        has_analysis_error = 'analysis error:' in output or '[VO:ERROR:' in output
+        has_rust_panic = 'panicked at' in output
+
+        if has_rust_panic:
+            panic_line = next((l for l in output.split('\n') if 'panicked at' in l), '')[:60]
+            self._record_fail('vm', f"{file} [should_fail] [RUST PANIC: {panic_line}]")
+        elif has_analysis_error and code != 0:
+            # Test correctly failed at compile/type-check stage
+            self._record_pass('vm', f"{file} [should_fail]")
+        else:
+            # Test should have failed but didn't
+            self._record_fail('vm', f"{file} [should_fail] (expected compile error but passed)")
+
+        if self.verbose:
+            print(output)
+
+    def _run_test(self, file: str, mode: str, gc_debug: bool):
         if file.endswith('/'):
             path = TEST_DIR / file.rstrip('/')
         else:
@@ -267,13 +317,6 @@ class TestRunner:
         has_rust_panic = 'panicked at' in output
         has_ok = '[VO:OK]' in output
         has_cli_error = output.strip().startswith('error:')
-
-        if expect_error:
-            if has_vo_error:
-                self._record_pass(mode, f"{file} [{mode}] (expected error)")
-            else:
-                self._record_fail(mode, f"{file} [{mode}] (expected error but passed)")
-            return
 
         if has_ok and not has_vo_error and not has_rust_panic:
             self._record_pass(mode, f"{file} [{mode}]")

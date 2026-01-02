@@ -1,18 +1,15 @@
-# Vo Integration Test Skip Configuration
+# Vo Integration Test Configuration
 #
-# Tests NOT listed here will run in BOTH vm and jit modes.
-# Only list tests that need to be skipped.
+# Tests NOT listed here will run in BOTH vm and jit modes and expected to pass.
 #
 # Format:
-#   skips:
+#   tests:
 #     - file: path/to/test.vo      # Relative to test_data/
-#       skip: [vm, jit]            # Skip both modes
-#       skip: [vm]                 # Skip vm mode only
-#                  # Skip jit mode only
-#       reason: "why"              # Optional reason
-#       expect_error: true         # Test expects an error (negative test)
+#       skip: [vm, jit]            # Optional: skip modes (vm, jit, or both)
+#       should_fail: true          # Optional: must fail at compile/type-check
+#       reason: "why"              # Optional: reason for skip/should_fail
 
-skips:
+tests:
   - file: channel_send.vo
   - file: clone_immediate_read.vo
   - file: complex_literal.vo
@@ -39,14 +36,14 @@ skips:
   - file: label_stmt.vo
   - file: go_stmt.vo
   - file: goto_stmt.vo
-    skip: [vm, jit]
+    should_fail: true
     reason: "goto is not supported"
   - file: hex_literal_debug.vo
   - file: iface_escape_closure.vo
   - file: iface_to_iface_assertion.vo
   - file: init_call_error.vo
-    skip: [vm, jit]
-    reason: "expected error: init() cannot be called explicitly"
+    should_fail: true
+    reason: "init() cannot be called explicitly"
   - file: interface.vo
   - file: interface_closure.vo
   - file: interface_conversion.vo
@@ -75,8 +72,8 @@ skips:
   - file: rect_only_sum.vo
   - file: rune_literal.vo
   - file: select_stmt.vo
-    skip: [vm, jit]
-    reason: "type check failed"
+    should_fail: true
+    reason: "assert(false) is compile-time error"
   - file: setfield_getfield_test.vo
   - file: shift_ops.vo
   - file: setfield_test.vo
@@ -139,13 +136,13 @@ skips:
   - file: errdefer_stmt.vo
   - file: debug_nil_interface.vo
   - file: debug_iface.vo
-  
-  # Typechecker tests - known bugs
-  # FIXED: typechecker/assignable_interface.vo - recv_slots issue in wrapper
-  # FIXED: typechecker/interface_embedding.vo - interface-to-interface itab lookup
-  # FIXED: typechecker/bug_empty_struct_interface.vo - needs_unbox check in wrapper
-  # FIXED: typechecker/bug_interface_multi_return.vo - needs_unbox check in wrapper
-  # FIXED: typechecker/bug_named_type_interface.vo - needs_unbox check in wrapper
-  # FIXED: typechecker/method_set_equivalence.vo - interface parameter works
-  # FIXED: typechecker/bug_ptr_embed_interface.vo - promoted method wrapper for pointer embedding
-  # FIXED: typechecker/type_assertion.vo - interface-to-interface assignment now preserves reference semantics
+
+# Typechecker tests - known bugs (now fixed)
+# FIXED: typechecker/assignable_interface.vo - recv_slots issue in wrapper
+# FIXED: typechecker/interface_embedding.vo - interface-to-interface itab lookup
+# FIXED: typechecker/bug_empty_struct_interface.vo - needs_unbox check in wrapper
+# FIXED: typechecker/bug_interface_multi_return.vo - needs_unbox check in wrapper
+# FIXED: typechecker/bug_named_type_interface.vo - needs_unbox check in wrapper
+# FIXED: typechecker/method_set_equivalence.vo - interface parameter works
+# FIXED: typechecker/bug_ptr_embed_interface.vo - promoted method wrapper for pointer embedding
+# FIXED: typechecker/type_assertion.vo - interface-to-interface assignment now preserves reference semantics
