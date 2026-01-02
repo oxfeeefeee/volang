@@ -401,7 +401,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             
-            if !self.eat(TokenKind::Comma) {
+            if !self.eat(TokenKind::Comma) || self.at(TokenKind::RParen) {
                 break;
             }
         }
