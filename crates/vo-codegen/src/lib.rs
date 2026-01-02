@@ -10,6 +10,7 @@ mod lvalue;
 mod stmt;
 mod type_info;
 mod type_interner;
+mod wrapper;
 
 pub use context::CodegenContext;
 pub use error::CodegenError;
@@ -343,7 +344,7 @@ fn compile_file_functions(
                     // For value receiver methods, generate a wrapper that accepts GcRef
                     // and dereferences it before calling the original method
                     let iface_func_id = if !recv.is_pointer {
-                        generate_value_receiver_wrapper(ctx, info, func_decl, func_id, recv_type)?
+                        wrapper::generate_iface_wrapper(ctx, info, func_decl, func_id, recv_type)?
                     } else {
                         func_id
                     };
@@ -621,94 +622,6 @@ fn compile_func_decl(
     };
     
     Ok(func_id)
-}
-
-/// Generate a wrapper function for value receiver methods.
-/// The wrapper accepts interface data slot (GcRef for struct/array, value for basic types),
-/// and calls the original method with the receiver value.
-fn generate_value_receiver_wrapper(
-    ctx: &mut CodegenContext,
-    info: &TypeInfoWrapper,
-    func_decl: &vo_syntax::ast::FuncDecl,
-    original_func_id: u32,
-    recv_type: vo_analysis::objects::TypeKey,
-) -> Result<u32, CodegenError> {
-    let name = info.project.interner.resolve(func_decl.name.symbol)
-        .unwrap_or("unknown");
-    let wrapper_name = format!("{}$iface", name);
-    
-    let mut builder = FuncBuilder::new(&wrapper_name);
-    
-    // Check if receiver needs unboxing (struct/array are boxed in interface slot1)
-    let recv_vk = info.type_value_kind(recv_type);
-    let needs_unbox = recv_vk.needs_boxing();
-    
-    // Wrapper receives interface data slot as first parameter (1 slot)
-    // Set recv_slots so CallIface knows where to place arguments
-    builder.set_recv_slots(1);
-    let slot_type = if needs_unbox { vo_runtime::SlotType::GcRef } else { vo_runtime::SlotType::Value };
-    let data_slot = builder.define_param(vo_common::symbol::Symbol::DUMMY, 1, &[slot_type]);
-    
-    // Define other parameters (forwarded from original function)
-    let mut wrapper_param_slots = Vec::new();
-    for param in &func_decl.sig.params {
-        let (slots, slot_types) = info.type_expr_layout(param.ty.id);
-        for name in &param.names {
-            let slot = builder.define_param(name.symbol, slots, &slot_types);
-            wrapper_param_slots.push((slot, slots));
-        }
-    }
-    
-    // Get receiver value slots
-    let recv_slots = info.type_slot_count(recv_type);
-    let recv_slot_types = info.type_slot_types(recv_type);
-    
-    let ret_slots: u16 = func_decl.sig.results.iter()
-        .map(|r| info.type_expr_layout(r.ty.id).0)
-        .sum();
-    
-    // Allocate args area for call: recv_value + params
-    let args_start = builder.alloc_temp_typed(&recv_slot_types);
-    
-    if needs_unbox {
-        // Struct/Array: dereference GcRef to get value
-        builder.emit_with_flags(
-            vo_vm::instruction::Opcode::PtrGetN,
-            recv_slots as u8,
-            args_start,
-            data_slot,
-            0,
-        );
-    } else {
-        // Basic types: slot1 is the value directly, just copy
-        builder.emit_copy(args_start, data_slot, recv_slots);
-    }
-    
-    // Copy other parameters after receiver value
-    let mut dest_offset = args_start + recv_slots;
-    for (src_slot, slots) in &wrapper_param_slots {
-        if *slots > 0 {
-            builder.alloc_temp(*slots);
-            builder.emit_copy(dest_offset, *src_slot, *slots);
-            dest_offset += *slots;
-        }
-    }
-    
-    // Call original function
-    let forwarded_param_slots: u16 = wrapper_param_slots.iter().map(|(_, s)| *s).sum();
-    let total_arg_slots = recv_slots + forwarded_param_slots;
-    let c = crate::type_info::encode_call_args(total_arg_slots, ret_slots);
-    let (func_id_low, func_id_high) = crate::type_info::encode_func_id(original_func_id);
-    builder.emit_with_flags(vo_vm::instruction::Opcode::Call, func_id_high, func_id_low, args_start, c);
-    
-    // Return (result is already at args_start)
-    builder.set_ret_slots(ret_slots);
-    builder.emit_op(vo_vm::instruction::Opcode::Return, args_start, ret_slots, 0);
-    
-    let func_def = builder.build();
-    let wrapper_id = ctx.add_function(func_def);
-    
-    Ok(wrapper_id)
 }
 
 fn compile_init_and_entry(

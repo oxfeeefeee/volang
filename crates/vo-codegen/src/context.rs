@@ -66,6 +66,11 @@ pub struct CodegenContext {
 }
 
 impl CodegenContext {
+    /// Get a reference to the module being built
+    pub(crate) fn module(&self) -> &Module {
+        &self.module
+    }
+    
     pub fn new(name: &str) -> Self {
         Self {
             module: Module {
@@ -318,19 +323,42 @@ impl CodegenContext {
             None
         };
         
-        let methods: Vec<u32> = iface_meta
-            .method_names
+        // Collect method names first to avoid borrow issues
+        let method_names: Vec<String> = iface_meta.method_names.clone();
+        
+        let methods: Vec<u32> = method_names
             .iter()
             .map(|name| {
                 // Use lookup_field_or_method to find method (handles promoted methods)
                 match vo_analysis::lookup::lookup_field_or_method(type_key, true, pkg, name, tc_objs) {
-                    vo_analysis::lookup::LookupResult::Entry(obj_key, _, _) => {
-                        // Use iface_func (wrapper for value receiver, original for pointer receiver)
-                        self.get_iface_func_by_objkey(obj_key)
+                    vo_analysis::lookup::LookupResult::Entry(obj_key, indices, _) => {
+                        let base_iface_func = self.get_iface_func_by_objkey(obj_key)
                             .unwrap_or_else(|| panic!(
                                 "method '{}' found but no iface_func_id registered for ObjKey {:?}",
                                 name, obj_key
-                            ))
+                            ));
+                        
+                        // Check if this is a promoted method (indices has embedding path)
+                        // indices = [field_idx, ..., method_idx], len > 1 means promoted
+                        if indices.len() > 1 {
+                            // Get original func_id (not iface wrapper) for direct call
+                            let original_func_id = self.get_func_by_objkey(obj_key)
+                                .unwrap_or(base_iface_func); // fallback to iface_func if not found
+                            
+                            // Generate a wrapper that navigates through embedded fields
+                            // and calls original method directly (avoiding double wrapper)
+                            crate::wrapper::generate_promoted_wrapper(
+                                self,
+                                type_key,
+                                &indices[..indices.len()-1], // embedding path (exclude method index)
+                                original_func_id,
+                                base_iface_func,
+                                name,
+                                tc_objs,
+                            )
+                        } else {
+                            base_iface_func
+                        }
                     }
                     _ => panic!("method '{}' not found in type {:?} for itab building", name, type_key),
                 }
@@ -341,7 +369,7 @@ impl CodegenContext {
         self.module.itabs.push(Itab { methods });
         itab_id
     }
-
+    
     // === Function registration ===
 
     /// Pre-register a function name for forward references.
