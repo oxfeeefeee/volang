@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
     /// 2. Try to parse another type after the list
     /// 3. If successful: first list was names, continue parsing named params
     /// 4. If not: first list was types (anonymous params)
-    fn parse_func_type_params(&mut self) -> ParseResult<Vec<Param>> {
+    pub(crate) fn parse_func_type_params(&mut self) -> ParseResult<Vec<Param>> {
         if self.at(TokenKind::RParen) {
             return Ok(Vec::new());
         }
@@ -137,7 +137,8 @@ impl<'a> Parser<'a> {
         // Phase 2: Try to parse a type after the list
         if let Some(ty) = self.try_parse_type() {
             // Success: first_group was identifier names, ty is their type
-            self.parse_named_params(first_group, ty)
+            let (params, _variadic) = self.parse_named_params(first_group, ty)?;
+            Ok(params)
         } else {
             // No type follows: first_group was anonymous type params
             Ok(self.types_to_anonymous_params(first_group))
@@ -145,7 +146,7 @@ impl<'a> Parser<'a> {
     }
     
     /// Collects a comma-separated list of types (stops at ')' or when non-type follows).
-    fn collect_type_list(&mut self) -> ParseResult<Vec<TypeExpr>> {
+    pub(crate) fn collect_type_list(&mut self) -> ParseResult<Vec<TypeExpr>> {
         let mut types = Vec::new();
         loop {
             types.push(self.parse_type()?);
@@ -157,7 +158,7 @@ impl<'a> Parser<'a> {
     }
     
     /// Tries to parse a type without consuming tokens on failure.
-    fn try_parse_type(&mut self) -> Option<TypeExpr> {
+    pub(crate) fn try_parse_type(&mut self) -> Option<TypeExpr> {
         if self.is_type_start() || self.at(TokenKind::Ellipsis) {
             self.eat(TokenKind::Ellipsis); // handle variadic
             self.parse_type().ok()
@@ -167,7 +168,7 @@ impl<'a> Parser<'a> {
     }
     
     /// Converts type expressions to identifier names (for named parameter parsing).
-    fn types_to_idents(&self, types: Vec<TypeExpr>) -> Vec<Ident> {
+    pub(crate) fn types_to_idents(&self, types: Vec<TypeExpr>) -> Vec<Ident> {
         types.into_iter().filter_map(|t| {
             if let TypeExprKind::Ident(ident) = t.kind {
                 Some(ident)
@@ -178,18 +179,18 @@ impl<'a> Parser<'a> {
     }
     
     /// Converts type expressions to anonymous Params.
-    fn types_to_anonymous_params(&self, types: Vec<TypeExpr>) -> Vec<Param> {
+    pub(crate) fn types_to_anonymous_params(&self, types: Vec<TypeExpr>) -> Vec<Param> {
         types.into_iter().map(|ty| {
             let span = ty.span;
             Param { names: Vec::new(), ty, span }
         }).collect()
     }
     
-    /// Parses remaining named parameters after first group.
-    fn parse_named_params(&mut self, first_names: Vec<TypeExpr>, first_type: TypeExpr) -> ParseResult<Vec<Param>> {
+    /// Parses remaining named parameters after first group. Returns (params, is_variadic).
+    pub(crate) fn parse_named_params(&mut self, first_names: Vec<TypeExpr>, first_type: TypeExpr) -> ParseResult<(Vec<Param>, bool)> {
         let mut params = Vec::new();
+        let mut variadic = false;
         
-        // First param: names from first_names, type from first_type
         let names = self.types_to_idents(first_names);
         let span = if let Some(first) = names.first() {
             Span::new(first.span.start, first_type.span.end)
@@ -198,17 +199,30 @@ impl<'a> Parser<'a> {
         };
         params.push(Param { names, ty: first_type, span });
         
-        // Continue parsing remaining named params
         while self.eat(TokenKind::Comma) && !self.at(TokenKind::RParen) {
             let start = self.current.span.start;
+            
+            if self.eat(TokenKind::Ellipsis) {
+                variadic = true;
+                let ty = self.parse_type()?;
+                params.push(Param { names: Vec::new(), ty, span: Span::new(start, self.current.span.start) });
+                break;
+            }
+            
             let names = self.parse_ident_list()?;
-            self.eat(TokenKind::Ellipsis); // handle variadic
+            
+            if self.eat(TokenKind::Ellipsis) {
+                variadic = true;
+                let ty = self.parse_type()?;
+                params.push(Param { names, ty, span: Span::new(start, self.current.span.start) });
+                break;
+            }
+            
             let ty = self.parse_type()?;
-            let span = Span::new(start, self.current.span.start);
-            params.push(Param { names, ty, span });
+            params.push(Param { names, ty, span: Span::new(start, self.current.span.start) });
         }
         
-        Ok(params)
+        Ok((params, variadic))
     }
     
     fn parse_struct_body(&mut self) -> ParseResult<StructType> {
@@ -260,7 +274,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn is_type_start(&self) -> bool {
+    pub(crate) fn is_type_start(&self) -> bool {
         matches!(
             self.current.kind,
             TokenKind::Ident

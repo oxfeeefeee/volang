@@ -201,57 +201,39 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parses function parameters. Reuses parse_func_type_params and detects variadic.
     fn parse_param_list(&mut self) -> ParseResult<(Vec<Param>, bool)> {
-        let mut params = Vec::new();
-        let mut variadic = false;
-        
         if self.at(TokenKind::RParen) {
-            return Ok((params, variadic));
+            return Ok((Vec::new(), false));
         }
         
-        loop {
-            let param_start = self.current.span.start;
-            
-            // Check for variadic: ...Type
-            if self.eat(TokenKind::Ellipsis) {
-                variadic = true;
-                let ty = self.parse_type()?;
-                params.push(Param {
-                    names: Vec::new(),
-                    ty,
-                    span: Span::new(param_start, self.current.span.start),
-                });
-                break;
-            }
-            
-            // Parse names
-            let names = self.parse_ident_list()?;
-            
-            // Check for variadic after names: name ...Type
-            if self.eat(TokenKind::Ellipsis) {
-                variadic = true;
-                let ty = self.parse_type()?;
-                params.push(Param {
-                    names,
-                    ty,
-                    span: Span::new(param_start, self.current.span.start),
-                });
-                break;
-            }
-            
+        // Handle leading variadic: ...Type
+        if self.eat(TokenKind::Ellipsis) {
+            let start = self.current.span.start;
             let ty = self.parse_type()?;
-            params.push(Param {
-                names,
-                ty,
-                span: Span::new(param_start, self.current.span.start),
-            });
-            
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
+            let param = Param { names: Vec::new(), ty, span: Span::new(start, self.current.span.start) };
+            return Ok((vec![param], true));
         }
         
-        Ok((params, variadic))
+        // Reuse the strategy from parse_func_type_params
+        let first_group = self.collect_type_list()?;
+        
+        // Check for variadic after first group
+        if self.eat(TokenKind::Ellipsis) {
+            let ty = self.parse_type()?;
+            let names = self.types_to_idents(first_group);
+            let span = ty.span;
+            return Ok((vec![Param { names, ty, span }], true));
+        }
+        
+        // Try to parse type after the list
+        if let Some(ty) = self.try_parse_type() {
+            // first_group was names, reuse parse_named_params
+            self.parse_named_params(first_group, ty)
+        } else {
+            // first_group was anonymous types
+            Ok((self.types_to_anonymous_params(first_group), false))
+        }
     }
 
     fn parse_result_type(&mut self) -> ParseResult<Vec<ResultParam>> {
