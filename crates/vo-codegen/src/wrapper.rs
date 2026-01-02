@@ -121,9 +121,13 @@ pub fn generate_promoted_wrapper(
     // Check if original method is pointer receiver
     let is_pointer_receiver = original_func_id == iface_func_id;
     
-    // Compute embedding path info and final receiver type
-    let (offset, current_type, has_pointer_embed) = 
-        compute_embed_path(outer_type, embed_indices, tc_objs);
+    // Use unified embed path analysis
+    // Note: embed_indices here does NOT include method index (already stripped by caller)
+    // So we pass indices as-is without adding a fake method index
+    let path_info = crate::embed::analyze_embed_path_raw(outer_type, embed_indices, tc_objs);
+    let offset = path_info.total_offset;
+    let current_type = path_info.final_type;
+    let has_pointer_embed = path_info.steps.iter().any(|s| s.is_pointer);
     
     let recv_slots_for_call = if is_pointer_receiver {
         1u16
@@ -185,40 +189,6 @@ pub fn generate_promoted_wrapper(
 // =============================================================================
 // Helper functions
 // =============================================================================
-
-/// Compute embedding path info: total offset, final type, and whether any embed is pointer
-fn compute_embed_path(
-    outer_type: TypeKey,
-    embed_indices: &[usize],
-    tc_objs: &vo_analysis::objects::TCObjects,
-) -> (u16, TypeKey, bool) {
-    let mut offset = 0u16;
-    let mut current_type = outer_type;
-    let mut has_pointer_embed = false;
-    
-    for &idx in embed_indices {
-        let (field_offset, _) = vo_analysis::check::type_info::struct_field_offset_by_index(
-            current_type, idx, tc_objs
-        );
-        let field_type = vo_analysis::check::type_info::struct_field_type_by_index(
-            current_type, idx, tc_objs
-        );
-        
-        offset += field_offset;
-        
-        if vo_analysis::check::type_info::is_pointer(field_type, tc_objs) {
-            has_pointer_embed = true;
-            let underlying = vo_analysis::typ::underlying_type(field_type, tc_objs);
-            if let vo_analysis::typ::Type::Pointer(p) = &tc_objs.types[underlying] {
-                current_type = p.base();
-            }
-        } else {
-            current_type = field_type;
-        }
-    }
-    
-    (offset, current_type, has_pointer_embed)
-}
 
 /// Emit receiver loading for promoted method wrapper
 fn emit_promoted_receiver(

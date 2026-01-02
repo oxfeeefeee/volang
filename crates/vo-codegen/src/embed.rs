@@ -126,6 +126,67 @@ pub fn analyze_embed_path(
     }
 }
 
+/// Analyze embedding path using ALL indices (no method index skipping).
+/// Used by wrapper generation where indices are already stripped.
+pub fn analyze_embed_path_raw(
+    recv_type: TypeKey,
+    indices: &[usize],
+    tc_objs: &TCObjects,
+) -> EmbedPathInfo {
+    let mut steps = Vec::new();
+    let mut total_offset = 0u16;
+    let mut current_type = recv_type;
+    let mut embedded_iface = None;
+    
+    // Strip pointer from receiver if needed
+    if layout::is_pointer(current_type, tc_objs) {
+        let underlying = typ::underlying_type(current_type, tc_objs);
+        if let Type::Pointer(p) = &tc_objs.types[underlying] {
+            current_type = p.base();
+        }
+    }
+    
+    for &idx in indices {
+        let (field_offset, _slots) = layout::struct_field_offset_by_index(current_type, idx, tc_objs);
+        let field_type = layout::struct_field_type_by_index(current_type, idx, tc_objs);
+        
+        let is_pointer = layout::is_pointer(field_type, tc_objs);
+        let is_interface = layout::is_interface(field_type, tc_objs);
+        
+        steps.push(EmbedStep {
+            field_offset,
+            is_pointer,
+            is_interface,
+        });
+        
+        total_offset += field_offset;
+        
+        if is_interface {
+            embedded_iface = Some(EmbeddedIfaceInfo {
+                offset: total_offset,
+                iface_type: field_type,
+            });
+            break;
+        }
+        
+        if is_pointer {
+            let underlying = typ::underlying_type(field_type, tc_objs);
+            if let Type::Pointer(p) = &tc_objs.types[underlying] {
+                current_type = p.base();
+            }
+        } else {
+            current_type = field_type;
+        }
+    }
+    
+    EmbedPathInfo {
+        steps,
+        total_offset,
+        final_type: current_type,
+        embedded_iface,
+    }
+}
+
 // =============================================================================
 // Unified Method Call Resolution
 // =============================================================================
