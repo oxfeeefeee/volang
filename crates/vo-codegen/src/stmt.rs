@@ -1887,9 +1887,7 @@ pub fn compile_iface_assign(
         ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id)
     };
     
-    let is_value_type = src_vk == vo_runtime::ValueKind::Struct || src_vk == vo_runtime::ValueKind::Array;
-    
-    if is_value_type {
+    if src_vk.needs_boxing() {
         let src_slots = info.type_slot_count(src_type);
         let src_slot_types = info.type_slot_types(src_type);
         let meta_idx = ctx.get_or_create_value_meta(Some(src_type), src_slots, &src_slot_types);

@@ -3,7 +3,7 @@
 //! slot0 format: [itab_id:32 | rttid:24 | value_kind:8]
 //! slot1: data (immediate value or GcRef)
 
-use vo_runtime::ValueKind;
+use vo_runtime::{RuntimeType, ValueKind};
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::interface;
 
@@ -11,6 +11,16 @@ use crate::bytecode::{Constant, Module};
 use crate::instruction::Instruction;
 use crate::itab::ItabCache;
 use crate::vm::ExecResult;
+
+/// Extract named_type_id from RuntimeType (recursively unwraps Pointer).
+/// Methods are always defined on the base Named type.
+fn extract_named_type_id(rt: &RuntimeType) -> Option<u32> {
+    match rt {
+        RuntimeType::Named(id) => Some(*id),
+        RuntimeType::Pointer(inner) => extract_named_type_id(inner),
+        _ => None,
+    }
+}
 
 /// IfaceAssign: a=dst (2 slots), b=src, c=const_idx, flags=value_kind
 ///
@@ -43,21 +53,24 @@ pub fn exec_iface_assign(
         let src_vk = interface::unpack_value_kind(src_slot0);
         let iface_meta_id = low;  // low = target iface_meta_id
         
-        let itab_id = if src_rttid == 0 {
-            0  // primitive or nil
-        } else {
-            // Get named_type_id from runtime_types (rttid != named_type_id)
-            let named_type_id = if let Some(vo_runtime::RuntimeType::Named(id)) = module.runtime_types.get(src_rttid as usize) {
-                *id
+        let itab_id = {
+            // Get named_type_id from runtime_types
+            // For Named types: Named(id) -> id
+            // For Pointer types: Pointer(Named(id)) -> id (methods are on base type)
+            let named_type_id = module.runtime_types.get(src_rttid as usize)
+                .and_then(|rt| extract_named_type_id(rt))
+                .unwrap_or(0);
+            
+            if named_type_id == 0 {
+                0  // primitive or nil - no methods
             } else {
-                0 // non-Named types don't have methods
-            };
-            itab_cache.get_or_create(
-                named_type_id,
-                iface_meta_id,
-                &module.named_type_metas,
-                &module.interface_metas,
-            )
+                itab_cache.get_or_create(
+                    named_type_id,
+                    iface_meta_id,
+                    &module.named_type_metas,
+                    &module.interface_metas,
+                )
+            }
         };
         (src_rttid, src_vk, itab_id)
     } else {

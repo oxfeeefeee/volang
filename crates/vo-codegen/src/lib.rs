@@ -624,8 +624,8 @@ fn compile_func_decl(
 }
 
 /// Generate a wrapper function for value receiver methods.
-/// The wrapper accepts a GcRef (pointer to the value), dereferences it,
-/// and calls the original method with the value.
+/// The wrapper accepts interface data slot (GcRef for struct/array, value for basic types),
+/// and calls the original method with the receiver value.
 fn generate_value_receiver_wrapper(
     ctx: &mut CodegenContext,
     info: &TypeInfoWrapper,
@@ -639,8 +639,15 @@ fn generate_value_receiver_wrapper(
     
     let mut builder = FuncBuilder::new(&wrapper_name);
     
-    // Wrapper receives GcRef as first parameter (1 slot)
-    let ptr_slot = builder.define_param(vo_common::symbol::Symbol::DUMMY, 1, &[vo_runtime::SlotType::GcRef]);
+    // Check if receiver needs unboxing (struct/array are boxed in interface slot1)
+    let recv_vk = info.type_value_kind(recv_type);
+    let needs_unbox = recv_vk.needs_boxing();
+    
+    // Wrapper receives interface data slot as first parameter (1 slot)
+    // Set recv_slots so CallIface knows where to place arguments
+    builder.set_recv_slots(1);
+    let slot_type = if needs_unbox { vo_runtime::SlotType::GcRef } else { vo_runtime::SlotType::Value };
+    let data_slot = builder.define_param(vo_common::symbol::Symbol::DUMMY, 1, &[slot_type]);
     
     // Define other parameters (forwarded from original function)
     let mut wrapper_param_slots = Vec::new();
@@ -663,14 +670,19 @@ fn generate_value_receiver_wrapper(
     // Allocate args area for call: recv_value + params
     let args_start = builder.alloc_temp_typed(&recv_slot_types);
     
-    // Dereference GcRef to get value: PtrGetN(recv_slots, args_start, ptr_slot, 0)
-    builder.emit_with_flags(
-        vo_vm::instruction::Opcode::PtrGetN,
-        recv_slots as u8,
-        args_start,
-        ptr_slot,
-        0,
-    );
+    if needs_unbox {
+        // Struct/Array: dereference GcRef to get value
+        builder.emit_with_flags(
+            vo_vm::instruction::Opcode::PtrGetN,
+            recv_slots as u8,
+            args_start,
+            data_slot,
+            0,
+        );
+    } else {
+        // Basic types: slot1 is the value directly, just copy
+        builder.emit_copy(args_start, data_slot, recv_slots);
+    }
     
     // Copy other parameters after receiver value
     let mut dest_offset = args_start + recv_slots;

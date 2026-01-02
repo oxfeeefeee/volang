@@ -114,6 +114,14 @@ impl ValueKind {
         }
     }
 
+    /// Returns true if this type needs boxing (heap allocation) when assigned to interface.
+    /// Struct/Array are multi-slot and need to be copied to heap via PtrNew.
+    /// Other types (primitives, references) are stored directly in interface slot1.
+    #[inline]
+    pub fn needs_boxing(&self) -> bool {
+        matches!(self, Self::Struct | Self::Array)
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
