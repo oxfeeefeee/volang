@@ -1,0 +1,297 @@
+//! Builtin function compilation (len, cap, make, append, etc.).
+
+use vo_vm::instruction::Opcode;
+
+use crate::context::CodegenContext;
+use crate::error::CodegenError;
+use crate::func::FuncBuilder;
+use crate::type_info::{encode_i32, TypeInfoWrapper};
+
+use super::{compile_expr, compile_expr_to};
+
+pub fn is_builtin(name: &str) -> bool {
+    matches!(name, "len" | "cap" | "make" | "new" | "append" | "copy" | "delete" | "panic" | "recover" | "print" | "println" | "close" | "assert")
+}
+
+pub fn compile_builtin_call(
+    expr: &vo_syntax::ast::Expr,
+    name: &str,
+    call: &vo_syntax::ast::CallExpr,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    match name {
+        "len" => {
+            if call.args.len() != 1 {
+                return Err(CodegenError::Internal("len expects 1 argument".to_string()));
+            }
+            let arg_reg = compile_expr(&call.args[0], ctx, func, info)?;
+            let arg_type = info.expr_type(call.args[0].id);
+            
+            // Check type: string, array, slice, map
+            if info.is_array(arg_type) {
+                // Array: len is known at compile time
+                let len = info.array_len(arg_type);
+                let (b, c) = encode_i32(len as i32);
+                func.emit_op(Opcode::LoadInt, dst, b, c);
+            } else if info.is_string(arg_type) {
+                func.emit_op(Opcode::StrLen, dst, arg_reg, 0);
+            } else if info.is_map(arg_type) {
+                func.emit_op(Opcode::MapLen, dst, arg_reg, 0);
+            } else if info.is_slice(arg_type) {
+                func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
+            } else {
+                // Default to SliceLen
+                func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
+            }
+        }
+        "cap" => {
+            if call.args.len() != 1 {
+                return Err(CodegenError::Internal("cap expects 1 argument".to_string()));
+            }
+            let arg_reg = compile_expr(&call.args[0], ctx, func, info)?;
+            func.emit_op(Opcode::SliceCap, dst, arg_reg, 0);
+        }
+        "print" | "println" => {
+            // CallExtern with vo_print/vo_println
+            // Each argument is passed as (value, value_kind) pair
+            let extern_name = if name == "println" { "vo_println" } else { "vo_print" };
+            let extern_id = ctx.get_or_register_extern(extern_name);
+            
+            // Compile arguments: each arg becomes (value, value_kind)
+            let args_start = func.alloc_temp((call.args.len() * 2) as u16);
+            for (i, arg) in call.args.iter().enumerate() {
+                let slot = args_start + (i * 2) as u16;
+                compile_expr_to(arg, slot, ctx, func, info)?;
+                // Store value_kind in next slot
+                let arg_type = info.expr_type(arg.id);
+                let vk = info.type_value_kind(arg_type) as u8 as i32;
+                let (b, c) = encode_i32(vk);
+                func.emit_op(Opcode::LoadInt, slot + 1, b, c);
+            }
+            
+            // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_slots (each arg is 2 slots)
+            func.emit_with_flags(Opcode::CallExtern, (call.args.len() * 2) as u8, dst, extern_id as u16, args_start);
+        }
+        "panic" => {
+            // Compile panic message
+            if !call.args.is_empty() {
+                let msg_reg = compile_expr(&call.args[0], ctx, func, info)?;
+                func.emit_op(Opcode::Panic, msg_reg, 0, 0);
+            } else {
+                func.emit_op(Opcode::Panic, 0, 0, 0);
+            }
+        }
+        "make" => {
+            // make([]T, len) or make([]T, len, cap) or make(map[K]V) or make(chan T)
+            // Use the call expression's type, not the first arg (which is a type expr)
+            let type_key = info.expr_type(expr.id);
+            
+            if info.is_slice(type_key) {
+                    // make([]T, len) or make([]T, len, cap)
+                    let elem_slots = info.slice_elem_slots(type_key);
+                    let elem_bytes = info.slice_elem_bytes(type_key);
+                    let elem_type = info.slice_elem_type(type_key);
+                    let elem_slot_types = info.slice_elem_slot_types(type_key);
+                    let elem_vk = info.type_value_kind(elem_type);
+                    let elem_meta_idx = ctx.get_or_create_value_meta_with_kind(Some(elem_type), elem_slots, &elem_slot_types, Some(elem_vk));
+                    
+                    // Load elem_meta into register
+                    let meta_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
+                    
+                    let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
+                    // When flags=0 (elem_bytes > 63), put elem_bytes in c+2
+                    let num_regs = if flags == 0 { 3 } else { 2 };
+                    let len_cap_reg = func.alloc_temp(num_regs);
+                    
+                    if call.args.len() > 1 {
+                        compile_expr_to(&call.args[1], len_cap_reg, ctx, func, info)?;
+                    } else {
+                        func.emit_op(Opcode::LoadInt, len_cap_reg, 0, 0);
+                    }
+                    if call.args.len() > 2 {
+                        compile_expr_to(&call.args[2], len_cap_reg + 1, ctx, func, info)?;
+                    } else {
+                        // cap = len
+                        func.emit_op(Opcode::Copy, len_cap_reg + 1, len_cap_reg, 0);
+                    }
+                    if flags == 0 {
+                        // Store elem_bytes in c+2 for dynamic case (use LoadConst so JIT can read from const table)
+                        let elem_bytes_idx = ctx.const_int(elem_bytes as i64);
+                        func.emit_op(Opcode::LoadConst, len_cap_reg + 2, elem_bytes_idx, 0);
+                    }
+                    
+                    // SliceNew: a=dst, b=elem_meta, c=len_cap_start, flags=elem_flags
+                    func.emit_with_flags(Opcode::SliceNew, flags, dst, meta_reg, len_cap_reg);
+                } else if info.is_map(type_key) {
+                    // make(map[K]V)
+                    // MapNew: a=dst, b=packed_meta, c=slots
+                    let (key_slots, val_slots) = info.map_key_val_slots(type_key);
+                    let key_slot_types = info.map_key_slot_types(type_key);
+                    let val_slot_types = info.map_val_slot_types(type_key);
+                    let key_vk = info.map_key_value_kind(type_key);
+                    let val_vk = info.map_val_value_kind(type_key);
+                    let key_meta_idx = ctx.get_or_create_value_meta_with_kind(None, key_slots, &key_slot_types, Some(key_vk));
+                    let val_meta_idx = ctx.get_or_create_value_meta_with_kind(None, val_slots, &val_slot_types, Some(val_vk));
+                    
+                    // Pack key_meta and val_meta into one register: (key_meta << 32) | val_meta
+                    let key_meta_reg = func.alloc_temp(1);
+                    let val_meta_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadConst, key_meta_reg, key_meta_idx, 0);
+                    func.emit_op(Opcode::LoadConst, val_meta_reg, val_meta_idx, 0);
+                    
+                    let packed_reg = func.alloc_temp(1);
+                    let shift_reg = func.alloc_temp(1);
+                    func.emit_op(Opcode::LoadInt, shift_reg, 32, 0);
+                    func.emit_op(Opcode::Shl, packed_reg, key_meta_reg, shift_reg);
+                    func.emit_op(Opcode::Or, packed_reg, packed_reg, val_meta_reg);
+                    
+                    let slots_arg = crate::type_info::encode_map_new_slots(key_slots, val_slots);
+                    func.emit_op(Opcode::MapNew, dst, packed_reg, slots_arg);
+                } else if info.is_chan(type_key) {
+                    // make(chan T) or make(chan T, cap)
+                    let cap_reg = if call.args.len() > 1 {
+                        compile_expr(&call.args[1], ctx, func, info)?
+                    } else {
+                        let tmp = func.alloc_temp(1);
+                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
+                        tmp
+                    };
+                    func.emit_op(Opcode::ChanNew, dst, cap_reg, 0);
+            } else {
+                return Err(CodegenError::UnsupportedExpr("make with unsupported type".to_string()));
+            }
+        }
+        "new" => {
+            // new(T) - allocate zero value of T on heap
+            // Use the call expression's type (pointer to T), not the first arg
+            let ptr_type_key = info.expr_type(expr.id);
+            let type_key = info.pointer_elem(ptr_type_key);
+            let slots = info.type_slot_count(type_key);
+            // PtrNew: a=dst, b=0 (zero init), flags=slots
+            func.emit_with_flags(Opcode::PtrNew, slots as u8, dst, 0, 0);
+        }
+        "append" => {
+            // append(slice, elem...) - variadic, supports multiple elements
+            if call.args.len() < 2 {
+                return Err(CodegenError::Internal("append requires at least 2 args".to_string()));
+            }
+            let slice_reg = compile_expr(&call.args[0], ctx, func, info)?;
+            
+            let slice_type = info.expr_type(call.args[0].id);
+            let elem_slots = info.slice_elem_slots(slice_type);
+            let elem_bytes = info.slice_elem_bytes(slice_type);
+            let elem_type = info.slice_elem_type(slice_type);
+            let elem_slot_types = info.type_slot_types(elem_type);
+            let elem_vk = info.type_value_kind(elem_type);
+            
+            // Get elem_meta as raw u32 value
+            let elem_meta_idx = ctx.get_or_create_value_meta_with_kind(Some(elem_type), elem_slots, &elem_slot_types, Some(elem_vk));
+            
+            let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
+            // SliceAppend: a=dst, b=slice, c=meta_and_elem, flags=elem_flags
+            // When flags!=0: c=[elem_meta], c+1..=[elem]
+            // When flags==0: c=[elem_meta], c+1=[elem_bytes], c+2..=[elem]
+            let extra_slot = if flags == 0 { 1 } else { 0 };
+            let meta_and_elem_reg = func.alloc_temp(1 + extra_slot + elem_slots);
+            
+            // Current slice (updated after each append)
+            let mut current_slice = slice_reg;
+            
+            // Append each element (args[1], args[2], ...)
+            for (i, arg) in call.args.iter().skip(1).enumerate() {
+                let is_last = i == call.args.len() - 2;
+                let append_dst = if is_last { dst } else { func.alloc_temp(1) };
+                
+                func.emit_op(Opcode::LoadConst, meta_and_elem_reg, elem_meta_idx, 0);
+                if flags == 0 {
+                    let elem_bytes_idx = ctx.const_int(elem_bytes as i64);
+                    func.emit_op(Opcode::LoadConst, meta_and_elem_reg + 1, elem_bytes_idx, 0);
+                    crate::stmt::compile_value_to(arg, meta_and_elem_reg + 2, elem_type, ctx, func, info)?;
+                } else {
+                    crate::stmt::compile_value_to(arg, meta_and_elem_reg + 1, elem_type, ctx, func, info)?;
+                }
+                
+                func.emit_with_flags(Opcode::SliceAppend, flags, append_dst, current_slice, meta_and_elem_reg);
+                current_slice = append_dst;
+            }
+        }
+        "copy" => {
+            // copy(dst, src) - use extern for now
+            let extern_id = ctx.get_or_register_extern("vo_copy");
+            let args_start = func.alloc_temp(2);
+            compile_expr_to(&call.args[0], args_start, ctx, func, info)?;
+            compile_expr_to(&call.args[1], args_start + 1, ctx, func, info)?;
+            func.emit_with_flags(Opcode::CallExtern, 2, dst, extern_id as u16, args_start);
+        }
+        "delete" => {
+            // delete(map, key)
+            if call.args.len() != 2 {
+                return Err(CodegenError::Internal("delete requires 2 args".to_string()));
+            }
+            let map_reg = compile_expr(&call.args[0], ctx, func, info)?;
+            let key_reg = compile_expr(&call.args[1], ctx, func, info)?;
+            
+            // MapDelete expects: a=map, b=meta_and_key
+            // meta = key_slots, key at b+1
+            let map_type = info.expr_type(call.args[0].id);
+            let (key_slots, _) = info.map_key_val_slots(map_type);
+            
+            let meta_and_key_reg = func.alloc_temp(1 + key_slots);
+            let meta_idx = ctx.const_int(key_slots as i64);
+            func.emit_op(Opcode::LoadConst, meta_and_key_reg, meta_idx, 0);
+            func.emit_copy(meta_and_key_reg + 1, key_reg, key_slots);
+            
+            func.emit_op(Opcode::MapDelete, map_reg, meta_and_key_reg, 0);
+        }
+        "close" => {
+            // close(chan)
+            if call.args.len() != 1 {
+                return Err(CodegenError::Internal("close requires 1 arg".to_string()));
+            }
+            let chan_reg = compile_expr(&call.args[0], ctx, func, info)?;
+            func.emit_op(Opcode::ChanClose, chan_reg, 0, 0);
+        }
+        "recover" => {
+            // recover() - returns interface{}
+            // Recover: a=dst
+            func.emit_op(Opcode::Recover, dst, 0, 0);
+        }
+        "assert" => {
+            // assert(cond, msg...) - call vo_assert extern
+            // Args: [cond, cond_kind, msg_values...]
+            let extern_id = ctx.get_or_register_extern("vo_assert");
+            
+            if call.args.is_empty() {
+                return Err(CodegenError::Internal("assert requires at least 1 argument".to_string()));
+            }
+            
+            // Compile all arguments as (value, value_kind) pairs
+            let args_start = func.alloc_temp((call.args.len() * 2) as u16);
+            for (i, arg) in call.args.iter().enumerate() {
+                let slot = args_start + (i * 2) as u16;
+                compile_expr_to(arg, slot, ctx, func, info)?;
+                // Store value_kind in next slot
+                let arg_type = info.expr_type(arg.id);
+                let vk = info.type_value_kind(arg_type) as u8 as i32;
+                let (b, c) = encode_i32(vk);
+                func.emit_op(Opcode::LoadInt, slot + 1, b, c);
+            }
+            
+            // Record debug info for assert (may cause panic)
+            let pc = func.current_pc() as u32;
+            ctx.record_debug_loc(pc, expr.span, &info.project.source_map);
+            
+            // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count*2
+            func.emit_with_flags(Opcode::CallExtern, (call.args.len() * 2) as u8, dst, extern_id as u16, args_start);
+        }
+        _ => {
+            return Err(CodegenError::UnsupportedExpr(format!("builtin {}", name)));
+        }
+    }
+    
+    Ok(())
+}

@@ -1244,8 +1244,6 @@ fn compile_defer_method_call(
     
     let base_type = if call_info.recv_is_pointer { info.pointer_base(recv_type) } else { recv_type };
     let actual_recv_type = if call_info.embed_path.steps.is_empty() { base_type } else { call_info.embed_path.final_type };
-    let is_promoted = !call_info.embed_path.steps.is_empty();
-    
     let recv_storage = match &sel.expr.kind {
         ExprKind::Ident(ident) => func.lookup_local(ident.symbol).map(|l| l.storage),
         _ => None,
