@@ -10,6 +10,8 @@ use crate::type_interner::TypeInterner;
 use vo_vm::bytecode::{
     Constant, ExternDef, FunctionDef, GlobalDef, InterfaceMeta, Itab, MethodInfo, Module, NamedTypeMeta, StructMeta,
 };
+use vo_common::SourceMap;
+use vo_common::span::Span;
 
 /// Package-level codegen context.
 pub struct CodegenContext {
@@ -63,6 +65,9 @@ pub struct CodegenContext {
     /// Pending itab builds: (rttid, type_key, iface_meta_id, const_idx)
     /// These are processed after all methods are registered
     pending_itabs: Vec<(u32, TypeKey, u32, u16)>,
+
+    /// Current function ID being compiled (for debug info recording)
+    current_func_id: Option<u32>,
 }
 
 impl CodegenContext {
@@ -90,6 +95,7 @@ impl CodegenContext {
                 functions: Vec::new(),
                 externs: Vec::new(),
                 entry_func: 0,
+                debug_info: vo_common_core::debug_info::DebugInfo::new(),
             },
             func_indices: HashMap::new(),
             extern_indices: HashMap::new(),
@@ -107,6 +113,7 @@ impl CodegenContext {
             objkey_to_iface_func: HashMap::new(),
             init_functions: Vec::new(),
             pending_itabs: Vec::new(),
+            current_func_id: None,
         }
     }
 
@@ -635,6 +642,41 @@ impl CodegenContext {
             return Err(format!("too many runtime types: {} exceeds 24-bit limit", self.type_interner.len()));
         }
         Ok(())
+    }
+
+    // === Debug Info ===
+
+    /// Set the current function ID being compiled.
+    pub fn set_current_func_id(&mut self, func_id: u32) {
+        self.current_func_id = Some(func_id);
+    }
+
+    /// Get the current function ID being compiled.
+    pub fn current_func_id(&self) -> Option<u32> {
+        self.current_func_id
+    }
+
+    /// Record a debug location from a Span using SourceMap.
+    /// Stores line:col:len for error display and highlighting.
+    pub fn add_debug_loc_from_span(&mut self, func_id: u32, pc: u32, span: Span, source_map: &SourceMap) {
+        if let Some(file) = source_map.lookup_file(span.start) {
+            let lc = file.line_col(span.start);
+            let len = (span.end.to_u32() - span.start.to_u32()) as u16;
+            self.module.debug_info.add_loc(func_id, pc, file.name(), lc.line, lc.column as u16, len);
+        }
+    }
+
+    /// Record debug location for current function from span.
+    /// Use this during function compilation when you have access to the span.
+    pub fn record_debug_loc(&mut self, pc: u32, span: Span, source_map: &SourceMap) {
+        if let Some(func_id) = self.current_func_id {
+            self.add_debug_loc_from_span(func_id, pc, span, source_map);
+        }
+    }
+
+    /// Finalize debug info (sort entries by PC).
+    pub fn finalize_debug_info(&mut self) {
+        self.module.debug_info.finalize();
     }
 
     pub fn finish(self) -> Module {

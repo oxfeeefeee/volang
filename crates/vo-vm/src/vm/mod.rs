@@ -10,7 +10,7 @@ mod helpers;
 mod types;
 
 pub use helpers::{stack_get, stack_set};
-pub use types::{ExecResult, VmError, VmState, TIME_SLICE};
+pub use types::{ExecResult, VmError, VmState, ErrorLocation, TIME_SLICE};
 
 use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index};
 
@@ -99,6 +99,10 @@ impl Vm {
 }
 
 impl Vm {
+    pub fn module(&self) -> Option<&Module> {
+        self.module.as_ref()
+    }
+
     pub fn load(&mut self, module: Module) {
         // Register extern functions from module
         for (id, def) in module.externs.iter().enumerate() {
@@ -151,7 +155,7 @@ impl Vm {
                     self.scheduler.suspend_current();
                 }
                 ExecResult::Return | ExecResult::Done => {
-                    self.scheduler.kill_current();
+                    let _ = self.scheduler.kill_current();
                 }
                 ExecResult::Yield => {
                     self.scheduler.suspend_current();
@@ -160,8 +164,9 @@ impl Vm {
                     self.scheduler.block_current();
                 }
                 ExecResult::Panic => {
-                    let msg = self.scheduler.kill_current();
-                    return Err(VmError::PanicUnwound(msg));
+                    let (msg, loc_tuple) = self.scheduler.kill_current();
+                    let loc = loc_tuple.map(|(func_id, pc)| ErrorLocation { func_id, pc });
+                    return Err(VmError::PanicUnwound { msg, loc });
                 }
                 ExecResult::Osr(_, _, _) => {
                     // OSR result should not propagate here from run_fiber

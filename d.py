@@ -60,6 +60,9 @@ def parse_config_yaml(path: Path) -> list[dict]:
             # should_fail: true
             elif current_entry and 'should_fail:' in stripped:
                 current_entry['should_fail'] = 'true' in stripped.lower()
+            # zip_root: path/
+            elif current_entry and 'zip_root:' in stripped:
+                current_entry['zip_root'] = stripped.split('zip_root:', 1)[1].strip()
     
     if current_entry:
         entries.append(current_entry)
@@ -150,6 +153,7 @@ class TestRunner:
                 config[entry['file']] = {
                     'skip': entry.get('skip', []),
                     'should_fail': entry.get('should_fail', False),
+                    'zip_root': entry.get('zip_root', None),
                 }
         
         return config
@@ -163,6 +167,11 @@ class TestRunner:
         if file in self.config:
             return self.config[file].get('should_fail', False)
         return False
+
+    def get_zip_root(self, file: str) -> Optional[str]:
+        if file in self.config:
+            return self.config[file].get('zip_root')
+        return None
 
     def run(self, mode: str, single_file: Optional[str] = None):
         print(f"{Colors.DIM}Building vo-cli...{Colors.NC}")
@@ -222,6 +231,7 @@ class TestRunner:
                     self._run_test(rel_file, 'jit', gc_debug)
 
         if not is_gc_mode:
+            # Run proj_* directory tests
             for proj_dir in sorted(TEST_DIR.glob('proj_*')):
                 if not proj_dir.is_dir():
                     continue
@@ -242,6 +252,27 @@ class TestRunner:
                         self.jit_skipped += 1
                     else:
                         self._run_test(dir_name, 'jit', False)
+
+            # Run zip file tests
+            for zip_file in sorted(TEST_DIR.rglob('*.zip')):
+                rel_path = zip_file.relative_to(TEST_DIR)
+                rel_file = str(rel_path)
+                
+                # Check for zip_root config (e.g., subdir.zip:src/)
+                zip_root = self.get_zip_root(rel_file)
+                test_path = f"{rel_file}:{zip_root}" if zip_root else rel_file
+                
+                if run_vm:
+                    if self.should_skip(rel_file, 'vm'):
+                        self.vm_skipped += 1
+                    else:
+                        self._run_test(test_path, 'vm', False)
+
+                if run_jit:
+                    if self.should_skip(rel_file, 'jit'):
+                        self.jit_skipped += 1
+                    else:
+                        self._run_test(test_path, 'jit', False)
 
         self._print_results()
 
@@ -276,8 +307,12 @@ class TestRunner:
         code, stdout, stderr = run_cmd(cmd)
         output = stdout + stderr
 
-        # Check for compile/type-check errors
-        has_analysis_error = 'analysis error:' in output or '[VO:ERROR:' in output
+        # Check for compile/type-check errors (new tags: PARSE, CHECK, CODEGEN, IO)
+        has_analysis_error = ('analysis error:' in output or 
+                              '[VO:PARSE:' in output or 
+                              '[VO:CHECK:' in output or 
+                              '[VO:CODEGEN:' in output or
+                              '[VO:IO:' in output)
         has_rust_panic = 'panicked at' in output
 
         if has_rust_panic:
@@ -313,7 +348,11 @@ class TestRunner:
         code, stdout, stderr = run_cmd(cmd, env=run_env)
         output = stdout + stderr
 
-        has_vo_error = '[VO:PANIC:' in output or '[VO:ERROR:' in output
+        has_vo_error = ('[VO:PANIC:' in output or 
+                        '[VO:PARSE:' in output or 
+                        '[VO:CHECK:' in output or 
+                        '[VO:CODEGEN:' in output or
+                        '[VO:IO:' in output)
         has_rust_panic = 'panicked at' in output
         has_ok = '[VO:OK]' in output
         has_cli_error = output.strip().startswith('error:')
@@ -324,7 +363,7 @@ class TestRunner:
             panic_line = next((l for l in output.split('\n') if 'panicked at' in l), '')[:60]
             self._record_fail(mode, f"{file} [{mode}] [RUST PANIC: {panic_line}]")
         elif has_vo_error:
-            msg = next((l for l in output.split('\n') if '[VO:PANIC:' in l or '[VO:ERROR:' in l), '')
+            msg = next((l for l in output.split('\n') if '[VO:PANIC:' in l or '[VO:PARSE:' in l or '[VO:CHECK:' in l or '[VO:CODEGEN:' in l or '[VO:IO:' in l), '')
             self._record_fail(mode, f"{file} [{mode}] {msg[:60]}")
         elif has_cli_error:
             err_line = next((l for l in output.split('\n') if l.startswith('error:')), '')[:60]

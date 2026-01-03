@@ -170,11 +170,13 @@ fn parse_run_mode(s: &str) -> Result<RunMode, String> {
 fn main() {
     let cli = Cli::parse();
 
-    let result = match cli.command {
-        Commands::Init { module_path } => commands::init::run(&module_path),
-        Commands::Get { module_version } => commands::get::run(&module_version),
+    // Commands return bool (true = success, error already reported)
+    // or Result (error needs to be printed by main)
+    let success = match cli.command {
+        Commands::Init { module_path } => commands::init::run(&module_path).is_ok(),
+        Commands::Get { module_version } => commands::get::run(&module_version).is_ok(),
         Commands::Build { path, std } => commands::build::run(&path, std),
-        Commands::Check => commands::check::run(),
+        Commands::Check => commands::check::run().is_ok(),
         Commands::Run(args) => commands::run::run(
             &args.file,
             args.mode,
@@ -182,13 +184,12 @@ fn main() {
             args.ast,
             args.codegen,
         ),
-        Commands::Dump { file } => commands::dump::run(&file),
-        Commands::Compile { file, output } => commands::compile::run(&file, output),
-        Commands::RunBytecode { test } => bytecode_tests::run_test(&test),
+        Commands::Dump { file } => commands::dump::run(&file).is_ok(),
+        Commands::Compile { file, output } => commands::compile::run(&file, output).is_ok(),
+        Commands::RunBytecode { test } => bytecode_tests::run_test(&test).is_ok(),
     };
 
-    if let Err(e) = result {
-        eprintln!("error: {}", e);
+    if !success {
         process::exit(1);
     }
 }

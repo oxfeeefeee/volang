@@ -44,7 +44,10 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     // 5. Build runtime_types after all codegen (all types have been assigned rttid)
     build_runtime_types(project, &mut ctx, &info);
     
-    // 6. Final check: all IDs within 24-bit limit
+    // 6. Finalize debug info (sort entries by PC)
+    ctx.finalize_debug_info();
+    
+    // 7. Final check: all IDs within 24-bit limit
     ctx.check_id_limits().map_err(CodegenError::Internal)?;
     
     Ok(ctx.finish())
@@ -539,6 +542,20 @@ fn compile_func_decl(
 ) -> Result<u32, CodegenError> {
     let name = info.project.interner.resolve(func_decl.name.symbol)
         .unwrap_or("unknown");
+    
+    // Get the func_id for pre-declared functions (for debug info recording)
+    let (recv_base_type, is_pointer_recv) = func_decl.receiver.as_ref()
+        .map(|recv| {
+            let base_type = info.method_receiver_base_type(func_decl)
+                .expect("method receiver must have type");
+            (Some(base_type), recv.is_pointer)
+        })
+        .unwrap_or((None, false));
+    
+    // Set current function ID for debug info (if pre-declared)
+    if let Some(func_id) = ctx.get_func_index(recv_base_type, is_pointer_recv, func_decl.name.symbol) {
+        ctx.set_current_func_id(func_id);
+    }
     
     let mut builder = FuncBuilder::new(name);
     

@@ -1,17 +1,17 @@
-//! Virtual File System for package resolution.
+//! Package resolution system.
 //!
-//! Provides three separate VFS layers:
-//! - StdVfs: Standard library packages
-//! - LocalVfs: Local packages (relative paths)
-//! - ModVfs: External module dependencies
+//! Provides three package sources:
+//! - StdSource: Standard library packages
+//! - LocalSource: Local packages (relative paths)
+//! - ModSource: External module dependencies
 
 use std::path::{Path, PathBuf};
 
 use vo_common::vfs::{FileSystem, RealFs};
 
-/// VFS configuration with three root paths.
+/// Package resolver configuration with three root paths.
 #[derive(Debug, Clone)]
-pub struct VfsConfig {
+pub struct ResolverConfig {
     /// Standard library root path
     pub std_root: PathBuf,
     /// Local packages root path (project directory)
@@ -20,8 +20,8 @@ pub struct VfsConfig {
     pub mod_root: PathBuf,
 }
 
-impl VfsConfig {
-    /// Create a new VFS config with the given paths.
+impl ResolverConfig {
+    /// Create a new resolver config with the given paths.
     pub fn new(std_root: PathBuf, local_root: PathBuf, mod_root: PathBuf) -> Self {
         Self { std_root, local_root, mod_root }
     }
@@ -88,9 +88,9 @@ impl VfsConfig {
         }
     }
     
-    /// Build a VFS from this config.
-    pub fn to_vfs(&self) -> Vfs {
-        Vfs::with_fs_roots(
+    /// Build a PackageResolver from this config.
+    pub fn to_resolver(&self) -> PackageResolver {
+        PackageResolver::with_roots(
             self.std_root.clone(),
             self.local_root.clone(),
             self.mod_root.clone(),
@@ -98,7 +98,7 @@ impl VfsConfig {
     }
 }
 
-/// A resolved package from the VFS.
+/// A resolved package from the package resolver.
 #[derive(Debug, Clone)]
 pub struct VfsPackage {
     /// Package name (e.g., "fmt", "mylib")
@@ -109,7 +109,7 @@ pub struct VfsPackage {
     pub files: Vec<VfsFile>,
 }
 
-/// A source file from the VFS.
+/// A source file from a package.
 #[derive(Debug, Clone)]
 pub struct VfsFile {
     /// File path relative to package
@@ -118,7 +118,7 @@ pub struct VfsFile {
     pub content: String,
 }
 
-/// Package source trait for VFS implementations.
+/// Package source trait for package resolution.
 pub trait PackageSource: Send + Sync {
     /// Resolve a package by import path.
     fn resolve(&self, import_path: &str) -> Option<VfsPackage>;
@@ -127,81 +127,50 @@ pub trait PackageSource: Send + Sync {
     fn can_handle(&self, import_path: &str) -> bool;
 }
 
-/// Standard library VFS.
-pub struct StdVfs<F: FileSystem = RealFs> {
-    root: PathBuf,
+/// Standard library package source.
+pub struct StdSource<F: FileSystem = RealFs> {
     fs: F,
 }
 
-impl StdVfs<RealFs> {
+impl StdSource<RealFs> {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, fs: RealFs }
+        Self { fs: RealFs::new(&root) }
     }
 }
 
-impl<F: FileSystem> StdVfs<F> {
-    pub fn with_fs(root: PathBuf, fs: F) -> Self {
-        Self { root, fs }
-    }
-    
-    fn load_package(&self, import_path: &str) -> Option<VfsPackage> {
-        let pkg_dir = self.root.join(import_path);
-        if !self.fs.is_dir(&pkg_dir) {
-            return None;
-        }
-        
-        let files = load_vo_files(&self.fs, &pkg_dir)?;
-        let name = import_path.rsplit('/').next().unwrap_or(import_path).to_string();
-        
-        Some(VfsPackage {
-            name,
-            path: import_path.to_string(),
-            files,
-        })
+impl<F: FileSystem> StdSource<F> {
+    pub fn with_fs(fs: F) -> Self {
+        Self { fs }
     }
     
     pub fn resolve(&self, import_path: &str) -> Option<VfsPackage> {
-        self.load_package(import_path)
+        resolve_package(&self.fs, import_path, import_path)
     }
     
     pub fn can_handle(&self, import_path: &str) -> bool {
-        // Stdlib: no dots (domain names have dots)
         !import_path.contains('.')
     }
 }
 
-/// Local package VFS (relative paths).
-pub struct LocalVfs<F: FileSystem = RealFs> {
-    root: PathBuf,
+/// Local package source (relative paths).
+pub struct LocalSource<F: FileSystem = RealFs> {
     fs: F,
 }
 
-impl LocalVfs<RealFs> {
+impl LocalSource<RealFs> {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, fs: RealFs }
+        Self { fs: RealFs::new(&root) }
     }
 }
 
-impl<F: FileSystem> LocalVfs<F> {
-    pub fn with_fs(root: PathBuf, fs: F) -> Self {
-        Self { root, fs }
+impl<F: FileSystem> LocalSource<F> {
+    pub fn with_fs(fs: F) -> Self {
+        Self { fs }
     }
     
     pub fn resolve(&self, import_path: &str) -> Option<VfsPackage> {
         let rel_path = import_path.trim_start_matches("./");
-        let pkg_dir = self.root.join(rel_path);
-        if !self.fs.is_dir(&pkg_dir) {
-            return None;
-        }
-        
-        let files = load_vo_files(&self.fs, &pkg_dir)?;
-        let name = rel_path.rsplit('/').next().unwrap_or(rel_path).to_string();
-        
-        Some(VfsPackage {
-            name,
-            path: import_path.to_string(),
-            files,
-        })
+        resolve_package(&self.fs, rel_path, import_path)
     }
     
     pub fn can_handle(&self, import_path: &str) -> bool {
@@ -209,112 +178,114 @@ impl<F: FileSystem> LocalVfs<F> {
     }
 }
 
-/// External module VFS (module cache).
-pub struct ModVfs<F: FileSystem = RealFs> {
-    root: PathBuf,
+/// External module package source (module cache).
+pub struct ModSource<F: FileSystem = RealFs> {
     fs: F,
 }
 
-impl ModVfs<RealFs> {
+impl ModSource<RealFs> {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, fs: RealFs }
+        Self { fs: RealFs::new(&root) }
     }
 }
 
-impl<F: FileSystem> ModVfs<F> {
-    pub fn with_fs(root: PathBuf, fs: F) -> Self {
-        Self { root, fs }
+impl<F: FileSystem> ModSource<F> {
+    pub fn with_fs(fs: F) -> Self {
+        Self { fs }
     }
     
     pub fn resolve(&self, import_path: &str) -> Option<VfsPackage> {
-        // e.g., "github.com/user/pkg" -> {mod_root}/github.com/user/pkg
-        let pkg_dir = self.root.join(import_path);
-        if !self.fs.is_dir(&pkg_dir) {
-            return None;
-        }
-        
-        let files = load_vo_files(&self.fs, &pkg_dir)?;
-        let name = import_path.rsplit('/').next().unwrap_or(import_path).to_string();
-        
-        Some(VfsPackage {
-            name,
-            path: import_path.to_string(),
-            files,
-        })
+        resolve_package(&self.fs, import_path, import_path)
     }
     
     pub fn can_handle(&self, import_path: &str) -> bool {
-        // External: has dots in domain (not relative paths)
-        // e.g., "github.com/user/pkg" but not "./mylib"
         !import_path.starts_with("./") 
             && !import_path.starts_with("../")
             && import_path.contains('.')
     }
 }
 
-/// Combined VFS that delegates to the appropriate source.
-pub struct Vfs<F: FileSystem = RealFs> {
-    pub std_vfs: StdVfs<F>,
-    pub local_vfs: LocalVfs<F>,
-    pub mod_vfs: ModVfs<F>,
+/// Combined package resolver that delegates to the appropriate source.
+pub struct PackageResolver<F: FileSystem = RealFs> {
+    pub std: StdSource<F>,
+    pub local: LocalSource<F>,
+    pub r#mod: ModSource<F>,
 }
 
-impl Vfs<RealFs> {
-    /// Create a VFS with three filesystem root paths using real filesystem.
+impl PackageResolver<RealFs> {
+    /// Create a resolver with three filesystem root paths using real filesystem.
     ///
     /// # Arguments
     /// * `std_root` - Root path for standard library (e.g., "/usr/local/vo/std")
     /// * `local_root` - Root path for local packages (usually project directory)
     /// * `mod_root` - Root path for module cache (e.g., "~/.vo/mod")
-    pub fn with_fs_roots(std_root: PathBuf, local_root: PathBuf, mod_root: PathBuf) -> Self {
+    pub fn with_roots(std_root: PathBuf, local_root: PathBuf, mod_root: PathBuf) -> Self {
         Self {
-            std_vfs: StdVfs::new(std_root),
-            local_vfs: LocalVfs::new(local_root),
-            mod_vfs: ModVfs::new(mod_root),
+            std: StdSource::new(std_root),
+            local: LocalSource::new(local_root),
+            r#mod: ModSource::new(mod_root),
         }
     }
 }
 
-impl<F: FileSystem + Clone> Vfs<F> {
-    /// Create a VFS with three filesystem root paths using custom filesystem.
-    pub fn with_fs(std_root: PathBuf, local_root: PathBuf, mod_root: PathBuf, fs: F) -> Self {
+impl<F: FileSystem + Clone> PackageResolver<F> {
+    /// Create a resolver with a single shared filesystem (e.g., MemoryFs, ZipFs).
+    /// All three sources share the same filesystem instance.
+    pub fn with_fs(fs: F) -> Self {
         Self {
-            std_vfs: StdVfs::with_fs(std_root, fs.clone()),
-            local_vfs: LocalVfs::with_fs(local_root, fs.clone()),
-            mod_vfs: ModVfs::with_fs(mod_root, fs),
+            std: StdSource::with_fs(fs.clone()),
+            local: LocalSource::with_fs(fs.clone()),
+            r#mod: ModSource::with_fs(fs),
         }
     }
 }
 
-impl<F: FileSystem> Vfs<F> {
+impl<F: FileSystem> PackageResolver<F> {
     /// Resolve a package by import path.
     /// 
     /// Resolution order follows module.md spec:
-    /// 1. Explicit local paths (./xxx or ../xxx) → LocalVfs
-    /// 2. External dependencies (has dots like github.com/...) → ModVfs  
+    /// 1. Explicit local paths (./xxx or ../xxx) → LocalSource
+    /// 2. External dependencies (has dots like github.com/...) → ModSource  
     /// 3. Non-dotted paths: try stdlib first, then local fallback
     pub fn resolve(&self, import_path: &str) -> Option<VfsPackage> {
         // Explicit local paths
         if import_path.starts_with("./") || import_path.starts_with("../") {
-            return self.local_vfs.resolve(import_path);
+            return self.local.resolve(import_path);
         }
         
         // External dependencies (has dots = domain name)
         if import_path.contains('.') {
-            return self.mod_vfs.resolve(import_path);
+            return self.r#mod.resolve(import_path);
         }
         
         // Non-dotted paths: try stdlib first, then local fallback
         // This matches module.md spec section 6.3:
         //   "P" (known stdlib) → stdlib
         //   "P" (not stdlib) → <project-root>/<P>/
-        if let Some(pkg) = self.std_vfs.resolve(import_path) {
+        if let Some(pkg) = self.std.resolve(import_path) {
             return Some(pkg);
         }
         
         // Fallback to local package (e.g., "iface" → ./iface/)
-        self.local_vfs.resolve(import_path)
+        self.local.resolve(import_path)
     }
+}
+
+/// Helper to resolve a package from a file system.
+fn resolve_package<F: FileSystem>(fs: &F, fs_path: &str, import_path: &str) -> Option<VfsPackage> {
+    let pkg_path = Path::new(fs_path);
+    if !fs.is_dir(pkg_path) {
+        return None;
+    }
+    
+    let files = load_vo_files(fs, pkg_path)?;
+    let name = fs_path.rsplit('/').next().unwrap_or(fs_path).to_string();
+    
+    Some(VfsPackage {
+        name,
+        path: import_path.to_string(),
+        files,
+    })
 }
 
 /// Helper to load all .vo files from a directory.
@@ -323,7 +294,7 @@ fn load_vo_files<F: FileSystem>(fs: &F, dir: &Path) -> Option<Vec<VfsFile>> {
     
     let entries = fs.read_dir(dir).ok()?;
     for path in entries {
-        if path.extension().map(|e| e == "vo").unwrap_or(false) {
+        if path.extension().is_some_and(|e| e == "vo") {
             if let Ok(content) = fs.read_file(&path) {
                 files.push(VfsFile {
                     path: path.file_name().unwrap().into(),
@@ -346,9 +317,9 @@ mod tests {
     
     #[test]
     fn test_can_handle() {
-        let std_vfs = StdVfs::new(PathBuf::new());
-        let local_vfs = LocalVfs::new(PathBuf::new());
-        let mod_vfs = ModVfs::new(PathBuf::new());
+        let std_vfs = StdSource::new(PathBuf::new());
+        let local_vfs = LocalSource::new(PathBuf::new());
+        let mod_vfs = ModSource::new(PathBuf::new());
         
         // Stdlib
         assert!(std_vfs.can_handle("fmt"));

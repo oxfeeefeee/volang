@@ -22,6 +22,7 @@ use codespan_reporting::term::{
 
 use crate::source::SourceMap;
 use crate::span::Span;
+use vo_common_core::{SourceLoc, SourceProvider};
 
 /// Severity level of a diagnostic.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -407,6 +408,26 @@ impl<'a> DiagnosticEmitter<'a> {
         output
     }
 
+    /// Emits a diagnostic in simple format: "file:line:col: severity: message"
+    /// Use this for runtime errors or when source code is not available.
+    pub fn format_simple(&self, diagnostic: &Diagnostic) -> String {
+        let loc = diagnostic.labels.first().and_then(|label| {
+            self.source_map.lookup_file(label.span.start).map(|file| {
+                let lc = file.line_col(label.span.start);
+                format!("{}:{}:{}", file.name(), lc.line, lc.column)
+            })
+        });
+        
+        let code_str = diagnostic.code
+            .map(|c| format!("[E{:04}]", c))
+            .unwrap_or_default();
+        
+        match loc {
+            Some(l) => format!("{}: {}{}: {}", l, diagnostic.severity, code_str, diagnostic.message),
+            None => format!("{}{}: {}", diagnostic.severity, code_str, diagnostic.message),
+        }
+    }
+
     /// Builds a SimpleFiles structure for codespan-reporting.
     fn build_files(&self) -> SimpleFiles<&str, &str> {
         let mut files = SimpleFiles::new();
@@ -475,6 +496,73 @@ impl<T, E> DiagnosticResultExt<T> for Result<T, E> {
                 Err(sink)
             }
         }
+    }
+}
+
+/// Render an error to stderr with optional source code context.
+///
+/// If source code is available (via `source_provider`), renders a pretty-printed
+/// error with source snippet and highlighting. Otherwise, falls back to simple
+/// `file:line:col: severity: message` format.
+///
+/// # Arguments
+/// * `loc` - Source location (file, line, col, len)
+/// * `severity` - Error severity string ("error" or "panic")
+/// * `message` - Error message
+/// * `source_provider` - Provider for reading source files (can be NoSource for fallback)
+pub fn render_error(
+    loc: Option<&SourceLoc>,
+    severity: &str,
+    message: &str,
+    source_provider: &dyn SourceProvider,
+) {
+    let Some(loc) = loc else {
+        // No location - just print the message
+        eprintln!("{}: {}", severity, message);
+        return;
+    };
+
+    // Try to get source code
+    let source = source_provider.read_source(&loc.file);
+    
+    if let Some(source) = source {
+        // Have source - pretty print
+        render_error_with_source(loc, severity, message, &source);
+    } else {
+        // No source - simple format
+        eprintln!("{}:{}:{}: {}: {}", loc.file, loc.line, loc.col, severity, message);
+    }
+}
+
+/// Render an error with source code context (pretty print).
+fn render_error_with_source(loc: &SourceLoc, severity: &str, message: &str, source: &str) {
+    // Build a temporary SourceMap with just this file
+    let mut source_map = SourceMap::new();
+    source_map.add_file(loc.file.as_str(), source);
+    
+    // Calculate byte position from line:col
+    let file = source_map.files().next().unwrap();
+    let line_start = file.line_start((loc.line - 1) as usize).unwrap_or(0);
+    let start = line_start + (loc.col - 1) as u32;
+    let end = start + loc.len as u32;
+    let span = Span::from_u32(start, end);
+    
+    // Create diagnostic (severity string is for display, always use Error style for codespan)
+    let _ = severity;
+    let diagnostic = Diagnostic::error(message)
+        .with_label(Label::primary(span));
+    
+    // Emit
+    let emitter = DiagnosticEmitter::new(&source_map);
+    eprintln!();
+    emitter.emit(&diagnostic);
+}
+
+/// Format a simple error message: "file:line:col: severity: message"
+pub fn format_simple_error(loc: Option<&SourceLoc>, severity: &str, message: &str) -> String {
+    match loc {
+        Some(l) => format!("{}:{}:{}: {}: {}", l.file, l.line, l.col, severity, message),
+        None => format!("{}: {}", severity, message),
     }
 }
 

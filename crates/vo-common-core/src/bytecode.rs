@@ -11,6 +11,7 @@ use hashbrown::HashMap;
 use crate::types::{SlotType, ValueMeta};
 use crate::RuntimeType;
 use crate::instruction::Instruction;
+use crate::debug_info::DebugInfo;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
@@ -111,6 +112,7 @@ pub struct Module {
     pub functions: Vec<FunctionDef>,
     pub externs: Vec<ExternDef>,
     pub entry_func: u32,
+    pub debug_info: DebugInfo,
 }
 
 impl Module {
@@ -127,6 +129,7 @@ impl Module {
             functions: Vec::new(),
             externs: Vec::new(),
             entry_func: 0,
+            debug_info: DebugInfo::new(),
         }
     }
 }

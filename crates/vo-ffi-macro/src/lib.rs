@@ -27,7 +27,7 @@ use syn::{
     punctuated::Punctuated, Token, Expr, Lit,
 };
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod vo_parser;
 
@@ -231,7 +231,7 @@ fn find_vo_mod_root() -> Option<PathBuf> {
 
 /// Resolve package path to filesystem directory.
 /// Returns (dir, is_std) where is_std indicates if it's a stdlib package.
-fn resolve_pkg_path(project_root: &PathBuf, pkg_path: &str) -> Option<(PathBuf, bool)> {
+fn resolve_pkg_path(project_root: &Path, pkg_path: &str) -> Option<(PathBuf, bool)> {
     // Check for stdlib path (e.g., "fmt", "encoding/json")
     // Use vo-module's STD_PREFIX convention: "std/" prefix
     if pkg_path.starts_with("std/") {

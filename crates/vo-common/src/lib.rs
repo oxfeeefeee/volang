@@ -13,7 +13,7 @@ pub mod span;
 pub mod diagnostics;
 pub mod vfs;
 
-pub use source::{SourceMap, SourceFile, FileId};
+pub use source::{SourceMap, SourceFile, FileId, SourceLoc};
 pub use span::{Span, Spanned, BytePos};
 pub use diagnostics::{Diagnostic, DiagnosticSink, Severity, Label};
 pub use vfs::{FileSystem, RealFs, MemoryFs, FileSet};

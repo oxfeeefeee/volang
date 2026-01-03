@@ -49,11 +49,10 @@ impl ModuleClosure {
         let mut best_len = 0;
 
         for (mod_path, resolved) in &self.modules {
-            if import_path == mod_path || import_path.starts_with(&format!("{}/", mod_path)) {
-                if mod_path.len() > best_len {
-                    best_len = mod_path.len();
-                    best_match = Some(resolved);
-                }
+            let matches = import_path == mod_path || import_path.starts_with(&format!("{}/", mod_path));
+            if matches && mod_path.len() > best_len {
+                best_len = mod_path.len();
+                best_match = Some(resolved);
             }
         }
 
@@ -328,7 +327,7 @@ impl ModuleResolver {
             }
         } else if import_path.ends_with("/internal") {
             // Edge case: package is exactly "something/internal"
-            let internal_parent = &import_path[..import_path.len() - "/internal".len()];
+            let internal_parent = import_path.strip_suffix("/internal").unwrap();
             if !importer_path.starts_with(internal_parent) {
                 return Err(ModuleError::InternalPackageViolation {
                     importer: importer_path.to_string(),

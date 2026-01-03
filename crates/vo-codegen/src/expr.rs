@@ -1876,6 +1876,10 @@ fn compile_builtin_call(
                 func.emit_op(Opcode::LoadInt, slot + 1, b, c);
             }
             
+            // Record debug info for assert (may cause panic)
+            let pc = func.current_pc() as u32;
+            _ctx.record_debug_loc(pc, expr.span, &info.project.source_map);
+            
             // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count*2
             func.emit_with_flags(Opcode::CallExtern, (call.args.len() * 2) as u8, dst, extern_id as u16, args_start);
         }

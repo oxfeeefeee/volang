@@ -139,6 +139,13 @@ tests:
   - file: debug_nil_interface.vo
   - file: debug_iface.vo
 
+  # Zip file tests
+  - file: zip/single_file.zip
+  - file: zip/multi.zip
+  - file: zip/subdir.zip
+    zip_root: src/
+    reason: "project in src/ subdirectory"
+
   # Typechecker tests - complex test cases with multiple issues (parser/compiler bugs fixed, test cases need review)
   - file: typechecker/method_sig_complex_params.vo
   - file: typechecker/method_sig_func_types.vo

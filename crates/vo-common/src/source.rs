@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::span::{BytePos, Span};
+use vo_common_core::SourceProvider;
 
 /// A unique identifier for a source file within a `SourceMap`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -83,6 +84,27 @@ impl LineCol {
 impl fmt::Display for LineCol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.line, self.column)
+    }
+}
+
+/// Complete source location with file, line, and column.
+/// Used by both compile-time and runtime error reporting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLoc {
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
+}
+
+impl SourceLoc {
+    pub fn new(file: String, line: u32, col: u32) -> Self {
+        Self { file, line, col }
+    }
+}
+
+impl fmt::Display for SourceLoc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file, self.line, self.col)
     }
 }
 
@@ -458,6 +480,14 @@ impl fmt::Debug for SourceMap {
             .field("file_count", &self.files.len())
             .field("next_base", &self.next_base)
             .finish()
+    }
+}
+
+impl SourceProvider for SourceMap {
+    fn read_source(&self, path: &str) -> Option<String> {
+        self.files.iter()
+            .find(|f| f.name() == path)
+            .map(|f| f.source().to_string())
     }
 }
 

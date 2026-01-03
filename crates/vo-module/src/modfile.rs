@@ -10,6 +10,7 @@
 //!
 //! The alias is used in source code with `@"alias"` syntax for external imports.
 
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
@@ -72,7 +73,7 @@ impl ModFile {
                     return Err(ModuleError::DuplicateModuleDecl(file_path.to_path_buf()));
                 }
 
-                let module_path = line["module ".len()..].trim();
+                let module_path = line.strip_prefix("module ").unwrap().trim();
                 if !is_valid_module_path(module_path) {
                     return Err(ModuleError::ParseError {
                         file: file_path.to_path_buf(),
@@ -87,7 +88,7 @@ impl ModFile {
 
             // Parse require directive
             if line.starts_with("require ") {
-                let rest = line["require ".len()..].trim();
+                let rest = line.strip_prefix("require ").unwrap().trim();
                 let parts: Vec<&str> = rest.split_whitespace().collect();
 
                 if parts.len() != 3 {
@@ -176,25 +177,24 @@ impl ModFile {
         self.requires.iter().find(|r| r.alias == alias)
     }
 
-    /// Serializes the ModFile to a string.
-    pub fn to_string(&self) -> String {
-        let mut result = format!("module {}\n", self.module);
-
-        if !self.requires.is_empty() {
-            result.push('\n');
-            for req in &self.requires {
-                result.push_str(&format!("require {} {} {}\n", req.alias, req.module, req.version));
-            }
-        }
-
-        result
-    }
-
     /// Writes the ModFile to a file.
     pub fn write_file<P: AsRef<Path>>(&self, path: P) -> ModuleResult<()> {
         let path = path.as_ref();
         fs::write(path, self.to_string())
             .map_err(|e| ModuleError::IoError(path.to_path_buf(), e.to_string()))
+    }
+}
+
+impl fmt::Display for ModFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "module {}\n", self.module)?;
+        if !self.requires.is_empty() {
+            writeln!(f)?;
+            for req in &self.requires {
+                writeln!(f, "require {} {} {}", req.alias, req.module, req.version)?;
+            }
+        }
+        Ok(())
     }
 }
 

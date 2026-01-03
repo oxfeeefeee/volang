@@ -20,6 +20,8 @@ pub mod runtime_type;
 pub mod instruction;
 pub mod bytecode;
 pub mod serialize;
+pub mod debug_info;
+pub mod source_provider;
 
 pub use types::{
     ValueKind, ValueMeta, SlotType, MetaId, elem_flags,
@@ -32,3 +34,5 @@ pub use symbol::SymbolInterner;
 pub use runtime_type::{RuntimeType, ChanDir, StructField, InterfaceMethod};
 pub use instruction::{Instruction, Opcode};
 pub use bytecode::{Module, FunctionDef, Constant, ExternDef, GlobalDef, StructMeta, InterfaceMeta, Itab};
+pub use debug_info::{DebugInfo, DebugLoc, FuncDebugInfo, SourceLoc};
+pub use source_provider::{SourceProvider, NoSource};

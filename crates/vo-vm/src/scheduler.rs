@@ -176,14 +176,18 @@ impl Scheduler {
         None
     }
 
-    pub fn kill_current(&mut self) -> Option<String> {
+    /// Kill current fiber and return (panic_msg, error_location).
+    /// error_location is (func_id, pc) from the current frame if available.
+    pub fn kill_current(&mut self) -> (Option<String>, Option<(u32, u32)>) {
         if let Some(id) = self.current {
-            let msg = self.fibers[id as usize].panic_msg.take();
-            self.fibers[id as usize].status = FiberStatus::Dead;
+            let fiber = &mut self.fibers[id as usize];
+            let msg = fiber.panic_msg.take();
+            let loc = fiber.current_frame().map(|f| (f.func_id, f.pc as u32));
+            fiber.status = FiberStatus::Dead;
             self.free_slots.push(id);
-            msg
+            (msg, loc)
         } else {
-            None
+            (None, None)
         }
     }
 

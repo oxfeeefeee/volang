@@ -11,8 +11,8 @@ use std::rc::Rc;
 use vo_common::diagnostics::DiagnosticSink;
 use vo_common::source::SourceMap;
 use vo_common::symbol::SymbolInterner;
-use vo_common::vfs::FileSet;
-use vo_module::vfs::Vfs;
+use vo_common::vfs::{FileSet, FileSystem};
+use vo_module::vfs::PackageResolver;
 use vo_syntax::ast::File;
 use vo_syntax::parser;
 
@@ -23,8 +23,10 @@ use crate::objects::{PackageKey, TCObjects, TypeKey};
 
 /// Analysis error.
 pub enum AnalysisError {
-    /// Parse error.
-    Parse(String),
+    /// Parse error with diagnostics and source map for formatting.
+    /// Note: SourceMap is moved here, but source content uses Arc<str> internally,
+    /// so no actual source bytes are copied.
+    Parse(DiagnosticSink, SourceMap),
     /// Type check error with collected diagnostics and source map for formatting.
     Check(DiagnosticSink, SourceMap),
     /// Import error.
@@ -34,26 +36,26 @@ pub enum AnalysisError {
 }
 
 impl AnalysisError {
-    /// Returns the diagnostics if this is a Check error.
+    /// Returns the diagnostics if this is a Parse or Check error.
     pub fn diagnostics(&self) -> Option<&DiagnosticSink> {
         match self {
-            AnalysisError::Check(diags, _) => Some(diags),
+            AnalysisError::Parse(diags, _) | AnalysisError::Check(diags, _) => Some(diags),
             _ => None,
         }
     }
 
-    /// Returns the source map if this is a Check error.
+    /// Returns the source map if this is a Parse or Check error.
     pub fn source_map(&self) -> Option<&SourceMap> {
         match self {
-            AnalysisError::Check(_, source_map) => Some(source_map),
+            AnalysisError::Parse(_, source_map) | AnalysisError::Check(_, source_map) => Some(source_map),
             _ => None,
         }
     }
 
-    /// Takes the diagnostics if this is a Check error.
+    /// Takes the diagnostics if this is a Parse or Check error.
     pub fn take_diagnostics(&mut self) -> Option<DiagnosticSink> {
         match self {
-            AnalysisError::Check(diags, _) => Some(std::mem::take(diags)),
+            AnalysisError::Parse(diags, _) | AnalysisError::Check(diags, _) => Some(std::mem::take(diags)),
             _ => None,
         }
     }
@@ -62,7 +64,9 @@ impl AnalysisError {
 impl std::fmt::Debug for AnalysisError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AnalysisError::Parse(msg) => f.debug_tuple("Parse").field(msg).finish(),
+            AnalysisError::Parse(diags, _) => f.debug_tuple("Parse")
+                .field(&format!("{} errors", diags.error_count()))
+                .finish(),
             AnalysisError::Check(diags, _) => f.debug_tuple("Check")
                 .field(&format!("{} errors, {} warnings", diags.error_count(), diags.warning_count()))
                 .finish(),
@@ -75,7 +79,18 @@ impl std::fmt::Debug for AnalysisError {
 impl std::fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AnalysisError::Parse(msg) => write!(f, "parse error: {}", msg),
+            AnalysisError::Parse(diags, source_map) => {
+                writeln!(f, "parse error: {} error(s)", diags.error_count())?;
+                for diag in diags.iter() {
+                    if let Some(label) = diag.labels.first() {
+                        let pos = source_map.format_span(label.span);
+                        writeln!(f, "  - {} at {}", diag.message, pos)?;
+                    } else {
+                        writeln!(f, "  - {}", diag.message)?;
+                    }
+                }
+                Ok(())
+            }
             AnalysisError::Check(diags, source_map) => {
                 writeln!(f, "type check failed: {} error(s)", diags.error_count())?;
                 for diag in diags.iter() {
@@ -121,6 +136,8 @@ pub struct Project {
     pub imported_files: HashMap<String, Vec<File>>,
     /// Type checking results for imported packages (package path -> type_info).
     pub imported_type_infos: HashMap<String, crate::check::TypeInfo>,
+    /// Source map for position lookup (used by codegen and runtime error reporting).
+    pub source_map: SourceMap,
 }
 
 impl Project {
@@ -181,17 +198,17 @@ struct ProjectState {
 ///
 /// This is the main entry point for type checking a Vo project.
 /// It handles recursive package imports through the provided VFS.
-pub fn analyze_project(
+pub fn analyze_project<F: FileSystem>(
     files: FileSet,
-    vfs: &Vfs,
+    vfs: &PackageResolver<F>,
 ) -> Result<Project, AnalysisError> {
     analyze_project_with_options(files, vfs, &AnalysisOptions::default())
 }
 
 /// Analyze a project with custom options.
-pub fn analyze_project_with_options(
+pub fn analyze_project_with_options<F: FileSystem>(
     files: FileSet,
-    vfs: &Vfs,
+    vfs: &PackageResolver<F>,
     options: &AnalysisOptions,
 ) -> Result<Project, AnalysisError> {
     let state = Rc::new(RefCell::new(ProjectState {
@@ -269,6 +286,7 @@ pub fn analyze_project_with_options(
         files: parsed_files,
         imported_files: final_state.imported_files,
         imported_type_infos: final_state.imported_type_infos,
+        source_map: final_state.source_map,
     })
 }
 
@@ -316,6 +334,7 @@ pub fn analyze_single_file_with_options(
         files: vec![file],
         imported_files: HashMap::new(),
         imported_type_infos: HashMap::new(),
+        source_map: SourceMap::new(),
     })
 }
 
@@ -359,11 +378,8 @@ fn parse_files(files: &FileSet, state: &Rc<RefCell<ProjectState>>) -> Result<Vec
         state_ref.id_state = new_id_state;
         
         if diags.has_errors() {
-            let mut msg = format!("{}: parse errors\n", path.display());
-            for d in diags.iter() {
-                msg.push_str(&format!("  - {}\n", d.message));
-            }
-            return Err(AnalysisError::Parse(msg));
+            let source_map = std::mem::take(&mut state_ref.source_map);
+            return Err(AnalysisError::Parse(diags, source_map));
         }
         parsed_files.push(file);
     }
@@ -397,11 +413,8 @@ fn parse_vfs_package(
         state_ref.interner = new_interner;
         
         if diags.has_errors() {
-            let mut msg = format!("{:?}: parse errors\n", vfs_file.path);
-            for d in diags.iter() {
-                msg.push_str(&format!("  - {}\n", d.message));
-            }
-            return Err(AnalysisError::Parse(msg));
+            let source_map = std::mem::take(&mut state_ref.source_map);
+            return Err(AnalysisError::Parse(diags, source_map));
         }
         parsed_files.push(file);
     }
@@ -411,7 +424,7 @@ fn parse_vfs_package(
 
 /// Pre-load all imports from the parsed files.
 /// This must be called BEFORE swapping tc_objs with checker.
-fn preload_imports(files: &[File], importer: &mut ProjectImporter) {
+fn preload_imports<F: FileSystem>(files: &[File], importer: &mut ProjectImporter<F>) {
     for file in files {
         for import in &file.imports {
             let path = &import.path.value;
@@ -423,17 +436,17 @@ fn preload_imports(files: &[File], importer: &mut ProjectImporter) {
 }
 
 /// Project-level importer that uses VFS to resolve packages.
-struct ProjectImporter<'a> {
+struct ProjectImporter<'a, F: FileSystem> {
     /// VFS for resolving import paths.
-    vfs: &'a Vfs,
+    vfs: &'a PackageResolver<F>,
     /// Working directory (project root).
     working_dir: PathBuf,
     /// Shared project state.
     state: Rc<RefCell<ProjectState>>,
 }
 
-impl<'a> ProjectImporter<'a> {
-    fn new(vfs: &'a Vfs, working_dir: &std::path::Path, state: Rc<RefCell<ProjectState>>) -> Self {
+impl<'a, F: FileSystem> ProjectImporter<'a, F> {
+    fn new(vfs: &'a PackageResolver<F>, working_dir: &std::path::Path, state: Rc<RefCell<ProjectState>>) -> Self {
         Self {
             vfs,
             working_dir: working_dir.to_path_buf(),
@@ -442,7 +455,7 @@ impl<'a> ProjectImporter<'a> {
     }
 }
 
-impl Importer for ProjectImporter<'_> {
+impl<F: FileSystem> Importer for ProjectImporter<'_, F> {
     fn import(&mut self, key: &ImportKey) -> ImportResult {
         let import_path = &key.path;
         
@@ -540,7 +553,7 @@ impl Importer for ProjectImporter<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vo_module::vfs::VfsConfig;
+    use vo_module::vfs::ResolverConfig;
     use std::path::Path;
 
     /// Test that analyze_project can parse and start analyzing a multipackage project.
@@ -560,8 +573,8 @@ mod tests {
         let mut file_set = FileSet::new(project_dir.clone());
         file_set.files.insert(main_path, main_content);
         
-        let vfs_config = VfsConfig::from_env(project_dir);
-        let vfs = vfs_config.to_vfs();
+        let vfs_config = ResolverConfig::from_env(project_dir);
+        let vfs = vfs_config.to_resolver();
         
         let result = analyze_project(file_set, &vfs);
         
@@ -591,8 +604,8 @@ mod tests {
         let mut file_set = FileSet::new(project_dir.clone());
         file_set.files.insert(main_path, main_content);
         
-        let vfs_config = VfsConfig::from_env(project_dir);
-        let vfs = vfs_config.to_vfs();
+        let vfs_config = ResolverConfig::from_env(project_dir);
+        let vfs = vfs_config.to_resolver();
         
         let result = analyze_project(file_set, &vfs);
         
@@ -616,8 +629,8 @@ mod tests {
             .parent().unwrap()
             .join("examples/multipackage");
         
-        let vfs_config = VfsConfig::from_env(project_dir);
-        let vfs = vfs_config.to_vfs();
+        let vfs_config = ResolverConfig::from_env(project_dir);
+        let vfs = vfs_config.to_resolver();
         
         // Should resolve the local math package
         let pkg = vfs.resolve("./math");

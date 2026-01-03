@@ -20,6 +20,13 @@ pub enum ExecResult {
     Osr(u32, usize, usize),
 }
 
+/// Runtime error location for debug info lookup.
+#[derive(Debug, Clone, Copy)]
+pub struct ErrorLocation {
+    pub func_id: u32,
+    pub pc: u32,
+}
+
 #[derive(Debug)]
 pub enum VmError {
     NoEntryFunction,
@@ -27,12 +34,12 @@ pub enum VmError {
     StackOverflow,
     StackUnderflow,
     InvalidOpcode(u8),
-    DivisionByZero,
-    IndexOutOfBounds,
-    NilPointerDereference,
-    TypeAssertionFailed,
-    PanicUnwound(Option<String>),
-    SendOnClosedChannel,
+    DivisionByZero(Option<ErrorLocation>),
+    IndexOutOfBounds(Option<ErrorLocation>),
+    NilPointerDereference(Option<ErrorLocation>),
+    TypeAssertionFailed(Option<ErrorLocation>),
+    PanicUnwound { msg: Option<String>, loc: Option<ErrorLocation> },
+    SendOnClosedChannel(Option<ErrorLocation>),
 }
 
 /// VM mutable state that can be borrowed independently from scheduler.

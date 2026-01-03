@@ -289,6 +289,10 @@ impl<'a> ByteReader<'a> {
         Self { data, pos: 0 }
     }
 
+    fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.pos)
+    }
+
     fn read_u8(&mut self) -> Result<u8, SerializeError> {
         if self.pos >= self.data.len() {
             return Err(SerializeError::UnexpectedEof);
@@ -460,6 +464,18 @@ impl Module {
 
         w.write_u32(self.entry_func);
 
+        // Debug info
+        w.write_vec(&self.debug_info.files, |w, f| w.write_string(f));
+        w.write_vec(&self.debug_info.funcs, |w, func_info| {
+            w.write_vec(&func_info.entries, |w, entry| {
+                w.write_u32(entry.pc);
+                w.write_u16(entry.file_id);
+                w.write_u32(entry.line);
+                w.write_u16(entry.col);
+                w.write_u16(entry.len);
+            });
+        });
+
         w.into_bytes()
     }
 
@@ -602,6 +618,25 @@ impl Module {
 
         let entry_func = r.read_u32()?;
 
+        // Debug info (may not exist in older bytecode files)
+        let debug_info = if r.remaining() > 0 {
+            let files = r.read_vec(|r| r.read_string())?;
+            let funcs = r.read_vec(|r| {
+                let entries = r.read_vec(|r| {
+                    let pc = r.read_u32()?;
+                    let file_id = r.read_u16()?;
+                    let line = r.read_u32()?;
+                    let col = r.read_u16()?;
+                    let len = r.read_u16()?;
+                    Ok(crate::debug_info::DebugLoc { pc, file_id, line, col, len })
+                })?;
+                Ok(crate::debug_info::FuncDebugInfo { entries })
+            })?;
+            crate::debug_info::DebugInfo { files, funcs }
+        } else {
+            crate::debug_info::DebugInfo::new()
+        };
+
         Ok(Module {
             name,
             struct_metas,
@@ -614,6 +649,7 @@ impl Module {
             functions,
             externs,
             entry_func,
+            debug_info,
         })
     }
 }
