@@ -6,8 +6,8 @@ use linkme::distributed_slice;
 use vo_common_core::types::ValueKind;
 
 use crate::ffi::{ExternCallContext, ExternEntryWithContext, ExternResult, EXTERN_TABLE_WITH_CONTEXT};
-use crate::gc::GcRef;
-use crate::objects::{interface, string};
+use crate::gc::{Gc, GcRef};
+use crate::objects::{interface, string, struct_ops};
 
 /// dyn_get_attr: Get a field from an interface value by name.
 ///
@@ -88,24 +88,21 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     let field_rttid = field.type_info.rttid();
     let field_vk = field.type_info.value_kind();
     
-    // Read field data
-    let data_ptr = data_ref as *const u64;
-    
+    // Read field data using proper GC APIs
     let result_slot1 = if field_vk == ValueKind::Struct || field_vk == ValueKind::Array {
         // Struct/Array fields need boxing: allocate heap and copy data
         let field_slot_types: Vec<_> = struct_meta.slot_types[field_offset..field_offset + field_slots].to_vec();
         let new_ref = call.gc_alloc(field_slots as u16, &field_slot_types);
         
-        // Copy field data to new allocation
-        unsafe {
-            let src = data_ptr.add(field_offset);
-            let dst = new_ref as *mut u64;
-            std::ptr::copy_nonoverlapping(src, dst, field_slots);
+        // Copy field data to new allocation using GC APIs
+        for i in 0..field_slots {
+            let val = unsafe { Gc::read_slot(data_ref, field_offset + i) };
+            unsafe { Gc::write_slot(new_ref, i, val) };
         }
         new_ref as u64
     } else {
-        // Single slot value: read directly
-        unsafe { *data_ptr.add(field_offset) }
+        // Single slot value: read using GC API
+        unsafe { struct_ops::get_field(data_ref, field_offset) }
     };
     
     let result_slot0 = interface::pack_slot0(0, field_rttid, field_vk);

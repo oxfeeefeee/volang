@@ -285,13 +285,15 @@ fn compile_dyn_closure_call(
     let closure_slot = func.alloc_temp(1);
     func.emit_op(Opcode::Copy, closure_slot, callee_reg + 1, 0);
     
-    // Calculate arg slots
+    // Calculate arg slots and return slots
     let arg_slots_total: u16 = args.iter().map(|a| info.expr_slots(a.id)).sum();
     
+    // For dynamic calls, assume 1 slot per return value (basic types)
+    // Struct/array returns would need more sophisticated runtime handling
+    let ret_slots = expected_ret_count;
+    
     // Allocate space for args and return values
-    // Max ret_slots = expected_ret_count (assuming 1 slot per return value for basic types)
-    let max_ret_slots: u16 = expected_ret_count;
-    let args_start = func.alloc_temp(arg_slots_total.max(max_ret_slots));
+    let args_start = func.alloc_temp(arg_slots_total.max(ret_slots));
     
     // Compile arguments
     let mut arg_offset = 0u16;
@@ -302,31 +304,31 @@ fn compile_dyn_closure_call(
     }
     
     // CallClosure: a=closure_slot, b=args_start (also ret_reg), c=(arg_slots<<8|ret_slots)
-    let ret_slots = expected_ret_count;  // Assume 1 slot per return value
     let c = crate::type_info::encode_call_args(arg_slots_total, ret_slots);
     func.emit_op(Opcode::CallClosure, closure_slot, args_start, c);
     
     // Handle return values based on LHS types
-    // Return values are in args_start[0..ret_slots]
+    // Return values are in args_start, each return value is 1 slot for basic types
+    // (struct/array returns would need runtime handling - not yet supported)
     // meta_result layout: [ret_count, ret_slots, ret_meta_0, ret_meta_1, ...]
     let mut dst_offset = 0u16;
     for (i, &ret_type) in ret_types.iter().enumerate() {
         let i = i as u16;
         if info.is_any_type(ret_type) {
-            // LHS is any: box the return value (2 slots)
+            // LHS is any: box the return value (2 slots for interface)
             // slot0 = ret_meta_i (from meta_result + 2 + i)
-            // slot1 = raw value (from args_start + i)
+            // slot1 = raw value (from args_start + i, assuming 1 slot per return)
             func.emit_op(Opcode::Copy, dst + dst_offset, meta_result + 2 + i, 0);  // slot0 = ret_meta
             func.emit_op(Opcode::Copy, dst + dst_offset + 1, args_start + i, 0);   // slot1 = value
             dst_offset += 2;
         } else {
-            // LHS has concrete type: use raw value directly (1 slot for basic types)
-            // TODO: handle multi-slot types (struct, etc.)
-            let ret_slots = info.type_slot_count(ret_type);
-            for j in 0..ret_slots {
+            // LHS has concrete type: copy the raw value
+            // For basic types, this is 1 slot; for struct/array, this needs more handling
+            let lhs_slots = info.type_slot_count(ret_type);
+            for j in 0..lhs_slots {
                 func.emit_op(Opcode::Copy, dst + dst_offset + j, args_start + i + j, 0);
             }
-            dst_offset += ret_slots;
+            dst_offset += lhs_slots;
         }
     }
     

@@ -569,7 +569,7 @@ impl Vm {
                     exec::exec_call(stack, &mut fiber.frames, &inst, module)
                 }
                 Opcode::CallExtern => {
-                    exec::exec_call_extern(stack, bp, &inst, &module.externs, &self.state.extern_registry, &mut self.state.gc, &module.struct_metas, &module.named_type_metas, &module.runtime_types, &mut fiber.panic_msg)
+                    exec::exec_call_extern(stack, bp, &inst, &module.externs, &self.state.extern_registry, &mut self.state.gc, &module.struct_metas, &module.named_type_metas, &module.runtime_types, &module.rttid_to_struct_meta, &mut fiber.panic_msg)
                 }
                 Opcode::CallClosure => {
                     exec::exec_call_closure(stack, &mut fiber.frames, &inst, module)

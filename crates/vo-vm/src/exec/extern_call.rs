@@ -25,6 +25,7 @@ pub fn exec_call_extern(
     struct_metas: &[vo_common_core::bytecode::StructMeta],
     named_type_metas: &[vo_common_core::bytecode::NamedTypeMeta],
     runtime_types: &[vo_runtime::RuntimeType],
+    rttid_to_struct_meta: &[(u32, u32)],
     fiber_panic_msg: &mut Option<String>,
 ) -> ExecResult {
     // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
@@ -51,6 +52,7 @@ pub fn exec_call_extern(
         struct_metas,
         named_type_metas,
         runtime_types,
+        rttid_to_struct_meta,
     );
 
     match result {

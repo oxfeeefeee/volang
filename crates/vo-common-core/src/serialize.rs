@@ -420,6 +420,11 @@ impl Module {
             write_runtime_type(w, rt);
         });
 
+        w.write_vec(&self.rttid_to_struct_meta, |w, (rttid, meta_id)| {
+            w.write_u32(*rttid);
+            w.write_u32(*meta_id);
+        });
+
         w.write_vec(&self.constants, |w, c| match c {
             Constant::Nil => w.write_u8(0),
             Constant::Bool(b) => {
@@ -556,6 +561,12 @@ impl Module {
 
         let runtime_types = r.read_vec(|r| read_runtime_type(r))?;
 
+        let rttid_to_struct_meta = r.read_vec(|r| {
+            let rttid = r.read_u32()?;
+            let meta_id = r.read_u32()?;
+            Ok((rttid, meta_id))
+        })?;
+
         let constants = r.read_vec(|r| {
             let tag = r.read_u8()?;
             match tag {
@@ -651,6 +662,7 @@ impl Module {
             interface_metas,
             named_type_metas,
             runtime_types,
+            rttid_to_struct_meta,
             itabs,
             constants,
             globals,

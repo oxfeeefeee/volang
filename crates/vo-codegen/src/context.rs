@@ -89,6 +89,7 @@ impl CodegenContext {
                 }],
                 named_type_metas: Vec::new(),
                 runtime_types: Vec::new(),
+                rttid_to_struct_meta: Vec::new(),
                 itabs: Vec::new(),
                 constants: Vec::new(),
                 globals: Vec::new(),
@@ -137,6 +138,11 @@ impl CodegenContext {
         self.struct_meta_ids.get(&type_key).copied()
     }
 
+    /// Register rttid -> struct_meta_id mapping for anonymous struct lookup at runtime
+    pub fn register_rttid_struct_meta(&mut self, rttid: u32, struct_meta_id: u32) {
+        self.module.rttid_to_struct_meta.push((rttid, struct_meta_id));
+    }
+
     pub fn register_named_type_meta(&mut self, type_key: TypeKey, meta: NamedTypeMeta) -> u32 {
         let id = self.module.named_type_metas.len() as u32;
         self.module.named_type_metas.push(meta);
@@ -163,8 +169,13 @@ impl CodegenContext {
         use vo_runtime::{RuntimeType, ValueKind};
         
         // Check if it's a Named type first
-        if let Some(id) = self.get_named_type_id(type_key) {
-            return self.type_interner.intern(RuntimeType::Named(id));
+        if let Some(named_id) = self.get_named_type_id(type_key) {
+            let rttid = self.type_interner.intern(RuntimeType::Named(named_id));
+            // Register rttid -> struct_meta_id mapping for Named struct types
+            if let Some(struct_meta_id) = self.struct_meta_ids.get(&type_key).copied() {
+                self.module.rttid_to_struct_meta.push((rttid, struct_meta_id));
+            }
+            return rttid;
         }
         
         let vk = info.type_value_kind(type_key);
@@ -176,7 +187,12 @@ impl CodegenContext {
                 self.type_interner.intern(RuntimeType::Basic(vk))
             }
             ValueKind::Struct => {
-                self.type_interner.intern(RuntimeType::Struct { fields: Vec::new() })
+                let rttid = self.type_interner.intern(RuntimeType::Struct { fields: Vec::new() });
+                // Register rttid -> struct_meta_id mapping if struct_meta is already registered
+                if let Some(struct_meta_id) = self.struct_meta_ids.get(&type_key).copied() {
+                    self.module.rttid_to_struct_meta.push((rttid, struct_meta_id));
+                }
+                rttid
             }
             ValueKind::Array => {
                 let elem_type = info.array_elem_type(type_key);

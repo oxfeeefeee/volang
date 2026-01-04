@@ -114,6 +114,7 @@ pub struct Module {
     pub interface_metas: Vec<InterfaceMeta>,
     pub named_type_metas: Vec<NamedTypeMeta>,
     pub runtime_types: Vec<RuntimeType>,  // rttid -> RuntimeType
+    pub rttid_to_struct_meta: Vec<(u32, u32)>,  // (rttid, struct_meta_id) for anonymous structs
     pub itabs: Vec<Itab>,  // compile-time built itabs
     pub constants: Vec<Constant>,
     pub globals: Vec<GlobalDef>,
@@ -131,6 +132,7 @@ impl Module {
             interface_metas: Vec::new(),
             named_type_metas: Vec::new(),
             runtime_types: Vec::new(),
+            rttid_to_struct_meta: Vec::new(),
             itabs: Vec::new(),
             constants: Vec::new(),
             globals: Vec::new(),

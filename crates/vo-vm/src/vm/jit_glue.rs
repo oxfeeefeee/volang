@@ -57,6 +57,7 @@ pub extern "C" fn call_extern_trampoline(
         &module.struct_metas,
         &module.named_type_metas,
         &module.runtime_types,
+        &module.rttid_to_struct_meta,
     );
     
     match result {

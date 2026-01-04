@@ -226,6 +226,8 @@ pub struct ExternCallContext<'a> {
     named_type_metas: &'a [NamedTypeMeta],
     /// Runtime types for rttid resolution.
     runtime_types: &'a [RuntimeType],
+    /// rttid -> struct_meta_id mapping for anonymous structs.
+    rttid_to_struct_meta: &'a [(u32, u32)],
 }
 
 impl<'a> ExternCallContext<'a> {
@@ -241,6 +243,7 @@ impl<'a> ExternCallContext<'a> {
         struct_metas: &'a [StructMeta],
         named_type_metas: &'a [NamedTypeMeta],
         runtime_types: &'a [RuntimeType],
+        rttid_to_struct_meta: &'a [(u32, u32)],
     ) -> Self {
         Self {
             call: ExternCall::new(stack, bp, arg_start, arg_count, ret_start),
@@ -248,6 +251,7 @@ impl<'a> ExternCallContext<'a> {
             struct_metas,
             named_type_metas,
             runtime_types,
+            rttid_to_struct_meta,
         }
     }
 
@@ -263,18 +267,12 @@ impl<'a> ExternCallContext<'a> {
         self.named_type_metas.get(idx)
     }
 
-    /// Get struct_meta_id from rttid by looking up runtime_types and named_type_metas.
-    /// For Named struct types: rttid -> RuntimeType::Named(id) -> named_type_meta.underlying_meta.meta_id
+    /// Get struct_meta_id from rttid by looking up rttid_to_struct_meta mapping.
+    /// This mapping is populated at codegen time for both Named and anonymous structs.
     pub fn get_struct_meta_id_from_rttid(&self, rttid: u32) -> Option<u32> {
-        use vo_common_core::runtime_type::RuntimeType;
-        let rt = self.runtime_types.get(rttid as usize)?;
-        match rt {
-            RuntimeType::Named(named_id) => {
-                let named_meta = self.named_type_metas.get(*named_id as usize)?;
-                Some(named_meta.underlying_meta.meta_id())
-            }
-            _ => None,
-        }
+        self.rttid_to_struct_meta.iter()
+            .find(|(r, _)| *r == rttid)
+            .map(|(_, meta_id)| *meta_id)
     }
 
     /// Get named_type_id from rttid.
@@ -637,6 +635,7 @@ impl ExternRegistry {
         struct_metas: &[StructMeta],
         named_type_metas: &[NamedTypeMeta],
         runtime_types: &[RuntimeType],
+        rttid_to_struct_meta: &[(u32, u32)],
     ) -> ExternResult {
         match self.funcs.get(id as usize) {
             Some(Some(ExternFnEntry::Simple(f))) => {
@@ -644,7 +643,7 @@ impl ExternRegistry {
                 f(&mut call)
             }
             Some(Some(ExternFnEntry::WithContext(f))) => {
-                let mut call = ExternCallContext::new(stack, bp, arg_start, arg_count, ret_start, gc, struct_metas, named_type_metas, runtime_types);
+                let mut call = ExternCallContext::new(stack, bp, arg_start, arg_count, ret_start, gc, struct_metas, named_type_metas, runtime_types, rttid_to_struct_meta);
                 f(&mut call)
             }
             _ => ExternResult::Panic(format!("extern function {} not found", id)),
