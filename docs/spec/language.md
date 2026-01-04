@@ -23,6 +23,25 @@ Go's appeal is **low ceremony**: it writes like a scripting language but ships l
 - **No pointer arithmetic**: Pointers only for struct types (`*MyStruct`)
 - **Error handling sugar**: `?` operator, `fail`, and `errdefer` for cleaner error handling
 
+### 1.3 Error Handling Sugar
+
+Vo provides simplified error handling with `?`, `fail`, and `errdefer`.
+
+#### 1.3.1 The `?` operator
+
+`expr?` is valid when `expr` has type `(T, error)` or `error`.
+
+- If `expr` has type `(T, error)`: evaluate `expr` to `(v, err)`. If `err != nil`, `fail err`. Otherwise the result of `expr?` is `v`.
+- If `expr` has type `error`: evaluate `expr` to `err`. If `err != nil`, `fail err`. Otherwise `expr?` produces no value and is only valid where a value is not required.
+
+#### 1.3.2 `fail`
+
+`fail e` aborts the current function and returns the error `e` (and runs `errdefer` actions).
+
+#### 1.3.3 `errdefer`
+
+`errdefer stmt` registers `stmt` to run only on the error path (when the function exits via `fail` or a `?` that triggers `fail`).
+
 ---
 
 ## 2. Memory Model
@@ -197,6 +216,8 @@ int  int8  int16  int32  int64
 uint  uint8  uint16  uint32  uint64
 float32  float64
 byte  rune  // aliases for uint8 and int32
+any        // alias for interface{}
+```
 
 // Constants
 true  false  iota
@@ -209,18 +230,40 @@ _
 
 // Functions (compiler built-ins)
 len  cap  append  copy  delete  make  close  panic  recover  print  println  assert
-```
 
-**Blank identifier `_`**: Used to discard values or declare unused variables. It can appear on the left side of assignments and short variable declarations.
+### 3.4 Dynamic Access (`~>`)
+
+Vo supports opt-in dynamic (duck-typing) operations on `any`/`interface` values via the `~>` operator.
+
+Dynamic access does not introduce a new runtime representation. It is implemented by compile-time desugaring of a small whitelist of `~>` operations into runtime helper calls.
+
+Dynamic operations return `(any, error)` and are intended to be used with postfix `?` (see §1.3).
+
+The left operand of `~>` may have static type `any/interface` or `(any, error)`. If the left operand is `(any, error)`, `~>` implicitly short-circuits: if `error != nil`, the result is `(nil, error)`; otherwise the operation continues on the `any` value.
+
+The following forms are supported:
 
 ```vo
-_, err := doSomething()   // discard first return value
-for _, v := range slice { // discard index
-    println(v)
-}
+var a any = 123
+v := a~>field?
+v2 := a~>["key"]?
+v3 := a~>(1, 2, 3)?
+v4 := a~>user~>name?
 ```
 
-### 3.4 Operators and Punctuation
+Dynamic set has the following semantics:
+
+- `a~>field = x` and `a~>[key] = x` lower to runtime helper calls and produce an `error` result.
+- When used as a statement, the compiler implicitly applies postfix `?` to the produced `error` (fail-on-error). This is an implicit error propagation step, not an implicit insertion of parentheses.
+- Chained assignment targets like `a~>b~>c = x` are supported. Their meaning is: evaluate `a~>b` (with implicit short-circuiting as described above), then perform a dynamic set on the resulting value.
+
+Type assertion uses standard interface semantics (not a dynamic operation):
+- `a.(T)` — panic on failure
+- `v, ok := a.(T)` — ok=false on failure, no panic
+
+The helper APIs used for lowering are available for advanced usage when explicit error handling is required (e.g. `dyn_get_attr(a, "field")`, `dyn_set_attr(a, "field", x)`).
+
+### 3.5 Operators and Punctuation
 
 ```
 +    -    *    /    %
@@ -228,14 +271,15 @@ for _, v := range slice { // discard index
 <<   >>
 ==   !=   <    <=   >    >=
 &&   ||   !
-<-                              // channel send/receive
-++   --                        // increment/decrement (statements only)
-=    :=   +=   -=   *=   /=   %=   <<=  >>=  &=  |=  ^=  &^=
-(    )    [    ]    {    }
-,    :    ;    .    ...
+ <-                              // channel send/receive
+ ++   --                        // increment/decrement (statements only)
+ =    :=   +=   -=   *=   /=   %=   <<=  >>=  &=  |=  ^=  &^=
+ ~>
+ (    )    [    ]    {    }
+ ,    :    ;    .    ...
 ```
 
-### 3.5 Literals
+### 3.6 Literals
 
 ```ebnf
 HexDigit ::= "0".."9" | "A".."F" | "a".."f" ;
