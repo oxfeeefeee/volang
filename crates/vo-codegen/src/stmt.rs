@@ -21,10 +21,10 @@ fn compute_iface_assert_params(
     info: &TypeInfoWrapper,
 ) -> (u8, u32) {
     if info.is_interface(type_key) {
-        let iface_meta_id = ctx.get_or_create_interface_meta_id(type_key, &info.project.tc_objs, &info.project.interner);
+        let iface_meta_id = info.get_or_create_interface_meta_id(type_key, ctx);
         (1, iface_meta_id)
     } else {
-        let rt = crate::type_key_to_runtime_type_simple(type_key, info, &info.project.interner, ctx);
+        let rt = info.type_to_runtime_type(type_key, ctx);
         let rttid = ctx.intern_rttid(rt);
         (0, rttid)
     }
@@ -534,8 +534,8 @@ fn compile_stmt_with_label(
 
                             // Fast-path: if base implements dyn.SetAttrObject, call __setattr via CallIface
                             let set_attr_iface_type = lookup_pkg_type(info, "dyn", "SetAttrObject");
-                            let set_attr_iface_meta_id = ctx.get_or_create_interface_meta_id(set_attr_iface_type, &info.project.tc_objs, &info.project.interner);
-                            let set_attr_method_idx = ctx.get_interface_method_index(set_attr_iface_type, "__setattr", &info.project.tc_objs, &info.project.interner);
+                            let set_attr_iface_meta_id = info.get_or_create_interface_meta_id(set_attr_iface_type, ctx);
+                            let set_attr_method_idx = info.get_iface_meta_method_index(set_attr_iface_type, "__setattr", ctx);
                             // IfaceAssert (interface kind) with has_ok stores ok at dst+2.
                             // Allocate 3 slots to keep ok in-bounds.
                             let iface_reg = func.alloc_temp(3);
@@ -642,8 +642,8 @@ fn compile_stmt_with_label(
 
                             // Fast-path: if base implements dyn.SetIndexObject, call __setindex via CallIface
                             let set_index_iface_type = lookup_pkg_type(info, "dyn", "SetIndexObject");
-                            let set_index_iface_meta_id = ctx.get_or_create_interface_meta_id(set_index_iface_type, &info.project.tc_objs, &info.project.interner);
-                            let set_index_method_idx = ctx.get_interface_method_index(set_index_iface_type, "__setindex", &info.project.tc_objs, &info.project.interner);
+                            let set_index_iface_meta_id = info.get_or_create_interface_meta_id(set_index_iface_type, ctx);
+                            let set_index_method_idx = info.get_iface_meta_method_index(set_index_iface_type, "__setindex", ctx);
                             // IfaceAssert (interface kind) with has_ok stores ok at dst+2.
                             // Allocate 3 slots to keep ok in-bounds.
                             let iface_reg = func.alloc_temp(3);
@@ -2090,7 +2090,7 @@ pub fn compile_iface_assign(
         return Ok(());
     }
     
-    let iface_meta_id = ctx.get_or_create_interface_meta_id(iface_type, &info.project.tc_objs, &info.project.interner);
+    let iface_meta_id = info.get_or_create_interface_meta_id(iface_type, ctx);
     
     let const_idx = if src_vk == vo_runtime::ValueKind::Interface {
         ctx.register_iface_assign_const_interface(iface_meta_id)
@@ -2099,7 +2099,7 @@ pub fn compile_iface_assign(
         ctx.const_int(0)
     } else {
         // Use RuntimeType for structural equality in rttid lookup
-        let rt = crate::type_key_to_runtime_type_simple(src_type, info, &info.project.interner, ctx);
+        let rt = info.type_to_runtime_type(src_type, ctx);
         let rttid = ctx.intern_rttid(rt);
         // For pointer types, get the base type (methods are on the base type)
         let base_type = if info.is_pointer(src_type) {

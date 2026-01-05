@@ -159,18 +159,18 @@ fn write_runtime_type(w: &mut ByteWriter, rt: &RuntimeType) {
             w.write_u8(RT_STRUCT);
             w.write_u32(fields.len() as u32);
             for f in fields {
-                w.write_u32(f.name.as_u32());
+                w.write_string(&f.name);
                 w.write_u32(f.typ.to_raw());
-                w.write_u32(f.tag.as_u32());
+                w.write_string(&f.tag);
                 w.write_u8(f.embedded as u8);
-                w.write_u32(f.pkg.as_u32());
+                w.write_string(&f.pkg);
             }
         }
         RuntimeType::Interface { methods } => {
             w.write_u8(RT_INTERFACE);
             w.write_u32(methods.len() as u32);
             for m in methods {
-                w.write_u32(m.name.as_u32());
+                w.write_string(&m.name);
                 w.write_u32(m.sig.to_raw());
             }
         }
@@ -243,26 +243,24 @@ fn read_runtime_type(r: &mut ByteReader) -> Result<RuntimeType, SerializeError> 
         }
         RT_STRUCT => {
             use crate::runtime_type::StructField;
-            use crate::symbol::Symbol;
             let field_count = r.read_u32()? as usize;
             let mut fields = Vec::with_capacity(field_count);
             for _ in 0..field_count {
-                let name = Symbol::from_raw(r.read_u32()?);
+                let name = r.read_string()?;
                 let typ = ValueRttid::from_raw(r.read_u32()?);
-                let tag = Symbol::from_raw(r.read_u32()?);
+                let tag = r.read_string()?;
                 let embedded = r.read_u8()? != 0;
-                let pkg = Symbol::from_raw(r.read_u32()?);
+                let pkg = r.read_string()?;
                 fields.push(StructField::new(name, typ, tag, embedded, pkg));
             }
             Ok(RuntimeType::Struct { fields })
         }
         RT_INTERFACE => {
             use crate::runtime_type::InterfaceMethod;
-            use crate::symbol::Symbol;
             let method_count = r.read_u32()? as usize;
             let mut methods = Vec::with_capacity(method_count);
             for _ in 0..method_count {
-                let name = Symbol::from_raw(r.read_u32()?);
+                let name = r.read_string()?;
                 let sig = ValueRttid::from_raw(r.read_u32()?);
                 methods.push(InterfaceMethod::new(name, sig));
             }

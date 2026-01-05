@@ -132,9 +132,111 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
     
-    /// Convert TypeKey to RuntimeType for signature building.
+    /// Convert TypeKey to RuntimeType.
+    /// This is the unified entry point for type conversion in codegen.
     pub fn type_to_runtime_type(&self, type_key: TypeKey, ctx: &mut crate::context::CodegenContext) -> vo_runtime::RuntimeType {
-        crate::type_key_to_runtime_type_simple(type_key, self, &self.project.interner, ctx)
+        use vo_runtime::{RuntimeType, ValueKind, ValueRttid};
+        
+        // Check if it's a Named type - use ObjKey (the true identity) for lookup
+        let tc_objs = self.tc_objs();
+        if let Type::Named(named) = &tc_objs.types[type_key] {
+            if let Some(obj_key) = named.obj() {
+                if let Some(id) = ctx.get_named_type_id(*obj_key) {
+                    return RuntimeType::Named(id);
+                }
+            }
+            // Named type not registered - recurse on underlying type
+            // This can happen for builtin named types like error
+            let underlying = named.underlying();
+            return self.type_to_runtime_type(underlying, ctx);
+        }
+        
+        // Use ValueKind to identify type category
+        let vk = self.type_value_kind(type_key);
+        
+        match vk {
+            ValueKind::Int | ValueKind::Int8 | ValueKind::Int16 | ValueKind::Int32 | ValueKind::Int64 |
+            ValueKind::Uint | ValueKind::Uint8 | ValueKind::Uint16 | ValueKind::Uint32 | ValueKind::Uint64 |
+            ValueKind::Float32 | ValueKind::Float64 | ValueKind::Bool | ValueKind::String => {
+                RuntimeType::Basic(vk)
+            }
+            ValueKind::Struct | ValueKind::Array | ValueKind::Interface => {
+                // Preserve structural identity via ctx interning
+                let rttid = ctx.intern_type_key(type_key, self);
+                ctx.runtime_type(rttid).clone()
+            }
+            ValueKind::Pointer => {
+                let elem_type = self.pointer_elem(type_key);
+                let elem_rttid = ctx.intern_type_key(elem_type, self);
+                let elem_vk = self.type_value_kind(elem_type);
+                RuntimeType::Pointer(ValueRttid::new(elem_rttid, elem_vk))
+            }
+            ValueKind::Slice => {
+                let elem_type = self.slice_elem_type(type_key);
+                let elem_rttid = ctx.intern_type_key(elem_type, self);
+                let elem_vk = self.type_value_kind(elem_type);
+                RuntimeType::Slice(ValueRttid::new(elem_rttid, elem_vk))
+            }
+            ValueKind::Map => {
+                let (key_type, val_type) = self.map_key_val_types(type_key);
+                let key_rttid = ctx.intern_type_key(key_type, self);
+                let key_vk = self.type_value_kind(key_type);
+                let val_rttid = ctx.intern_type_key(val_type, self);
+                let val_vk = self.type_value_kind(val_type);
+                RuntimeType::Map {
+                    key: ValueRttid::new(key_rttid, key_vk),
+                    val: ValueRttid::new(val_rttid, val_vk),
+                }
+            }
+            ValueKind::Channel => {
+                let elem_type = self.chan_elem_type(type_key);
+                let elem_rttid = ctx.intern_type_key(elem_type, self);
+                let elem_vk = self.type_value_kind(elem_type);
+                let dir = self.chan_dir(type_key);
+                RuntimeType::Chan { dir, elem: ValueRttid::new(elem_rttid, elem_vk) }
+            }
+            ValueKind::Closure => {
+                let underlying = typ::underlying_type(type_key, tc_objs);
+                if let Type::Signature(sig) = &tc_objs.types[underlying] {
+                    let params = self.tuple_to_value_rttids(sig.params(), ctx);
+                    let results = self.tuple_to_value_rttids(sig.results(), ctx);
+                    RuntimeType::Func { params, results, variadic: sig.variadic() }
+                } else {
+                    RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false }
+                }
+            }
+            _ => RuntimeType::Basic(ValueKind::Void),
+        }
+    }
+    
+    /// Convert tuple type to Vec<ValueRttid>
+    fn tuple_to_value_rttids(&self, tuple_key: TypeKey, ctx: &mut crate::context::CodegenContext) -> Vec<vo_runtime::ValueRttid> {
+        use vo_runtime::ValueRttid;
+        let tc_objs = self.tc_objs();
+        if let Type::Tuple(tuple) = &tc_objs.types[tuple_key] {
+            tuple.vars().iter()
+                .filter_map(|&v| {
+                    let obj = &tc_objs.lobjs[v];
+                    obj.typ().map(|t| {
+                        let rttid = ctx.intern_type_key(t, self);
+                        let vk = self.type_value_kind(t);
+                        ValueRttid::new(rttid, vk)
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Get or create interface meta ID (simplified API - no need to pass tc_objs/interner).
+    pub fn get_or_create_interface_meta_id(&self, type_key: TypeKey, ctx: &mut crate::context::CodegenContext) -> u32 {
+        ctx.get_or_create_interface_meta_id(type_key, &self.project.tc_objs, &self.project.interner)
+    }
+    
+    /// Get method index in InterfaceMeta (for CallIface). Uses registered meta order.
+    pub fn get_iface_meta_method_index(&self, type_key: TypeKey, method_name: &str, ctx: &mut crate::context::CodegenContext) -> u32 {
+        ctx.get_interface_method_index(type_key, method_name, &self.project.tc_objs, &self.project.interner)
     }
 
     /// Get the empty interface type (any) - creates a new one each time

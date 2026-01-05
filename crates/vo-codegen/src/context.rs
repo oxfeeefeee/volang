@@ -622,8 +622,8 @@ impl CodegenContext {
         
         // Use rttid for all types (unified type system)
         // This allows type assertions to work for basic types in slices
-        let rttid = if let Some(tk) = type_key {
-            let rt = crate::type_key_to_runtime_type_basic(tk, value_kind.unwrap_or(ValueKind::Int));
+        let rttid = if let Some(_tk) = type_key {
+            let rt = vo_runtime::RuntimeType::Basic(value_kind.unwrap_or(ValueKind::Int));
             self.intern_rttid(rt)
         } else {
             0

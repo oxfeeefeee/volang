@@ -20,9 +20,10 @@
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
 #[cfg(not(feature = "std"))]
+use alloc::string::String;
+#[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use crate::symbol::Symbol;
 use crate::types::{ValueKind, ValueRttid};
 
 /// Runtime type representation for type identity checking.
@@ -98,24 +99,24 @@ pub enum ChanDir {
 /// A field in an anonymous struct type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StructField {
-    /// Field name (interned symbol).
-    pub name: Symbol,
+    /// Field name.
+    pub name: String,
     /// Field type.
     pub typ: ValueRttid,
-    /// Struct tag (Symbol::DUMMY if no tag).
-    pub tag: Symbol,
+    /// Struct tag (empty string if no tag).
+    pub tag: String,
     /// Whether this field is embedded.
     pub embedded: bool,
-    /// Package where the field is defined (for non-exported field identity).
-    /// Symbol::DUMMY for exported fields.
-    pub pkg: Symbol,
+    /// Package path where the field is defined (for non-exported field identity).
+    /// Empty string for exported fields.
+    pub pkg: String,
 }
 
 /// A method in an anonymous interface type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InterfaceMethod {
-    /// Method name (interned symbol).
-    pub name: Symbol,
+    /// Method name.
+    pub name: String,
     /// Method signature (must point to RuntimeType::Func).
     pub sig: ValueRttid,
 }
@@ -145,14 +146,14 @@ impl RuntimeType {
 
 impl StructField {
     /// Creates a new struct field.
-    pub fn new(name: Symbol, typ: ValueRttid, tag: Symbol, embedded: bool, pkg: Symbol) -> Self {
+    pub fn new(name: String, typ: ValueRttid, tag: String, embedded: bool, pkg: String) -> Self {
         Self { name, typ, tag, embedded, pkg }
     }
 }
 
 impl InterfaceMethod {
     /// Creates a new interface method.
-    pub fn new(name: Symbol, sig: ValueRttid) -> Self {
+    pub fn new(name: String, sig: ValueRttid) -> Self {
         Self { name, sig }
     }
 }
@@ -189,6 +190,18 @@ impl PartialEq for RuntimeType {
 
 impl Eq for RuntimeType {}
 
+/// Simple hasher for order-independent interface method hashing.
+struct SimpleHasher(u64);
+
+impl core::hash::Hasher for SimpleHasher {
+    fn finish(&self) -> u64 { self.0 }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.wrapping_mul(31).wrapping_add(b as u64);
+        }
+    }
+}
+
 impl core::hash::Hash for RuntimeType {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         core::mem::discriminant(self).hash(state);
@@ -205,11 +218,13 @@ impl core::hash::Hash for RuntimeType {
             }
             Self::Struct { fields } => fields.hash(state),
             Self::Interface { methods } => {
-                // Hash method count and sum of (name ^ sig) for order-independence
+                // Hash method count and XOR of method hashes for order-independence
                 methods.len().hash(state);
                 let mut combined: u64 = 0;
                 for m in methods {
-                    combined = combined.wrapping_add(m.name.as_u32() as u64 ^ m.sig.to_raw() as u64);
+                    let mut h = SimpleHasher(0);
+                    core::hash::Hash::hash(m, &mut h);
+                    combined ^= h.0;
                 }
                 combined.hash(state);
             }

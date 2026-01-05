@@ -4,7 +4,7 @@
 //! to structurally identical types. This enables O(1) type identity checks at runtime.
 
 use std::collections::HashMap;
-use vo_runtime::{RuntimeType, Symbol, ValueKind, ValueRttid, ChanDir, StructField, InterfaceMethod};
+use vo_runtime::{RuntimeType, ValueKind, ValueRttid, ChanDir, StructField, InterfaceMethod};
 use vo_analysis::objects::{TypeKey, ObjKey};
 use vo_analysis::typ::{Type, BasicType};
 
@@ -204,9 +204,7 @@ fn type_key_to_runtime_type(
             let fields: Vec<StructField> = s.fields().iter()
                 .map(|&f| {
                     let obj = &tc_objs.lobjs[f];
-                    let name = Symbol::from_raw(
-                        str_interner.get(obj.name()).map(|s| s.as_u32()).unwrap_or(u32::MAX)
-                    );
+                    let name = obj.name().to_string();
                     let typ_value_rttid = obj.typ()
                         .map(|t| {
                             let (rt, vk) = type_key_to_runtime_type(interner, t, tc_objs, str_interner, named_type_ids);
@@ -214,14 +212,13 @@ fn type_key_to_runtime_type(
                             ValueRttid::new(rttid, vk)
                         })
                         .unwrap_or(ValueRttid::new(ValueKind::Void as u32, ValueKind::Void));
-                    let tag = Symbol::DUMMY;
+                    let tag = String::new(); // TODO: parse struct tags if needed
                     let embedded = obj.entity_type().var_property().embedded;
-                    let pkg = if obj.exported() { Symbol::DUMMY } else {
+                    let pkg = if obj.exported() { String::new() } else {
                         obj.pkg()
                             .and_then(|p| tc_objs.pkgs.get(p))
-                            .and_then(|pkg| str_interner.get(pkg.path()))
-                            .map(|s| Symbol::from_raw(s.as_u32()))
-                            .unwrap_or(Symbol::DUMMY)
+                            .map(|pkg| pkg.path().to_string())
+                            .unwrap_or_default()
                     };
                     StructField::new(name, typ_value_rttid, tag, embedded, pkg)
                 })
@@ -236,9 +233,7 @@ fn type_key_to_runtime_type(
             let methods: Vec<InterfaceMethod> = method_keys.iter()
                 .map(|&m| {
                     let obj = &tc_objs.lobjs[m];
-                    let name = Symbol::from_raw(
-                        str_interner.get(obj.name()).map(|s| s.as_u32()).unwrap_or(u32::MAX)
-                    );
+                    let name = obj.name().to_string();
                     let sig_value_rttid = obj.typ()
                         .map(|t| {
                             let (rt, _vk) = type_key_to_runtime_type(interner, t, tc_objs, str_interner, named_type_ids);

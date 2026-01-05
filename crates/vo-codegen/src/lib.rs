@@ -126,7 +126,7 @@ fn register_types(
                             slot_types.extend(slot_type_list);
 
                             let field_vk = info.type_value_kind(field_type);
-                            let field_rt = type_key_to_runtime_type_simple(field_type, info, &project.interner, ctx);
+                            let field_rt = info.type_to_runtime_type(field_type, ctx);
                             let field_rttid = ctx.intern_rttid(field_rt);
 
                             fields.push(vo_vm::bytecode::FieldMeta {
@@ -201,7 +201,7 @@ fn register_types(
                 _ => {
                     // Other types (Map, Slice, Chan, etc.): intern underlying type to get rttid
                     let underlying_vk = info.type_value_kind(underlying_key);
-                    let underlying_rt = type_key_to_runtime_type_simple(underlying_key, info, &project.interner, ctx);
+                    let underlying_rt = info.type_to_runtime_type(underlying_key, ctx);
                     let underlying_rttid = ctx.intern_rttid(underlying_rt);
                     ValueMeta::new(underlying_rttid, underlying_vk)
                 }
@@ -611,116 +611,6 @@ fn signature_type_to_runtime_type(
         }
     } else {
         RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false }
-    }
-}
-
-/// Convert type_key to RuntimeType using just ValueKind.
-/// Used for basic types when full type info is not available.
-pub fn type_key_to_runtime_type_basic(
-    _type_key: vo_analysis::objects::TypeKey,
-    vk: vo_runtime::ValueKind,
-) -> vo_runtime::RuntimeType {
-    vo_runtime::RuntimeType::Basic(vk)
-}
-
-/// Simplified type_key to RuntimeType conversion using mutable context for interning.
-/// Uses ValueKind-based conversion for basic types, named_type_id for Named types.
-/// For composite types, recursively interns inner types to get their rttids.
-pub fn type_key_to_runtime_type_simple(
-    type_key: vo_analysis::objects::TypeKey,
-    info: &TypeInfoWrapper,
-    _interner: &vo_common::SymbolInterner,
-    ctx: &mut CodegenContext,
-) -> vo_runtime::RuntimeType {
-    use vo_runtime::RuntimeType;
-    use vo_runtime::ValueKind;
-    use vo_analysis::typ::Type;
-    
-    // Check if it's a Named type - use ObjKey (the true identity) for lookup
-    let tc_objs = &info.project.tc_objs;
-    if let Type::Named(named) = &tc_objs.types[type_key] {
-        if let Some(obj_key) = named.obj() {
-            if let Some(id) = ctx.get_named_type_id(*obj_key) {
-                return RuntimeType::Named(id);
-            }
-        }
-        // Named type not registered - recurse on underlying type
-        // This can happen for builtin named types like error
-        let underlying = named.underlying();
-        return type_key_to_runtime_type_simple(underlying, info, _interner, ctx);
-    }
-    let _ = tc_objs;
-    
-    // Use ValueKind as a simple way to identify basic types
-    let vk = info.type_value_kind(type_key);
-    
-    match vk {
-        ValueKind::Int | ValueKind::Int8 | ValueKind::Int16 | ValueKind::Int32 | ValueKind::Int64 |
-        ValueKind::Uint | ValueKind::Uint8 | ValueKind::Uint16 | ValueKind::Uint32 | ValueKind::Uint64 |
-        ValueKind::Float32 | ValueKind::Float64 | ValueKind::Bool | ValueKind::String => {
-            RuntimeType::Basic(vk)
-        }
-        ValueKind::Struct => {
-            let rttid = ctx.intern_type_key(type_key, info);
-            ctx.runtime_type(rttid).clone()
-        }
-        ValueKind::Array => {
-            // Preserve structural identity via ctx interning.
-            let rttid = ctx.intern_type_key(type_key, info);
-            ctx.runtime_type(rttid).clone()
-        }
-        ValueKind::Pointer => {
-            // Recursively intern elem type to get ValueRttid
-            let elem_type = info.pointer_elem(type_key);
-            let elem_rttid = ctx.intern_type_key(elem_type, info);
-            let elem_vk = info.type_value_kind(elem_type);
-            RuntimeType::Pointer(vo_runtime::ValueRttid::new(elem_rttid, elem_vk))
-        }
-        ValueKind::Slice => {
-            let elem_type = info.slice_elem_type(type_key);
-            let elem_rttid = ctx.intern_type_key(elem_type, info);
-            let elem_vk = info.type_value_kind(elem_type);
-            RuntimeType::Slice(vo_runtime::ValueRttid::new(elem_rttid, elem_vk))
-        }
-        ValueKind::Map => {
-            let (key_type, val_type) = info.map_key_val_types(type_key);
-            let key_rttid = ctx.intern_type_key(key_type, info);
-            let key_vk = info.type_value_kind(key_type);
-            let val_rttid = ctx.intern_type_key(val_type, info);
-            let val_vk = info.type_value_kind(val_type);
-            RuntimeType::Map {
-                key: vo_runtime::ValueRttid::new(key_rttid, key_vk),
-                val: vo_runtime::ValueRttid::new(val_rttid, val_vk),
-            }
-        }
-        ValueKind::Channel => {
-            let elem_type = info.chan_elem_type(type_key);
-            let elem_rttid = ctx.intern_type_key(elem_type, info);
-            let elem_vk = info.type_value_kind(elem_type);
-            let dir = info.chan_dir(type_key);
-            RuntimeType::Chan {
-                dir,
-                elem: vo_runtime::ValueRttid::new(elem_rttid, elem_vk),
-            }
-        }
-        ValueKind::Interface => {
-            // Preserve structural identity via ctx interning.
-            let rttid = ctx.intern_type_key(type_key, info);
-            ctx.runtime_type(rttid).clone()
-        }
-        ValueKind::Closure => {
-            // Get function signature from type info
-            let tc_objs = &info.project.tc_objs;
-            let underlying = vo_analysis::typ::underlying_type(type_key, tc_objs);
-            if let vo_analysis::typ::Type::Signature(sig) = &tc_objs.types[underlying] {
-                let params = tuple_to_value_rttids(sig.params(), tc_objs, info, ctx);
-                let results = tuple_to_value_rttids(sig.results(), tc_objs, info, ctx);
-                RuntimeType::Func { params, results, variadic: sig.variadic() }
-            } else {
-                RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false }
-            }
-        }
-        _ => RuntimeType::Basic(ValueKind::Void),
     }
 }
 
