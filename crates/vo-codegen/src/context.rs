@@ -175,9 +175,9 @@ impl CodegenContext {
 
     /// Recursively intern a type_key, returning its rttid.
     /// For composite types, this first interns inner types to get their ValueRttids.
+    /// Note: rttid_to_struct_meta mapping is built separately via build_rttid_to_struct_meta()
+    /// after all types are registered.
     pub fn intern_type_key(&mut self, type_key: vo_analysis::objects::TypeKey, info: &crate::type_info::TypeInfoWrapper) -> u32 {
-        use vo_runtime::ValueKind;
-
         let tc_objs = &info.project.tc_objs;
         let value_rttid = crate::type_interner::intern_type_key(
             &mut self.type_interner,
@@ -186,17 +186,39 @@ impl CodegenContext {
             &info.project.interner,
             &self.named_type_ids,
         );
+        value_rttid.rttid()
+    }
 
-        let rttid = value_rttid.rttid();
-
-        // Register rttid -> struct_meta_id mapping for dynamic struct field access.
-        if value_rttid.value_kind() == ValueKind::Struct {
-            if let Some(struct_meta_id) = self.struct_meta_ids.get(&type_key).copied() {
+    /// Build rttid_to_struct_meta mapping for all Named struct types.
+    /// Should be called after all type declarations are processed.
+    /// This enables dynamic field access on struct values via `~>` operator.
+    pub fn build_rttid_to_struct_meta(&mut self, info: &crate::type_info::TypeInfoWrapper) {
+        use vo_runtime::ValueKind;
+        use vo_analysis::objects::TypeKey;
+        
+        // Collect struct info first to avoid borrow conflicts
+        let struct_infos: Vec<(u32, TypeKey)> = self.module.named_type_metas.iter()
+            .enumerate()
+            .filter(|(_, meta)| meta.underlying_meta.value_kind() == ValueKind::Struct)
+            .filter_map(|(named_type_id, meta)| {
+                let struct_meta_id = meta.underlying_meta.meta_id();
+                // Find the ObjKey for this named_type_id
+                let obj_key = self.named_type_ids.iter()
+                    .find(|(_, &id)| id == named_type_id as u32)
+                    .map(|(k, _)| *k)?;
+                // Get the type_key for this named type
+                let type_key = info.project.tc_objs.lobjs[obj_key].typ()?;
+                Some((struct_meta_id, type_key))
+            })
+            .collect();
+        
+        // Now register mappings
+        for (struct_meta_id, type_key) in struct_infos {
+            let rttid = self.intern_type_key(type_key, info);
+            if !self.module.rttid_to_struct_meta.iter().any(|(r, _)| *r == rttid) {
                 self.module.rttid_to_struct_meta.push((rttid, struct_meta_id));
             }
         }
-
-        rttid
     }
 
     /// Get the interned RuntimeTypes (in rttid order)

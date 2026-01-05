@@ -126,8 +126,7 @@ fn register_types(
                             slot_types.extend(slot_type_list);
 
                             let field_vk = info.type_value_kind(field_type);
-                            let field_rt = info.type_to_runtime_type(field_type, ctx);
-                            let field_rttid = ctx.intern_rttid(field_rt);
+                            let field_rttid = ctx.intern_type_key(field_type, info);
 
                             fields.push(vo_vm::bytecode::FieldMeta {
                                 name: field_name,
@@ -215,6 +214,9 @@ fn register_types(
             };
             ctx.register_named_type_meta(obj_key, named_type_meta);
         }
+
+        // Build rttid_to_struct_meta after all types are registered
+        ctx.build_rttid_to_struct_meta(info);
 
         Ok(())
     }
