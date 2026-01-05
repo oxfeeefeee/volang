@@ -93,7 +93,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     let field_vk = field.type_info.value_kind();
     
     // Read field data using proper GC APIs
-    let result_slot1 = if field_vk == ValueKind::Struct || field_vk == ValueKind::Array {
+    let (result_slot0, result_slot1) = if field_vk == ValueKind::Struct || field_vk == ValueKind::Array {
         // Struct/Array fields need boxing: allocate heap and copy data
         let field_slot_types: Vec<_> = struct_meta.slot_types[field_offset..field_offset + field_slots].to_vec();
         let new_ref = call.gc_alloc(field_slots as u16, &field_slot_types);
@@ -103,13 +103,27 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
             let val = unsafe { Gc::read_slot(data_ref, field_offset + i) };
             unsafe { Gc::write_slot(new_ref, i, val) };
         }
-        new_ref as u64
+        let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
+        (slot0, new_ref as u64)
+    } else if field_vk == ValueKind::Interface {
+        // Interface field is 2 slots: slot0 (meta) + slot1 (data)
+        // Read both slots from the struct
+        let iface_slot0 = unsafe { Gc::read_slot(data_ref, field_offset) };
+        let iface_slot1 = unsafe { Gc::read_slot(data_ref, field_offset + 1) };
+        
+        // Extract the concrete type info from the stored interface
+        let concrete_rttid = interface::unpack_rttid(iface_slot0);
+        let concrete_vk = interface::unpack_value_kind(iface_slot0);
+        
+        // Wrap in any (itab_id=0 for empty interface)
+        let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
+        (result_slot0, iface_slot1)
     } else {
         // Single slot value: read using GC API
-        unsafe { struct_ops::get_field(data_ref, field_offset) }
+        let slot1 = unsafe { struct_ops::get_field(data_ref, field_offset) };
+        let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
+        (slot0, slot1)
     };
-    
-    let result_slot0 = interface::pack_slot0(0, field_rttid, field_vk);
     
     // Return (any, nil)
     call.ret_u64(0, result_slot0);
@@ -298,11 +312,15 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             let value = crate::objects::slice::get(base_ref, idx as usize, elem_bytes);
             
             if elem_vk == ValueKind::Interface {
-                // Element is already an interface (any), need to read 2 slots
-                let value2 = crate::objects::slice::get(base_ref, idx as usize * 2 + 1, 8);
-                let value1 = crate::objects::slice::get(base_ref, idx as usize * 2, 8);
-                call.ret_u64(0, value1);
-                call.ret_u64(1, value2);
+                // Element is already an interface, need to read 2 slots
+                let iface_slot0 = crate::objects::slice::get(base_ref, idx as usize * 2, 8);
+                let iface_slot1 = crate::objects::slice::get(base_ref, idx as usize * 2 + 1, 8);
+                // Extract concrete type info, wrap in any (itab_id=0)
+                let concrete_rttid = interface::unpack_rttid(iface_slot0);
+                let concrete_vk = interface::unpack_value_kind(iface_slot0);
+                let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
+                call.ret_u64(0, result_slot0);
+                call.ret_u64(1, iface_slot1);
             } else {
                 let result_slot0 = interface::pack_slot0(0, elem_value_rttid.rttid(), elem_vk);
                 call.ret_u64(0, result_slot0);
@@ -362,9 +380,14 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             
             if let Some(val_slice) = found {
                 if val_vk == crate::ValueKind::Interface {
-                    // Value is already an interface (any), return as-is (2 slots)
-                    call.ret_u64(0, val_slice[0]);
-                    call.ret_u64(1, val_slice[1]);
+                    // Value is already an interface, extract and wrap in any (itab_id=0)
+                    let iface_slot0 = val_slice[0];
+                    let iface_slot1 = val_slice[1];
+                    let concrete_rttid = interface::unpack_rttid(iface_slot0);
+                    let concrete_vk = interface::unpack_value_kind(iface_slot0);
+                    let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
+                    call.ret_u64(0, result_slot0);
+                    call.ret_u64(1, iface_slot1);
                 } else {
                     let result_slot0 = interface::pack_slot0(0, val_value_rttid.rttid(), val_vk);
                     call.ret_u64(0, result_slot0);

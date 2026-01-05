@@ -1,0 +1,41 @@
+// Test dynamic access on slice with interface elements
+// Bug #2: dyn_get_index returns interface element with wrong itab for any
+
+import "errors"
+
+func main() {
+    // Create a slice of errors
+    errs := []error{errors.New("err1"), errors.New("err2")}
+    
+    // Cast to any
+    var a any = errs
+    
+    // Dynamic index access
+    v, err := a~>[0]
+    if err != nil {
+        println("unexpected error:", err.Error())
+        return
+    }
+    
+    // Type assert to error
+    e, ok := v.(error)
+    if !ok {
+        println("FAIL: type assertion to error failed")
+        return
+    }
+    
+    if e == nil {
+        println("FAIL: error is nil")
+        return
+    }
+    
+    if e.Error() != "err1" {
+        println("FAIL: error message mismatch, got:", e.Error())
+        return
+    }
+    
+    println("PASS")
+}
+
+// Expected output:
+// PASS

@@ -1,0 +1,78 @@
+// Test that dynamic access returns any with itab_id=0
+// Bug #2: dyn_get_index should clear itab_id when wrapping interface element into any
+
+import "errors"
+
+type MyInterface interface {
+    Method() int
+}
+
+type Impl struct {
+    val int
+}
+
+func (i *Impl) Method() int {
+    return i.val
+}
+
+func main() {
+    // Create a slice of MyInterface (non-any interface)
+    impls := []MyInterface{&Impl{val: 42}, &Impl{val: 100}}
+    
+    // Cast slice to any
+    var a any = impls
+    
+    // Dynamic index access - returns any
+    v, err := a~>[0]
+    if err != nil {
+        println("unexpected error:", err.Error())
+        return
+    }
+    
+    // v is now any, wrapping the original MyInterface value
+    // The issue: if itab_id is not cleared, v might have wrong metadata
+    
+    // Test 1: Type assertion to the concrete type should work
+    impl, ok := v.(*Impl)
+    if !ok {
+        println("FAIL: type assertion to *Impl failed")
+        return
+    }
+    if impl.Method() != 42 {
+        println("FAIL: method call returned wrong value")
+        return
+    }
+    
+    // Test 2: Type assertion to the interface should work
+    mi, ok := v.(MyInterface)
+    if !ok {
+        println("FAIL: type assertion to MyInterface failed")
+        return
+    }
+    if mi.Method() != 42 {
+        println("FAIL: interface method call returned wrong value")
+        return
+    }
+    
+    // Test 3: Chain dynamic access - this would fail if itab_id causes issues
+    v2, err := a~>[1]
+    if err != nil {
+        println("unexpected error on second access:", err.Error())
+        return
+    }
+    
+    impl2, ok := v2.(*Impl)
+    if !ok {
+        println("FAIL: second type assertion failed")
+        return
+    }
+    if impl2.Method() != 100 {
+        println("FAIL: second method call returned wrong value")
+        return
+    }
+    
+    println("PASS")
+}
+
+// Expected output:
+// PASS

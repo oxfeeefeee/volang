@@ -1,0 +1,44 @@
+// Test dynamic access on map with interface values
+// Bug #2: dyn_get_index returns interface value with wrong itab for any
+
+import "errors"
+
+func main() {
+    // Create a map with error values
+    m := map[string]error{
+        "a": errors.New("err_a"),
+        "b": errors.New("err_b"),
+    }
+    
+    // Cast to any
+    var a any = m
+    
+    // Dynamic index access
+    v, err := a~>["a"]
+    if err != nil {
+        println("unexpected error:", err.Error())
+        return
+    }
+    
+    // Type assert to error
+    e, ok := v.(error)
+    if !ok {
+        println("FAIL: type assertion to error failed")
+        return
+    }
+    
+    if e == nil {
+        println("FAIL: error is nil")
+        return
+    }
+    
+    if e.Error() != "err_a" {
+        println("FAIL: error message mismatch, got:", e.Error())
+        return
+    }
+    
+    println("PASS")
+}
+
+// Expected output:
+// PASS

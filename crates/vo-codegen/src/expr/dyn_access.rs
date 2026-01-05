@@ -1,6 +1,6 @@
 //! Dynamic access expression compilation (a~>field, a~>[key], a~>(args), a~>method(args))
 
-use vo_runtime::RuntimeType;
+use vo_runtime::{RuntimeType, ValueKind};
 use vo_syntax::ast::{DynAccessOp, Expr};
 use vo_vm::instruction::Opcode;
 
@@ -137,25 +137,7 @@ fn compile_dyn_op(
             // Convert result based on LHS type
             let mut dst_offset = 0u16;
             for &ret_type in ret_types.iter() {
-
-                if info.is_any_type(ret_type) {
-                    func.emit_op(Opcode::Copy, dst + dst_offset, result, 0);
-                    func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 1, 0);
-                    dst_offset += 2;
-                } else {
-                    let slots = info.type_slot_count(ret_type);
-                    if slots == 1 {
-                        func.emit_op(Opcode::Copy, dst + dst_offset, result + 1, 0);
-                        dst_offset += 1;
-                    } else if slots == 2 {
-                        func.emit_ptr_get(dst + dst_offset, result + 1, 0, 2);
-                        dst_offset += 2;
-                    } else {
-                        let tmp = func.alloc_temp(1);
-                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
-                        func.emit_op(Opcode::Panic, tmp, 0, 0);
-                    }
-                }
+                dst_offset += emit_dyn_result_unpack(ret_type, dst + dst_offset, result, func, info);
             }
 
             func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
@@ -191,25 +173,7 @@ fn compile_dyn_op(
             // Convert result based on LHS type
             let mut dst_offset = 0u16;
             for &ret_type in ret_types.iter() {
-
-                if info.is_any_type(ret_type) {
-                    func.emit_op(Opcode::Copy, dst + dst_offset, result, 0);
-                    func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 1, 0);
-                    dst_offset += 2;
-                } else {
-                    let slots = info.type_slot_count(ret_type);
-                    if slots == 1 {
-                        func.emit_op(Opcode::Copy, dst + dst_offset, result + 1, 0);
-                        dst_offset += 1;
-                    } else if slots == 2 {
-                        func.emit_ptr_get(dst + dst_offset, result + 1, 0, 2);
-                        dst_offset += 2;
-                    } else {
-                        let tmp = func.alloc_temp(1);
-                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
-                        func.emit_op(Opcode::Panic, tmp, 0, 0);
-                    }
-                }
+                dst_offset += emit_dyn_result_unpack(ret_type, dst + dst_offset, result, func, info);
             }
 
             func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
@@ -418,3 +382,43 @@ fn compile_dyn_closure_call(
     Ok(())
 }
 
+/// Emit code to unpack a dynamic result (any[2]) to the expected LHS type.
+/// Returns the number of dst slots consumed.
+fn emit_dyn_result_unpack(
+    ret_type: vo_analysis::TypeKey,
+    dst: u16,
+    result: u16,  // result+0 = any.slot0, result+1 = any.slot1
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> u16 {
+    if info.is_any_type(ret_type) {
+        // LHS is any: copy both slots directly
+        func.emit_op(Opcode::Copy, dst, result, 0);
+        func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
+        return 2;
+    }
+    
+    let slots = info.type_slot_count(ret_type);
+    let vk = info.type_value_kind(ret_type);
+    
+    if slots == 1 {
+        // Single slot: copy data directly from result+1
+        func.emit_op(Opcode::Copy, dst, result + 1, 0);
+        1
+    } else if vk == ValueKind::Struct || vk == ValueKind::Array {
+        // Struct/Array: result+1 is GcRef, read data from heap
+        func.emit_ptr_get(dst, result + 1, 0, slots);
+        slots
+    } else if vk == ValueKind::Interface {
+        // Interface: runtime already extracted concrete value into any format
+        // result+0 has the concrete type's slot0, result+1 has the data
+        // Copy both slots as the interface value
+        func.emit_op(Opcode::Copy, dst, result, 0);
+        func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
+        2
+    } else {
+        // Other multi-slot types: read from GcRef
+        func.emit_ptr_get(dst, result + 1, 0, slots);
+        slots
+    }
+}
