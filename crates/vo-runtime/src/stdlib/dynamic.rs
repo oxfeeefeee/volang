@@ -2,12 +2,15 @@
 //!
 //! These functions implement runtime reflection for dynamic field/index/method access.
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 use linkme::distributed_slice;
 use vo_common_core::types::ValueKind;
 
 use crate::ffi::{ExternCallContext, ExternEntryWithContext, ExternResult, EXTERN_TABLE_WITH_CONTEXT};
 use crate::gc::{Gc, GcRef};
-use crate::objects::{interface, string, struct_ops};
+use crate::objects::{array, interface, map, slice, string, struct_ops};
 use vo_common_core::runtime_type::RuntimeType;
 
 /// dyn_get_attr: Get a field from an interface value by name.
@@ -144,12 +147,7 @@ fn try_get_method(call: &mut ExternCallContext, rttid: u32, receiver_slot1: u64,
     ExternResult::Ok
 }
 
-/// Helper to return a dynamic access error.
-fn dyn_error(call: &mut ExternCallContext, msg: &str) -> ExternResult {
-    // Return (nil, error)
-    call.ret_nil(0);
-    call.ret_nil(1);
-
+fn write_error_to(call: &mut ExternCallContext, ret_slot: u16, msg: &str) {
     let named_type_id = call
         .named_type_metas()
         .iter()
@@ -207,21 +205,38 @@ fn dyn_error(call: &mut ExternCallContext, msg: &str) -> ExternResult {
         }
     };
 
-    // code: 0
     set_field_by_name(err_obj, "code", &[0]);
-    // msg: string (GcRef)
     set_field_by_name(err_obj, "msg", &[err_str as u64]);
-    // cause: error interface (nil)
     set_field_by_name(err_obj, "cause", &[0, 0]);
-    // data: any interface (nil)
     set_field_by_name(err_obj, "data", &[0, 0]);
 
     let itab_id = call.get_or_create_itab(named_type_id, error_iface_meta_id);
     let err_slot0 = interface::pack_slot0(itab_id, error_ptr_rttid, ValueKind::Pointer);
-    call.ret_u64(2, err_slot0);
-    call.ret_ref(3, err_obj);
-    
+    call.ret_u64(ret_slot, err_slot0);
+    call.ret_ref(ret_slot + 1, err_obj);
+}
+
+fn dyn_error(call: &mut ExternCallContext, msg: &str) -> ExternResult {
+    call.ret_nil(0);
+    call.ret_nil(1);
+    write_error_to(call, 2, msg);
     ExternResult::Ok
+}
+
+fn dyn_error_only(call: &mut ExternCallContext, msg: &str) -> ExternResult {
+    write_error_to(call, 0, msg);
+    ExternResult::Ok
+}
+
+fn named_type_id_for_itab(call: &ExternCallContext, rttid: u32) -> Option<u32> {
+    match call.runtime_types().get(rttid as usize) {
+        Some(RuntimeType::Named(id)) => Some(*id),
+        Some(RuntimeType::Pointer(elem)) => match call.runtime_types().get(elem.rttid() as usize) {
+            Some(RuntimeType::Named(id)) => Some(*id),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
@@ -364,6 +379,345 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
 static __VO_DYN_GET_INDEX: ExternEntryWithContext = ExternEntryWithContext {
     name: "dyn_get_index",
     func: dyn_get_index,
+};
+
+/// dyn_set_attr: Set a struct field on an interface value by name.
+///
+/// Args: (base: any[2], name: string[1], value: any[2]) -> error[2]
+/// - base slot 0-1: interface value (slot0=meta, slot1=data)
+/// - name slot 2: field name string
+/// - value slot 3-4: value (boxed as any)
+fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
+    let base_slot0 = call.arg_u64(0);
+    let base_slot1 = call.arg_u64(1);
+    let name_ref = call.arg_ref(2);
+    let val_slot0 = call.arg_u64(3);
+    let val_slot1 = call.arg_u64(4);
+
+    if interface::is_nil(base_slot0) {
+        return dyn_error_only(call, "cannot set field on nil");
+    }
+    if name_ref.is_null() {
+        return dyn_error_only(call, "field name is nil");
+    }
+    let field_name = string::as_str(name_ref);
+
+    let base_vk = interface::unpack_value_kind(base_slot0);
+    let base_rttid = interface::unpack_rttid(base_slot0);
+
+    let (effective_rttid, data_ref) = if base_vk == ValueKind::Pointer {
+        let elem_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
+        (elem_value_rttid.rttid(), base_slot1 as GcRef)
+    } else if base_vk == ValueKind::Struct {
+        (base_rttid, base_slot1 as GcRef)
+    } else {
+        return dyn_error_only(call, &format!("cannot set field on type {:?}", base_vk));
+    };
+
+    if data_ref.is_null() {
+        return dyn_error_only(call, "struct data is nil");
+    }
+
+    let struct_meta_id = call.get_struct_meta_id_from_rttid(effective_rttid);
+    let struct_meta_id = match struct_meta_id {
+        Some(id) => id as usize,
+        None => return dyn_error_only(call, "cannot set field on non-struct type"),
+    };
+
+    let (field_offset, field_slots, expected_vk, expected_rttid) = {
+        let struct_meta = match call.struct_meta(struct_meta_id) {
+            Some(m) => m,
+            None => return dyn_error_only(call, &format!("struct meta {} not found", struct_meta_id)),
+        };
+
+        let field = match struct_meta.fields.iter().find(|f| f.name == field_name) {
+            Some(f) => f,
+            None => return dyn_error_only(call, &format!("field '{}' not found", field_name)),
+        };
+
+        (
+            field.offset as usize,
+            field.slot_count as usize,
+            field.type_info.value_kind(),
+            field.type_info.rttid(),
+        )
+    };
+    let val_vk = interface::unpack_value_kind(val_slot0);
+    let val_rttid = interface::unpack_rttid(val_slot0);
+
+    if expected_vk == ValueKind::Interface {
+        let iface_meta_id = expected_rttid;
+
+        let named_type_id = match named_type_id_for_itab(call, val_rttid) {
+            Some(id) => id,
+            None => return dyn_error_only(call, "value does not have methods"),
+        };
+        let itab_id = call.get_or_create_itab(named_type_id, iface_meta_id);
+        let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
+
+        unsafe {
+            struct_ops::set_field(data_ref, field_offset, stored_slot0);
+            struct_ops::set_field(data_ref, field_offset + 1, val_slot1);
+        }
+
+        call.ret_nil(0);
+        call.ret_nil(1);
+        return ExternResult::Ok;
+    }
+
+    if expected_vk != val_vk || expected_rttid != val_rttid {
+        return dyn_error_only(
+            call,
+            &format!(
+                "field '{}' type mismatch: expected {:?} (rttid {}), got {:?} (rttid {})",
+                field_name, expected_vk, expected_rttid, val_vk, val_rttid
+            ),
+        );
+    }
+
+    match expected_vk {
+        ValueKind::Struct | ValueKind::Array => {
+            let src_ref = val_slot1 as GcRef;
+            if src_ref.is_null() {
+                return dyn_error_only(call, "struct/array value is nil");
+            }
+            for i in 0..field_slots {
+                let v = unsafe { Gc::read_slot(src_ref, i) };
+                unsafe { Gc::write_slot(data_ref, field_offset + i, v) };
+            }
+        }
+        _ => unsafe {
+            struct_ops::set_field(data_ref, field_offset, val_slot1);
+        },
+    }
+
+    call.ret_nil(0);
+    call.ret_nil(1);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_SET_ATTR: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_set_attr",
+    func: dyn_set_attr,
+};
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_SET_ATTR_CAMEL: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_SetAttr",
+    func: dyn_set_attr,
+};
+
+/// dyn_set_index: Set an element in a map or slice by key/index.
+///
+/// Args: (base: any[2], key: any[2], value: any[2]) -> error[2]
+fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
+    let base_slot0 = call.arg_u64(0);
+    let base_slot1 = call.arg_u64(1);
+    let key_slot0 = call.arg_u64(2);
+    let key_slot1 = call.arg_u64(3);
+    let val_slot0 = call.arg_u64(4);
+    let val_slot1 = call.arg_u64(5);
+
+    if interface::is_nil(base_slot0) {
+        return dyn_error_only(call, "cannot set index on nil");
+    }
+
+    let base_vk = interface::unpack_value_kind(base_slot0);
+    let base_rttid = interface::unpack_rttid(base_slot0);
+    let base_ref = base_slot1 as GcRef;
+
+    match base_vk {
+        ValueKind::Slice => {
+            let key_vk = interface::unpack_value_kind(key_slot0);
+            if !matches!(
+                key_vk,
+                ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8
+            ) {
+                return dyn_error_only(call, "slice index must be integer");
+            }
+            let idx = key_slot1 as i64;
+            if idx < 0 {
+                return dyn_error_only(call, "slice index out of bounds (negative)");
+            }
+            let len = slice::len(base_ref);
+            if idx as usize >= len {
+                return dyn_error_only(call, "slice index out of bounds");
+            }
+
+            let elem_meta = slice::elem_meta(base_ref);
+            let elem_vk = elem_meta.value_kind();
+            let elem_bytes = array::elem_bytes(slice::array_ref(base_ref));
+            let elem_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
+
+            if elem_vk == ValueKind::Interface {
+                let iface_meta_id = elem_meta.meta_id();
+                let val_vk = interface::unpack_value_kind(val_slot0);
+                let val_rttid = interface::unpack_rttid(val_slot0);
+                let named_type_id = match named_type_id_for_itab(call, val_rttid) {
+                    Some(id) => id,
+                    None => return dyn_error_only(call, "value does not have methods"),
+                };
+                let itab_id = call.get_or_create_itab(named_type_id, iface_meta_id);
+                let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
+                let src = [stored_slot0, val_slot1];
+                slice::set_n(base_ref, idx as usize, &src, elem_bytes);
+
+                call.ret_nil(0);
+                call.ret_nil(1);
+                return ExternResult::Ok;
+            }
+
+            let val_vk = interface::unpack_value_kind(val_slot0);
+            let val_rttid = interface::unpack_rttid(val_slot0);
+            if val_vk != elem_vk || val_rttid != elem_value_rttid.rttid() {
+                return dyn_error_only(
+                    call,
+                    &format!(
+                        "slice element type mismatch: expected {:?} (rttid {}), got {:?} (rttid {})",
+                        elem_vk,
+                        elem_value_rttid.rttid(),
+                        val_vk,
+                        val_rttid
+                    ),
+                );
+            }
+
+            match elem_vk {
+                ValueKind::Struct | ValueKind::Array => {
+                    let src_ref = val_slot1 as GcRef;
+                    if src_ref.is_null() {
+                        return dyn_error_only(call, "struct/array value is nil");
+                    }
+                    let elem_slots = elem_bytes / 8;
+                    let mut buf: Vec<u64> = Vec::with_capacity(elem_slots);
+                    for i in 0..elem_slots {
+                        buf.push(unsafe { Gc::read_slot(src_ref, i) });
+                    }
+                    slice::set_n(base_ref, idx as usize, &buf, elem_bytes);
+                }
+                _ => {
+                    slice::set_auto(slice::data_ptr(base_ref), idx as usize, val_slot1, elem_bytes, elem_vk);
+                }
+            }
+
+            call.ret_nil(0);
+            call.ret_nil(1);
+            ExternResult::Ok
+        }
+        ValueKind::Map => {
+            let map_key_vk = map::key_kind(base_ref);
+            let key_vk = interface::unpack_value_kind(key_slot0);
+
+            let key_compatible = match (map_key_vk, key_vk) {
+                (a, b) if a == b => true,
+                (ValueKind::Int, k) | (k, ValueKind::Int) => matches!(
+                    k,
+                    ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8
+                ),
+                _ => false,
+            };
+            if !key_compatible {
+                return dyn_error_only(call, &format!("map key type mismatch: expected {:?}, got {:?}", map_key_vk, key_vk));
+            }
+
+            let val_meta = map::val_meta(base_ref);
+            let map_val_vk = val_meta.value_kind();
+            let map_val_slots = map::val_slots(base_ref) as usize;
+            let map_val_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
+
+            let mut key_buf: Vec<u64> = Vec::new();
+            match map_key_vk {
+                ValueKind::Struct | ValueKind::Array => {
+                    let expected_key_vr = match call.runtime_types().get(base_rttid as usize) {
+                        Some(RuntimeType::Map { key, .. }) => *key,
+                        _ => return dyn_error_only(call, "invalid map runtime type"),
+                    };
+                    let key_rttid = interface::unpack_rttid(key_slot0);
+                    if expected_key_vr.value_kind() != key_vk || expected_key_vr.rttid() != key_rttid {
+                        return dyn_error_only(call, "map key type mismatch");
+                    }
+                    let src_ref = key_slot1 as GcRef;
+                    if src_ref.is_null() {
+                        return dyn_error_only(call, "map key is nil");
+                    }
+                    let key_slots = map::key_slots(base_ref) as usize;
+                    key_buf.reserve(key_slots);
+                    for i in 0..key_slots {
+                        key_buf.push(unsafe { Gc::read_slot(src_ref, i) });
+                    }
+                }
+                _ => {
+                    key_buf.push(key_slot1);
+                }
+            }
+
+            let mut val_buf: Vec<u64> = Vec::with_capacity(map_val_slots);
+            if map_val_vk == ValueKind::Interface {
+                let iface_meta_id = val_meta.meta_id();
+                let val_vk = interface::unpack_value_kind(val_slot0);
+                let val_rttid = interface::unpack_rttid(val_slot0);
+                let named_type_id = match named_type_id_for_itab(call, val_rttid) {
+                    Some(id) => id,
+                    None => return dyn_error_only(call, "value does not have methods"),
+                };
+                let itab_id = call.get_or_create_itab(named_type_id, iface_meta_id);
+                let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
+                val_buf.push(stored_slot0);
+                val_buf.push(val_slot1);
+            } else {
+                let val_vk = interface::unpack_value_kind(val_slot0);
+                let val_rttid = interface::unpack_rttid(val_slot0);
+                if val_vk != map_val_vk || val_rttid != map_val_value_rttid.rttid() {
+                    return dyn_error_only(
+                        call,
+                        &format!(
+                            "map value type mismatch: expected {:?} (rttid {}), got {:?} (rttid {})",
+                            map_val_vk,
+                            map_val_value_rttid.rttid(),
+                            val_vk,
+                            val_rttid
+                        ),
+                    );
+                }
+
+                match map_val_vk {
+                    ValueKind::Struct | ValueKind::Array => {
+                        let src_ref = val_slot1 as GcRef;
+                        if src_ref.is_null() {
+                            return dyn_error_only(call, "struct/array value is nil");
+                        }
+                        for i in 0..map_val_slots {
+                            val_buf.push(unsafe { Gc::read_slot(src_ref, i) });
+                        }
+                    }
+                    _ => {
+                        val_buf.push(val_slot1);
+                    }
+                }
+            }
+
+            map::set(base_ref, &key_buf, &val_buf);
+            call.ret_nil(0);
+            call.ret_nil(1);
+            ExternResult::Ok
+        }
+        ValueKind::String => dyn_error_only(call, "string index assignment is not supported"),
+        ValueKind::Array => dyn_error_only(call, "array index assignment is not supported"),
+        _ => dyn_error_only(call, &format!("cannot set index on type {:?}", base_vk)),
+    }
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_SET_INDEX: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_set_index",
+    func: dyn_set_index,
+};
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_SET_INDEX_CAMEL: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_SetIndex",
+    func: dyn_set_index,
 };
 
 /// dyn_call_check: Check closure signature before calling.

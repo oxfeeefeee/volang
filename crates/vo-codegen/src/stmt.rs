@@ -481,6 +481,140 @@ fn compile_stmt_with_label(
         // === Assignment ===
         StmtKind::Assign(assign) => {
             use vo_syntax::ast::AssignOp;
+
+            if assign.op == AssignOp::Assign && assign.lhs.len() == 1 && assign.rhs.len() == 1 {
+                if let vo_syntax::ast::ExprKind::DynAccess(dyn_access) = &assign.lhs[0].kind {
+                    match &dyn_access.op {
+                        vo_syntax::ast::DynAccessOp::Field(ident) => {
+                            let base_type = info.expr_type(dyn_access.base.id);
+                            let base_slots = info.type_slot_count(base_type);
+                            let base_reg = func.alloc_temp(base_slots);
+                            compile_expr_to(&dyn_access.base, base_reg, ctx, func, info)?;
+
+                            if info.is_tuple_any_error(base_type) {
+                                let ok_jump = func.emit_jump(Opcode::JumpIfNot, base_reg + 2);
+
+                                let ret_types: Vec<_> = func.return_types().to_vec();
+                                let mut total_ret_slots = 0u16;
+                                for ret_type in &ret_types {
+                                    total_ret_slots += info.type_slot_count(*ret_type);
+                                }
+                                let ret_start = func.alloc_temp(total_ret_slots);
+                                for i in 0..total_ret_slots {
+                                    func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
+                                }
+                                if !ret_types.is_empty() {
+                                    let error_type = *ret_types.last().unwrap();
+                                    let error_slots = info.type_slot_count(error_type);
+                                    let error_start = ret_start + total_ret_slots - error_slots;
+                                    func.emit_copy(error_start, base_reg + 2, error_slots);
+                                }
+                                func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
+
+                                func.patch_jump(ok_jump, func.current_pc());
+                            }
+
+                            let field_name = info.project.interner.resolve(ident.symbol).unwrap_or("");
+                            let args_start = func.alloc_temp(5);
+                            func.emit_copy(args_start, base_reg, 2);
+                            let name_idx = ctx.const_string(field_name);
+                            func.emit_op(Opcode::StrNew, args_start + 2, name_idx, 0);
+
+                            let any_type = info.any_type();
+                            crate::stmt::compile_iface_assign(args_start + 3, &assign.rhs[0], any_type, ctx, func, info)?;
+
+                            let extern_id = ctx.get_or_register_extern("dyn_SetAttr");
+                            let err_reg = func.alloc_temp(2);
+                            func.emit_with_flags(Opcode::CallExtern, 5, err_reg, extern_id as u16, args_start);
+
+                            let done_jump = func.emit_jump(Opcode::JumpIfNot, err_reg);
+
+                            let ret_types: Vec<_> = func.return_types().to_vec();
+                            let mut total_ret_slots = 0u16;
+                            for ret_type in &ret_types {
+                                total_ret_slots += info.type_slot_count(*ret_type);
+                            }
+                            let ret_start = func.alloc_temp(total_ret_slots);
+                            for i in 0..total_ret_slots {
+                                func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
+                            }
+                            if !ret_types.is_empty() {
+                                let error_type = *ret_types.last().unwrap();
+                                let error_slots = info.type_slot_count(error_type);
+                                let error_start = ret_start + total_ret_slots - error_slots;
+                                func.emit_copy(error_start, err_reg, error_slots);
+                            }
+                            func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
+
+                            func.patch_jump(done_jump, func.current_pc());
+                            return Ok(());
+                        }
+                        vo_syntax::ast::DynAccessOp::Index(key_expr) => {
+                            let base_type = info.expr_type(dyn_access.base.id);
+                            let base_slots = info.type_slot_count(base_type);
+                            let base_reg = func.alloc_temp(base_slots);
+                            compile_expr_to(&dyn_access.base, base_reg, ctx, func, info)?;
+
+                            if info.is_tuple_any_error(base_type) {
+                                let ok_jump = func.emit_jump(Opcode::JumpIfNot, base_reg + 2);
+
+                                let ret_types: Vec<_> = func.return_types().to_vec();
+                                let mut total_ret_slots = 0u16;
+                                for ret_type in &ret_types {
+                                    total_ret_slots += info.type_slot_count(*ret_type);
+                                }
+                                let ret_start = func.alloc_temp(total_ret_slots);
+                                for i in 0..total_ret_slots {
+                                    func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
+                                }
+                                if !ret_types.is_empty() {
+                                    let error_type = *ret_types.last().unwrap();
+                                    let error_slots = info.type_slot_count(error_type);
+                                    let error_start = ret_start + total_ret_slots - error_slots;
+                                    func.emit_copy(error_start, base_reg + 2, error_slots);
+                                }
+                                func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
+
+                                func.patch_jump(ok_jump, func.current_pc());
+                            }
+
+                            let args_start = func.alloc_temp(6);
+                            func.emit_copy(args_start, base_reg, 2);
+
+                            let any_type = info.any_type();
+                            crate::stmt::compile_iface_assign(args_start + 2, key_expr, any_type, ctx, func, info)?;
+                            crate::stmt::compile_iface_assign(args_start + 4, &assign.rhs[0], any_type, ctx, func, info)?;
+
+                            let extern_id = ctx.get_or_register_extern("dyn_SetIndex");
+                            let err_reg = func.alloc_temp(2);
+                            func.emit_with_flags(Opcode::CallExtern, 6, err_reg, extern_id as u16, args_start);
+
+                            let done_jump = func.emit_jump(Opcode::JumpIfNot, err_reg);
+
+                            let ret_types: Vec<_> = func.return_types().to_vec();
+                            let mut total_ret_slots = 0u16;
+                            for ret_type in &ret_types {
+                                total_ret_slots += info.type_slot_count(*ret_type);
+                            }
+                            let ret_start = func.alloc_temp(total_ret_slots);
+                            for i in 0..total_ret_slots {
+                                func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
+                            }
+                            if !ret_types.is_empty() {
+                                let error_type = *ret_types.last().unwrap();
+                                let error_slots = info.type_slot_count(error_type);
+                                let error_start = ret_start + total_ret_slots - error_slots;
+                                func.emit_copy(error_start, err_reg, error_slots);
+                            }
+                            func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
+
+                            func.patch_jump(done_jump, func.current_pc());
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            }
             
             // Check for multi-value case: v1, v2, ... = f() where f() returns a tuple
             // This includes comma-ok (2 values) and multi-return functions (3+ values)

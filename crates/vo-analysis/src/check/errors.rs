@@ -180,6 +180,8 @@ pub enum TypeError {
     PreviousCase = 2519,
     /// errdefer in function without error return.
     ErrDeferNoErrorReturn = 2520,
+    /// dynamic write (~>field= / ~>[k]=) in function without error return.
+    DynWriteNoErrorReturn = 2521,
 
     // === Builtin Function (2600-2699) ===
     /// First argument to append must be slice.
@@ -414,6 +416,7 @@ impl TypeError {
             
             // Errdefer
             TypeError::ErrDeferNoErrorReturn => "errdefer requires function with error return value",
+            TypeError::DynWriteNoErrorReturn => "dynamic write requires function with error return value",
         }
     }
 

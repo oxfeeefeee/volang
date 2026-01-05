@@ -1,0 +1,12 @@
+package main
+
+type S struct {
+    x int
+}
+
+func main() int {
+    s := &S{x: 1}
+    var a any = s
+    a~>x = 2
+    return 0
+}

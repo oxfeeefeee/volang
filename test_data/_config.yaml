@@ -22,6 +22,9 @@ tests:
   - file: debug_iface_bugs.vo
   - file: debug_sequence.vo
   - file: defer_stmt.vo
+  - file: dyn_write_no_error_return.vo
+    should_fail: true
+    reason: "dynamic write requires function with error return value"
   - file: embed_iface_simple.vo
   - file: embed_interface.vo
   - file: embed_interface_impl.vo

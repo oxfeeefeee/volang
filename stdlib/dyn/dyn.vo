@@ -48,6 +48,10 @@ type CallObject interface {
     __call(args ...any) (any, error)
 }
 
+// Extern functions (implemented in Rust)
+func SetAttr(base any, name string, value any) error
+func SetIndex(base any, key any, value any) error
+
 // anymap is the standard dynamic object container.
 type MapObject map[string]any
 

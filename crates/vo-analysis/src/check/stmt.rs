@@ -514,6 +514,74 @@ impl Checker {
                             self.error_code(TypeError::MissingLhs, stmt.span);
                             return;
                         }
+                        if astmt.lhs.len() == 1 && astmt.rhs.len() == 1 {
+                            if let vo_syntax::ast::ExprKind::DynAccess(dyn_access) = &astmt.lhs[0].kind {
+                                use vo_syntax::ast::DynAccessOp;
+
+                                let is_write = matches!(dyn_access.op, DynAccessOp::Field(_) | DynAccessOp::Index(_));
+                                if is_write {
+                                    if let Some(sig_key) = self.octx.sig {
+                                        let sig = self.otype(sig_key).try_as_signature().unwrap();
+                                        let results = self.otype(sig.results()).try_as_tuple().unwrap();
+                                        let vars = results.vars();
+                                        let error_type = self.universe().error_type();
+                                        let has_error_return = if let Some(last_var) = vars.last() {
+                                            let last_type = self.lobj(*last_var).typ().unwrap_or(self.invalid_type());
+                                            crate::typ::identical(last_type, error_type, self.objs())
+                                                || crate::lookup::missing_method(last_type, error_type, true, self).is_none()
+                                        } else {
+                                            false
+                                        };
+                                        if !has_error_return {
+                                            self.error_code_msg(
+                                                TypeError::DynWriteNoErrorReturn,
+                                                stmt.span,
+                                                "dynamic write requires function with error return value".to_string(),
+                                            );
+                                            return;
+                                        }
+                                    }
+
+                                    let mut base_x = Operand::new();
+                                    self.multi_expr(&mut base_x, &dyn_access.base);
+                                    if base_x.invalid() {
+                                        return;
+                                    }
+                                    let base_type = base_x.typ.unwrap_or(self.invalid_type());
+                                    if !self.is_dyn_access_base_type(base_type) {
+                                        self.error_code_msg(
+                                            TypeError::InvalidOp,
+                                            dyn_access.base.span,
+                                            "~> operator requires any/interface or (any, error) type".to_string(),
+                                        );
+                                        return;
+                                    }
+
+                                    let any_type = self.new_t_empty_interface();
+
+                                    match &dyn_access.op {
+                                        DynAccessOp::Field(_) => {}
+                                        DynAccessOp::Index(idx) => {
+                                            let mut key_x = Operand::new();
+                                            self.expr(&mut key_x, idx);
+                                            if key_x.invalid() {
+                                                return;
+                                            }
+                                            self.assignment(&mut key_x, Some(any_type), "dynamic write index");
+                                        }
+                                        _ => unreachable!(),
+                                    }
+
+                                    let mut val_x = Operand::new();
+                                    self.expr(&mut val_x, &astmt.rhs[0]);
+                                    if val_x.invalid() {
+                                        return;
+                                    }
+                                    self.assignment(&mut val_x, Some(any_type), "dynamic write value");
+                                    return;
+                                }
+                            }
+                        }
                         self.assign_vars(&astmt.lhs, &astmt.rhs);
                     }
                     _ => {
