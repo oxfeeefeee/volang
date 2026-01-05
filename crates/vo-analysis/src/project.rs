@@ -425,6 +425,12 @@ fn parse_vfs_package(
 /// Pre-load all imports from the parsed files.
 /// This must be called BEFORE swapping tc_objs with checker.
 fn preload_imports<F: FileSystem>(files: &[File], importer: &mut ProjectImporter<F>) {
+    // Always-link core packages required by runtime.
+    // This does not inject a package name into user scopes (no auto-import),
+    // but ensures the package is analyzed and compiled into the final module.
+    let key = ImportKey::new("errors", ".");
+    let _ = importer.import(&key);
+
     for file in files {
         for import in &file.imports {
             let path = &import.path.value;

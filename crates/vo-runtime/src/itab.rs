@@ -3,6 +3,9 @@
 //! Unified itab table design:
 //! - VM init: copy module.itabs to vm.itabs
 //! - Runtime: new itabs are appended to vm.itabs
+//!
+//! NOTE: This is shared between VM and runtime externs, so runtime helpers can
+//! construct correct interface values (with non-zero itab_id) when needed.
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
@@ -12,7 +15,7 @@ use std::collections::HashMap;
 #[cfg(not(feature = "std"))]
 use hashbrown::HashMap;
 
-use crate::bytecode::{InterfaceMeta, Itab, NamedTypeMeta};
+use vo_common_core::bytecode::{InterfaceMeta, Itab, NamedTypeMeta};
 
 /// Unified itab table with runtime cache for interface-to-interface assignments.
 #[derive(Debug, Default)]
@@ -75,7 +78,7 @@ impl ItabCache {
         let named_type = &named_type_metas[named_type_id as usize];
         let iface_meta = &interface_metas[iface_meta_id as usize];
 
-        // Method set check done at compile time
+        // Method set check done at compile time.
         let methods: Vec<u32> = iface_meta
             .method_names
             .iter()

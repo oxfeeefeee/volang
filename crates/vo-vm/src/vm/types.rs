@@ -3,7 +3,7 @@
 use vo_runtime::gc::Gc;
 
 use crate::exec::ExternRegistry;
-use crate::itab::ItabCache;
+use vo_runtime::itab::ItabCache;
 
 /// Time slice: number of instructions before forced yield check.
 pub const TIME_SLICE: u32 = 1000;

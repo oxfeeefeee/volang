@@ -30,8 +30,53 @@ func NewError(code int, msg string) error {
     return &Error{Code: code, Msg: msg}
 }
 
+type Object interface {
+    AttrObject
+    IndexObject
+    CallObject
+}
+
+type AttrObject interface {
+    __attr(name string) (any, error)
+}
+
+type IndexObject interface {
+    __index(key any) (any, error)
+}
+
+type CallObject interface {
+    __call(args ...any) (any, error)
+}
+
 // anymap is the standard dynamic object container.
-type anymap = map[string]any
+type MapObject map[string]any
+
+func (m MapObject) __attr(name string) (any, error) {
+    return m.__index(name)
+}
+
+func (m MapObject) __index(key any) (any, error) {
+    k, ok := key.(string)
+    if !ok {
+        return nil, NewError(ErrBadIndex, "map key must be string")
+    }
+    v, ok := m[k]
+    if !ok {
+        return nil, NewError(ErrBadField, "key not found")
+    }
+    return v, nil
+}
 
 // anyslice is the standard dynamic array container.
-type anyslice = []any
+type SliceObject []any
+
+func (s SliceObject) __index(key any) (any, error) {
+    i, ok := key.(int)
+    if !ok {
+        return nil, NewError(ErrBadIndex, "slice index must be int")
+    }
+    if i < 0 || i >= len(s) {
+        return nil, NewError(ErrOutOfBounds, "slice index out of bounds")
+    }
+    return s[i], nil
+}

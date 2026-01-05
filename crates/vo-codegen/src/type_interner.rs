@@ -113,9 +113,28 @@ fn type_key_to_runtime_type(
             (RuntimeType::Basic(vk), vk)
         }
         Type::Named(named) => {
-            // Named types: get underlying value kind
+            // Named types are nominal for identity, but their ValueKind is determined by
+            // the underlying type category.
+            //
+            // IMPORTANT: do NOT recursively convert the full underlying RuntimeType here.
+            // For self-referential named interface types (e.g. builtin error with Unwrap() error),
+            // recursing into interface method signatures would cause infinite recursion.
             let underlying = vo_analysis::typ::underlying_type(type_key, tc_objs);
-            let (_, vk) = type_key_to_runtime_type(interner, underlying, tc_objs, str_interner, named_type_ids);
+            let vk = match &tc_objs.types[underlying] {
+                Type::Basic(b) => basic_type_to_value_kind(b.typ()),
+                Type::Pointer(_) => ValueKind::Pointer,
+                Type::Array(_) => ValueKind::Array,
+                Type::Slice(_) => ValueKind::Slice,
+                Type::Map(_) => ValueKind::Map,
+                Type::Chan(_) => ValueKind::Channel,
+                Type::Signature(_) => ValueKind::Closure,
+                Type::Struct(_) => ValueKind::Struct,
+                Type::Interface(_) => ValueKind::Interface,
+                Type::Tuple(_) => ValueKind::Void,
+                Type::Named(_) => {
+                    panic!("type_interner: unexpected Named underlying for a Named type")
+                }
+            };
             let id = if let Some(&id) = named_type_ids.get(&type_key) {
                 id
             } else {
@@ -210,8 +229,7 @@ fn type_key_to_runtime_type(
                     let pkg = if obj.exported() { Symbol::DUMMY } else {
                         obj.pkg()
                             .and_then(|p| tc_objs.pkgs.get(p))
-                            .and_then(|pkg| pkg.name().as_ref())
-                            .and_then(|name| str_interner.get(name))
+                            .and_then(|pkg| str_interner.get(pkg.path()))
                             .map(|s| Symbol::from_raw(s.as_u32()))
                             .unwrap_or(Symbol::DUMMY)
                     };

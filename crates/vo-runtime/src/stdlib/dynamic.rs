@@ -8,6 +8,7 @@ use vo_common_core::types::ValueKind;
 use crate::ffi::{ExternCallContext, ExternEntryWithContext, ExternResult, EXTERN_TABLE_WITH_CONTEXT};
 use crate::gc::{Gc, GcRef};
 use crate::objects::{interface, string, struct_ops};
+use vo_common_core::runtime_type::RuntimeType;
 
 /// dyn_get_attr: Get a field from an interface value by name.
 ///
@@ -148,14 +149,77 @@ fn dyn_error(call: &mut ExternCallContext, msg: &str) -> ExternResult {
     // Return (nil, error)
     call.ret_nil(0);
     call.ret_nil(1);
-    
-    // Create error string
+
+    let named_type_id = call
+        .named_type_metas()
+        .iter()
+        .position(|m| m.name == "errors.Error")
+        .expect("dyn_error: errors.Error not found in named_type_metas") as u32;
+
+    let error_iface_meta_id = call
+        .interface_metas()
+        .iter()
+        .position(|m| m.name == "error")
+        .expect("dyn_error: builtin error interface meta not found") as u32;
+
+    let error_named_rttid = call
+        .runtime_types()
+        .iter()
+        .position(|rt| matches!(rt, RuntimeType::Named(id) if *id == named_type_id))
+        .expect("dyn_error: rttid for errors.Error not found") as u32;
+
+    let error_ptr_rttid = call
+        .runtime_types()
+        .iter()
+        .position(|rt| match rt {
+            RuntimeType::Pointer(elem) => elem.rttid() == error_named_rttid && elem.value_kind() == ValueKind::Struct,
+            _ => false,
+        })
+        .expect("dyn_error: rttid for *errors.Error not found") as u32;
+
+    let meta_id = call
+        .named_type_meta(named_type_id as usize)
+        .expect("dyn_error: named type meta index out of range")
+        .underlying_meta
+        .meta_id();
+
+    let struct_meta = call
+        .struct_meta(meta_id as usize)
+        .expect("dyn_error: struct meta for errors.Error not found")
+        .clone();
+
+    let slots = struct_meta.slot_count() as usize;
+    let err_obj = struct_ops::create(call.gc(), meta_id, slots);
+
     let err_str = call.alloc_str(msg);
-    
-    // Pack error as interface
-    let err_slot0 = interface::pack_slot0(0, 0, ValueKind::String);
+
+    let set_field_by_name = |obj: GcRef, name: &str, values: &[u64]| {
+        let field = struct_meta
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap_or_else(|| panic!("dyn_error: field '{}' not found in errors.Error", name));
+        if field.slot_count as usize != values.len() {
+            panic!("dyn_error: field '{}' slot_count mismatch", name);
+        }
+        for (i, v) in values.iter().enumerate() {
+            unsafe { Gc::write_slot(obj, field.offset as usize + i, *v) };
+        }
+    };
+
+    // code: 0
+    set_field_by_name(err_obj, "code", &[0]);
+    // msg: string (GcRef)
+    set_field_by_name(err_obj, "msg", &[err_str as u64]);
+    // cause: error interface (nil)
+    set_field_by_name(err_obj, "cause", &[0, 0]);
+    // data: any interface (nil)
+    set_field_by_name(err_obj, "data", &[0, 0]);
+
+    let itab_id = call.get_or_create_itab(named_type_id, error_iface_meta_id);
+    let err_slot0 = interface::pack_slot0(itab_id, error_ptr_rttid, ValueKind::Pointer);
     call.ret_u64(2, err_slot0);
-    call.ret_ref(3, err_str);
+    call.ret_ref(3, err_obj);
     
     ExternResult::Ok
 }

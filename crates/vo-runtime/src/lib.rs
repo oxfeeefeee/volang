@@ -18,6 +18,8 @@ pub mod builtins;
 pub mod stdlib;
 #[cfg(feature = "std")]
 pub mod jit_api;
+#[cfg(feature = "std")]
+pub mod itab;
 #[cfg(feature = "gc-debug")]
 pub mod gc_debug;
 

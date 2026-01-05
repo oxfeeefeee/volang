@@ -25,9 +25,10 @@ use linkme::distributed_slice;
 
 use crate::gc::{Gc, GcRef};
 use crate::objects::{string, slice, array};
-use vo_common_core::bytecode::{StructMeta, NamedTypeMeta};
+use vo_common_core::bytecode::{InterfaceMeta, NamedTypeMeta, StructMeta};
 use vo_common_core::runtime_type::RuntimeType;
 use vo_common_core::types::{ValueKind, ValueMeta, ValueRttid};
+use crate::itab::ItabCache;
 
 /// Extern function execution result.
 #[derive(Debug, Clone)]
@@ -224,10 +225,12 @@ pub struct ExternCallContext<'a> {
     struct_metas: &'a [StructMeta],
     /// Named type metadata for reflection.
     named_type_metas: &'a [NamedTypeMeta],
+    interface_metas: &'a [InterfaceMeta],
     /// Runtime types for rttid resolution.
     runtime_types: &'a [RuntimeType],
     /// rttid -> struct_meta_id mapping for anonymous structs.
     rttid_to_struct_meta: &'a [(u32, u32)],
+    itab_cache: &'a mut ItabCache,
 }
 
 impl<'a> ExternCallContext<'a> {
@@ -242,16 +245,20 @@ impl<'a> ExternCallContext<'a> {
         gc: &'a mut Gc,
         struct_metas: &'a [StructMeta],
         named_type_metas: &'a [NamedTypeMeta],
+        interface_metas: &'a [InterfaceMeta],
         runtime_types: &'a [RuntimeType],
         rttid_to_struct_meta: &'a [(u32, u32)],
+        itab_cache: &'a mut ItabCache,
     ) -> Self {
         Self {
             call: ExternCall::new(stack, bp, arg_start, arg_count, ret_start),
             gc,
             struct_metas,
             named_type_metas,
+            interface_metas,
             runtime_types,
             rttid_to_struct_meta,
+            itab_cache,
         }
     }
 
@@ -265,6 +272,36 @@ impl<'a> ExternCallContext<'a> {
     #[inline]
     pub fn named_type_meta(&self, idx: usize) -> Option<&NamedTypeMeta> {
         self.named_type_metas.get(idx)
+    }
+
+    #[inline]
+    pub fn named_type_metas(&self) -> &'a [NamedTypeMeta] {
+        self.named_type_metas
+    }
+
+    #[inline]
+    pub fn interface_meta(&self, idx: usize) -> Option<&InterfaceMeta> {
+        self.interface_metas.get(idx)
+    }
+
+    #[inline]
+    pub fn interface_metas(&self) -> &'a [InterfaceMeta] {
+        self.interface_metas
+    }
+
+    #[inline]
+    pub fn runtime_types(&self) -> &'a [RuntimeType] {
+        self.runtime_types
+    }
+
+    #[inline]
+    pub fn get_or_create_itab(&mut self, named_type_id: u32, iface_meta_id: u32) -> u32 {
+        self.itab_cache.get_or_create(
+            named_type_id,
+            iface_meta_id,
+            self.named_type_metas,
+            self.interface_metas,
+        )
     }
 
     /// Get struct_meta_id from rttid by looking up rttid_to_struct_meta mapping.
@@ -601,9 +638,11 @@ impl ExternRegistry {
         ret_start: u16,
         gc: &mut Gc,
         struct_metas: &[StructMeta],
+        interface_metas: &[InterfaceMeta],
         named_type_metas: &[NamedTypeMeta],
         runtime_types: &[RuntimeType],
         rttid_to_struct_meta: &[(u32, u32)],
+        itab_cache: &mut ItabCache,
     ) -> ExternResult {
         match self.funcs.get(id as usize) {
             Some(Some(ExternFnEntry::Simple(f))) => {
@@ -611,7 +650,20 @@ impl ExternRegistry {
                 f(&mut call)
             }
             Some(Some(ExternFnEntry::WithContext(f))) => {
-                let mut call = ExternCallContext::new(stack, bp, arg_start, arg_count, ret_start, gc, struct_metas, named_type_metas, runtime_types, rttid_to_struct_meta);
+                let mut call = ExternCallContext::new(
+                    stack,
+                    bp,
+                    arg_start,
+                    arg_count,
+                    ret_start,
+                    gc,
+                    struct_metas,
+                    named_type_metas,
+                    interface_metas,
+                    runtime_types,
+                    rttid_to_struct_meta,
+                    itab_cache,
+                );
                 f(&mut call)
             }
             _ => ExternResult::Panic(format!("extern function {} not found", id)),

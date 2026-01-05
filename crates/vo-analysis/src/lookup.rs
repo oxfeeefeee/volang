@@ -262,7 +262,12 @@ fn lookup_field_or_method_impl(
                 }
                 typ::Type::Interface(detail) => {
                     let all = detail.all_methods();
-                    if let Some((i, &okey)) = lookup_method(all.as_ref().unwrap(), pkg, name, objs) {
+                    let methods: &[ObjKey] = if let Some(ref all_methods) = *all {
+                        all_methods
+                    } else {
+                        detail.methods()
+                    };
+                    if let Some((i, &okey)) = lookup_method(methods, pkg, name, objs) {
                         lookup_on_found!(indices, i, &mut target, et, indirect, okey);
                     }
                 }
@@ -478,8 +483,9 @@ pub fn missing_method(
     checker: &mut Checker,
 ) -> Option<(ObjKey, bool)> {
     // First, check if intf is an interface type and if it's empty
+    let intf_underlying = typ::underlying_type(intf, &checker.tc_objs);
     {
-        let ival = match checker.tc_objs.types[intf].try_as_interface() {
+        let ival = match checker.tc_objs.types[intf_underlying].try_as_interface() {
             Some(i) => i,
             None => return None, // Not an interface type
         };
@@ -502,7 +508,7 @@ pub fn missing_method(
             detail.all_methods().as_ref().map(|v| v.clone()).unwrap_or_default()
         };
         let i_methods: Vec<ObjKey> = {
-            let ival = checker.tc_objs.types[intf].try_as_interface().unwrap();
+            let ival = checker.tc_objs.types[intf_underlying].try_as_interface().unwrap();
             ival.all_methods().as_ref().map(|v| v.clone()).unwrap_or_default()
         };
 
@@ -525,7 +531,7 @@ pub fn missing_method(
 
     // A concrete type implements 'intf' if it implements all methods of 'intf'.
     let all_methods: Vec<ObjKey> = {
-        let ival = checker.tc_objs.types[intf].try_as_interface().unwrap();
+        let ival = checker.tc_objs.types[intf_underlying].try_as_interface().unwrap();
         ival.all_methods().as_ref().map(|v| v.clone()).unwrap_or_default()
     };
 

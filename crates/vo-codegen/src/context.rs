@@ -170,84 +170,36 @@ impl CodegenContext {
     /// Recursively intern a type_key, returning its rttid.
     /// For composite types, this first interns inner types to get their ValueRttids.
     pub fn intern_type_key(&mut self, type_key: vo_analysis::objects::TypeKey, info: &crate::type_info::TypeInfoWrapper) -> u32 {
-        use vo_runtime::{RuntimeType, ValueKind, ValueRttid};
-        
-        // Check if it's a Named type first
-        if let Some(named_id) = self.get_named_type_id(type_key) {
-            let rttid = self.type_interner.intern(RuntimeType::Named(named_id));
-            // Register rttid -> struct_meta_id mapping for Named struct types
+        use vo_runtime::ValueKind;
+
+        let tc_objs = &info.project.tc_objs;
+        let value_rttid = crate::type_interner::intern_type_key(
+            &mut self.type_interner,
+            type_key,
+            tc_objs,
+            &info.project.interner,
+            &self.named_type_ids,
+        );
+
+        let rttid = value_rttid.rttid();
+
+        // Register rttid -> struct_meta_id mapping for dynamic struct field access.
+        if value_rttid.value_kind() == ValueKind::Struct {
             if let Some(struct_meta_id) = self.struct_meta_ids.get(&type_key).copied() {
                 self.module.rttid_to_struct_meta.push((rttid, struct_meta_id));
             }
-            return rttid;
         }
-        
-        let vk = info.type_value_kind(type_key);
-        
-        match vk {
-            ValueKind::Int | ValueKind::Int8 | ValueKind::Int16 | ValueKind::Int32 | ValueKind::Int64 |
-            ValueKind::Uint | ValueKind::Uint8 | ValueKind::Uint16 | ValueKind::Uint32 | ValueKind::Uint64 |
-            ValueKind::Float32 | ValueKind::Float64 | ValueKind::Bool | ValueKind::String => {
-                self.type_interner.intern(RuntimeType::Basic(vk))
-            }
-            ValueKind::Struct => {
-                let rttid = self.type_interner.intern(RuntimeType::Struct { fields: Vec::new() });
-                // Register rttid -> struct_meta_id mapping if struct_meta is already registered
-                if let Some(struct_meta_id) = self.struct_meta_ids.get(&type_key).copied() {
-                    self.module.rttid_to_struct_meta.push((rttid, struct_meta_id));
-                }
-                rttid
-            }
-            ValueKind::Array => {
-                let elem_type = info.array_elem_type(type_key);
-                let elem_rttid = self.intern_type_key(elem_type, info);
-                let elem_vk = info.type_value_kind(elem_type);
-                let len = info.array_len(type_key) as u64;
-                self.type_interner.intern(RuntimeType::Array { len, elem: ValueRttid::new(elem_rttid, elem_vk) })
-            }
-            ValueKind::Pointer => {
-                let elem_type = info.pointer_elem(type_key);
-                let elem_rttid = self.intern_type_key(elem_type, info);
-                let elem_vk = info.type_value_kind(elem_type);
-                self.type_interner.intern(RuntimeType::Pointer(ValueRttid::new(elem_rttid, elem_vk)))
-            }
-            ValueKind::Slice => {
-                let elem_type = info.slice_elem_type(type_key);
-                let elem_rttid = self.intern_type_key(elem_type, info);
-                let elem_vk = info.type_value_kind(elem_type);
-                self.type_interner.intern(RuntimeType::Slice(ValueRttid::new(elem_rttid, elem_vk)))
-            }
-            ValueKind::Map => {
-                let (key_type, val_type) = info.map_key_val_types(type_key);
-                let key_rttid = self.intern_type_key(key_type, info);
-                let key_vk = info.type_value_kind(key_type);
-                let val_rttid = self.intern_type_key(val_type, info);
-                let val_vk = info.type_value_kind(val_type);
-                self.type_interner.intern(RuntimeType::Map { 
-                    key: ValueRttid::new(key_rttid, key_vk), 
-                    val: ValueRttid::new(val_rttid, val_vk) 
-                })
-            }
-            ValueKind::Channel => {
-                let elem_type = info.chan_elem_type(type_key);
-                let elem_rttid = self.intern_type_key(elem_type, info);
-                let elem_vk = info.type_value_kind(elem_type);
-                let dir = info.chan_dir(type_key);
-                self.type_interner.intern(RuntimeType::Chan { dir, elem: ValueRttid::new(elem_rttid, elem_vk) })
-            }
-            ValueKind::Interface => {
-                self.type_interner.intern(RuntimeType::Interface { methods: Vec::new() })
-            }
-            ValueKind::Closure => {
-                self.type_interner.intern(RuntimeType::Func { params: Vec::new(), results: Vec::new(), variadic: false })
-            }
-            _ => self.type_interner.intern(RuntimeType::Basic(ValueKind::Void)),
-        }
+
+        rttid
     }
 
     /// Get the interned RuntimeTypes (in rttid order)
     pub fn runtime_types(&self) -> Vec<vo_runtime::RuntimeType> {
         self.type_interner.types().to_vec()
+    }
+
+    pub fn runtime_type(&self, rttid: u32) -> &vo_runtime::RuntimeType {
+        &self.type_interner.types()[rttid as usize]
     }
 
     /// Update a NamedTypeMeta's methods map after function compilation

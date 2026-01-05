@@ -27,6 +27,7 @@ pub extern "C" fn itab_lookup_trampoline(
 }
 
 pub extern "C" fn call_extern_trampoline(
+    ctx: *mut vo_runtime::jit_api::JitContext,
     registry: *const std::ffi::c_void,
     gc: *mut vo_runtime::gc::Gc,
     module: *const std::ffi::c_void,
@@ -41,6 +42,8 @@ pub extern "C" fn call_extern_trampoline(
     let registry = unsafe { &*(registry as *const ExternRegistry) };
     let gc = unsafe { &mut *gc };
     let module = unsafe { &*(module as *const Module) };
+    let ctx = unsafe { &mut *ctx };
+    let itab_cache = unsafe { &mut *(ctx.itab_cache as *mut vo_runtime::itab::ItabCache) };
     
     let mut temp_stack: Vec<u64> = (0..arg_count as usize)
         .map(|i| unsafe { *args.add(i) })
@@ -55,9 +58,11 @@ pub extern "C" fn call_extern_trampoline(
         0,
         gc,
         &module.struct_metas,
+        &module.interface_metas,
         &module.named_type_metas,
         &module.runtime_types,
         &module.rttid_to_struct_meta,
+        itab_cache,
     );
     
     match result {

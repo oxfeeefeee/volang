@@ -38,6 +38,7 @@ pub struct Universe {
     unsafe_pkg: PackageKey,
     iota: ObjKey,
     any_type: TypeKey,
+    error_code_type: TypeKey,
     byte: TypeKey,
     rune: TypeKey,
     slice_of_bytes: TypeKey,
@@ -81,8 +82,11 @@ impl Universe {
         // Create any type: alias for empty interface{}
         let any_type = Self::create_any_type(universe_scope, objs);
 
+        // Create ErrorCode type (named u64)
+        let error_code_type = Self::create_error_code_type(&types, universe_scope, objs);
+
         // Create error type
-        let error_type = Self::create_error_type(&types, universe_scope, objs);
+        let error_type = Self::create_error_type(&types, universe_scope, objs, any_type, error_code_type);
 
         // Define constants (true, false, iota)
         let iota = Self::define_constants(&types, universe_scope, objs);
@@ -114,6 +118,7 @@ impl Universe {
             unsafe_pkg,
             iota,
             any_type,
+            error_code_type,
             byte,
             rune,
             slice_of_bytes,
@@ -140,6 +145,10 @@ impl Universe {
 
     pub fn any_type(&self) -> TypeKey {
         self.any_type
+    }
+
+    pub fn error_code_type(&self) -> TypeKey {
+        self.error_code_type
     }
 
     pub fn byte(&self) -> TypeKey {
@@ -196,10 +205,36 @@ impl Universe {
         any_type
     }
 
+    fn create_error_code_type(
+        types: &HashMap<BasicType, TypeKey>,
+        universe_scope: ScopeKey,
+        objs: &mut TCObjects,
+    ) -> TypeKey {
+        // Create: type ErrorCode uint64
+        let u64_type = types[&BasicType::Uint64];
+
+        let error_code_type = objs.types.insert(Type::Named(crate::typ::NamedDetail::new(
+            None,
+            Some(u64_type),
+            vec![],
+        )));
+
+        let type_name = objs.lobjs.insert(LangObj::new_type_name(
+            0,
+            None,
+            "ErrorCode".to_string(),
+            Some(error_code_type),
+        ));
+        Scope::insert(universe_scope, type_name, objs);
+
+        error_code_type
+    }
+
     /// Looks up a predeclared type by name string.
     pub fn lookup_type_by_name(&self, name: &str) -> Option<TypeKey> {
         let basic = match name {
             "any" => return Some(self.any_type),
+            "ErrorCode" => return Some(self.error_code_type),
             "bool" => BasicType::Bool,
             "int" => BasicType::Int,
             "int8" => BasicType::Int8,
@@ -314,43 +349,96 @@ impl Universe {
         types: &HashMap<BasicType, TypeKey>,
         universe_scope: ScopeKey,
         objs: &mut TCObjects,
+        any_type: TypeKey,
+        error_code_type: TypeKey,
     ) -> TypeKey {
-        // Create: type error interface { Error() string }
+        // Create: type error interface {
+        //   Error() string
+        //   Code() ErrorCode
+        //   Unwrap() error
+        //   Data() any
+        // }
         let string_type = types[&BasicType::Str];
 
-        // Create result variable for Error() method
-        let result_var = objs
-            .lobjs
-            .insert(LangObj::new_var(0, None, "".to_string(), Some(string_type)));
-
-        // Create empty params tuple and results tuple with string
-        let params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
-        let results = objs
-            .types
-            .insert(Type::Tuple(TupleDetail::new(vec![result_var])));
-
-        // Create signature for Error() method
-        let sig = objs.types.insert(Type::Signature(SignatureDetail::new(
-            None, None, params, results, false,
-        )));
-
-        // Create Error method
-        let error_method = objs
-            .lobjs
-            .insert(LangObj::new_func(0, None, "Error".to_string(), Some(sig)));
-
-        // Create interface with Error method
-        let iface = InterfaceDetail::new(vec![error_method], vec![]);
-
-        // Create underlying interface type
-        let underlying = objs.types.insert(Type::Interface(iface));
-
-        // Create named type "error"
+        // Create named type placeholder for "error" first so Unwrap() can return it.
         let error_type = objs.types.insert(Type::Named(crate::typ::NamedDetail::new(
             None,
-            Some(underlying),
+            None,
             vec![],
         )));
+
+        // === Error() string ===
+        let err_res_var = objs
+            .lobjs
+            .insert(LangObj::new_var(0, None, "".to_string(), Some(string_type)));
+        let err_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
+        let err_results = objs
+            .types
+            .insert(Type::Tuple(TupleDetail::new(vec![err_res_var])));
+        let err_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
+            None, None, err_params, err_results, false,
+        )));
+        let err_method = objs
+            .lobjs
+            .insert(LangObj::new_func(0, None, "Error".to_string(), Some(err_sig)));
+
+        // === Code() ErrorCode ===
+        let code_res_var = objs
+            .lobjs
+            .insert(LangObj::new_var(0, None, "".to_string(), Some(error_code_type)));
+        let code_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
+        let code_results = objs
+            .types
+            .insert(Type::Tuple(TupleDetail::new(vec![code_res_var])));
+        let code_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
+            None, None, code_params, code_results, false,
+        )));
+        let code_method = objs
+            .lobjs
+            .insert(LangObj::new_func(0, None, "Code".to_string(), Some(code_sig)));
+
+        // === Unwrap() error ===
+        let unwrap_res_var = objs
+            .lobjs
+            .insert(LangObj::new_var(0, None, "".to_string(), Some(error_type)));
+        let unwrap_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
+        let unwrap_results = objs
+            .types
+            .insert(Type::Tuple(TupleDetail::new(vec![unwrap_res_var])));
+        let unwrap_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
+            None, None, unwrap_params, unwrap_results, false,
+        )));
+        let unwrap_method = objs
+            .lobjs
+            .insert(LangObj::new_func(0, None, "Unwrap".to_string(), Some(unwrap_sig)));
+
+        // === Data() any ===
+        let data_res_var = objs
+            .lobjs
+            .insert(LangObj::new_var(0, None, "".to_string(), Some(any_type)));
+        let data_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
+        let data_results = objs
+            .types
+            .insert(Type::Tuple(TupleDetail::new(vec![data_res_var])));
+        let data_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
+            None, None, data_params, data_results, false,
+        )));
+        let data_method = objs
+            .lobjs
+            .insert(LangObj::new_func(0, None, "Data".to_string(), Some(data_sig)));
+
+        // Create underlying interface type
+        let mut iface = InterfaceDetail::new(vec![err_method, code_method, unwrap_method, data_method], vec![]);
+        // Universe-builtin interfaces must be complete: no embedded interfaces, method set is known.
+        iface.set_complete(vec![err_method, code_method, unwrap_method, data_method]);
+        let underlying = objs.types.insert(Type::Interface(iface));
+
+        // Point named "error" to its underlying interface
+        if let Type::Named(named) = &mut objs.types[error_type] {
+            named.set_underlying(underlying);
+        } else {
+            panic!("create_error_type: expected named type for error");
+        }
 
         // Create type name object
         let type_name = objs.lobjs.insert(LangObj::new_type_name(

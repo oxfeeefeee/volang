@@ -9,8 +9,8 @@ use vo_runtime::objects::closure;
 use crate::bytecode::{FunctionDef, Module};
 use crate::fiber::{CallFrame, DeferEntry, DeferState};
 use crate::instruction::Instruction;
-use crate::itab::ItabCache;
 use crate::vm::ExecResult;
+use vo_runtime::itab::ItabCache;
 
 pub fn exec_call(
     stack: &mut Vec<u64>,

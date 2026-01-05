@@ -1,16 +1,78 @@
 package errors
 
-// New returns an error that formats as the given text.
-// Each call to New returns a distinct error value even if the text is identical.
-func New(text string) error {
-    return &errorString{text}
+// Error is the canonical structured error implementation.
+type Error struct {
+    code  ErrorCode
+    msg   string
+    cause error
+    data  any
 }
 
-// errorString is a trivial implementation of error.
-type errorString struct {
-    s string
+func (e *Error) Error() string {
+    return e.msg
 }
 
-func (e *errorString) Error() string {
-    return e.s
+func (e *Error) Code() ErrorCode {
+    return e.code
+}
+
+func (e *Error) Unwrap() error {
+    return e.cause
+}
+
+func (e *Error) Data() any {
+    return e.data
+}
+
+const (
+    CodeUnknown ErrorCode = 0
+)
+
+// New returns a new error with default code CodeUnknown.
+func New(msg string) error {
+    return &Error{code: CodeUnknown, msg: msg}
+}
+
+// NewCode returns a new error with the given code.
+func NewCode(code ErrorCode, msg string) error {
+    return &Error{code: code, msg: msg}
+}
+
+// Wrap returns a new error with a cause and default code CodeUnknown.
+func Wrap(cause error, msg string) error {
+    return &Error{code: CodeUnknown, msg: msg, cause: cause}
+}
+
+// WrapCode returns a new error with a cause and the given code.
+func WrapCode(cause error, code ErrorCode, msg string) error {
+    return &Error{code: code, msg: msg, cause: cause}
+}
+
+// WithData returns a new error that wraps cause and attaches data.
+func WithData(cause error, data any) error {
+    return &Error{code: cause.Code(), msg: cause.Error(), cause: cause, data: data}
+}
+
+// MakeCode packs domain/local into a 64-bit ErrorCode.
+func MakeCode(domain uint32, local uint32) ErrorCode {
+    return ErrorCode((uint64(domain) << 32) | uint64(local))
+}
+
+func Domain(code ErrorCode) uint32 {
+    return uint32(uint64(code) >> 32)
+}
+
+func Local(code ErrorCode) uint32 {
+    return uint32(uint64(code) & 0xffffffff)
+}
+
+// IsCode checks whether any error in the unwrap chain matches code.
+func IsCode(err error, code ErrorCode) bool {
+    for err != nil {
+        if err.Code() == code {
+            return true
+        }
+        err = err.Unwrap()
+    }
+    return false
 }

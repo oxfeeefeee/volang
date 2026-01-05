@@ -6,10 +6,10 @@
 use vo_runtime::{RuntimeType, ValueKind};
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::interface;
+use vo_runtime::itab::ItabCache;
 
 use crate::bytecode::{Constant, Module};
 use crate::instruction::Instruction;
-use crate::itab::ItabCache;
 use crate::vm::ExecResult;
 
 /// Extract named_type_id from RuntimeType (recursively unwraps Pointer).
