@@ -239,20 +239,9 @@ impl<'a> TypeInfoWrapper<'a> {
         ctx.get_interface_method_index(type_key, method_name, &self.project.tc_objs, &self.project.interner)
     }
 
-    /// Get the empty interface type (any) - creates a new one each time
-    /// This is fine for codegen since we only use it for structural type comparison
+    /// Get the empty interface type (any) from Universe.
     pub fn any_type(&self) -> TypeKey {
-        // Empty interface is stored at index 0 in interface_metas
-        // We need to find it in the type system - use the first empty interface we can find
-        // For codegen purposes, any empty interface type will work
-        for (key, typ) in self.tc_objs().types.iter() {
-            if let Type::Interface(iface) = typ {
-                if iface.methods().is_empty() && iface.embeddeds().is_empty() {
-                    return key;
-                }
-            }
-        }
-        panic!("empty interface type not found in type system")
+        self.tc_objs().universe().any_type()
     }
 
     pub fn expr_type_raw(&self, expr_id: ExprId) -> TypeKey {

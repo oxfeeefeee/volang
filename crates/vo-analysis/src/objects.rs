@@ -11,6 +11,7 @@ use crate::scope::Scope;
 use crate::typ::Type;
 use crate::universe::Universe;
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 // Define all key types used in type checking
 crate::define_key! {
@@ -61,6 +62,9 @@ pub struct TCObjects {
     /// All packages
     pub pkgs: Packages,
     
+    /// Package path -> PackageKey cache for O(1) lookup
+    pkg_path_cache: HashMap<String, PackageKey>,
+    
     /// Declaration info for package-level objects
     pub decls: Decls,
     
@@ -85,6 +89,7 @@ impl TCObjects {
             types: Arena::new(),
             scopes: Arena::new(),
             pkgs: Arena::new(),
+            pkg_path_cache: HashMap::new(),
             decls: Arena::new(),
             universe: None,
             fmt_qualifier: Box::new(default_fmt_qualifier),
@@ -105,6 +110,7 @@ impl TCObjects {
             types: Arena::with_capacity(capacity),
             scopes: Arena::with_capacity(capacity / 4),
             pkgs: Arena::with_capacity(16),
+            pkg_path_cache: HashMap::with_capacity(16),
             decls: Arena::with_capacity(capacity / 2),
             universe: None,
             fmt_qualifier: Box::new(default_fmt_qualifier),
@@ -142,18 +148,15 @@ impl TCObjects {
     pub fn new_package(&mut self, path: String) -> PackageKey {
         let universe_scope = self.universe.as_ref().map(|u| u.scope());
         let skey = self.new_scope(universe_scope, 0, 0, &format!("package {}", path), false);
-        let pkg = Package::new(path, None, skey);
-        self.pkgs.insert(pkg)
+        let pkg = Package::new(path.clone(), None, skey);
+        let key = self.pkgs.insert(pkg);
+        self.pkg_path_cache.insert(path, key);
+        key
     }
     
-    /// Find an existing package by its path.
+    /// Find an existing package by its path (O(1) lookup).
     pub fn find_package_by_path(&self, path: &str) -> Option<PackageKey> {
-        for (key, pkg) in self.pkgs.iter() {
-            if pkg.path() == path {
-                return Some(key);
-            }
-        }
-        None
+        self.pkg_path_cache.get(path).copied()
     }
 
     pub fn new_pkg_name(
