@@ -426,8 +426,37 @@ fn compile_selector(
     if is_pkg_qualified_name(sel, info) {
         return compile_pkg_qualified_name(expr, sel, dst, ctx, func, info);
     }
-    let lv = crate::lvalue::resolve_lvalue(expr, ctx, func, info)?;
-    crate::lvalue::emit_lvalue_load(&lv, dst, ctx, func);
+
+    if let ExprSource::Location(storage) = get_expr_source(expr, ctx, func, info) {
+        func.emit_storage_load(storage, dst);
+        return Ok(());
+    }
+
+    let recv_type = info.expr_type(sel.expr.id);
+    let field_name = info
+        .project
+        .interner
+        .resolve(sel.sel.symbol)
+        .ok_or_else(|| CodegenError::Internal("cannot resolve field".to_string()))?;
+
+    let is_ptr = info.is_pointer(recv_type);
+    if is_ptr {
+        let ptr_reg = compile_expr(&sel.expr, ctx, func, info)?;
+        let base_type = info.pointer_base(recv_type);
+        let (offset, slots) = info
+            .get_selection(expr.id)
+            .map(|sel_info| info.compute_field_offset_from_indices(base_type, sel_info.indices()))
+            .unwrap_or_else(|| info.struct_field_offset(base_type, field_name));
+        func.emit_ptr_get(dst, ptr_reg, offset, slots);
+        return Ok(());
+    }
+
+    let base_reg = compile_expr(&sel.expr, ctx, func, info)?;
+    let (offset, slots) = info
+        .get_selection(expr.id)
+        .map(|sel_info| info.compute_field_offset_from_indices(recv_type, sel_info.indices()))
+        .unwrap_or_else(|| info.struct_field_offset(recv_type, field_name));
+    func.emit_copy(dst, base_reg + offset, slots);
     Ok(())
 }
 

@@ -5,6 +5,11 @@ type Calc struct {
 	val int
 }
 
+type Pair struct {
+	A int
+	B int
+}
+
 func (c *Calc) GetInt() int {
 	return c.val
 }
@@ -15,6 +20,24 @@ func (c *Calc) GetString() string {
 
 func (c *Calc) GetPair() (int, string) {
 	return c.val, "world"
+}
+
+func (c *Calc) GetStruct() Pair {
+	return Pair{A: c.val, B: 7}
+}
+
+func (c *Calc) GetStructAndInt() (Pair, int) {
+	return Pair{A: c.val, B: 7}, c.val
+}
+
+func (c *Calc) GetStructPtr() *Pair {
+	p := &Pair{A: c.val, B: 7}
+	return p
+}
+
+func (c *Calc) GetPtrAndInt() (*Pair, int) {
+	p := &Pair{A: c.val, B: 7}
+	return p, c.val
 }
 
 func main() {
@@ -74,6 +97,108 @@ func main() {
 	}
 	println("Test 4 (int,string): GetPair() =", n, s)
 
+	// Test 4.1: Struct return with any
+	pAny, err := obj~>GetStruct()
+	if err != nil {
+		println("FAIL: GetStruct should succeed")
+		return
+	}
+	if pAny.(Pair).A != 42 || pAny.(Pair).B != 7 {
+		println("FAIL: GetStruct mismatch")
+		return
+	}
+	println("Test 4.1 (any): GetStruct() =", pAny.(Pair).A, pAny.(Pair).B)
+
+	// Test 4.2: Struct return with concrete type
+	var p Pair
+	p, err = obj~>GetStruct()
+	if err != nil {
+		println("FAIL: GetStruct should succeed")
+		return
+	}
+	if p.A != 42 || p.B != 7 {
+		println("FAIL: GetStruct mismatch")
+		return
+	}
+	println("Test 4.2 (Pair): GetStruct() =", p.A, p.B)
+
+	// Test 4.3: Multi-return with struct first (validates return layout/offset)
+	p2, i2, err := obj~>GetStructAndInt()
+	if err != nil {
+		println("FAIL: GetStructAndInt should succeed")
+		return
+	}
+	if p2.(Pair).A != 42 || p2.(Pair).B != 7 || i2.(int) != 42 {
+		println("FAIL: GetStructAndInt mismatch")
+		return
+	}
+	println("Test 4.3 (any,any): GetStructAndInt() =", p2.(Pair).A, p2.(Pair).B, i2.(int))
+
+	// Test 4.4: Multi-return with struct first (concrete types)
+	var p3 Pair
+	var i3 int
+	p3, i3, err = obj~>GetStructAndInt()
+	if err != nil {
+		println("FAIL: GetStructAndInt should succeed")
+		return
+	}
+	if p3.A != 42 || p3.B != 7 || i3 != 42 {
+		println("FAIL: GetStructAndInt mismatch")
+		return
+	}
+	println("Test 4.4 (Pair,int): GetStructAndInt() =", p3.A, p3.B, i3)
+
+	// Test 4.5: Struct pointer return with any
+	ppAny, err := obj~>GetStructPtr()
+	if err != nil {
+		println("FAIL: GetStructPtr should succeed")
+		return
+	}
+	if ppAny.(*Pair).A != 42 || ppAny.(*Pair).B != 7 {
+		println("FAIL: GetStructPtr mismatch")
+		return
+	}
+	println("Test 4.5 (any): GetStructPtr() =", ppAny.(*Pair).A, ppAny.(*Pair).B)
+
+	// Test 4.6: Struct pointer return with concrete type
+	var pp *Pair
+	pp, err = obj~>GetStructPtr()
+	if err != nil {
+		println("FAIL: GetStructPtr should succeed")
+		return
+	}
+	if pp.A != 42 || pp.B != 7 {
+		println("FAIL: GetStructPtr mismatch")
+		return
+	}
+	println("Test 4.6 (*Pair): GetStructPtr() =", pp.A, pp.B)
+
+	// Test 4.7: Multi-return with pointer first (validates return layout/offset width=1)
+	pp2, i4, err := obj~>GetPtrAndInt()
+	if err != nil {
+		println("FAIL: GetPtrAndInt should succeed")
+		return
+	}
+	if pp2.(*Pair).A != 42 || pp2.(*Pair).B != 7 || i4.(int) != 42 {
+		println("FAIL: GetPtrAndInt mismatch")
+		return
+	}
+	println("Test 4.7 (any,any): GetPtrAndInt() =", pp2.(*Pair).A, pp2.(*Pair).B, i4.(int))
+
+	// Test 4.8: Multi-return with pointer first (concrete types)
+	var pp3 *Pair
+	var i5 int
+	pp3, i5, err = obj~>GetPtrAndInt()
+	if err != nil {
+		println("FAIL: GetPtrAndInt should succeed")
+		return
+	}
+	if pp3.A != 42 || pp3.B != 7 || i5 != 42 {
+		println("FAIL: GetPtrAndInt mismatch")
+		return
+	}
+	println("Test 4.8 (*Pair,int): GetPtrAndInt() =", pp3.A, pp3.B, i5)
+
 	// ============================================================
 	// Field access tests
 	// ============================================================
@@ -84,6 +209,7 @@ func main() {
 		Name  string
 	}
 	var data interface{} = &Data{Count: 100, Name: "test"}
+	var dataVal interface{} = Data{Count: 101, Name: "test2"}
 
 	// Test 5: Field access with any LHS
 	f1, err := data~>Count
@@ -109,6 +235,18 @@ func main() {
 		return
 	}
 	println("Test 6 (int): data~>Count =", count)
+
+	// Test 6.1: Field access on struct value (non-pointer)
+	f1v, err := dataVal~>Count
+	if err != nil {
+		println("FAIL: field Count on value should succeed")
+		return
+	}
+	if f1v.(int) != 101 {
+		println("FAIL: expected 101")
+		return
+	}
+	println("Test 6.1 (any): dataVal~>Count =", f1v.(int))
 
 	// ============================================================
 	// Map index tests

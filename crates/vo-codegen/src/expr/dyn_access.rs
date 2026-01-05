@@ -7,6 +7,7 @@ use vo_vm::instruction::Opcode;
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
 use crate::func::FuncBuilder;
+use crate::type_info::encode_i32;
 use crate::type_info::TypeInfoWrapper;
 
 use super::compile_expr_to;
@@ -117,6 +118,7 @@ fn compile_dyn_op(
         DynAccessOp::Field(ident) => {
             // dyn_get_attr(base: any[2], name: string[1]) -> (any, error)[4]
             let extern_id = ctx.get_or_register_extern("dyn_get_attr");
+
             let field_name = info.project.interner.resolve(ident.symbol).unwrap_or("");
             
             // Allocate args: base[2] + name[1] = 3 slots
@@ -133,22 +135,31 @@ fn compile_dyn_op(
             func.emit_with_flags(Opcode::CallExtern, 3, result, extern_id as u16, args_start);
             
             // Convert result based on LHS type
-            if ret_types.len() == 1 && !info.is_any_type(ret_types[0]) {
-                // LHS has concrete type: extract raw value from any (slot1)
-                let ret_slots = info.type_slot_count(ret_types[0]);
-                for j in 0..ret_slots {
-                    func.emit_op(Opcode::Copy, dst + j, result + 1 + j, 0);
+            let mut dst_offset = 0u16;
+            for &ret_type in ret_types.iter() {
+
+                if info.is_any_type(ret_type) {
+                    func.emit_op(Opcode::Copy, dst + dst_offset, result, 0);
+                    func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 1, 0);
+                    dst_offset += 2;
+                } else {
+                    let slots = info.type_slot_count(ret_type);
+                    if slots == 1 {
+                        func.emit_op(Opcode::Copy, dst + dst_offset, result + 1, 0);
+                        dst_offset += 1;
+                    } else if slots == 2 {
+                        func.emit_ptr_get(dst + dst_offset, result + 1, 0, 2);
+                        dst_offset += 2;
+                    } else {
+                        let tmp = func.alloc_temp(1);
+                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
+                        func.emit_op(Opcode::Panic, tmp, 0, 0);
+                    }
                 }
-                // Copy error
-                func.emit_op(Opcode::Copy, dst + ret_slots, result + 2, 0);
-                func.emit_op(Opcode::Copy, dst + ret_slots + 1, result + 3, 0);
-            } else {
-                // LHS is any: copy as-is
-                func.emit_op(Opcode::Copy, dst, result, 0);
-                func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
-                func.emit_op(Opcode::Copy, dst + 2, result + 2, 0);
-                func.emit_op(Opcode::Copy, dst + 3, result + 3, 0);
             }
+
+            func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
+            func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 3, 0);
         }
         DynAccessOp::Index(index_expr) => {
             // dyn_get_index(base: any[2], key: any[2]) -> (any, error)[4]
@@ -178,22 +189,31 @@ fn compile_dyn_op(
             func.emit_with_flags(Opcode::CallExtern, 4, result, extern_id as u16, args_start);
             
             // Convert result based on LHS type
-            if ret_types.len() == 1 && !info.is_any_type(ret_types[0]) {
-                // LHS has concrete type: extract raw value from any (slot1)
-                let ret_slots = info.type_slot_count(ret_types[0]);
-                for j in 0..ret_slots {
-                    func.emit_op(Opcode::Copy, dst + j, result + 1 + j, 0);
+            let mut dst_offset = 0u16;
+            for &ret_type in ret_types.iter() {
+
+                if info.is_any_type(ret_type) {
+                    func.emit_op(Opcode::Copy, dst + dst_offset, result, 0);
+                    func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 1, 0);
+                    dst_offset += 2;
+                } else {
+                    let slots = info.type_slot_count(ret_type);
+                    if slots == 1 {
+                        func.emit_op(Opcode::Copy, dst + dst_offset, result + 1, 0);
+                        dst_offset += 1;
+                    } else if slots == 2 {
+                        func.emit_ptr_get(dst + dst_offset, result + 1, 0, 2);
+                        dst_offset += 2;
+                    } else {
+                        let tmp = func.alloc_temp(1);
+                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
+                        func.emit_op(Opcode::Panic, tmp, 0, 0);
+                    }
                 }
-                // Copy error
-                func.emit_op(Opcode::Copy, dst + ret_slots, result + 2, 0);
-                func.emit_op(Opcode::Copy, dst + ret_slots + 1, result + 3, 0);
-            } else {
-                // LHS is any: copy as-is
-                func.emit_op(Opcode::Copy, dst, result, 0);
-                func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
-                func.emit_op(Opcode::Copy, dst + 2, result + 2, 0);
-                func.emit_op(Opcode::Copy, dst + 3, result + 3, 0);
             }
+
+            func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
+            func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 3, 0);
         }
         DynAccessOp::Call { args, spread: _ } => {
             compile_dyn_closure_call(base_reg, args, dst, ret_types, ctx, func, info)?;
@@ -202,6 +222,7 @@ fn compile_dyn_op(
             // a~>method(args) = dyn_get_attr(a, "method") then call closure
             // Step 1: Get method as closure via dyn_get_attr
             let extern_id = ctx.get_or_register_extern("dyn_get_attr");
+
             let method_name = info.project.interner.resolve(method.symbol).unwrap_or("");
             
             let attr_args = func.alloc_temp(3);
@@ -215,14 +236,14 @@ fn compile_dyn_op(
             func.emit_with_flags(Opcode::CallExtern, 3, get_result, extern_id as u16, attr_args);
             
             // Check if error (slot 2,3) is nil
-            let expected_ret_count = ret_types.len() as u16;
             let skip_error = func.emit_jump(Opcode::JumpIfNot, get_result + 2);
             // Error - fill nil values and propagate error
-            for i in 0..(expected_ret_count * 2) {
+            let expected_dst_slots: u16 = ret_types.iter().map(|&t| if info.is_any_type(t) { 2 } else { info.type_slot_count(t) }).sum();
+            for i in 0..expected_dst_slots {
                 func.emit_op(Opcode::LoadInt, dst + i, 0, 0);
             }
-            func.emit_op(Opcode::Copy, dst + expected_ret_count * 2, get_result + 2, 0);
-            func.emit_op(Opcode::Copy, dst + expected_ret_count * 2 + 1, get_result + 3, 0);
+            func.emit_op(Opcode::Copy, dst + expected_dst_slots, get_result + 2, 0);
+            func.emit_op(Opcode::Copy, dst + expected_dst_slots + 1, get_result + 3, 0);
             let done_jump = func.emit_jump(Opcode::Jump, 0);
             
             // No error - call the closure
@@ -268,11 +289,12 @@ fn compile_dyn_closure_call(
     // 2. Check error - if set, fill nil values and propagate error
     let skip_error = func.emit_jump(Opcode::JumpIfNot, check_result);
     // Error case: fill all result slots with nil, then copy error
-    for i in 0..(expected_ret_count * 2) {
+    let expected_dst_slots: u16 = ret_types.iter().map(|&t| if info.is_any_type(t) { 2 } else { info.type_slot_count(t) }).sum();
+    for i in 0..expected_dst_slots {
         func.emit_op(Opcode::LoadInt, dst + i, 0, 0);
     }
-    func.emit_op(Opcode::Copy, dst + expected_ret_count * 2, check_result, 0);
-    func.emit_op(Opcode::Copy, dst + expected_ret_count * 2 + 1, check_result + 1, 0);
+    func.emit_op(Opcode::Copy, dst + expected_dst_slots, check_result, 0);
+    func.emit_op(Opcode::Copy, dst + expected_dst_slots + 1, check_result + 1, 0);
     let done_jump = func.emit_jump(Opcode::Jump, 0);
     
     // 3. No error - call the closure
@@ -295,13 +317,9 @@ fn compile_dyn_closure_call(
     
     // Calculate arg slots and return slots
     let arg_slots_total: u16 = args.iter().map(|a| info.expr_slots(a.id)).sum();
-    
-    // For dynamic calls, assume 1 slot per return value (basic types)
-    // Struct/array returns would need more sophisticated runtime handling
-    let ret_slots = expected_ret_count;
-    
-    // Allocate space for args and return values
-    let args_start = func.alloc_temp(arg_slots_total.max(ret_slots));
+
+    let max_ret_slots: u16 = expected_ret_count * 2;
+    let args_start = func.alloc_temp(arg_slots_total.max(max_ret_slots));
     
     // Compile arguments
     let mut arg_offset = 0u16;
@@ -311,36 +329,87 @@ fn compile_dyn_closure_call(
         arg_offset += arg_slots;
     }
     
-    // CallClosure: a=closure_slot, b=args_start (also ret_reg), c=(arg_slots<<8|ret_slots)
-    let c = crate::type_info::encode_call_args(arg_slots_total, ret_slots);
-    func.emit_op(Opcode::CallClosure, closure_slot, args_start, c);
+    let ret_slots_reg = meta_result + 1;
+    let const_reg = func.alloc_temp(1);
+    let cmp_reg = func.alloc_temp(1);
+
+    let mut call_jumps: Vec<usize> = Vec::new();
+    for k in 0..=max_ret_slots {
+        let (b, c) = encode_i32(k as i32);
+        func.emit_op(Opcode::LoadInt, const_reg, b, c);
+        func.emit_op(Opcode::EqI, cmp_reg, ret_slots_reg, const_reg);
+        let j = func.emit_jump(Opcode::JumpIf, cmp_reg);
+        call_jumps.push(j);
+    }
+
+    func.emit_op(Opcode::LoadInt, const_reg, 0, 0);
+    func.emit_op(Opcode::Panic, const_reg, 0, 0);
+
+    let mut end_call_jumps: Vec<usize> = Vec::new();
+    for (k, j) in call_jumps.into_iter().enumerate() {
+        func.patch_jump(j, func.current_pc());
+        let ret_slots = k as u16;
+        let c = crate::type_info::encode_call_args(arg_slots_total, ret_slots);
+        func.emit_op(Opcode::CallClosure, closure_slot, args_start, c);
+        end_call_jumps.push(func.emit_jump(Opcode::Jump, 0));
+    }
+    let end_call_pc = func.current_pc();
+    for j in end_call_jumps {
+        func.patch_jump(j, end_call_pc);
+    }
+
+    let read_ret_extern_id = ctx.get_or_register_extern("dyn_ret_read_advance");
+    let box_extern_id = ctx.get_or_register_extern("dyn_box_returns");
+
+    let base_off_reg = func.alloc_temp(1);
+    let (b, c) = encode_i32(args_start as i32);
+    func.emit_op(Opcode::LoadInt, base_off_reg, b, c);
+
+    let src_off_reg = func.alloc_temp(1);
+    func.emit_op(Opcode::LoadInt, src_off_reg, 0, 0);
     
-    // Handle return values based on LHS types
-    // Return values are in args_start, each return value is 1 slot for basic types
-    // (struct/array returns would need runtime handling - not yet supported)
-    // meta_result layout: [ret_count, ret_slots, ret_meta_0, ret_meta_1, ...]
     let mut dst_offset = 0u16;
     for (i, &ret_type) in ret_types.iter().enumerate() {
         let i = i as u16;
+
+        let read_args = func.alloc_temp(3);
+        func.emit_op(Opcode::Copy, read_args, base_off_reg, 0);
+        func.emit_op(Opcode::Copy, read_args + 1, src_off_reg, 0);
+        func.emit_op(Opcode::Copy, read_args + 2, meta_result + 2 + i, 0);
+
+        let read_result = func.alloc_temp(3);
+        func.emit_with_flags(Opcode::CallExtern, 3, read_result, read_ret_extern_id as u16, read_args);
+        func.emit_op(Opcode::Copy, src_off_reg, read_result + 2, 0);
+
         if info.is_any_type(ret_type) {
-            // LHS is any: box the return value (2 slots for interface)
-            // slot0 = ret_meta_i (from meta_result + 2 + i)
-            // slot1 = raw value (from args_start + i, assuming 1 slot per return)
-            func.emit_op(Opcode::Copy, dst + dst_offset, meta_result + 2 + i, 0);  // slot0 = ret_meta
-            func.emit_op(Opcode::Copy, dst + dst_offset + 1, args_start + i, 0);   // slot1 = value
+            let box_args = func.alloc_temp(3);
+            func.emit_op(Opcode::Copy, box_args, read_result, 0);
+            func.emit_op(Opcode::Copy, box_args + 1, read_result + 1, 0);
+            func.emit_op(Opcode::Copy, box_args + 2, meta_result + 2 + i, 0);
+
+            let box_result = func.alloc_temp(2);
+            func.emit_with_flags(Opcode::CallExtern, 3, box_result, box_extern_id as u16, box_args);
+
+            func.emit_op(Opcode::Copy, dst + dst_offset, box_result, 0);
+            func.emit_op(Opcode::Copy, dst + dst_offset + 1, box_result + 1, 0);
             dst_offset += 2;
         } else {
-            // LHS has concrete type: copy the raw value
-            // For basic types, this is 1 slot; for struct/array, this needs more handling
-            let lhs_slots = info.type_slot_count(ret_type);
-            for j in 0..lhs_slots {
-                func.emit_op(Opcode::Copy, dst + dst_offset + j, args_start + i + j, 0);
+            let slots = info.type_slot_count(ret_type);
+            if slots == 1 {
+                func.emit_op(Opcode::Copy, dst + dst_offset, read_result, 0);
+                dst_offset += 1;
+            } else if slots == 2 {
+                func.emit_op(Opcode::Copy, dst + dst_offset, read_result, 0);
+                func.emit_op(Opcode::Copy, dst + dst_offset + 1, read_result + 1, 0);
+                dst_offset += 2;
+            } else {
+                let tmp = func.alloc_temp(1);
+                func.emit_op(Opcode::LoadInt, tmp, 0, 0);
+                func.emit_op(Opcode::Panic, tmp, 0, 0);
             }
-            dst_offset += lhs_slots;
         }
     }
-    
-    // Set error = nil (last 2 slots)
+
     func.emit_op(Opcode::LoadInt, dst + dst_offset, 0, 0);
     func.emit_op(Opcode::LoadInt, dst + dst_offset + 1, 0, 0);
     

@@ -404,3 +404,64 @@ static __VO_DYN_GET_RET_META: ExternEntryWithContext = ExternEntryWithContext {
     func: dyn_get_ret_meta,
 };
 
+fn dyn_ret_read_advance(call: &mut ExternCallContext) -> ExternResult {
+    let base_off = call.arg_u64(0) as u16;
+    let src_off = call.arg_u64(1) as u16;
+    let value_rttid_raw = call.arg_u64(2) as u32;
+
+    let vk = ValueKind::from_u8((value_rttid_raw & 0xFF) as u8);
+    let width: u16 = match vk {
+        ValueKind::Struct | ValueKind::Array => 2,
+        _ => 1,
+    };
+
+    let raw0 = call.call().slot(base_off + src_off);
+    let raw1 = call.call().slot(base_off + src_off + 1);
+
+    call.ret_u64(0, raw0);
+    call.ret_u64(1, raw1);
+    call.ret_u64(2, (src_off + width) as u64);
+
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_RET_READ_ADVANCE: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_ret_read_advance",
+    func: dyn_ret_read_advance,
+};
+
+fn dyn_box_returns(call: &mut ExternCallContext) -> ExternResult {
+    let raw_slot0 = call.arg_u64(0);
+    let raw_slot1 = call.arg_u64(1);
+    let value_rttid_raw = call.arg_u64(2) as u32;
+
+    let rttid = value_rttid_raw >> 8;
+    let vk = ValueKind::from_u8((value_rttid_raw & 0xFF) as u8);
+
+    let result_slot1 = match vk {
+        ValueKind::Struct | ValueKind::Array => {
+            let new_ref = call.gc_alloc(2, &[]);
+            unsafe {
+                Gc::write_slot(new_ref, 0, raw_slot0);
+                Gc::write_slot(new_ref, 1, raw_slot1);
+            }
+            new_ref as u64
+        }
+        _ => raw_slot0,
+    };
+
+    let result_slot0 = interface::pack_slot0(0, rttid, vk);
+
+    call.ret_u64(0, result_slot0);
+    call.ret_u64(1, result_slot1);
+
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_BOX_RETURNS: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_box_returns",
+    func: dyn_box_returns,
+};
+

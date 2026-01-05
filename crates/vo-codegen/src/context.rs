@@ -127,6 +127,10 @@ impl CodegenContext {
         id
     }
 
+    pub fn alias_struct_meta_id(&mut self, type_key: TypeKey, struct_meta_id: u32) {
+        self.struct_meta_ids.insert(type_key, struct_meta_id);
+    }
+
     pub fn register_interface_meta(&mut self, type_key: TypeKey, meta: InterfaceMeta) -> u32 {
         let id = self.module.interface_metas.len() as u32;
         self.module.interface_metas.push(meta);

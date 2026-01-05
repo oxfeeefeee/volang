@@ -131,6 +131,7 @@ fn register_types(
                         }
                         let meta = StructMeta { slot_types, fields };
                         let struct_meta_id = ctx.register_struct_meta(underlying_key, meta);
+                        ctx.alias_struct_meta_id(named_key, struct_meta_id);
                         ValueMeta::new(struct_meta_id as u32, vo_runtime::ValueKind::Struct)
                     }
                     TypeExprKind::Interface(_) => {
