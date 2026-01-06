@@ -462,6 +462,21 @@ impl<'a> ExternCallContext<'a> {
     ///
     /// This is the canonical way to convert any value to interface representation.
     ///
+    /// # Design Decision: Boxing in Runtime, Unboxing in Codegen
+    ///
+    /// Boxing and unboxing are intentionally asymmetric:
+    /// - **Boxing (here, runtime)**: For dynamic access (`a~>field`, `a~>[k]`, `a~>Method()`),
+    ///   the source type is unknown at compile time. Only runtime knows the actual field/element type.
+    /// - **Unboxing (codegen)**: The target type (LHS) is always known at compile time.
+    ///   Codegen generates optimal instructions (Copy/PtrGet) directly, avoiding runtime overhead.
+    ///
+    /// This asymmetry is dictated by the problem structure:
+    /// - Boxing: "known value → any" (runtime knows source type)
+    /// - Unboxing: "any → known target" (codegen knows target type)
+    ///
+    /// Putting unboxing in runtime would add unnecessary indirection: runtime would return
+    /// `Vec<u64>` that codegen must copy to stack, whereas codegen can directly emit PtrGet.
+    ///
     /// # Arguments
     /// * `rttid` - Runtime type ID
     /// * `vk` - Value kind

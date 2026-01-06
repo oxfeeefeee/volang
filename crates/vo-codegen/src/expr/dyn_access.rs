@@ -386,6 +386,9 @@ fn compile_dyn_closure_call(
 /// Runtime always returns interface format (slot0=meta, slot1=data).
 /// This function extracts the value according to the target type.
 /// Returns the number of dst slots consumed.
+///
+/// See `ExternCallContext::box_to_interface` for design rationale on why
+/// boxing is in runtime and unboxing is in codegen.
 fn emit_unbox_interface(
     ret_type: vo_analysis::TypeKey,
     dst: u16,
@@ -414,12 +417,8 @@ fn emit_unbox_interface(
             func.emit_op(Opcode::Copy, dst, result, 0);
             func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
             2
-        } else if (vk == ValueKind::Struct || vk == ValueKind::Array) && slots > 2 {
-            // Large struct/array (>2 slots): slot1 is GcRef, use PtrGet to read all slots
-            func.emit_ptr_get(dst, result + 1, 0, slots);
-            slots
         } else {
-            // 2-slot small struct: slot1 is GcRef, use PtrGet
+            // Struct/Array (any size): slot1 is GcRef, use PtrGet to read all slots
             func.emit_ptr_get(dst, result + 1, 0, slots);
             slots
         }

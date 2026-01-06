@@ -15,12 +15,38 @@ use vo_common_core::runtime_type::RuntimeType;
 
 // ==================== Helper functions ====================
 
+/// Check if a ValueKind is an integer type (Int, Int64, Int32, Int16, Int8).
+#[inline]
+fn is_integer_value_kind(vk: ValueKind) -> bool {
+    matches!(vk, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8)
+}
+
+/// Prepare a value for assignment to an interface-typed field/element.
+/// Validates that the value implements the interface and computes the itab.
+/// Returns (stored_slot0, val_slot1) on success.
+#[inline]
+fn prepare_interface_value(
+    call: &mut ExternCallContext,
+    val_slot0: u64,
+    val_slot1: u64,
+    target_iface_meta_id: u32,
+) -> Result<(u64, u64), &'static str> {
+    let val_vk = interface::unpack_value_kind(val_slot0);
+    let val_rttid = interface::unpack_rttid(val_slot0);
+    let named_type_id = call.get_named_type_id_from_rttid(val_rttid, true)
+        .ok_or("value does not have methods")?;
+    let itab_id = call.try_get_or_create_itab(named_type_id, target_iface_meta_id)
+        .ok_or("value does not implement the interface")?;
+    let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
+    Ok((stored_slot0, val_slot1))
+}
+
 /// Check if key is an integer type, extract its value, and validate bounds.
 /// Combines type checking and bounds checking in one call.
 #[inline]
 fn check_int_index(key_slot0: u64, key_slot1: u64, len: usize, type_name: &'static str) -> Result<usize, &'static str> {
     let key_vk = interface::unpack_value_kind(key_slot0);
-    if !matches!(key_vk, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8) {
+    if !is_integer_value_kind(key_vk) {
         return Err("index must be integer");
     }
     
@@ -302,7 +328,7 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             
             let key_compatible = match (map_key_vk, key_vk) {
                 (a, b) if a == b => true,
-                (ValueKind::Int, k) | (k, ValueKind::Int) => matches!(k, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8),
+                (ValueKind::Int, k) | (k, ValueKind::Int) => is_integer_value_kind(k),
                 _ => false,
             };
             if !key_compatible {
@@ -410,22 +436,14 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
     let val_rttid = interface::unpack_rttid(val_slot0);
 
     if expected_vk == ValueKind::Interface {
-        let iface_meta_id = expected_rttid;
-
-        let named_type_id = match call.get_named_type_id_from_rttid(val_rttid, true) {
-            Some(id) => id,
-            None => return dyn_error_only(call, "value does not have methods"),
+        let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, expected_rttid) {
+            Ok(v) => v,
+            Err(e) => return dyn_error_only(call, e),
         };
-        // Use try_get_or_create_itab to check if value implements the interface
-        let itab_id = match call.try_get_or_create_itab(named_type_id, iface_meta_id) {
-            Some(id) => id,
-            None => return dyn_error_only(call, "value does not implement the interface"),
-        };
-        let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
 
         unsafe {
             struct_ops::set_field(data_ref, field_offset, stored_slot0);
-            struct_ops::set_field(data_ref, field_offset + 1, val_slot1);
+            struct_ops::set_field(data_ref, field_offset + 1, stored_slot1);
         }
 
         call.ret_nil(0);
@@ -504,19 +522,11 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
 
             if elem_vk == ValueKind::Interface {
                 let iface_meta_id = elem_meta.meta_id();
-                let val_vk = interface::unpack_value_kind(val_slot0);
-                let val_rttid = interface::unpack_rttid(val_slot0);
-                let named_type_id = match call.get_named_type_id_from_rttid(val_rttid, true) {
-                    Some(id) => id,
-                    None => return dyn_error_only(call, "value does not have methods"),
+                let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, iface_meta_id) {
+                    Ok(v) => v,
+                    Err(e) => return dyn_error_only(call, e),
                 };
-                // Use try_get_or_create_itab to check if value implements the interface
-                let itab_id = match call.try_get_or_create_itab(named_type_id, iface_meta_id) {
-                    Some(id) => id,
-                    None => return dyn_error_only(call, "value does not implement the interface"),
-                };
-                let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
-                let src = [stored_slot0, val_slot1];
+                let src = [stored_slot0, stored_slot1];
                 slice::set_n(base_ref, idx as usize, &src, elem_bytes);
 
                 call.ret_nil(0);
@@ -567,10 +577,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
 
             let key_compatible = match (map_key_vk, key_vk) {
                 (a, b) if a == b => true,
-                (ValueKind::Int, k) | (k, ValueKind::Int) => matches!(
-                    k,
-                    ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8
-                ),
+                (ValueKind::Int, k) | (k, ValueKind::Int) => is_integer_value_kind(k),
                 _ => false,
             };
             if !key_compatible {
@@ -611,20 +618,12 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
             let mut val_buf: Vec<u64> = Vec::with_capacity(map_val_slots);
             if map_val_vk == ValueKind::Interface {
                 let iface_meta_id = val_meta.meta_id();
-                let val_vk = interface::unpack_value_kind(val_slot0);
-                let val_rttid = interface::unpack_rttid(val_slot0);
-                let named_type_id = match call.get_named_type_id_from_rttid(val_rttid, true) {
-                    Some(id) => id,
-                    None => return dyn_error_only(call, "value does not have methods"),
+                let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, iface_meta_id) {
+                    Ok(v) => v,
+                    Err(e) => return dyn_error_only(call, e),
                 };
-                // Use try_get_or_create_itab to check if value implements the interface
-                let itab_id = match call.try_get_or_create_itab(named_type_id, iface_meta_id) {
-                    Some(id) => id,
-                    None => return dyn_error_only(call, "value does not implement the interface"),
-                };
-                let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
                 val_buf.push(stored_slot0);
-                val_buf.push(val_slot1);
+                val_buf.push(stored_slot1);
             } else {
                 let val_vk = interface::unpack_value_kind(val_slot0);
                 let val_rttid = interface::unpack_rttid(val_slot0);
