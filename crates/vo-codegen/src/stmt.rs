@@ -583,7 +583,7 @@ fn compile_stmt_with_label(
                             let name_idx = ctx.const_string(field_name);
                             func.emit_op(Opcode::StrNew, args_start + 2, name_idx, 0);
                             crate::stmt::compile_iface_assign(args_start + 3, &assign.rhs[0], any_type, ctx, func, info)?;
-                            let extern_id = ctx.get_or_register_extern("dyn_SetAttr");
+                            let extern_id = ctx.get_or_register_extern("dyn_set_attr");
                             let err_reg = func.alloc_temp(2);
                             func.emit_with_flags(Opcode::CallExtern, 5, err_reg, extern_id as u16, args_start);
 
@@ -637,7 +637,7 @@ fn compile_stmt_with_label(
                             func.emit_copy(args_start, base_reg, 2);
                             crate::stmt::compile_iface_assign(args_start + 2, key_expr, any_type, ctx, func, info)?;
                             crate::stmt::compile_iface_assign(args_start + 4, &assign.rhs[0], any_type, ctx, func, info)?;
-                            let extern_id = ctx.get_or_register_extern("dyn_SetIndex");
+                            let extern_id = ctx.get_or_register_extern("dyn_set_index");
                             let err_reg = func.alloc_temp(2);
                             func.emit_with_flags(Opcode::CallExtern, 6, err_reg, extern_id as u16, args_start);
 
