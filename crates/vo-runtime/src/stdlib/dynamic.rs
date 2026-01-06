@@ -115,28 +115,13 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     let field_rttid = field.type_info.rttid();
     let field_vk = field.type_info.value_kind();
     
-    // Always return interface format - codegen handles unboxing
-    let (data0, data1) = if field_vk == ValueKind::Struct || field_vk == ValueKind::Array {
-        // Struct/Array: allocate and copy to heap, return as (meta, GcRef)
-        let field_slot_types: Vec<_> = struct_meta.slot_types[field_offset..field_offset + field_slots].to_vec();
-        let new_ref = call.gc_alloc(field_slots as u16, &field_slot_types);
-        for i in 0..field_slots {
-            let val = unsafe { Gc::read_slot(data_ref, field_offset + i) };
-            unsafe { Gc::write_slot(new_ref, i, val) };
-        }
-        let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
-        (slot0, new_ref as u64)
-    } else if field_vk == ValueKind::Interface {
-        // Interface field: preserve itab_id (return as-is)
-        let iface_slot0 = unsafe { Gc::read_slot(data_ref, field_offset) };
-        let iface_slot1 = unsafe { Gc::read_slot(data_ref, field_offset + 1) };
-        (iface_slot0, iface_slot1)
-    } else {
-        // Primitive/reference types: pack as interface
-        let val = unsafe { struct_ops::get_field(data_ref, field_offset) };
-        let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
-        (slot0, val)
-    };
+    // Read raw slots from struct field
+    let raw_slots: Vec<u64> = (0..field_slots)
+        .map(|i| unsafe { Gc::read_slot(data_ref, field_offset + i) })
+        .collect();
+    
+    // Box to interface format using unified boxing logic
+    let (data0, data1) = call.box_to_interface(field_rttid, field_vk, &raw_slots);
     
     // Return (data, nil)
     call.ret_u64(0, data0);
@@ -269,15 +254,6 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     let base_rttid = interface::unpack_rttid(base_slot0);
     let base_ref = base_slot1 as GcRef;
     
-    // Helper to format return value in interface format
-    let format_result = |call: &mut ExternCallContext, rttid: u32, vk: ValueKind, value: u64| {
-        let slot0 = interface::pack_slot0(0, rttid, vk);
-        call.ret_u64(0, slot0);
-        call.ret_u64(1, value);
-        call.ret_nil(2);
-        call.ret_nil(3);
-    };
-    
     match base_vk {
         ValueKind::Slice => {
             let len = crate::objects::slice::len(base_ref);
@@ -288,22 +264,20 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             
             let elem_meta = crate::objects::slice::elem_meta(base_ref);
             let elem_vk = elem_meta.value_kind();
-            let elem_bytes = crate::objects::array::elem_bytes(crate::objects::slice::array_ref(base_ref));
             let elem_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
+            let elem_slots = call.get_type_slot_count(elem_value_rttid.rttid()) as usize;
             
-            if elem_vk == ValueKind::Interface {
-                // Element is interface: read 2 slots and preserve itab_id
-                let iface_slot0 = crate::objects::slice::get(base_ref, idx as usize * 2, 8);
-                let iface_slot1 = crate::objects::slice::get(base_ref, idx as usize * 2 + 1, 8);
-                // Return interface as-is (preserves itab_id) regardless of is_any
-                call.ret_u64(0, iface_slot0);
-                call.ret_u64(1, iface_slot1);
-                call.ret_nil(2);
-                call.ret_nil(3);
-            } else {
-                let value = crate::objects::slice::get(base_ref, idx as usize, elem_bytes);
-                format_result(call, elem_value_rttid.rttid(), elem_vk, value);
-            }
+            // Read all element slots
+            let raw_slots: Vec<u64> = (0..elem_slots)
+                .map(|i| crate::objects::slice::get(base_ref, idx as usize * elem_slots + i, 8))
+                .collect();
+            
+            // Box to interface format
+            let (data0, data1) = call.box_to_interface(elem_value_rttid.rttid(), elem_vk, &raw_slots);
+            call.ret_u64(0, data0);
+            call.ret_u64(1, data1);
+            call.ret_nil(2);
+            call.ret_nil(3);
         }
         ValueKind::String => {
             let s = string::as_str(base_ref);
@@ -312,7 +286,15 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
                 Ok(i) => i,
                 Err(e) => return dyn_error(call, e),
             };
-            format_result(call, ValueKind::Uint8 as u32, ValueKind::Uint8, bytes[idx as usize] as u64);
+            let (data0, data1) = call.box_to_interface(
+                ValueKind::Uint8 as u32,
+                ValueKind::Uint8,
+                &[bytes[idx as usize] as u64],
+            );
+            call.ret_u64(0, data0);
+            call.ret_u64(1, data1);
+            call.ret_nil(2);
+            call.ret_nil(3);
         }
         ValueKind::Map => {
             let key_vk = interface::unpack_value_kind(key_slot0);
@@ -334,25 +316,20 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             let key_data = [key_slot1];
             let found = crate::objects::map::get(base_ref, &key_data);
             
-            let (val0, val1) = if let Some(val_slice) = found {
-                if val_vk == ValueKind::Interface {
-                    (val_slice[0], val_slice[1])
-                } else {
-                    (val_slice[0], 0u64)
-                }
+            // Get raw slots from map value (or zeros if not found)
+            let raw_slots: Vec<u64> = if let Some(val_slice) = found {
+                val_slice.to_vec()
             } else {
-                (0u64, 0u64)
+                let val_slots = call.get_type_slot_count(val_value_rttid.rttid()) as usize;
+                vec![0u64; val_slots]
             };
             
-            if val_vk == ValueKind::Interface {
-                // Return interface as-is (preserves itab_id) regardless of is_any
-                call.ret_u64(0, val0);
-                call.ret_u64(1, val1);
-                call.ret_nil(2);
-                call.ret_nil(3);
-            } else {
-                format_result(call, val_value_rttid.rttid(), val_vk, val0);
-            }
+            // Box to interface format
+            let (data0, data1) = call.box_to_interface(val_value_rttid.rttid(), val_vk, &raw_slots);
+            call.ret_u64(0, data0);
+            call.ret_u64(1, data1);
+            call.ret_nil(2);
+            call.ret_nil(3);
         }
         _ => {
             return dyn_error(call, &format!("cannot index type {:?}", base_vk));
@@ -811,66 +788,38 @@ fn dyn_unpack_all_returns(call: &mut ExternCallContext) -> ExternResult {
         let width = call.get_type_slot_count(rttid);
         
         // Read raw slots from source
-        let (raw0, raw1, boxed_ref) = if (vk == ValueKind::Struct || vk == ValueKind::Array) && width > 2 {
-            // Large struct/array (> 2 slots): allocate GcRef and copy all slots
-            let new_ref = call.gc_alloc(width, &[]);
-            for j in 0..width {
-                let val = call.call().slot(base_off + src_off + j);
-                unsafe { Gc::write_slot(new_ref, j as usize, val) };
-            }
-            (0u64, new_ref as u64, true)
-        } else {
-            // Small value (1 or 2 slots)
-            let r0 = call.call().slot(base_off + src_off);
-            let r1 = if width > 1 {
-                call.call().slot(base_off + src_off + 1)
-            } else {
-                0
-            };
-            (r0, r1, false)
-        };
+        let raw_slots: Vec<u64> = (0..width)
+            .map(|j| call.call().slot(base_off + src_off + j))
+            .collect();
         
         src_off += width;
         
         if is_any {
-            // Box into interface format
-            let (result0, result1) = match vk {
-                ValueKind::Struct | ValueKind::Array => {
-                    if boxed_ref {
-                        let slot0 = interface::pack_slot0(0, rttid, vk);
-                        (slot0, raw1)
-                    } else {
-                        let new_ref = call.gc_alloc(width, &[]);
-                        unsafe {
-                            Gc::write_slot(new_ref, 0, raw0);
-                            if width > 1 {
-                                Gc::write_slot(new_ref, 1, raw1);
-                            }
-                        }
-                        let slot0 = interface::pack_slot0(0, rttid, vk);
-                        (slot0, new_ref as u64)
-                    }
-                }
-                ValueKind::Interface => {
-                    // Preserve itab_id: return interface as-is
-                    (raw0, raw1)
-                }
-                _ => {
-                    let slot0 = interface::pack_slot0(0, rttid, vk);
-                    (slot0, raw0)
-                }
-            };
+            // Box into interface format using unified boxing logic
+            let (result0, result1) = call.box_to_interface(rttid, vk, &raw_slots);
             call.ret_u64(ret_off, result0);
             call.ret_u64(ret_off + 1, result1);
             ret_off += 2;
         } else {
             // Return raw slots for typed LHS
-            call.ret_u64(ret_off, raw0);
-            if width > 1 || boxed_ref {
-                call.ret_u64(ret_off + 1, raw1);
+            let is_large = (vk == ValueKind::Struct || vk == ValueKind::Array) && width > 2;
+            if is_large {
+                // Large struct/array: allocate GcRef for caller to use PtrGet
+                let new_ref = call.gc_alloc(width, &[]);
+                for (j, &val) in raw_slots.iter().enumerate() {
+                    unsafe { Gc::write_slot(new_ref, j, val) };
+                }
+                call.ret_u64(ret_off, 0);
+                call.ret_u64(ret_off + 1, new_ref as u64);
+                ret_off += 2;
+            } else {
+                // Small value: return raw slots directly
+                call.ret_u64(ret_off, raw_slots.get(0).copied().unwrap_or(0));
+                if width > 1 {
+                    call.ret_u64(ret_off + 1, raw_slots.get(1).copied().unwrap_or(0));
+                }
+                ret_off += width.min(2);
             }
-            // For large structs, caller uses PtrGet to read from GcRef
-            ret_off += if boxed_ref { 2 } else { width.min(2) };
         }
     }
     

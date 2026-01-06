@@ -18,7 +18,58 @@ const DEFAULT_SPAN: Span = Span { start: BytePos(0), end: BytePos(0) };
 use super::checker::Checker;
 use super::errors::TypeError;
 
+/// LHS mode for dynamic access assignment/initialization.
+enum DynAccessLhs<'a> {
+    /// Assignment: LHS are expressions (v1, v2, err = ...)
+    Assign(&'a [Expr]),
+    /// Initialization: LHS are object keys (v1, v2, err := ...)
+    Init(&'a [ObjKey]),
+}
+
+impl<'a> DynAccessLhs<'a> {
+    fn len(&self) -> usize {
+        match self {
+            DynAccessLhs::Assign(exprs) => exprs.len(),
+            DynAccessLhs::Init(objs) => objs.len(),
+        }
+    }
+
+    /// Get element type for position i.
+    /// For Assign: infer from LHS expression type
+    /// For Init: always use default_type (any)
+    fn get_elem_type(&self, i: usize, checker: &mut Checker, default_type: TypeKey) -> TypeKey {
+        match self {
+            DynAccessLhs::Assign(exprs) => {
+                checker.get_lhs_type_for_dyn(&exprs[i]).unwrap_or(default_type)
+            }
+            DynAccessLhs::Init(_) => default_type,
+        }
+    }
+}
+
 impl Checker {
+    /// Get LHS type for dynamic access. Returns None for blank identifier.
+    fn get_lhs_type_for_dyn(&mut self, lhs: &Expr) -> Option<TypeKey> {
+        use vo_syntax::ast::ExprKind;
+
+        // Check for blank identifier
+        if let ExprKind::Ident(ident) = &lhs.kind {
+            let name = self.resolve_ident(ident);
+            if name == "_" {
+                return None; // Blank - caller should use any
+            }
+            // Look up variable type
+            if let Some(obj) = self.lookup(name) {
+                return self.lobj(obj).typ();
+            }
+        }
+
+        // For other expressions, type check and get type
+        let mut x = Operand::new();
+        self.expr(&mut x, lhs);
+        x.typ
+    }
+
     /// Reports whether x can be assigned to a variable of type t.
     /// If necessary, converts untyped values to the appropriate type.
     /// Use t == None to indicate assignment to an untyped blank identifier.
@@ -374,139 +425,37 @@ impl Checker {
         }
     }
 
-    /// Handle DynAccess assignment: v1, v2, err := obj~>Method() or err := obj~>Method()
-    /// Return type is derived from lhs types, with last being error.
-    /// For no-return methods, ll == 1 (only error).
+    /// Handle DynAccess assignment: v1, v2, err = obj~>Method()
+    /// Delegates to unified check_dyn_access_lhs.
     fn assign_vars_dyn_access(
         &mut self,
         lhs: &[Expr],
         rhs_expr: &Expr,
         dyn_access: &vo_syntax::ast::DynAccessExpr,
     ) {
-        use vo_syntax::ast::ExprKind;
-        
-        let ll = lhs.len();
-        if ll < 1 {
-            self.error_code_msg(
-                TypeError::AssignmentMismatch,
-                rhs_expr.span,
-                "dynamic access requires at least 1 lhs value (error)".to_string(),
-            );
-            return;
-        }
-        
-        // Type check the base expression
-        let mut base_x = Operand::new();
-        self.multi_expr(&mut base_x, &dyn_access.base);
-        if base_x.invalid() {
-            return;
-        }
-        
-        // Check base type is valid for dynamic access
-        let base_type = base_x.typ.unwrap_or(self.invalid_type());
-        if !self.is_dyn_access_base_type(base_type) {
-            self.error_code_msg(
-                TypeError::InvalidOp,
-                dyn_access.base.span,
-                "~> operator requires any/interface or (any, error) type".to_string(),
-            );
-            return;
-        }
-        
-        // Type check operation arguments - convert to any (interface{})
-        let any_type = self.new_t_empty_interface();
-        match &dyn_access.op {
-            vo_syntax::ast::DynAccessOp::Field(_) => {}
-            vo_syntax::ast::DynAccessOp::Index(idx) => {
-                let mut x = Operand::default();
-                self.expr(&mut x, idx);
-                self.convert_untyped(&mut x, any_type);
-            }
-            vo_syntax::ast::DynAccessOp::Call { args, .. }
-            | vo_syntax::ast::DynAccessOp::MethodCall { args, .. } => {
-                for arg in args {
-                    let mut x = Operand::default();
-                    self.expr(&mut x, arg);
-                    self.convert_untyped(&mut x, any_type);
-                }
-            }
-        }
-        
-        // Build return type: single error for ll==1, or tuple from lhs types for ll>1
-        let error_type = self.universe().error_type();
-        let any_type = self.new_t_empty_interface();
-        
-        if ll == 1 {
-            // No return values, only error - use error type directly (not tuple)
-            self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, error_type);
-            
-            // Assign error to lhs
-            let mut x = Operand::new();
-            x.mode = OperandMode::Value;
-            x.typ = Some(error_type);
-            x.set_expr(rhs_expr);
-            self.assign_var(&lhs[0], &mut x);
-        } else {
-            // Build tuple from lhs types
-            let mut tuple_vars = Vec::with_capacity(ll);
-            for (i, lhs_expr) in lhs.iter().enumerate() {
-                let elem_type = if i == ll - 1 {
-                    // Last element is error
-                    error_type
-                } else {
-                    // Get lhs type, default to any for blank or untyped
-                    self.get_lhs_type_for_dyn(lhs_expr).unwrap_or(any_type)
-                };
-                tuple_vars.push(self.new_var(0, None, String::new(), Some(elem_type)));
-            }
-            
-            let tuple_type = self.new_t_tuple(tuple_vars);
-            
-            // Record expression type
-            self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, tuple_type);
-            
-            // Assign each element to lhs
-            let tuple_detail = self.otype(tuple_type).try_as_tuple().unwrap();
-            let vars = tuple_detail.vars().to_vec();
-            for (i, l) in lhs.iter().enumerate() {
-                let var_type = self.lobj(vars[i]).typ();
-                let mut x = Operand::new();
-                x.mode = OperandMode::Value;
-                x.typ = var_type;
-                x.set_expr(rhs_expr);
-                self.assign_var(l, &mut x);
-            }
-        }
+        self.check_dyn_access_lhs(DynAccessLhs::Assign(lhs), rhs_expr, dyn_access);
     }
-    
-    /// Get lhs type for dynamic access. Returns None for blank identifier.
-    fn get_lhs_type_for_dyn(&mut self, lhs: &Expr) -> Option<TypeKey> {
-        use vo_syntax::ast::ExprKind;
-        
-        // Check for blank identifier
-        if let ExprKind::Ident(ident) = &lhs.kind {
-            let name = self.resolve_ident(ident);
-            if name == "_" {
-                return None; // Blank - caller should use any
-            }
-            // Look up variable type
-            if let Some(obj) = self.lookup(name) {
-                return self.lobj(obj).typ();
-            }
-        }
-        
-        // For other expressions, type check and get type
-        let mut x = Operand::new();
-        self.expr(&mut x, lhs);
-        x.typ
-    }
-    
-    /// Handle DynAccess initialization for short var decl: v1, v2, err := obj~>Method() or err := obj~>Method()
-    /// Return type is derived from lhs count, with all values as any and last being error.
-    /// For no-return methods, ll == 1 (only error).
+
+    /// Handle DynAccess initialization: v1, v2, err := obj~>Method()
+    /// Delegates to unified check_dyn_access_lhs.
     fn init_vars_dyn_access(
         &mut self,
         lhs: &[ObjKey],
+        rhs_expr: &Expr,
+        dyn_access: &vo_syntax::ast::DynAccessExpr,
+    ) {
+        self.check_dyn_access_lhs(DynAccessLhs::Init(lhs), rhs_expr, dyn_access);
+    }
+
+    /// Unified handler for dynamic access type checking.
+    ///
+    /// Handles both assignment (`v = obj~>Method()`) and initialization (`v := obj~>Method()`).
+    /// The LHS determines the expected return types:
+    /// - For Init: all values default to `any`, last is `error`
+    /// - For Assign: values use their declared types, last is `error`
+    fn check_dyn_access_lhs(
+        &mut self,
+        lhs: DynAccessLhs,
         rhs_expr: &Expr,
         dyn_access: &vo_syntax::ast::DynAccessExpr,
     ) {
@@ -519,14 +468,14 @@ impl Checker {
             );
             return;
         }
-        
+
         // Type check the base expression
         let mut base_x = Operand::new();
         self.multi_expr(&mut base_x, &dyn_access.base);
         if base_x.invalid() {
             return;
         }
-        
+
         // Check base type is valid for dynamic access
         let base_type = base_x.typ.unwrap_or(self.invalid_type());
         if !self.is_dyn_access_base_type(base_type) {
@@ -537,7 +486,7 @@ impl Checker {
             );
             return;
         }
-        
+
         // Type check operation arguments - convert to any (interface{})
         let any_type = self.new_t_empty_interface();
         match &dyn_access.op {
@@ -556,36 +505,84 @@ impl Checker {
                 }
             }
         }
-        
-        // Build return type: single error for ll==1, or tuple (any, any, ..., error) for ll>1
+
+        // Build return type and assign to LHS
         let error_type = self.universe().error_type();
         let any_type = self.new_t_empty_interface();
-        
+
         if ll == 1 {
-            // No return values, only error - use error type directly (not tuple)
+            // No return values, only error
             self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, error_type);
-            self.lobj_mut(lhs[0]).set_type(Some(error_type));
+            self.finish_dyn_access_lhs_single(&lhs, rhs_expr, error_type);
         } else {
-            // Build tuple: (any, any, ..., error)
-            let mut tuple_vars = Vec::with_capacity(ll);
-            for i in 0..ll {
-                let elem_type = if i == ll - 1 {
-                    error_type
-                } else {
-                    any_type
-                };
-                tuple_vars.push(self.new_var(0, None, String::new(), Some(elem_type)));
-            }
-            
-            let tuple_type = self.new_t_tuple(tuple_vars.clone());
-            
-            // Record expression type
+            // Build tuple type based on LHS
+            let elem_types: Vec<TypeKey> = (0..ll)
+                .map(|i| {
+                    if i == ll - 1 {
+                        error_type
+                    } else {
+                        lhs.get_elem_type(i, self, any_type)
+                    }
+                })
+                .collect();
+
+            let tuple_vars: Vec<_> = elem_types
+                .iter()
+                .map(|&t| self.new_var(0, None, String::new(), Some(t)))
+                .collect();
+            let tuple_type = self.new_t_tuple(tuple_vars);
+
             self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, tuple_type);
-            
-            // Initialize each lhs variable with corresponding type
-            for (i, &l) in lhs.iter().enumerate() {
-                let elem_type = if i == ll - 1 { error_type } else { any_type };
-                self.lobj_mut(l).set_type(Some(elem_type));
+            self.finish_dyn_access_lhs_multi(&lhs, rhs_expr, &elem_types, tuple_type);
+        }
+    }
+
+    /// Finish single-value dynamic access (only error).
+    fn finish_dyn_access_lhs_single(
+        &mut self,
+        lhs: &DynAccessLhs,
+        rhs_expr: &Expr,
+        error_type: TypeKey,
+    ) {
+        match lhs {
+            DynAccessLhs::Assign(exprs) => {
+                let mut x = Operand::new();
+                x.mode = OperandMode::Value;
+                x.typ = Some(error_type);
+                x.set_expr(rhs_expr);
+                self.assign_var(&exprs[0], &mut x);
+            }
+            DynAccessLhs::Init(objs) => {
+                self.lobj_mut(objs[0]).set_type(Some(error_type));
+            }
+        }
+    }
+
+    /// Finish multi-value dynamic access.
+    fn finish_dyn_access_lhs_multi(
+        &mut self,
+        lhs: &DynAccessLhs,
+        rhs_expr: &Expr,
+        elem_types: &[TypeKey],
+        tuple_type: TypeKey,
+    ) {
+        match lhs {
+            DynAccessLhs::Assign(exprs) => {
+                let tuple_detail = self.otype(tuple_type).try_as_tuple().unwrap();
+                let vars = tuple_detail.vars().to_vec();
+                for (i, expr) in exprs.iter().enumerate() {
+                    let var_type = self.lobj(vars[i]).typ();
+                    let mut x = Operand::new();
+                    x.mode = OperandMode::Value;
+                    x.typ = var_type;
+                    x.set_expr(rhs_expr);
+                    self.assign_var(expr, &mut x);
+                }
+            }
+            DynAccessLhs::Init(objs) => {
+                for (i, &obj) in objs.iter().enumerate() {
+                    self.lobj_mut(obj).set_type(Some(elem_types[i]));
+                }
             }
         }
     }

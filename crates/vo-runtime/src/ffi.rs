@@ -458,6 +458,46 @@ impl<'a> ExternCallContext<'a> {
         self.gc.alloc(value_meta, slots)
     }
 
+    /// Box a value into interface format (slot0, slot1).
+    ///
+    /// This is the canonical way to convert any value to interface representation.
+    ///
+    /// # Arguments
+    /// * `rttid` - Runtime type ID
+    /// * `vk` - Value kind
+    /// * `raw_slots` - Raw slot values to box
+    ///
+    /// # Returns
+    /// `(slot0, slot1)` in interface format
+    ///
+    /// # Boxing Rules
+    /// - **Struct/Array**: Allocate GcRef, copy all slots, return `(pack_slot0(rttid, vk), GcRef)`
+    /// - **Interface**: Return as-is to preserve itab_id
+    /// - **Others**: Return `(pack_slot0(rttid, vk), raw_slots[0])`
+    pub fn box_to_interface(&mut self, rttid: u32, vk: ValueKind, raw_slots: &[u64]) -> (u64, u64) {
+        use crate::objects::interface;
+
+        match vk {
+            ValueKind::Struct | ValueKind::Array => {
+                let slot_count = raw_slots.len();
+                let new_ref = self.gc_alloc(slot_count as u16, &[]);
+                for (i, &val) in raw_slots.iter().enumerate() {
+                    unsafe { Gc::write_slot(new_ref, i, val) };
+                }
+                let slot0 = interface::pack_slot0(0, rttid, vk);
+                (slot0, new_ref as u64)
+            }
+            ValueKind::Interface => {
+                // Preserve itab_id: return as-is
+                (raw_slots[0], raw_slots.get(1).copied().unwrap_or(0))
+            }
+            _ => {
+                let slot0 = interface::pack_slot0(0, rttid, vk);
+                (slot0, raw_slots.get(0).copied().unwrap_or(0))
+            }
+        }
+    }
+
     /// Get return ValueRttids for all return values from a Func RuntimeType.
     pub fn get_func_results(&self, func_rttid: u32) -> Vec<ValueRttid> {
         use crate::RuntimeType;
