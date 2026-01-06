@@ -133,51 +133,38 @@ fn compile_dyn_op(
 ) -> Result<(), CodegenError> {
     match op {
         DynAccessOp::Field(ident) => {
-            // dyn_get_attr(base[2], name[1], expected_value_rttid[1], is_any[1]) -> (data[2], error[2])
+            // dyn_get_attr(base[2], name[1]) -> (data[2], error[2])
             let extern_id = ctx.get_or_register_extern("dyn_get_attr");
             let field_name = info.project.interner.resolve(ident.symbol).unwrap_or("");
             
-            // For field access, we only have one return type (excluding error)
-            let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
-            let is_any = info.is_any_type(ret_type);
-            let rttid = ctx.intern_type_key(ret_type, info);
-            let vk = info.type_value_kind(ret_type);
-            let value_rttid = vo_runtime::ValueRttid::new(rttid, vk);
-            
-            // Args: base[2] + name[1] + expected_value_rttid[1] + is_any[1] = 5 slots
-            let args_start = func.alloc_temp(5);
+            // Args: base[2] + name[1] = 3 slots
+            let args_start = func.alloc_temp(3);
             func.emit_op(Opcode::Copy, args_start, base_reg, 0);
             func.emit_op(Opcode::Copy, args_start + 1, base_reg + 1, 0);
             let name_idx = ctx.const_string(field_name);
             func.emit_op(Opcode::StrNew, args_start + 2, name_idx, 0);
-            let value_rttid_const = ctx.const_int(value_rttid.to_raw() as i64);
-            func.emit_op(Opcode::LoadConst, args_start + 3, value_rttid_const, 0);
-            func.emit_op(Opcode::LoadInt, args_start + 4, if is_any { 1 } else { 0 }, 0);
             
-            // Call: 5 arg slots, 4 ret slots (data[2], error[2])
+            // Call: 3 arg slots, 4 ret slots (data[2], error[2])
             let result = func.alloc_temp(4);
-            func.emit_with_flags(Opcode::CallExtern, 5, result, extern_id as u16, args_start);
+            func.emit_with_flags(Opcode::CallExtern, 3, result, extern_id as u16, args_start);
             
-            // Copy result to dst based on type (runtime already formatted correctly)
-            let dst_offset = emit_dyn_result_copy(ret_type, dst, result, func, info);
+            // Unbox interface to LHS type
+            let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
+            let dst_offset = emit_unbox_interface(ret_type, dst, result, func, info);
+            
+            // Copy error
             func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
             func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 3, 0);
         }
         DynAccessOp::Index(index_expr) => {
-            // dyn_get_index(base[2], key[2], expected_value_rttid[1], is_any[1]) -> (data[2], error[2])
+            // dyn_get_index(base[2], key[2]) -> (data[2], error[2])
             let extern_id = ctx.get_or_register_extern("dyn_get_index");
-            
-            let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
-            let is_any = info.is_any_type(ret_type);
-            let rttid = ctx.intern_type_key(ret_type, info);
-            let vk = info.type_value_kind(ret_type);
-            let value_rttid = vo_runtime::ValueRttid::new(rttid, vk);
             
             let key_type = info.expr_type(index_expr.id);
             let key_slots = info.type_slot_count(key_type);
             
-            // Args: base[2] + key[2] + expected_value_rttid[1] + is_any[1] = 6 slots
-            let args_start = func.alloc_temp(6);
+            // Args: base[2] + key[2] = 4 slots
+            let args_start = func.alloc_temp(4);
             func.emit_op(Opcode::Copy, args_start, base_reg, 0);
             func.emit_op(Opcode::Copy, args_start + 1, base_reg + 1, 0);
             
@@ -189,16 +176,15 @@ fn compile_dyn_op(
                 crate::stmt::compile_iface_assign(args_start + 2, index_expr, any_type, ctx, func, info)?;
             }
             
-            let value_rttid_const = ctx.const_int(value_rttid.to_raw() as i64);
-            func.emit_op(Opcode::LoadConst, args_start + 4, value_rttid_const, 0);
-            func.emit_op(Opcode::LoadInt, args_start + 5, if is_any { 1 } else { 0 }, 0);
-            
-            // Call: 6 arg slots, 4 ret slots (data[2], error[2])
+            // Call: 4 arg slots, 4 ret slots (data[2], error[2])
             let result = func.alloc_temp(4);
-            func.emit_with_flags(Opcode::CallExtern, 6, result, extern_id as u16, args_start);
+            func.emit_with_flags(Opcode::CallExtern, 4, result, extern_id as u16, args_start);
             
-            // Copy result to dst
-            let dst_offset = emit_dyn_result_copy(ret_type, dst, result, func, info);
+            // Unbox interface to LHS type
+            let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
+            let dst_offset = emit_unbox_interface(ret_type, dst, result, func, info);
+            
+            // Copy error
             func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
             func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 3, 0);
         }
@@ -207,23 +193,19 @@ fn compile_dyn_op(
         }
         DynAccessOp::MethodCall { method, args, spread: _ } => {
             // a~>method(args) = dyn_get_attr(a, "method") then call closure
-            // For method, we always want the closure as any (to call it)
             let extern_id = ctx.get_or_register_extern("dyn_get_attr");
             let method_name = info.project.interner.resolve(method.symbol).unwrap_or("");
             
-            // Args: base[2] + name[1] + expected_rttid[1] + is_any[1] = 5 slots
-            // For method call, we always get closure as any (is_any=1)
-            let attr_args = func.alloc_temp(5);
+            // Args: base[2] + name[1] = 3 slots
+            let attr_args = func.alloc_temp(3);
             func.emit_op(Opcode::Copy, attr_args, base_reg, 0);
             func.emit_op(Opcode::Copy, attr_args + 1, base_reg + 1, 0);
             let name_idx = ctx.const_string(method_name);
             func.emit_op(Opcode::StrNew, attr_args + 2, name_idx, 0);
-            func.emit_op(Opcode::LoadInt, attr_args + 3, 0, 0);  // rttid (unused when is_any=1)
-            func.emit_op(Opcode::LoadInt, attr_args + 4, 1, 0);  // is_any=1
             
-            // dyn_get_attr returns (data[2], error[2]) = 4 slots
+            // dyn_get_attr returns (data[2], error[2]) = 4 slots in interface format
             let get_result = func.alloc_temp(4);
-            func.emit_with_flags(Opcode::CallExtern, 5, get_result, extern_id as u16, attr_args);
+            func.emit_with_flags(Opcode::CallExtern, 3, get_result, extern_id as u16, attr_args);
             
             // Check if error (slot 2,3) is nil
             let skip_error = func.emit_jump(Opcode::JumpIfNot, get_result + 2);
@@ -421,37 +403,46 @@ fn compile_dyn_closure_call(
     Ok(())
 }
 
-/// Copy pre-formatted result from runtime to dst.
-/// Runtime has already formatted data based on is_any/expected_rttid.
+/// Unbox interface value to concrete type based on LHS type.
+/// Runtime always returns interface format (slot0=meta, slot1=data).
+/// This function extracts the value according to the target type.
 /// Returns the number of dst slots consumed.
-fn emit_dyn_result_copy(
+fn emit_unbox_interface(
     ret_type: vo_analysis::TypeKey,
     dst: u16,
-    result: u16,  // result+0 = data0, result+1 = data1
+    result: u16,  // result[0-1] is interface format
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> u16 {
     let is_any = info.is_any_type(ret_type);
-    let slots = info.type_slot_count(ret_type);
-    let vk = info.type_value_kind(ret_type);
     
     if is_any {
-        // LHS is any: copy both slots (interface format)
+        // LHS is any: keep interface format
         func.emit_op(Opcode::Copy, dst, result, 0);
         func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
         2
-    } else if slots == 1 {
-        // Single slot: data0 is the value
-        func.emit_op(Opcode::Copy, dst, result, 0);
-        1
-    } else if (vk == ValueKind::Struct || vk == ValueKind::Array) && slots > 2 {
-        // Large struct/array: runtime returned (0, GcRef), use PtrGet
-        func.emit_ptr_get(dst, result + 1, 0, slots);
-        slots
     } else {
-        // 2-slot types (interface, small struct, etc): copy both
-        func.emit_op(Opcode::Copy, dst, result, 0);
-        func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
-        2
+        // LHS is concrete type: unbox from interface
+        let slots = info.type_slot_count(ret_type);
+        let vk = info.type_value_kind(ret_type);
+        
+        if slots == 1 {
+            // Single slot: extract from slot1
+            func.emit_op(Opcode::Copy, dst, result + 1, 0);
+            1
+        } else if vk == ValueKind::Interface {
+            // Interface type: copy both slots as-is
+            func.emit_op(Opcode::Copy, dst, result, 0);
+            func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
+            2
+        } else if (vk == ValueKind::Struct || vk == ValueKind::Array) && slots > 2 {
+            // Large struct/array: slot1 is GcRef, use PtrGet to read all slots
+            func.emit_ptr_get(dst, result + 1, 0, slots);
+            slots
+        } else {
+            // 2-slot small struct: slot1 is GcRef, use PtrGet
+            func.emit_ptr_get(dst, result + 1, 0, slots);
+            slots
+        }
     }
 }
