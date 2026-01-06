@@ -278,9 +278,9 @@ fn compile_dyn_closure_call(
     let metas_start = prepare_result + 1;
     let error_slot = prepare_result + 1 + expected_ret_count;
     
-    // 2. Check error (ret_slots == 0 means error)
-    // JumpIf: jump if ret_slots > 0 (success), fall through if ret_slots == 0 (error)
-    let skip_error = func.emit_jump(Opcode::JumpIf, ret_slots_reg);
+    // 2. Check error (error_slot != nil means error)
+    // JumpIfNot: jump if error == nil (success), fall through if error != nil
+    let skip_error = func.emit_jump(Opcode::JumpIfNot, error_slot);
     // Error path: propagate error
     let expected_dst_slots: u16 = ret_types.iter().map(|&t| if info.is_any_type(t) { 2 } else { info.type_slot_count(t) }).sum();
     for i in 0..expected_dst_slots {
@@ -307,9 +307,7 @@ fn compile_dyn_closure_call(
     let args_start = ret_slots_slot + 1;
     
     // Store ret_slots value at ret_slots_slot (= args_start - 1)
-    // Note: dyn_call_prepare returns (ret_slots + 1) to distinguish error (0) from no-return (would be 0)
-    // So we need to subtract 1 here to get actual ret_slots for CallClosure
-    func.emit_op(Opcode::SubI, ret_slots_slot, ret_slots_reg, 1);
+    func.emit_op(Opcode::Copy, ret_slots_slot, ret_slots_reg, 0);
     
     // Compile arguments
     let mut arg_offset = 0u16;
