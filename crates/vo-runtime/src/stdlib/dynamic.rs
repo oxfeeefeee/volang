@@ -37,19 +37,27 @@ fn check_bounds(idx: i64, len: usize, type_name: &'static str) -> Result<usize, 
     Ok(idx as usize)
 }
 
-/// dyn_get_attr: Get a field from an interface value by name.
+/// dyn_get_attr: Get a field from an interface value by name, returning in LHS expected format.
 ///
-/// Args: (base: any[2], name: string[1]) -> (any, error)[4]
+/// Args: (base: any[2], name: string[1], expected_value_rttid: int[1], is_any: int[1]) -> (data[2], error[2])
 /// - base slot 0-1: interface value (slot0=meta, slot1=data)
 /// - name slot 2: field name string
+/// - expected_value_rttid slot 3: LHS type's ValueRttid (rttid:24 | vk:8)
+/// - is_any slot 4: 1 if LHS is any, 0 if typed
 ///
-/// Returns:
-/// - slot 0-1: result any value
+/// Returns (fixed 4 slots):
+/// - slot 0-1: data in format determined by is_any/expected_value_rttid
+///   - is_any=1: (slot0, slot1) interface format
+///   - is_any=0, 1-slot: (value, 0)
+///   - is_any=0, 2-slot: (slot0, slot1)
+///   - is_any=0, >2-slot: (0, GcRef) caller uses PtrGet
 /// - slot 2-3: error (nil if success)
 fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     let slot0 = call.arg_u64(0);
     let slot1 = call.arg_u64(1);
     let name_ref = call.arg_ref(2);
+    let expected_value_rttid = crate::ValueRttid::from_raw(call.arg_u64(3) as u32);
+    let is_any = call.arg_u64(4) != 0;
     
     // Check if interface is nil
     if interface::is_nil(slot0) {
@@ -87,7 +95,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         Some(id) => id as usize,
         None => {
             // Not a struct type, try to get method instead
-            return try_get_method(call, rttid, slot1, field_name);
+            return try_get_method(call, rttid, slot1, field_name, is_any);
         }
     };
     
@@ -102,7 +110,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         Some(f) => f,
         None => {
             // Field not found - check if it's a method
-            return try_get_method(call, rttid, slot1, field_name);
+            return try_get_method(call, rttid, slot1, field_name, is_any);
         }
     };
     
@@ -116,42 +124,71 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     let field_rttid = field.type_info.rttid();
     let field_vk = field.type_info.value_kind();
     
-    // Read field data using proper GC APIs
-    let (result_slot0, result_slot1) = if field_vk == ValueKind::Struct || field_vk == ValueKind::Array {
-        // Struct/Array fields need boxing: allocate heap and copy data
-        let field_slot_types: Vec<_> = struct_meta.slot_types[field_offset..field_offset + field_slots].to_vec();
-        let new_ref = call.gc_alloc(field_slots as u16, &field_slot_types);
-        
-        // Copy field data to new allocation using GC APIs
-        for i in 0..field_slots {
-            let val = unsafe { Gc::read_slot(data_ref, field_offset + i) };
-            unsafe { Gc::write_slot(new_ref, i, val) };
+    // Read field data and format based on is_any/expected_rttid
+    let (data0, data1) = if is_any {
+        // LHS is any: return interface format (slot0=meta, slot1=data)
+        if field_vk == ValueKind::Struct || field_vk == ValueKind::Array {
+            // Struct/Array: allocate and copy to heap, return as (meta, GcRef)
+            let field_slot_types: Vec<_> = struct_meta.slot_types[field_offset..field_offset + field_slots].to_vec();
+            let new_ref = call.gc_alloc(field_slots as u16, &field_slot_types);
+            for i in 0..field_slots {
+                let val = unsafe { Gc::read_slot(data_ref, field_offset + i) };
+                unsafe { Gc::write_slot(new_ref, i, val) };
+            }
+            let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
+            (slot0, new_ref as u64)
+        } else if field_vk == ValueKind::Interface {
+            // Interface field: extract concrete type
+            let iface_slot0 = unsafe { Gc::read_slot(data_ref, field_offset) };
+            let iface_slot1 = unsafe { Gc::read_slot(data_ref, field_offset + 1) };
+            let concrete_rttid = interface::unpack_rttid(iface_slot0);
+            let concrete_vk = interface::unpack_value_kind(iface_slot0);
+            let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
+            (result_slot0, iface_slot1)
+        } else {
+            // Single slot: pack as interface
+            let val = unsafe { struct_ops::get_field(data_ref, field_offset) };
+            let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
+            (slot0, val)
         }
-        let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
-        (slot0, new_ref as u64)
-    } else if field_vk == ValueKind::Interface {
-        // Interface field is 2 slots: slot0 (meta) + slot1 (data)
-        // Read both slots from the struct
-        let iface_slot0 = unsafe { Gc::read_slot(data_ref, field_offset) };
-        let iface_slot1 = unsafe { Gc::read_slot(data_ref, field_offset + 1) };
-        
-        // Extract the concrete type info from the stored interface
-        let concrete_rttid = interface::unpack_rttid(iface_slot0);
-        let concrete_vk = interface::unpack_value_kind(iface_slot0);
-        
-        // Wrap in any (itab_id=0 for empty interface)
-        let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
-        (result_slot0, iface_slot1)
     } else {
-        // Single slot value: read using GC API
-        let slot1 = unsafe { struct_ops::get_field(data_ref, field_offset) };
-        let slot0 = interface::pack_slot0(0, field_rttid, field_vk);
-        (slot0, slot1)
+        // LHS has concrete type: return raw data
+        let expected_vk = expected_value_rttid.value_kind();
+        let expected_slots = call.get_type_slot_count(expected_value_rttid.rttid());
+        
+        if expected_slots == 1 {
+            // Single slot: return (value, 0)
+            let val = unsafe { struct_ops::get_field(data_ref, field_offset) };
+            (val, 0)
+        } else if (expected_vk == ValueKind::Struct || expected_vk == ValueKind::Array) && expected_slots > 2 {
+            // Large struct/array: allocate GcRef, return (0, GcRef) for caller PtrGet
+            let field_slot_types: Vec<_> = struct_meta.slot_types[field_offset..field_offset + field_slots].to_vec();
+            let new_ref = call.gc_alloc(field_slots as u16, &field_slot_types);
+            for i in 0..field_slots {
+                let val = unsafe { Gc::read_slot(data_ref, field_offset + i) };
+                unsafe { Gc::write_slot(new_ref, i, val) };
+            }
+            (0, new_ref as u64)
+        } else if expected_vk == ValueKind::Interface {
+            // Interface: read 2 slots as-is
+            let iface_slot0 = unsafe { Gc::read_slot(data_ref, field_offset) };
+            let iface_slot1 = unsafe { Gc::read_slot(data_ref, field_offset + 1) };
+            (iface_slot0, iface_slot1)
+        } else {
+            // 2-slot type (small struct, etc): return both slots
+            let val0 = unsafe { Gc::read_slot(data_ref, field_offset) };
+            let val1 = if field_slots > 1 {
+                unsafe { Gc::read_slot(data_ref, field_offset + 1) }
+            } else {
+                0
+            };
+            (val0, val1)
+        }
     };
     
-    // Return (any, nil)
-    call.ret_u64(0, result_slot0);
-    call.ret_u64(1, result_slot1);
+    // Return (data, nil)
+    call.ret_u64(0, data0);
+    call.ret_u64(1, data1);
     call.ret_nil(2);
     call.ret_nil(3);
     
@@ -160,7 +197,8 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
 
 /// Try to get a method as a closure binding the receiver.
 /// Returns closure with receiver as first capture.
-fn try_get_method(call: &mut ExternCallContext, rttid: u32, receiver_slot1: u64, method_name: &str) -> ExternResult {
+/// For methods, always returns in interface format since closure is a reference type.
+fn try_get_method(call: &mut ExternCallContext, rttid: u32, receiver_slot1: u64, method_name: &str, is_any: bool) -> ExternResult {
     use crate::objects::closure;
     
     // Lookup method by name - returns (func_id, is_pointer_receiver, signature_rttid)
@@ -170,15 +208,20 @@ fn try_get_method(call: &mut ExternCallContext, rttid: u32, receiver_slot1: u64,
     };
     
     // Create closure with receiver as capture
-    // Closure layout: [func_id, capture_count=1] + [receiver]
     let closure_ref = closure::create(call.gc(), func_id, 1);
     closure::set_capture(closure_ref, 0, receiver_slot1);
     
-    // Return closure as any with correct function type rttid
-    // This allows type assertions like methodAny.(func() int) to work
-    let result_slot0 = interface::pack_slot0(0, signature_rttid, ValueKind::Closure);
-    call.ret_u64(0, result_slot0);
-    call.ret_u64(1, closure_ref as u64);
+    // Return closure - format depends on is_any
+    if is_any {
+        // Return as interface format (meta, GcRef)
+        let result_slot0 = interface::pack_slot0(0, signature_rttid, ValueKind::Closure);
+        call.ret_u64(0, result_slot0);
+        call.ret_u64(1, closure_ref as u64);
+    } else {
+        // Closure is 1 slot (GcRef), return (GcRef, 0)
+        call.ret_u64(0, closure_ref as u64);
+        call.ret_u64(1, 0);
+    }
     call.ret_nil(2);
     call.ret_nil(3);
     
@@ -255,20 +298,24 @@ static __VO_DYN_GET_ATTR: ExternEntryWithContext = ExternEntryWithContext {
     func: dyn_get_attr,
 };
 
-/// dyn_get_index: Get an element from an interface value by index/key.
+/// dyn_get_index: Get an element from an interface value by index/key, returning in LHS expected format.
 ///
-/// Args: (base: any[2], key: any[2]) -> (any, error)[4]
+/// Args: (base: any[2], key: any[2], expected_value_rttid: int[1], is_any: int[1]) -> (data[2], error[2])
 /// - base slot 0-1: interface value (slot0=meta, slot1=data)
 /// - key slot 2-3: key interface value
+/// - expected_value_rttid slot 4: LHS type's ValueRttid (rttid:24 | vk:8)
+/// - is_any slot 5: 1 if LHS is any, 0 if typed
 ///
-/// Returns:
-/// - slot 0-1: result any value
+/// Returns (fixed 4 slots):
+/// - slot 0-1: data in format determined by is_any/expected_value_rttid
 /// - slot 2-3: error (nil if success)
 fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     let base_slot0 = call.arg_u64(0);
     let base_slot1 = call.arg_u64(1);
     let key_slot0 = call.arg_u64(2);
     let key_slot1 = call.arg_u64(3);
+    let _expected_value_rttid = crate::ValueRttid::from_raw(call.arg_u64(4) as u32);
+    let is_any = call.arg_u64(5) != 0;
     
     // Check if base is nil
     if interface::is_nil(base_slot0) {
@@ -278,6 +325,23 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     let base_vk = interface::unpack_value_kind(base_slot0);
     let base_rttid = interface::unpack_rttid(base_slot0);
     let base_ref = base_slot1 as GcRef;
+    
+    // Helper to format return value based on is_any
+    // For index operations, elem is always 1-slot (primitives) or interface
+    let format_result = |call: &mut ExternCallContext, rttid: u32, vk: ValueKind, value: u64, is_any: bool| {
+        if is_any {
+            // Return as interface format
+            let slot0 = interface::pack_slot0(0, rttid, vk);
+            call.ret_u64(0, slot0);
+            call.ret_u64(1, value);
+        } else {
+            // Return raw value
+            call.ret_u64(0, value);
+            call.ret_u64(1, 0);
+        }
+        call.ret_nil(2);
+        call.ret_nil(3);
+    };
     
     match base_vk {
         ValueKind::Slice => {
@@ -291,34 +355,32 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
                 Err(e) => return dyn_error(call, e),
             };
             
-            // Get element type info from base's RuntimeType (preserves named types)
             let elem_meta = crate::objects::slice::elem_meta(base_ref);
             let elem_vk = elem_meta.value_kind();
             let elem_bytes = crate::objects::array::elem_bytes(crate::objects::slice::array_ref(base_ref));
-            
-            // Get elem ValueRttid from base's RuntimeType (now O(1))
             let elem_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
             
-            // Read element value
-            let value = crate::objects::slice::get(base_ref, idx as usize, elem_bytes);
-            
             if elem_vk == ValueKind::Interface {
-                // Element is already an interface, need to read 2 slots
+                // Element is interface: read 2 slots
                 let iface_slot0 = crate::objects::slice::get(base_ref, idx as usize * 2, 8);
                 let iface_slot1 = crate::objects::slice::get(base_ref, idx as usize * 2 + 1, 8);
-                // Extract concrete type info, wrap in any (itab_id=0)
-                let concrete_rttid = interface::unpack_rttid(iface_slot0);
-                let concrete_vk = interface::unpack_value_kind(iface_slot0);
-                let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
-                call.ret_u64(0, result_slot0);
-                call.ret_u64(1, iface_slot1);
+                if is_any {
+                    let concrete_rttid = interface::unpack_rttid(iface_slot0);
+                    let concrete_vk = interface::unpack_value_kind(iface_slot0);
+                    let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
+                    call.ret_u64(0, result_slot0);
+                    call.ret_u64(1, iface_slot1);
+                } else {
+                    // Return interface as-is (2 slots)
+                    call.ret_u64(0, iface_slot0);
+                    call.ret_u64(1, iface_slot1);
+                }
+                call.ret_nil(2);
+                call.ret_nil(3);
             } else {
-                let result_slot0 = interface::pack_slot0(0, elem_value_rttid.rttid(), elem_vk);
-                call.ret_u64(0, result_slot0);
-                call.ret_u64(1, value);
+                let value = crate::objects::slice::get(base_ref, idx as usize, elem_bytes);
+                format_result(call, elem_value_rttid.rttid(), elem_vk, value, is_any);
             }
-            call.ret_nil(2);
-            call.ret_nil(3);
         }
         ValueKind::String => {
             let idx = match check_int_key(key_slot0, key_slot1) {
@@ -331,21 +393,12 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
                 Ok(i) => i,
                 Err(e) => return dyn_error(call, e),
             };
-            
-            // Return byte as uint8
-            // Basic type rttid = ValueKind value (pre-registered in TypeInterner)
-            let result_slot0 = interface::pack_slot0(0, ValueKind::Uint8 as u32, ValueKind::Uint8);
-            call.ret_u64(0, result_slot0);
-            call.ret_u64(1, bytes[idx as usize] as u64);
-            call.ret_nil(2);
-            call.ret_nil(3);
+            format_result(call, ValueKind::Uint8 as u32, ValueKind::Uint8, bytes[idx as usize] as u64, is_any);
         }
         ValueKind::Map => {
-            // Get key and value from map
             let key_vk = interface::unpack_value_kind(key_slot0);
             let map_key_vk = crate::objects::map::key_kind(base_ref);
             
-            // Key type must match (allow compatible int types)
             let key_compatible = match (map_key_vk, key_vk) {
                 (a, b) if a == b => true,
                 (ValueKind::Int, k) | (k, ValueKind::Int) => matches!(k, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8),
@@ -357,37 +410,36 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             
             let val_meta = crate::objects::map::val_meta(base_ref);
             let val_vk = val_meta.value_kind();
-            // Get val ValueRttid from base's RuntimeType (now O(1))
             let val_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
             
-            // Lookup in map - key is passed as slice
             let key_data = [key_slot1];
             let found = crate::objects::map::get(base_ref, &key_data);
             
-            if let Some(val_slice) = found {
-                if val_vk == crate::ValueKind::Interface {
-                    // Value is already an interface, extract and wrap in any (itab_id=0)
-                    let iface_slot0 = val_slice[0];
-                    let iface_slot1 = val_slice[1];
-                    let concrete_rttid = interface::unpack_rttid(iface_slot0);
-                    let concrete_vk = interface::unpack_value_kind(iface_slot0);
+            let (val0, val1) = if let Some(val_slice) = found {
+                if val_vk == ValueKind::Interface {
+                    (val_slice[0], val_slice[1])
+                } else {
+                    (val_slice[0], 0u64)
+                }
+            } else {
+                (0u64, 0u64)
+            };
+            
+            if val_vk == ValueKind::Interface {
+                if is_any {
+                    let concrete_rttid = interface::unpack_rttid(val0);
+                    let concrete_vk = interface::unpack_value_kind(val0);
                     let result_slot0 = interface::pack_slot0(0, concrete_rttid, concrete_vk);
                     call.ret_u64(0, result_slot0);
-                    call.ret_u64(1, iface_slot1);
+                    call.ret_u64(1, val1);
                 } else {
-                    let result_slot0 = interface::pack_slot0(0, val_value_rttid.rttid(), val_vk);
-                    call.ret_u64(0, result_slot0);
-                    call.ret_u64(1, val_slice[0]);
+                    call.ret_u64(0, val0);
+                    call.ret_u64(1, val1);
                 }
                 call.ret_nil(2);
                 call.ret_nil(3);
             } else {
-                // Key not found - return zero value
-                let result_slot0 = interface::pack_slot0(0, val_value_rttid.rttid(), val_vk);
-                call.ret_u64(0, result_slot0);
-                call.ret_u64(1, 0);
-                call.ret_nil(2);
-                call.ret_nil(3);
+                format_result(call, val_value_rttid.rttid(), val_vk, val0, is_any);
             }
         }
         _ => {
@@ -924,3 +976,4 @@ static __VO_DYN_UNPACK_ALL_RETURNS: ExternEntryWithContext = ExternEntryWithCont
     name: "dyn_unpack_all_returns",
     func: dyn_unpack_all_returns,
 };
+
