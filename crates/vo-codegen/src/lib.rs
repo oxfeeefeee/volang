@@ -45,7 +45,7 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     build_runtime_types(project, &mut ctx, &info);
     
     // 6. Fill WellKnownTypes for fast error creation
-    ctx.fill_well_known_types();
+    ctx.fill_well_known_types(project);
     
     // 7. Finalize debug info (sort entries by PC)
     ctx.finalize_debug_info();

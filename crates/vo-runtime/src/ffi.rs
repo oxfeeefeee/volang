@@ -25,7 +25,7 @@ use linkme::distributed_slice;
 
 use crate::gc::{Gc, GcRef};
 use crate::objects::{string, slice, array};
-use vo_common_core::bytecode::{InterfaceMeta, NamedTypeMeta, StructMeta, WellKnownTypes};
+use vo_common_core::bytecode::{DynErrorCodes, InterfaceMeta, NamedTypeMeta, StructMeta, WellKnownTypes};
 use vo_common_core::runtime_type::RuntimeType;
 use vo_common_core::types::{ValueKind, ValueMeta, ValueRttid};
 use crate::itab::ItabCache;
@@ -300,6 +300,11 @@ impl<'a> ExternCallContext<'a> {
     }
 
     #[inline]
+    pub fn dyn_err(&self) -> &'a DynErrorCodes {
+        &self.well_known.dyn_error_codes
+    }
+
+    #[inline]
     pub fn get_or_create_itab(&mut self, named_type_id: u32, iface_meta_id: u32) -> u32 {
         self.itab_cache.get_or_create(
             named_type_id,
@@ -514,11 +519,7 @@ impl<'a> ExternCallContext<'a> {
 
         match vk {
             ValueKind::Struct | ValueKind::Array => {
-                let slot_count = raw_slots.len();
-                let new_ref = self.gc_alloc(slot_count as u16, &[]);
-                for (i, &val) in raw_slots.iter().enumerate() {
-                    unsafe { Gc::write_slot(new_ref, i, val) };
-                }
+                let new_ref = self.alloc_and_copy_slots(raw_slots);
                 let slot0 = interface::pack_slot0(0, rttid, vk);
                 (slot0, new_ref as u64)
             }
@@ -531,6 +532,17 @@ impl<'a> ExternCallContext<'a> {
                 (slot0, raw_slots.get(0).copied().unwrap_or(0))
             }
         }
+    }
+
+    /// Allocate a GcRef and copy raw slots into it.
+    /// Used for boxing large structs/arrays to heap.
+    pub fn alloc_and_copy_slots(&mut self, raw_slots: &[u64]) -> GcRef {
+        let slot_count = raw_slots.len();
+        let new_ref = self.gc_alloc(slot_count as u16, &[]);
+        for (i, &val) in raw_slots.iter().enumerate() {
+            unsafe { Gc::write_slot(new_ref, i, val) };
+        }
+        new_ref
     }
 
     /// Get return ValueRttids for all return values from a Func RuntimeType.

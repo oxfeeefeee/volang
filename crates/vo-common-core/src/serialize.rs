@@ -23,7 +23,7 @@ use hashbrown::HashMap;
 use crate::types::{SlotType, ValueKind, ValueMeta, ValueRttid};
 use crate::RuntimeType;
 use crate::bytecode::{
-    Constant, ExternDef, FieldMeta, FunctionDef, GlobalDef, InterfaceMeta, InterfaceMethodMeta,
+    Constant, DynErrorCodes, ExternDef, FieldMeta, FunctionDef, GlobalDef, InterfaceMeta, InterfaceMethodMeta,
     Itab, MethodInfo, Module, NamedTypeMeta, StructMeta, WellKnownTypes,
 };
 use crate::instruction::Instruction;
@@ -456,6 +456,15 @@ impl Module {
             }
             None => w.write_u8(0),
         }
+        // Write DynErrorCodes
+        w.write_i64(self.well_known.dyn_error_codes.unknown as i64);
+        w.write_i64(self.well_known.dyn_error_codes.nil_base as i64);
+        w.write_i64(self.well_known.dyn_error_codes.bad_field as i64);
+        w.write_i64(self.well_known.dyn_error_codes.bad_index as i64);
+        w.write_i64(self.well_known.dyn_error_codes.out_of_bounds as i64);
+        w.write_i64(self.well_known.dyn_error_codes.bad_call as i64);
+        w.write_i64(self.well_known.dyn_error_codes.sig_mismatch as i64);
+        w.write_i64(self.well_known.dyn_error_codes.type_mismatch as i64);
 
         w.write_vec(&self.constants, |w, c| match c {
             Constant::Nil => w.write_u8(0),
@@ -608,6 +617,16 @@ impl Module {
                 Some([r.read_u16()?, r.read_u16()?, r.read_u16()?, r.read_u16()?])
             } else {
                 None
+            },
+            dyn_error_codes: DynErrorCodes {
+                unknown: r.read_i64()? as isize,
+                nil_base: r.read_i64()? as isize,
+                bad_field: r.read_i64()? as isize,
+                bad_index: r.read_i64()? as isize,
+                out_of_bounds: r.read_i64()? as isize,
+                bad_call: r.read_i64()? as isize,
+                sig_mismatch: r.read_i64()? as isize,
+                type_mismatch: r.read_i64()? as isize,
             },
         };
 

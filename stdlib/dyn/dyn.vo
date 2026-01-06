@@ -2,17 +2,16 @@ package dyn
 
 import "errors"
 
-// Error codes for dynamic access operations.
-// Range 1000-1099 is reserved for dyn package.
+// Re-export error codes from errors package for backward compatibility.
 const (
-    ErrUnknown      = 1000 // Unknown error
-    ErrNilBase      = 1001 // Base value is nil
-    ErrBadField     = 1002 // Field does not exist
-    ErrBadIndex     = 1003 // Invalid index type
-    ErrOutOfBounds  = 1004 // Index out of bounds
-    ErrBadCall      = 1005 // Cannot call value
-    ErrSigMismatch  = 1006 // Signature mismatch
-    ErrTypeMismatch = 1007 // Type mismatch
+    ErrUnknown      = errors.DynUnknown
+    ErrNilBase      = errors.DynNilBase
+    ErrBadField     = errors.DynBadField
+    ErrBadIndex     = errors.DynBadIndex
+    ErrOutOfBounds  = errors.DynOutOfBounds
+    ErrBadCall      = errors.DynBadCall
+    ErrSigMismatch  = errors.DynSigMismatch
+    ErrTypeMismatch = errors.DynTypeMismatch
 )
 
 // NewError creates a dynamic access error with the given code and message.

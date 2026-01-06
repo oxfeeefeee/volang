@@ -13,20 +13,9 @@ use crate::gc::{Gc, GcRef};
 use crate::objects::{array, interface, map, slice, string, struct_ops};
 use vo_common_core::runtime_type::RuntimeType;
 
-// ==================== Error codes (matches dyn.vo) ====================
-
-/// Error codes for dynamic access operations (matches dyn.Err* constants).
-/// Range 1000-1099 is reserved for dyn package.
-mod dyn_err {
-    pub const UNKNOWN: i64 = 1000;
-    pub const NIL_BASE: i64 = 1001;
-    pub const BAD_FIELD: i64 = 1002;
-    pub const BAD_INDEX: i64 = 1003;
-    pub const OUT_OF_BOUNDS: i64 = 1004;
-    pub const BAD_CALL: i64 = 1005;
-    pub const SIG_MISMATCH: i64 = 1006;
-    pub const TYPE_MISMATCH: i64 = 1007;
-}
+// ==================== Error codes ====================
+// Error codes are now read from errors.vo at codegen time and stored in
+// Module.well_known.dyn_error_codes. Access via call.dyn_err().
 
 // ==================== Helper functions ====================
 
@@ -56,21 +45,24 @@ fn prepare_interface_value(
     Ok((stored_slot0, val_slot1))
 }
 
+/// Index check error type - callers map to error codes via call.dyn_err()
+enum IndexError {
+    BadType,
+    OutOfBounds,
+}
+
 /// Check if key is an integer type, extract its value, and validate bounds.
 /// Combines type checking and bounds checking in one call.
 #[inline]
-fn check_int_index(key_slot0: u64, key_slot1: u64, len: usize, type_name: &'static str) -> Result<usize, &'static str> {
+fn check_int_index(key_slot0: u64, key_slot1: u64, len: usize) -> Result<usize, IndexError> {
     let key_vk = interface::unpack_value_kind(key_slot0);
     if !is_integer_value_kind(key_vk) {
-        return Err("index must be integer");
+        return Err(IndexError::BadType);
     }
     
     let idx = key_slot1 as i64;
-    if idx < 0 {
-        return Err(if type_name == "slice" { "slice index out of bounds (negative)" } else { "string index out of bounds (negative)" });
-    }
-    if idx as usize >= len {
-        return Err(if type_name == "slice" { "slice index out of bounds" } else { "string index out of bounds" });
+    if idx < 0 || idx as usize >= len {
+        return Err(IndexError::OutOfBounds);
     }
     Ok(idx as usize)
 }
@@ -93,12 +85,12 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     
     // Check if interface is nil
     if interface::is_nil(slot0) {
-        return dyn_error(call, dyn_err::NIL_BASE, "cannot access field on nil");
+        return dyn_error(call, call.dyn_err().nil_base, "cannot access field on nil");
     }
     
     // Get field name
     let field_name = if name_ref.is_null() {
-        return dyn_error(call, dyn_err::BAD_FIELD, "field name is nil");
+        return dyn_error(call, call.dyn_err().bad_field, "field name is nil");
     } else {
         string::as_str(name_ref)
     };
@@ -116,7 +108,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     } else if vk == ValueKind::Struct {
         (rttid, slot1 as GcRef)
     } else {
-        return dyn_error(call, dyn_err::TYPE_MISMATCH, &format!("cannot access field on type {:?}", vk));
+        return dyn_error(call, call.dyn_err().type_mismatch, &format!("cannot access field on type {:?}", vk));
     };
     
     // For Named struct types, rttid points to runtime_types which contains Named(id)
@@ -134,7 +126,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     // Lookup struct metadata
     let struct_meta = match call.struct_meta(struct_meta_id) {
         Some(m) => m,
-        None => return dyn_error(call, dyn_err::UNKNOWN, &format!("struct meta {} not found", struct_meta_id)),
+        None => return dyn_error(call, call.dyn_err().unknown, &format!("struct meta {} not found", struct_meta_id)),
     };
     
     // Find field by name using O(1) lookup
@@ -148,7 +140,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     
     // Read field value from struct data (data_ref already set above)
     if data_ref.is_null() {
-        return dyn_error(call, dyn_err::NIL_BASE, "struct data is nil");
+        return dyn_error(call, call.dyn_err().nil_base, "struct data is nil");
     }
     
     let field_offset = field.offset as usize;
@@ -194,7 +186,7 @@ fn try_get_method(call: &mut ExternCallContext, rttid: u32, receiver_slot1: u64,
     // Lookup method by name - returns (func_id, is_pointer_receiver, signature_rttid)
     let (func_id, _is_pointer_receiver, signature_rttid) = match call.lookup_method(rttid, method_name) {
         Some(info) => info,
-        None => return dyn_error(call, dyn_err::BAD_FIELD, &format!("field or method '{}' not found", method_name)),
+        None => return dyn_error(call, call.dyn_err().bad_field, &format!("field or method '{}' not found", method_name)),
     };
     
     // Create closure with receiver as capture (see design note above for why this works)
@@ -211,7 +203,7 @@ fn try_get_method(call: &mut ExternCallContext, rttid: u32, receiver_slot1: u64,
     ExternResult::Ok
 }
 
-fn write_error_to(call: &mut ExternCallContext, ret_slot: u16, code: i64, msg: &str) {
+fn write_error_to(call: &mut ExternCallContext, ret_slot: u16, code: isize, msg: &str) {
     let wk = call.well_known();
     
     // Use pre-computed IDs from WellKnownTypes
@@ -250,14 +242,14 @@ fn write_error_to(call: &mut ExternCallContext, ret_slot: u16, code: i64, msg: &
     call.ret_ref(ret_slot + 1, err_obj);
 }
 
-fn dyn_error(call: &mut ExternCallContext, code: i64, msg: &str) -> ExternResult {
+fn dyn_error(call: &mut ExternCallContext, code: isize, msg: &str) -> ExternResult {
     call.ret_nil(0);
     call.ret_nil(1);
     write_error_to(call, 2, code, msg);
     ExternResult::Ok
 }
 
-fn dyn_error_only(call: &mut ExternCallContext, code: i64, msg: &str) -> ExternResult {
+fn dyn_error_only(call: &mut ExternCallContext, code: isize, msg: &str) -> ExternResult {
     write_error_to(call, 0, code, msg);
     ExternResult::Ok
 }
@@ -265,7 +257,7 @@ fn dyn_error_only(call: &mut ExternCallContext, code: i64, msg: &str) -> ExternR
 /// Return error for dynamic call with too many return slots.
 /// Args: () -> error[2]
 fn dyn_ret_slots_overflow_error(call: &mut ExternCallContext) -> ExternResult {
-    write_error_to(call, 0, dyn_err::SIG_MISMATCH, "dynamic call: return value exceeds maximum slots (64)");
+    write_error_to(call, 0, call.dyn_err().sig_mismatch, "dynamic call: return value exceeds maximum slots (64)");
     ExternResult::Ok
 }
 
@@ -300,7 +292,7 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     
     // Check if base is nil
     if interface::is_nil(base_slot0) {
-        return dyn_error(call, dyn_err::NIL_BASE, "cannot index nil");
+        return dyn_error(call, call.dyn_err().nil_base, "cannot index nil");
     }
     
     let base_vk = interface::unpack_value_kind(base_slot0);
@@ -310,9 +302,10 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     match base_vk {
         ValueKind::Slice => {
             let len = crate::objects::slice::len(base_ref);
-            let idx = match check_int_index(key_slot0, key_slot1, len, "slice") {
+            let idx = match check_int_index(key_slot0, key_slot1, len) {
                 Ok(i) => i,
-                Err(e) => return dyn_error(call, dyn_err::OUT_OF_BOUNDS, e),
+                Err(IndexError::BadType) => return dyn_error(call, call.dyn_err().bad_index, "index must be integer"),
+                Err(IndexError::OutOfBounds) => return dyn_error(call, call.dyn_err().out_of_bounds, "slice"),
             };
             
             let elem_meta = crate::objects::slice::elem_meta(base_ref);
@@ -335,9 +328,10 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
         ValueKind::String => {
             let s = string::as_str(base_ref);
             let bytes = s.as_bytes();
-            let idx = match check_int_index(key_slot0, key_slot1, bytes.len(), "string") {
+            let idx = match check_int_index(key_slot0, key_slot1, bytes.len()) {
                 Ok(i) => i,
-                Err(e) => return dyn_error(call, dyn_err::OUT_OF_BOUNDS, e),
+                Err(IndexError::BadType) => return dyn_error(call, call.dyn_err().bad_index, "index must be integer"),
+                Err(IndexError::OutOfBounds) => return dyn_error(call, call.dyn_err().out_of_bounds, "string"),
             };
             let (data0, data1) = call.box_to_interface(
                 ValueKind::Uint8 as u32,
@@ -359,7 +353,7 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
                 _ => false,
             };
             if !key_compatible {
-                return dyn_error(call, dyn_err::TYPE_MISMATCH, &format!("map key type mismatch: expected {:?}, got {:?}", map_key_vk, key_vk));
+                return dyn_error(call, call.dyn_err().type_mismatch, &format!("map key type mismatch: expected {:?}, got {:?}", map_key_vk, key_vk));
             }
             
             let val_meta = crate::objects::map::val_meta(base_ref);
@@ -385,7 +379,7 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             call.ret_nil(3);
         }
         _ => {
-            return dyn_error(call, dyn_err::TYPE_MISMATCH, &format!("cannot index type {:?}", base_vk));
+            return dyn_error(call, call.dyn_err().type_mismatch, &format!("cannot index type {:?}", base_vk));
         }
     }
     
@@ -412,10 +406,10 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
     let val_slot1 = call.arg_u64(4);
 
     if interface::is_nil(base_slot0) {
-        return dyn_error_only(call, dyn_err::NIL_BASE, "cannot set field on nil");
+        return dyn_error_only(call, call.dyn_err().nil_base, "cannot set field on nil");
     }
     if name_ref.is_null() {
-        return dyn_error_only(call, dyn_err::BAD_FIELD, "field name is nil");
+        return dyn_error_only(call, call.dyn_err().bad_field, "field name is nil");
     }
     let field_name = string::as_str(name_ref);
 
@@ -428,28 +422,28 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
     } else if base_vk == ValueKind::Struct {
         (base_rttid, base_slot1 as GcRef)
     } else {
-        return dyn_error_only(call, dyn_err::TYPE_MISMATCH, &format!("cannot set field on type {:?}", base_vk));
+        return dyn_error_only(call, call.dyn_err().type_mismatch, &format!("cannot set field on type {:?}", base_vk));
     };
 
     if data_ref.is_null() {
-        return dyn_error_only(call, dyn_err::NIL_BASE, "struct data is nil");
+        return dyn_error_only(call, call.dyn_err().nil_base, "struct data is nil");
     }
 
     let struct_meta_id = call.get_struct_meta_id_from_rttid(effective_rttid);
     let struct_meta_id = match struct_meta_id {
         Some(id) => id as usize,
-        None => return dyn_error_only(call, dyn_err::TYPE_MISMATCH, "cannot set field on non-struct type"),
+        None => return dyn_error_only(call, call.dyn_err().type_mismatch, "cannot set field on non-struct type"),
     };
 
     let (field_offset, field_slots, expected_vk, expected_rttid) = {
         let struct_meta = match call.struct_meta(struct_meta_id) {
             Some(m) => m,
-            None => return dyn_error_only(call, dyn_err::UNKNOWN, &format!("struct meta {} not found", struct_meta_id)),
+            None => return dyn_error_only(call, call.dyn_err().unknown, &format!("struct meta {} not found", struct_meta_id)),
         };
 
         let field = match struct_meta.get_field(field_name) {
             Some(f) => f,
-            None => return dyn_error_only(call, dyn_err::BAD_FIELD, &format!("field '{}' not found", field_name)),
+            None => return dyn_error_only(call, call.dyn_err().bad_field, &format!("field '{}' not found", field_name)),
         };
 
         (
@@ -466,12 +460,12 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
         // Get iface_meta_id from expected_rttid (which points to RuntimeType::Interface)
         let iface_meta_id = match call.get_interface_meta_id_from_rttid(expected_rttid) {
             Some(id) => id,
-            None => return dyn_error_only(call, dyn_err::TYPE_MISMATCH, "field type is not a valid interface"),
+            None => return dyn_error_only(call, call.dyn_err().type_mismatch, "field type is not a valid interface"),
         };
         
         let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, iface_meta_id) {
             Ok(v) => v,
-            Err(e) => return dyn_error_only(call, dyn_err::TYPE_MISMATCH, e),
+            Err(e) => return dyn_error_only(call, call.dyn_err().type_mismatch, e),
         };
 
         unsafe {
@@ -487,7 +481,7 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
     if expected_vk != val_vk || expected_rttid != val_rttid {
         return dyn_error_only(
             call,
-            dyn_err::TYPE_MISMATCH,
+            call.dyn_err().type_mismatch,
             &format!(
                 "field '{}' type mismatch: expected {:?} (rttid {}), got {:?} (rttid {})",
                 field_name, expected_vk, expected_rttid, val_vk, val_rttid
@@ -499,7 +493,7 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
         ValueKind::Struct | ValueKind::Array => {
             let src_ref = val_slot1 as GcRef;
             if src_ref.is_null() {
-                return dyn_error_only(call, dyn_err::NIL_BASE, "struct/array value is nil");
+                return dyn_error_only(call, call.dyn_err().nil_base, "struct/array value is nil");
             }
             for i in 0..field_slots {
                 let v = unsafe { Gc::read_slot(src_ref, i) };
@@ -534,7 +528,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
     let val_slot1 = call.arg_u64(5);
 
     if interface::is_nil(base_slot0) {
-        return dyn_error_only(call, dyn_err::NIL_BASE, "cannot set index on nil");
+        return dyn_error_only(call, call.dyn_err().nil_base, "cannot set index on nil");
     }
 
     let base_vk = interface::unpack_value_kind(base_slot0);
@@ -544,9 +538,10 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
     match base_vk {
         ValueKind::Slice => {
             let len = slice::len(base_ref);
-            let idx = match check_int_index(key_slot0, key_slot1, len, "slice") {
+            let idx = match check_int_index(key_slot0, key_slot1, len) {
                 Ok(i) => i,
-                Err(e) => return dyn_error_only(call, dyn_err::TYPE_MISMATCH, e),
+                Err(IndexError::BadType) => return dyn_error_only(call, call.dyn_err().bad_index, "index must be integer"),
+                Err(IndexError::OutOfBounds) => return dyn_error_only(call, call.dyn_err().out_of_bounds, "slice"),
             };
 
             let elem_meta = slice::elem_meta(base_ref);
@@ -558,7 +553,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 let iface_meta_id = elem_meta.meta_id();
                 let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, iface_meta_id) {
                     Ok(v) => v,
-                    Err(e) => return dyn_error_only(call, dyn_err::TYPE_MISMATCH, e),
+                    Err(e) => return dyn_error_only(call, call.dyn_err().type_mismatch, e),
                 };
                 let src = [stored_slot0, stored_slot1];
                 slice::set_n(base_ref, idx as usize, &src, elem_bytes);
@@ -573,7 +568,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
             if val_vk != elem_vk || val_rttid != elem_value_rttid.rttid() {
                 return dyn_error_only(
                     call,
-                    dyn_err::TYPE_MISMATCH,
+                    call.dyn_err().type_mismatch,
                     &format!(
                         "slice element type mismatch: expected {:?} (rttid {}), got {:?} (rttid {})",
                         elem_vk,
@@ -588,7 +583,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 ValueKind::Struct | ValueKind::Array => {
                     let src_ref = val_slot1 as GcRef;
                     if src_ref.is_null() {
-                        return dyn_error_only(call, dyn_err::NIL_BASE, "struct/array value is nil");
+                        return dyn_error_only(call, call.dyn_err().nil_base, "struct/array value is nil");
                     }
                     let elem_slots = elem_bytes / 8;
                     let mut buf: Vec<u64> = Vec::with_capacity(elem_slots);
@@ -625,7 +620,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 _ => false,
             };
             if !key_compatible {
-                return dyn_error_only(call, dyn_err::TYPE_MISMATCH, &format!("map key type mismatch: expected {:?}, got {:?}", map_key_vk, key_vk));
+                return dyn_error_only(call, call.dyn_err().type_mismatch, &format!("map key type mismatch: expected {:?}, got {:?}", map_key_vk, key_vk));
             }
 
             let val_meta = map::val_meta(base_ref);
@@ -639,15 +634,15 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 ValueKind::Struct | ValueKind::Array => {
                     let expected_key_vr = match call.runtime_types().get(base_rttid as usize) {
                         Some(RuntimeType::Map { key, .. }) => *key,
-                        _ => return dyn_error_only(call, dyn_err::UNKNOWN, "invalid map runtime type"),
+                        _ => return dyn_error_only(call, call.dyn_err().unknown, "invalid map runtime type"),
                     };
                     let key_rttid = interface::unpack_rttid(key_slot0);
                     if expected_key_vr.value_kind() != key_vk || expected_key_vr.rttid() != key_rttid {
-                        return dyn_error_only(call, dyn_err::TYPE_MISMATCH, "map key type mismatch");
+                        return dyn_error_only(call, call.dyn_err().type_mismatch, "map key type mismatch");
                     }
                     let src_ref = key_slot1 as GcRef;
                     if src_ref.is_null() {
-                        return dyn_error_only(call, dyn_err::NIL_BASE, "map key is nil");
+                        return dyn_error_only(call, call.dyn_err().nil_base, "map key is nil");
                     }
                     let key_slots = map::key_slots(base_ref) as usize;
                     key_buf.reserve(key_slots);
@@ -665,7 +660,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 let iface_meta_id = val_meta.meta_id();
                 let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, iface_meta_id) {
                     Ok(v) => v,
-                    Err(e) => return dyn_error_only(call, dyn_err::TYPE_MISMATCH, e),
+                    Err(e) => return dyn_error_only(call, call.dyn_err().type_mismatch, e),
                 };
                 val_buf.push(stored_slot0);
                 val_buf.push(stored_slot1);
@@ -675,7 +670,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 if val_vk != map_val_vk || val_rttid != map_val_value_rttid.rttid() {
                     return dyn_error_only(
                         call,
-                        dyn_err::TYPE_MISMATCH,
+                        call.dyn_err().type_mismatch,
                         &format!(
                             "map value type mismatch: expected {:?} (rttid {}), got {:?} (rttid {})",
                             map_val_vk,
@@ -690,7 +685,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                     ValueKind::Struct | ValueKind::Array => {
                         let src_ref = val_slot1 as GcRef;
                         if src_ref.is_null() {
-                            return dyn_error_only(call, dyn_err::NIL_BASE, "struct/array value is nil");
+                            return dyn_error_only(call, call.dyn_err().nil_base, "struct/array value is nil");
                         }
                         for i in 0..map_val_slots {
                             val_buf.push(unsafe { Gc::read_slot(src_ref, i) });
@@ -707,9 +702,9 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
             call.ret_nil(1);
             ExternResult::Ok
         }
-        ValueKind::String => dyn_error_only(call, dyn_err::TYPE_MISMATCH, "string index assignment is not supported"),
-        ValueKind::Array => dyn_error_only(call, dyn_err::TYPE_MISMATCH, "array index assignment is not supported"),
-        _ => dyn_error_only(call, dyn_err::TYPE_MISMATCH, &format!("cannot set index on type {:?}", base_vk)),
+        ValueKind::String => dyn_error_only(call, call.dyn_err().type_mismatch, "string index assignment is not supported"),
+        ValueKind::Array => dyn_error_only(call, call.dyn_err().type_mismatch, "array index assignment is not supported"),
+        _ => dyn_error_only(call, call.dyn_err().type_mismatch, &format!("cannot set index on type {:?}", base_vk)),
     }
 }
 
@@ -761,19 +756,19 @@ fn dyn_call_prepare(call: &mut ExternCallContext) -> ExternResult {
     
     // 1. Check nil
     if interface::is_nil(callee_slot0) {
-        return_error!(dyn_err::NIL_BASE, "cannot call nil");
+        return_error!(call.dyn_err().nil_base, "cannot call nil");
     }
     
     // 2. Check is Closure type
     let vk = interface::unpack_value_kind(callee_slot0);
     if vk != ValueKind::Closure {
-        return_error!(dyn_err::BAD_CALL, &format!("cannot call non-function type {:?}", vk));
+        return_error!(call.dyn_err().bad_call, &format!("cannot call non-function type {:?}", vk));
     }
     
     // 3. Check signature compatibility
     let closure_sig_rttid = interface::unpack_rttid(callee_slot0);
     if let Err(msg) = call.check_func_signature_compatible(closure_sig_rttid, expected_sig_rttid) {
-        return_error!(dyn_err::SIG_MISMATCH, &msg);
+        return_error!(call.dyn_err().sig_mismatch, &msg);
     }
     
     // 4. Get return metadata
@@ -784,7 +779,7 @@ fn dyn_call_prepare(call: &mut ExternCallContext) -> ExternResult {
     
     // 5. Check ret_slots limit
     if ret_slots > max_ret_slots {
-        return_error!(dyn_err::SIG_MISMATCH, "dynamic call: return value exceeds maximum slots (64)");
+        return_error!(call.dyn_err().sig_mismatch, "dynamic call: return value exceeds maximum slots (64)");
     }
     
     // Success: return ret_slots directly (error is indicated by error slot, not ret_slots value)
@@ -850,10 +845,7 @@ fn dyn_unpack_all_returns(call: &mut ExternCallContext) -> ExternResult {
             let is_large = (vk == ValueKind::Struct || vk == ValueKind::Array) && width > 2;
             if is_large {
                 // Large struct/array: allocate GcRef for caller to use PtrGet
-                let new_ref = call.gc_alloc(width, &[]);
-                for (j, &val) in raw_slots.iter().enumerate() {
-                    unsafe { Gc::write_slot(new_ref, j, val) };
-                }
+                let new_ref = call.alloc_and_copy_slots(&raw_slots);
                 call.ret_u64(ret_off, 0);
                 call.ret_u64(ret_off + 1, new_ref as u64);
                 ret_off += 2;
