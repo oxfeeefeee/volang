@@ -15,19 +15,16 @@ use vo_common_core::runtime_type::RuntimeType;
 
 // ==================== Helper functions ====================
 
-/// Check if key is an integer type and extract its value.
+/// Check if key is an integer type, extract its value, and validate bounds.
+/// Combines type checking and bounds checking in one call.
 #[inline]
-fn check_int_key(key_slot0: u64, key_slot1: u64) -> Result<i64, &'static str> {
+fn check_int_index(key_slot0: u64, key_slot1: u64, len: usize, type_name: &'static str) -> Result<usize, &'static str> {
     let key_vk = interface::unpack_value_kind(key_slot0);
     if !matches!(key_vk, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8) {
         return Err("index must be integer");
     }
-    Ok(key_slot1 as i64)
-}
-
-/// Check bounds for slice/string indexing.
-#[inline]
-fn check_bounds(idx: i64, len: usize, type_name: &'static str) -> Result<usize, &'static str> {
+    
+    let idx = key_slot1 as i64;
     if idx < 0 {
         return Err(if type_name == "slice" { "slice index out of bounds (negative)" } else { "string index out of bounds (negative)" });
     }
@@ -283,12 +280,8 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     
     match base_vk {
         ValueKind::Slice => {
-            let idx = match check_int_key(key_slot0, key_slot1) {
-                Ok(i) => i,
-                Err(e) => return dyn_error(call, e),
-            };
             let len = crate::objects::slice::len(base_ref);
-            let idx = match check_bounds(idx, len, "slice") {
+            let idx = match check_int_index(key_slot0, key_slot1, len, "slice") {
                 Ok(i) => i,
                 Err(e) => return dyn_error(call, e),
             };
@@ -313,13 +306,9 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             }
         }
         ValueKind::String => {
-            let idx = match check_int_key(key_slot0, key_slot1) {
-                Ok(i) => i,
-                Err(e) => return dyn_error(call, e),
-            };
             let s = string::as_str(base_ref);
             let bytes = s.as_bytes();
-            let idx = match check_bounds(idx, bytes.len(), "string") {
+            let idx = match check_int_index(key_slot0, key_slot1, bytes.len(), "string") {
                 Ok(i) => i,
                 Err(e) => return dyn_error(call, e),
             };
@@ -525,12 +514,8 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
 
     match base_vk {
         ValueKind::Slice => {
-            let idx = match check_int_key(key_slot0, key_slot1) {
-                Ok(i) => i,
-                Err(e) => return dyn_error_only(call, e),
-            };
             let len = slice::len(base_ref);
-            let idx = match check_bounds(idx, len, "slice") {
+            let idx = match check_int_index(key_slot0, key_slot1, len, "slice") {
                 Ok(i) => i,
                 Err(e) => return dyn_error_only(call, e),
             };
