@@ -93,20 +93,9 @@ pub fn compile_dyn_access(
         // Check if error is nil (slot0 == 0) - JumpIfNot skips when false (i.e., nil)
         let skip_error_jump = func.emit_jump(Opcode::JumpIfNot, base_reg + 2);
         
-        // Error is set - fill nil values for return slots, then copy error
-        // Calculate actual dst slots based on LHS types (ret_types excludes error)
-        let mut result_slots = 0u16;
-        for &ret_type in ret_types.iter() {
-            result_slots += if info.is_any_type(ret_type) { 2 } else { info.type_slot_count(ret_type) };
-        }
-        // Fill result slots with nil
-        for i in 0..result_slots {
-            func.emit_op(Opcode::LoadInt, dst + i, 0, 0);
-        }
-        // Copy error (2 slots) after result slots
-        func.emit_op(Opcode::Copy, dst + result_slots, base_reg + 2, 0);     // error.slot0
-        func.emit_op(Opcode::Copy, dst + result_slots + 1, base_reg + 3, 0); // error.slot1
-        let done_jump = func.emit_jump(Opcode::Jump, 0);
+        // Error is set - use helper to propagate error
+        let result_slots = info.dyn_access_dst_slots(&ret_types);
+        let done_jump = func.emit_error_propagation(base_reg + 2, dst, result_slots);
         
         // No error - continue with base value (first 2 slots)
         func.patch_jump(skip_error_jump, func.current_pc());
@@ -209,14 +198,9 @@ fn compile_dyn_op(
             
             // Check if error (slot 2,3) is nil
             let skip_error = func.emit_jump(Opcode::JumpIfNot, get_result + 2);
-            // Error - fill nil values and propagate error
-            let expected_dst_slots: u16 = ret_types.iter().map(|&t| if info.is_any_type(t) { 2 } else { info.type_slot_count(t) }).sum();
-            for i in 0..expected_dst_slots {
-                func.emit_op(Opcode::LoadInt, dst + i, 0, 0);
-            }
-            func.emit_op(Opcode::Copy, dst + expected_dst_slots, get_result + 2, 0);
-            func.emit_op(Opcode::Copy, dst + expected_dst_slots + 1, get_result + 3, 0);
-            let done_jump = func.emit_jump(Opcode::Jump, 0);
+            // Error - use helper to propagate error
+            let expected_dst_slots = info.dyn_access_dst_slots(ret_types);
+            let done_jump = func.emit_error_propagation(get_result + 2, dst, expected_dst_slots);
             
             // No error - call the closure
             func.patch_jump(skip_error, func.current_pc());
@@ -272,14 +256,9 @@ fn compile_dyn_closure_call(
     // 2. Check error (error_slot != nil means error)
     // JumpIfNot: jump if error == nil (success), fall through if error != nil
     let skip_error = func.emit_jump(Opcode::JumpIfNot, error_slot);
-    // Error path: propagate error
-    let expected_dst_slots: u16 = ret_types.iter().map(|&t| if info.is_any_type(t) { 2 } else { info.type_slot_count(t) }).sum();
-    for i in 0..expected_dst_slots {
-        func.emit_op(Opcode::LoadInt, dst + i, 0, 0);
-    }
-    func.emit_op(Opcode::Copy, dst + expected_dst_slots, error_slot, 0);
-    func.emit_op(Opcode::Copy, dst + expected_dst_slots + 1, error_slot + 1, 0);
-    let done_jump = func.emit_jump(Opcode::Jump, 0);
+    // Error path: use helper to propagate error
+    let expected_dst_slots = info.dyn_access_dst_slots(ret_types);
+    let done_jump = func.emit_error_propagation(error_slot, dst, expected_dst_slots);
     
     // 3. No error - continue with call
     func.patch_jump(skip_error, func.current_pc());
@@ -376,7 +355,7 @@ fn compile_dyn_closure_call(
                 src_off += 2;
                 dst_off += 2;
             } else if slots > 2 && (vk == ValueKind::Struct || vk == ValueKind::Array) {
-                // Large struct: result is (0, GcRef), use PtrGet
+                // Large struct/array (>2 slots): result is (0, GcRef), use PtrGet
                 func.emit_ptr_get(dst + dst_off, unpack_result + src_off + 1, 0, slots);
                 src_off += 2;
                 dst_off += slots;
@@ -436,7 +415,7 @@ fn emit_unbox_interface(
             func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
             2
         } else if (vk == ValueKind::Struct || vk == ValueKind::Array) && slots > 2 {
-            // Large struct/array: slot1 is GcRef, use PtrGet to read all slots
+            // Large struct/array (>2 slots): slot1 is GcRef, use PtrGet to read all slots
             func.emit_ptr_get(dst, result + 1, 0, slots);
             slots
         } else {

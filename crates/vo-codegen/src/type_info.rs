@@ -122,6 +122,14 @@ impl<'a> TypeInfoWrapper<'a> {
             .collect()
     }
     
+    /// Calculate total dst slots for dynamic access return types.
+    /// Each any type takes 2 slots, each typed value takes its actual slot count.
+    pub fn dyn_access_dst_slots(&self, ret_types: &[TypeKey]) -> u16 {
+        ret_types.iter()
+            .map(|&t| if self.is_any_type(t) { 2 } else { self.type_slot_count(t) })
+            .sum()
+    }
+    
     /// Check if a type is the empty interface (any).
     pub fn is_any_type(&self, type_key: TypeKey) -> bool {
         let underlying = typ::underlying_type(type_key, self.tc_objs());

@@ -836,6 +836,37 @@ impl FuncBuilder {
         self.recv_slots = slots;
     }
 
+    // === Error handling helpers ===
+
+    /// Emit error propagation pattern: fill result slots with nil, copy error, and jump to end.
+    /// Returns the jump handle that should be patched to point to the continuation.
+    ///
+    /// Pattern:
+    /// - Fill result_slots with nil (LoadInt 0)
+    /// - Copy error[2] from error_src to dst + result_slots
+    /// - Jump to end (caller must patch this)
+    ///
+    /// # Arguments
+    /// * `error_src` - Source register containing error interface[2]
+    /// * `dst` - Destination start register
+    /// * `result_slots` - Number of result slots to fill with nil
+    pub fn emit_error_propagation(
+        &mut self,
+        error_src: u16,
+        dst: u16,
+        result_slots: u16,
+    ) -> usize {
+        // Fill result slots with nil
+        for i in 0..result_slots {
+            self.emit_op(Opcode::LoadInt, dst + i, 0, 0);
+        }
+        // Copy error (2 slots) after result slots
+        self.emit_op(Opcode::Copy, dst + result_slots, error_src, 0);
+        self.emit_op(Opcode::Copy, dst + result_slots + 1, error_src + 1, 0);
+        // Jump to end
+        self.emit_jump(Opcode::Jump, 0)
+    }
+
     pub fn build(mut self) -> FunctionDef {
         // Patch forward gotos
         let patches: Vec<_> = self.goto_patches.iter()
