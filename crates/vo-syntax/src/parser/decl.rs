@@ -236,72 +236,40 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses result types for function signatures.
+    /// Supports Go-style named returns: (a, b int, c bool) or (err error)
+    /// Also supports unnamed returns: (int, bool) or int
+    ///
+    /// Strategy (aligned with parse_func_type_params):
+    /// 1. Collect first group as types (could be names or types)
+    /// 2. Try to parse a type after the group
+    /// 3. If successful: first group was names, continue parsing named results
+    /// 4. If not: first group was types (anonymous results)
     fn parse_result_type(&mut self) -> ParseResult<Vec<ResultParam>> {
         // Multiple results in parentheses
         if self.at(TokenKind::LParen) {
             self.advance();
-            let mut results = Vec::new();
-            while !self.at(TokenKind::RParen) && !self.at_eof() {
-                let start = self.current.span.start;
-                
-                // Try to parse as named result(s): name1, name2, ... type
-                // or unnamed result: type
-                if self.at(TokenKind::Ident) {
-                    let first = self.parse_ident()?;
-                    
-                    // Check for comma (multiple names sharing a type)
-                    if self.at(TokenKind::Comma) && self.peek_is_ident_before_type() {
-                        // Multiple names: name1, name2, ... type
-                        let mut names = vec![first];
-                        while self.eat(TokenKind::Comma) && self.at(TokenKind::Ident) {
-                            // Check if this ident is a name or starts the type
-                            if self.peek_is_ident_before_type() || self.at_type_start_after_ident() {
-                                names.push(self.parse_ident()?);
-                            } else {
-                                break;
-                            }
-                        }
-                        let ty = self.parse_type()?;
-                        for name in names {
-                            results.push(ResultParam {
-                                name: Some(name.clone()),
-                                ty: ty.clone(),
-                                span: Span::new(start, self.current.span.start),
-                            });
-                        }
-                    } else if self.at_type_start() {
-                        // Single name: name type
-                        let ty = self.parse_type()?;
-                        results.push(ResultParam {
-                            name: Some(first),
-                            ty,
-                            span: Span::new(start, self.current.span.start),
-                        });
-                    } else {
-                        // First was actually the type (identifier type like `int`)
-                        let ty = self.make_type_expr(TypeExprKind::Ident(first), first.span);
-                        results.push(ResultParam {
-                            name: None,
-                            ty,
-                            span: Span::new(start, self.current.span.start),
-                        });
-                    }
-                } else {
-                    // Non-identifier type (like *int, []int, etc.)
-                    let ty = self.parse_type()?;
-                    results.push(ResultParam {
-                        name: None,
-                        ty,
-                        span: Span::new(start, self.current.span.start),
-                    });
-                }
-                
-                if !self.eat(TokenKind::Comma) {
-                    break;
-                }
+            
+            if self.at(TokenKind::RParen) {
+                self.advance();
+                return Ok(Vec::new());
             }
-            self.expect(TokenKind::RParen)?;
-            Ok(results)
+            
+            // Phase 1: Collect first group (types that might be names)
+            let first_group = self.collect_result_group()?;
+            
+            // Phase 2: Try to parse a type after the group
+            if let Some(ty) = self.try_parse_type() {
+                // Success: first_group was identifier names, ty is their type
+                let results = self.parse_named_results(first_group, ty)?;
+                self.expect(TokenKind::RParen)?;
+                Ok(results)
+            } else {
+                // No type follows: first_group was anonymous type results
+                let results = self.types_to_anonymous_results(first_group);
+                self.expect(TokenKind::RParen)?;
+                Ok(results)
+            }
         } else if self.at(TokenKind::LBrace) || self.at(TokenKind::Semicolon) || self.at_eof() {
             // No result type
             Ok(Vec::new())
@@ -317,33 +285,76 @@ impl<'a> Parser<'a> {
         }
     }
     
-    /// Check if we're at "name, name2 type" pattern (multiple names sharing type).
-    /// Called when we're at comma after first ident. Uses self.peek to look one token ahead.
-    /// Returns true if pattern looks like "a, b type" rather than "a, type".
-    fn peek_is_ident_before_type(&self) -> bool {
-        // We're at comma. self.peek is the next token after comma.
-        // Pattern "a, b int" -> we're at ',', peek is 'b' (ident that's a name)
-        // Pattern "a, int"   -> we're at ',', peek is 'int' (ident that's a type)
-        // Without deeper lookahead, we can't distinguish. 
-        // Use heuristic: if peek is ident and it's followed by comma, it's likely a name.
-        // For now, require explicit "name type" pattern - don't support "a, b type" syntax.
-        // Users should write "(a int, b int)" instead of "(a, b int)".
-        false
+    /// Collects a comma-separated group of types (stops at ')' or when a type follows idents).
+    /// For result parsing: collects until we can determine if these are names or types.
+    fn collect_result_group(&mut self) -> ParseResult<Vec<TypeExpr>> {
+        let mut types = Vec::new();
+        loop {
+            types.push(self.parse_type()?);
+            if !self.eat(TokenKind::Comma) || self.at(TokenKind::RParen) {
+                break;
+            }
+        }
+        Ok(types)
     }
     
-    /// Check if next token after current ident could be part of type or end of names
-    fn at_type_start_after_ident(&self) -> bool {
-        // After seeing "name1, name2", check if next is another name or starts type
-        !self.at_type_start() && self.at(TokenKind::Ident)
+    /// Converts type expressions to named ResultParams with the given type.
+    /// Continues parsing more named result groups.
+    fn parse_named_results(&mut self, first_names: Vec<TypeExpr>, first_type: TypeExpr) -> ParseResult<Vec<ResultParam>> {
+        let mut results = Vec::new();
+        
+        // Convert first group to named results
+        for type_expr in first_names {
+            if let TypeExprKind::Ident(ident) = type_expr.kind {
+                let span = Span::new(ident.span.start, first_type.span.end);
+                results.push(ResultParam {
+                    name: Some(ident),
+                    ty: first_type.clone(),
+                    span,
+                });
+            } else {
+                // Non-ident in name position is invalid, but continue parsing
+                let span = type_expr.span;
+                results.push(ResultParam {
+                    name: None,
+                    ty: type_expr,
+                    span,
+                });
+            }
+        }
+        
+        // Continue parsing more named result groups
+        while self.eat(TokenKind::Comma) && !self.at(TokenKind::RParen) {
+            let start = self.current.span.start;
+            
+            // Collect names
+            let names = self.parse_ident_list()?;
+            
+            // Parse their type
+            let ty = self.parse_type()?;
+            
+            for name in names {
+                results.push(ResultParam {
+                    name: Some(name.clone()),
+                    ty: ty.clone(),
+                    span: Span::new(start, self.current.span.start),
+                });
+            }
+        }
+        
+        Ok(results)
     }
     
-    /// Checks if current token could start a type expression.
-    fn at_type_start(&self) -> bool {
-        matches!(self.current.kind, 
-            TokenKind::Ident | TokenKind::LBracket | 
-            TokenKind::Map | TokenKind::Chan | TokenKind::Func |
-            TokenKind::Struct | TokenKind::Interface
-        )
+    /// Converts type expressions to anonymous ResultParams.
+    fn types_to_anonymous_results(&self, types: Vec<TypeExpr>) -> Vec<ResultParam> {
+        types.into_iter().map(|ty| {
+            let span = ty.span;
+            ResultParam {
+                name: None,
+                ty,
+                span,
+            }
+        }).collect()
     }
 
     pub(crate) fn parse_interface_elems(&mut self) -> ParseResult<Vec<InterfaceElem>> {

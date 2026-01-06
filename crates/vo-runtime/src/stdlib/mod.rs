@@ -9,6 +9,10 @@
 pub mod fmt;
 pub mod builtin;
 pub mod math;
+pub mod bits;
 pub mod bytes;
 pub mod strings;
+pub mod strconv;
+pub mod unicode;
+pub mod regexp;
 pub mod dynamic;

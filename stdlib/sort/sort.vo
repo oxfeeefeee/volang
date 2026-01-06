@@ -1,15 +1,25 @@
 package sort
 
-// Extern functions (implemented in Rust)
-func Ints(x []int)
-func Float64s(x []float64)
-func Strings(x []string)
+// Vo-implemented functions - all sorting uses quicksort with insertion sort for small arrays
 
-// GoX-implemented functions
+// Ints sorts a slice of ints in increasing order.
+func Ints(x []int) {
+    quickSortInts(x, 0, len(x))
+}
+
+// Float64s sorts a slice of float64s in increasing order.
+func Float64s(x []float64) {
+    quickSortFloat64s(x, 0, len(x))
+}
+
+// Strings sorts a slice of strings in increasing order.
+func Strings(x []string) {
+    quickSortStrings(x, 0, len(x))
+}
 
 // IntsAreSorted reports whether the slice x is sorted in increasing order.
 func IntsAreSorted(x []int) bool {
-    for i := 1; i < len(x); i += 1 {
+    for i := 1; i < len(x); i++ {
         if x[i] < x[i-1] {
             return false
         }
@@ -19,7 +29,7 @@ func IntsAreSorted(x []int) bool {
 
 // Float64sAreSorted reports whether the slice x is sorted in increasing order.
 func Float64sAreSorted(x []float64) bool {
-    for i := 1; i < len(x); i += 1 {
+    for i := 1; i < len(x); i++ {
         if x[i] < x[i-1] {
             return false
         }
@@ -29,7 +39,7 @@ func Float64sAreSorted(x []float64) bool {
 
 // StringsAreSorted reports whether the slice x is sorted in increasing order.
 func StringsAreSorted(x []string) bool {
-    for i := 1; i < len(x); i += 1 {
+    for i := 1; i < len(x); i++ {
         if x[i] < x[i-1] {
             return false
         }
@@ -37,13 +47,14 @@ func StringsAreSorted(x []string) bool {
     return true
 }
 
-// SearchInts searches for x in a sorted slice of ints and returns the index.
-func SearchInts(a []int, x int) int {
+// Search uses binary search to find and return the smallest index i in [0, n)
+// at which f(i) is true.
+func Search(n int, f func(int) bool) int {
     lo := 0
-    hi := len(a)
+    hi := n
     for lo < hi {
         mid := (lo + hi) / 2
-        if a[mid] < x {
+        if !f(mid) {
             lo = mid + 1
         } else {
             hi = mid
@@ -52,13 +63,182 @@ func SearchInts(a []int, x int) int {
     return lo
 }
 
+// SearchInts searches for x in a sorted slice of ints and returns the index.
+func SearchInts(a []int, x int) int {
+    return Search(len(a), func(i int) bool { return a[i] >= x })
+}
+
+// SearchFloat64s searches for x in a sorted slice of float64s and returns the index.
+func SearchFloat64s(a []float64, x float64) int {
+    return Search(len(a), func(i int) bool { return a[i] >= x })
+}
+
+// SearchStrings searches for x in a sorted slice of strings and returns the index.
+func SearchStrings(a []string, x string) int {
+    return Search(len(a), func(i int) bool { return a[i] >= x })
+}
+
 // Reverse reverses the order of elements in x.
 func Reverse(x []int) {
     n := len(x)
-    for i := 0; i < n/2; i += 1 {
+    for i := 0; i < n/2; i++ {
         j := n - 1 - i
-        tmp := x[i]
-        x[i] = x[j]
-        x[j] = tmp
+        x[i], x[j] = x[j], x[i]
+    }
+}
+
+// ReverseFloat64s reverses the order of elements in x.
+func ReverseFloat64s(x []float64) {
+    n := len(x)
+    for i := 0; i < n/2; i++ {
+        j := n - 1 - i
+        x[i], x[j] = x[j], x[i]
+    }
+}
+
+// ReverseStrings reverses the order of elements in x.
+func ReverseStrings(x []string) {
+    n := len(x)
+    for i := 0; i < n/2; i++ {
+        j := n - 1 - i
+        x[i], x[j] = x[j], x[i]
+    }
+}
+
+// Internal: quicksort for ints
+func quickSortInts(x []int, lo, hi int) {
+    for hi-lo > 12 {
+        p := partitionInts(x, lo, hi)
+        if p-lo < hi-p {
+            quickSortInts(x, lo, p)
+            lo = p + 1
+        } else {
+            quickSortInts(x, p+1, hi)
+            hi = p
+        }
+    }
+    insertionSortInts(x, lo, hi)
+}
+
+func partitionInts(x []int, lo, hi int) int {
+    mid := lo + (hi-lo)/2
+    if x[mid] < x[lo] {
+        x[lo], x[mid] = x[mid], x[lo]
+    }
+    if x[hi-1] < x[lo] {
+        x[lo], x[hi-1] = x[hi-1], x[lo]
+    }
+    if x[mid] < x[hi-1] {
+        x[mid], x[hi-1] = x[hi-1], x[mid]
+    }
+    pivot := x[hi-1]
+    i := lo
+    for j := lo; j < hi-1; j++ {
+        if x[j] < pivot {
+            x[i], x[j] = x[j], x[i]
+            i++
+        }
+    }
+    x[i], x[hi-1] = x[hi-1], x[i]
+    return i
+}
+
+func insertionSortInts(x []int, lo, hi int) {
+    for i := lo + 1; i < hi; i++ {
+        for j := i; j > lo && x[j] < x[j-1]; j-- {
+            x[j], x[j-1] = x[j-1], x[j]
+        }
+    }
+}
+
+// Internal: quicksort for float64s
+func quickSortFloat64s(x []float64, lo, hi int) {
+    for hi-lo > 12 {
+        p := partitionFloat64s(x, lo, hi)
+        if p-lo < hi-p {
+            quickSortFloat64s(x, lo, p)
+            lo = p + 1
+        } else {
+            quickSortFloat64s(x, p+1, hi)
+            hi = p
+        }
+    }
+    insertionSortFloat64s(x, lo, hi)
+}
+
+func partitionFloat64s(x []float64, lo, hi int) int {
+    mid := lo + (hi-lo)/2
+    if x[mid] < x[lo] {
+        x[lo], x[mid] = x[mid], x[lo]
+    }
+    if x[hi-1] < x[lo] {
+        x[lo], x[hi-1] = x[hi-1], x[lo]
+    }
+    if x[mid] < x[hi-1] {
+        x[mid], x[hi-1] = x[hi-1], x[mid]
+    }
+    pivot := x[hi-1]
+    i := lo
+    for j := lo; j < hi-1; j++ {
+        if x[j] < pivot {
+            x[i], x[j] = x[j], x[i]
+            i++
+        }
+    }
+    x[i], x[hi-1] = x[hi-1], x[i]
+    return i
+}
+
+func insertionSortFloat64s(x []float64, lo, hi int) {
+    for i := lo + 1; i < hi; i++ {
+        for j := i; j > lo && x[j] < x[j-1]; j-- {
+            x[j], x[j-1] = x[j-1], x[j]
+        }
+    }
+}
+
+// Internal: quicksort for strings
+func quickSortStrings(x []string, lo, hi int) {
+    for hi-lo > 12 {
+        p := partitionStrings(x, lo, hi)
+        if p-lo < hi-p {
+            quickSortStrings(x, lo, p)
+            lo = p + 1
+        } else {
+            quickSortStrings(x, p+1, hi)
+            hi = p
+        }
+    }
+    insertionSortStrings(x, lo, hi)
+}
+
+func partitionStrings(x []string, lo, hi int) int {
+    mid := lo + (hi-lo)/2
+    if x[mid] < x[lo] {
+        x[lo], x[mid] = x[mid], x[lo]
+    }
+    if x[hi-1] < x[lo] {
+        x[lo], x[hi-1] = x[hi-1], x[lo]
+    }
+    if x[mid] < x[hi-1] {
+        x[mid], x[hi-1] = x[hi-1], x[mid]
+    }
+    pivot := x[hi-1]
+    i := lo
+    for j := lo; j < hi-1; j++ {
+        if x[j] < pivot {
+            x[i], x[j] = x[j], x[i]
+            i++
+        }
+    }
+    x[i], x[hi-1] = x[hi-1], x[i]
+    return i
+}
+
+func insertionSortStrings(x []string, lo, hi int) {
+    for i := lo + 1; i < hi; i++ {
+        for j := i; j > lo && x[j] < x[j-1]; j-- {
+            x[j], x[j-1] = x[j-1], x[j]
+        }
     }
 }

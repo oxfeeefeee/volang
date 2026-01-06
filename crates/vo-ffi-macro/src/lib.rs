@@ -533,7 +533,10 @@ fn generate_wrapper(
     }
     
     // Analyze return type
-    let ret_writes = generate_ret_write(&func.sig.output)?;
+    let (ret_writes, ret_needs_gc) = generate_ret_write(&func.sig.output)?;
+    if ret_needs_gc {
+        needs_gc = true;
+    }
     
     // Generate wrapper
     let call_expr = quote! { #fn_name(#(#arg_names),*) };
@@ -660,7 +663,10 @@ fn vo_builtin_impl(name: String, func: ItemFn) -> syn::Result<TokenStream2> {
         }
     }
     
-    let ret_writes = generate_ret_write(&func.sig.output)?;
+    let (ret_writes, ret_needs_gc) = generate_ret_write(&func.sig.output)?;
+    if ret_needs_gc {
+        needs_gc = true;
+    }
     let call_expr = quote! { #fn_name(#(#arg_names),*) };
     
     let is_runtime_core = std::env::var("CARGO_PKG_NAME")
@@ -817,9 +823,9 @@ fn generate_arg_read(ty: &Type, slot: u16) -> syn::Result<(TokenStream2, bool, u
     }
 }
 
-fn generate_ret_write(ret: &ReturnType) -> syn::Result<TokenStream2> {
+fn generate_ret_write(ret: &ReturnType) -> syn::Result<(TokenStream2, bool)> {
     match ret {
-        ReturnType::Default => Ok(quote! {}),
+        ReturnType::Default => Ok((quote! {}, false)),
         ReturnType::Type(_, ty) => {
             match &**ty {
                 Type::Path(type_path) => {
@@ -829,27 +835,27 @@ fn generate_ret_write(ret: &ReturnType) -> syn::Result<TokenStream2> {
                     
                     match ident.as_str() {
                         "i64" | "i32" | "i16" | "i8" | "isize" => {
-                            Ok(quote! { call.ret_i64(0, __result as i64); })
+                            Ok((quote! { call.ret_i64(0, __result as i64); }, false))
                         }
                         "u64" | "u32" | "u16" | "u8" | "usize" => {
-                            Ok(quote! { call.ret_u64(0, __result as u64); })
+                            Ok((quote! { call.ret_u64(0, __result as u64); }, false))
                         }
                         "f64" => {
-                            Ok(quote! { call.ret_f64(0, __result); })
+                            Ok((quote! { call.ret_f64(0, __result); }, false))
                         }
                         "f32" => {
-                            Ok(quote! { call.ret_f64(0, __result as f64); })
+                            Ok((quote! { call.ret_f64(0, __result as f64); }, false))
                         }
                         "bool" => {
-                            Ok(quote! { call.ret_bool(0, __result); })
+                            Ok((quote! { call.ret_bool(0, __result); }, false))
                         }
                         "String" => {
-                            Ok(quote! { call.ret_str(0, &__result); })
+                            Ok((quote! { call.ret_str(0, &__result); }, true))
                         }
                         "Vec" => {
                             match get_generic_inner_type(type_path).as_deref() {
-                                Some("u8") => Ok(quote! { call.ret_bytes(0, &__result); }),
-                                Some("String") => Ok(quote! { call.ret_string_slice(0, &__result); }),
+                                Some("u8") => Ok((quote! { call.ret_bytes(0, &__result); }, true)),
+                                Some("String") => Ok((quote! { call.ret_string_slice(0, &__result); }, true)),
                                 Some(inner) => Err(syn::Error::new_spanned(ty, format!("unsupported Vec element type: {}", inner))),
                                 None => Err(syn::Error::new_spanned(ty, "Vec requires generic type argument")),
                             }
@@ -889,7 +895,7 @@ fn generate_ret_write(ret: &ReturnType) -> syn::Result<TokenStream2> {
                             return Err(syn::Error::new_spanned(elem, "unsupported tuple element type"));
                         }
                     }
-                    Ok(quote! { #(#writes)* })
+                    Ok((quote! { #(#writes)* }, false))
                 }
                 _ => Err(syn::Error::new_spanned(ty, "unsupported return type")),
             }

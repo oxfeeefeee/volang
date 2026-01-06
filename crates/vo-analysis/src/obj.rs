@@ -103,6 +103,8 @@ pub enum EntityType {
     /// A declared function, concrete method, or abstract method.
     Func {
         has_ptr_recv: bool,
+        /// True if function has implementation body (not extern).
+        has_body: bool,
     },
     /// A declared label.
     Label {
@@ -156,14 +158,27 @@ impl EntityType {
 
     pub fn func_has_ptr_recv(&self) -> bool {
         match self {
-            EntityType::Func { has_ptr_recv } => *has_ptr_recv,
+            EntityType::Func { has_ptr_recv, .. } => *has_ptr_recv,
             _ => false,
         }
     }
 
     pub fn func_set_has_ptr_recv(&mut self, has: bool) {
-        if let EntityType::Func { has_ptr_recv } = self {
+        if let EntityType::Func { has_ptr_recv, .. } = self {
             *has_ptr_recv = has;
+        }
+    }
+
+    pub fn func_has_body(&self) -> bool {
+        match self {
+            EntityType::Func { has_body, .. } => *has_body,
+            _ => false,
+        }
+    }
+
+    pub fn func_set_has_body(&mut self, has: bool) {
+        if let EntityType::Func { has_body, .. } = self {
+            *has_body = has;
         }
     }
 
@@ -324,9 +339,10 @@ impl LangObj {
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
+        has_body: bool,
     ) -> LangObj {
         LangObj::new(
-            EntityType::Func { has_ptr_recv: false },
+            EntityType::Func { has_ptr_recv: false, has_body },
             pos,
             pkg,
             name,

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use vo_common::diagnostics::render_error;
-use vo_common::vfs::{FileSet, RealFs, ZipFs};
+use vo_common::vfs::{FileSet, RealFs, ZipFs, OverlayFs};
 use vo_analysis::analyze_project;
 use vo_module::ResolverConfig;
 use vo_codegen::compile_project;
@@ -287,8 +287,15 @@ fn compile_zip(zip_path: &Path, internal_root: Option<&str>) -> Option<(Module, 
         return None;
     }
     
-    // Create resolver with ZipFs for local imports
-    let resolver = vo_module::PackageResolver::with_fs(zip_fs.clone());
+    // Get stdlib path from environment config (same as regular file compilation)
+    let config = ResolverConfig::from_env(abs_root.clone());
+    
+    // Create overlay filesystem: zip for project files, real fs for stdlib
+    let stdlib_fs = RealFs::new(&config.std_root);
+    let overlay_fs = OverlayFs::new(zip_fs.clone(), stdlib_fs);
+    
+    // Create resolver with overlay filesystem
+    let resolver = vo_module::PackageResolver::with_fs(overlay_fs);
     
     let project = match analyze_project(file_set, &resolver) {
         Ok(p) => p,

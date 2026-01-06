@@ -10,13 +10,16 @@ strings = { path = "strings" }
 strconv = { path = "strconv" }
 bytes = { path = "bytes" }
 unicode = { path = "unicode" }
+"unicode/utf8" = { path = "unicode/utf8" }
 math = { path = "math" }
+"math/bits" = { path = "math/bits" }
 sort = { path = "sort" }
+slices = { path = "slices" }
+maps = { path = "maps" }
 regexp = { path = "regexp" }
 dyn = { path = "dyn" }
 "encoding/hex" = { path = "encoding/hex" }
 "encoding/base64" = { path = "encoding/base64" }
-"encoding/json" = { path = "encoding/json" }
 
 # Standard packages (requires OS support)
 [packages.std]
@@ -24,10 +27,14 @@ dyn = { path = "dyn" }
 # io = { path = "io" }
 # os = { path = "os" }
 # time = { path = "time" }
-# rand = { path = "rand" }
+# "math/rand" = { path = "math/rand" }
 # path = { path = "path" }
+# "path/filepath" = { path = "path/filepath" }
+# bufio = { path = "bufio" }
 
 # Runtime packages (deep VM integration)
 [packages.runtime]
 # reflect = { path = "reflect" }
 # runtime = { path = "runtime" }
+# sync = { path = "sync" }
+# context = { path = "context" }

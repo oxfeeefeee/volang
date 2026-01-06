@@ -455,8 +455,8 @@ impl Checker {
     }
     
     #[inline]
-    pub(crate) fn new_func(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
-        self.tc_objs.new_func(pos, pkg, name, typ)
+    pub(crate) fn new_func(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, has_body: bool) -> ObjKey {
+        self.tc_objs.new_func(pos, pkg, name, typ, has_body)
     }
     
     #[inline]

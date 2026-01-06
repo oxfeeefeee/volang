@@ -1,0 +1,425 @@
+package slices
+
+// Vo doesn't have generics, so we provide typed variants for common types.
+// For other types, use the sort package or write custom functions.
+
+// ============ int slice functions ============
+
+// IndexInt returns the index of the first occurrence of v in s, or -1 if not present.
+func IndexInt(s []int, v int) int {
+    for i, x := range s {
+        if x == v {
+            return i
+        }
+    }
+    return -1
+}
+
+// ContainsInt reports whether v is present in s.
+func ContainsInt(s []int, v int) bool {
+    return IndexInt(s, v) >= 0
+}
+
+// EqualInt reports whether two slices are equal.
+func EqualInt(s1, s2 []int) bool {
+    if len(s1) != len(s2) {
+        return false
+    }
+    for i := range s1 {
+        if s1[i] != s2[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// CompareInt compares two slices lexicographically.
+func CompareInt(s1, s2 []int) int {
+    n := len(s1)
+    if len(s2) < n {
+        n = len(s2)
+    }
+    for i := 0; i < n; i++ {
+        if s1[i] < s2[i] {
+            return -1
+        }
+        if s1[i] > s2[i] {
+            return 1
+        }
+    }
+    if len(s1) < len(s2) {
+        return -1
+    }
+    if len(s1) > len(s2) {
+        return 1
+    }
+    return 0
+}
+
+// BinarySearchInt searches for target in a sorted slice and returns the position
+// where target is found, or the position where target would appear.
+func BinarySearchInt(x []int, target int) (int, bool) {
+    lo := 0
+    hi := len(x)
+    for lo < hi {
+        mid := (lo + hi) / 2
+        if x[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo, lo < len(x) && x[lo] == target
+}
+
+// MinInt returns the minimum element in s. Panics if s is empty.
+func MinInt(s []int) int {
+    if len(s) == 0 {
+        panic("slices.MinInt: empty slice")
+    }
+    m := s[0]
+    for i := 1; i < len(s); i++ {
+        if s[i] < m {
+            m = s[i]
+        }
+    }
+    return m
+}
+
+// MaxInt returns the maximum element in s. Panics if s is empty.
+func MaxInt(s []int) int {
+    if len(s) == 0 {
+        panic("slices.MaxInt: empty slice")
+    }
+    m := s[0]
+    for i := 1; i < len(s); i++ {
+        if s[i] > m {
+            m = s[i]
+        }
+    }
+    return m
+}
+
+// CloneInt returns a copy of the slice.
+func CloneInt(s []int) []int {
+    if s == nil {
+        return nil
+    }
+    c := make([]int, len(s))
+    copy(c, s)
+    return c
+}
+
+// ReverseInt reverses the elements of the slice in place.
+func ReverseInt(s []int) {
+    n := len(s)
+    for i := 0; i < n/2; i++ {
+        s[i], s[n-1-i] = s[n-1-i], s[i]
+    }
+}
+
+// IsSortedInt reports whether s is sorted in increasing order.
+func IsSortedInt(s []int) bool {
+    for i := 1; i < len(s); i++ {
+        if s[i] < s[i-1] {
+            return false
+        }
+    }
+    return true
+}
+
+// ============ string slice functions ============
+
+// IndexString returns the index of the first occurrence of v in s, or -1 if not present.
+func IndexString(s []string, v string) int {
+    for i, x := range s {
+        if x == v {
+            return i
+        }
+    }
+    return -1
+}
+
+// ContainsString reports whether v is present in s.
+func ContainsString(s []string, v string) bool {
+    return IndexString(s, v) >= 0
+}
+
+// EqualString reports whether two slices are equal.
+func EqualString(s1, s2 []string) bool {
+    if len(s1) != len(s2) {
+        return false
+    }
+    for i := range s1 {
+        if s1[i] != s2[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// CompareString compares two slices lexicographically.
+func CompareString(s1, s2 []string) int {
+    n := len(s1)
+    if len(s2) < n {
+        n = len(s2)
+    }
+    for i := 0; i < n; i++ {
+        if s1[i] < s2[i] {
+            return -1
+        }
+        if s1[i] > s2[i] {
+            return 1
+        }
+    }
+    if len(s1) < len(s2) {
+        return -1
+    }
+    if len(s1) > len(s2) {
+        return 1
+    }
+    return 0
+}
+
+// BinarySearchString searches for target in a sorted slice.
+func BinarySearchString(x []string, target string) (int, bool) {
+    lo := 0
+    hi := len(x)
+    for lo < hi {
+        mid := (lo + hi) / 2
+        if x[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo, lo < len(x) && x[lo] == target
+}
+
+// MinString returns the minimum element in s. Panics if s is empty.
+func MinString(s []string) string {
+    if len(s) == 0 {
+        panic("slices.MinString: empty slice")
+    }
+    m := s[0]
+    for i := 1; i < len(s); i++ {
+        if s[i] < m {
+            m = s[i]
+        }
+    }
+    return m
+}
+
+// MaxString returns the maximum element in s. Panics if s is empty.
+func MaxString(s []string) string {
+    if len(s) == 0 {
+        panic("slices.MaxString: empty slice")
+    }
+    m := s[0]
+    for i := 1; i < len(s); i++ {
+        if s[i] > m {
+            m = s[i]
+        }
+    }
+    return m
+}
+
+// CloneString returns a copy of the slice.
+func CloneString(s []string) []string {
+    if s == nil {
+        return nil
+    }
+    c := make([]string, len(s))
+    copy(c, s)
+    return c
+}
+
+// ReverseString reverses the elements of the slice in place.
+func ReverseString(s []string) {
+    n := len(s)
+    for i := 0; i < n/2; i++ {
+        s[i], s[n-1-i] = s[n-1-i], s[i]
+    }
+}
+
+// IsSortedString reports whether s is sorted in increasing order.
+func IsSortedString(s []string) bool {
+    for i := 1; i < len(s); i++ {
+        if s[i] < s[i-1] {
+            return false
+        }
+    }
+    return true
+}
+
+// ============ float64 slice functions ============
+
+// IndexFloat64 returns the index of the first occurrence of v in s, or -1 if not present.
+func IndexFloat64(s []float64, v float64) int {
+    for i, x := range s {
+        if x == v {
+            return i
+        }
+    }
+    return -1
+}
+
+// ContainsFloat64 reports whether v is present in s.
+func ContainsFloat64(s []float64, v float64) bool {
+    return IndexFloat64(s, v) >= 0
+}
+
+// EqualFloat64 reports whether two slices are equal.
+func EqualFloat64(s1, s2 []float64) bool {
+    if len(s1) != len(s2) {
+        return false
+    }
+    for i := range s1 {
+        if s1[i] != s2[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// CompareFloat64 compares two slices lexicographically.
+func CompareFloat64(s1, s2 []float64) int {
+    n := len(s1)
+    if len(s2) < n {
+        n = len(s2)
+    }
+    for i := 0; i < n; i++ {
+        if s1[i] < s2[i] {
+            return -1
+        }
+        if s1[i] > s2[i] {
+            return 1
+        }
+    }
+    if len(s1) < len(s2) {
+        return -1
+    }
+    if len(s1) > len(s2) {
+        return 1
+    }
+    return 0
+}
+
+// BinarySearchFloat64 searches for target in a sorted slice.
+func BinarySearchFloat64(x []float64, target float64) (int, bool) {
+    lo := 0
+    hi := len(x)
+    for lo < hi {
+        mid := (lo + hi) / 2
+        if x[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo, lo < len(x) && x[lo] == target
+}
+
+// MinFloat64 returns the minimum element in s. Panics if s is empty.
+func MinFloat64(s []float64) float64 {
+    if len(s) == 0 {
+        panic("slices.MinFloat64: empty slice")
+    }
+    m := s[0]
+    for i := 1; i < len(s); i++ {
+        if s[i] < m {
+            m = s[i]
+        }
+    }
+    return m
+}
+
+// MaxFloat64 returns the maximum element in s. Panics if s is empty.
+func MaxFloat64(s []float64) float64 {
+    if len(s) == 0 {
+        panic("slices.MaxFloat64: empty slice")
+    }
+    m := s[0]
+    for i := 1; i < len(s); i++ {
+        if s[i] > m {
+            m = s[i]
+        }
+    }
+    return m
+}
+
+// CloneFloat64 returns a copy of the slice.
+func CloneFloat64(s []float64) []float64 {
+    if s == nil {
+        return nil
+    }
+    c := make([]float64, len(s))
+    copy(c, s)
+    return c
+}
+
+// ReverseFloat64 reverses the elements of the slice in place.
+func ReverseFloat64(s []float64) {
+    n := len(s)
+    for i := 0; i < n/2; i++ {
+        s[i], s[n-1-i] = s[n-1-i], s[i]
+    }
+}
+
+// IsSortedFloat64 reports whether s is sorted in increasing order.
+func IsSortedFloat64(s []float64) bool {
+    for i := 1; i < len(s); i++ {
+        if s[i] < s[i-1] {
+            return false
+        }
+    }
+    return true
+}
+
+// ============ byte slice functions ============
+
+// IndexByte returns the index of the first occurrence of v in s, or -1 if not present.
+func IndexByte(s []byte, v byte) int {
+    for i, x := range s {
+        if x == v {
+            return i
+        }
+    }
+    return -1
+}
+
+// ContainsByte reports whether v is present in s.
+func ContainsByte(s []byte, v byte) bool {
+    return IndexByte(s, v) >= 0
+}
+
+// EqualByte reports whether two slices are equal.
+func EqualByte(s1, s2 []byte) bool {
+    if len(s1) != len(s2) {
+        return false
+    }
+    for i := range s1 {
+        if s1[i] != s2[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// CloneByte returns a copy of the slice.
+func CloneByte(s []byte) []byte {
+    if s == nil {
+        return nil
+    }
+    c := make([]byte, len(s))
+    copy(c, s)
+    return c
+}
+
+// ReverseByte reverses the elements of the slice in place.
+func ReverseByte(s []byte) {
+    n := len(s)
+    for i := 0; i < n/2; i++ {
+        s[i], s[n-1-i] = s[n-1-i], s[i]
+    }
+}

@@ -1,15 +1,12 @@
 //! math package native function implementations.
 //!
-//! Provides mathematical functions for the math standard library package.
+//! Native functions that require libm or hardware instructions.
+//! Simple functions (Abs, Max, Min, Dim, IsNaN, IsInf, Signbit, Copysign, Pow10)
+//! are implemented in Vo for better JIT inlining.
 
 use vo_ffi_macro::vo_extern_std;
 
-// ==================== Basic operations ====================
-
-#[vo_extern_std("math", "Abs")]
-fn abs(x: f64) -> f64 {
-    x.abs()
-}
+// ==================== Rounding (hardware instructions) ====================
 
 #[vo_extern_std("math", "Floor")]
 fn floor(x: f64) -> f64 {
@@ -31,22 +28,7 @@ fn trunc(x: f64) -> f64 {
     x.trunc()
 }
 
-#[vo_extern_std("math", "Max")]
-fn max(x: f64, y: f64) -> f64 {
-    x.max(y)
-}
-
-#[vo_extern_std("math", "Min")]
-fn min(x: f64, y: f64) -> f64 {
-    x.min(y)
-}
-
-#[vo_extern_std("math", "Dim")]
-fn dim(x: f64, y: f64) -> f64 {
-    if x > y { x - y } else { 0.0 }
-}
-
-// ==================== Power and root ====================
+// ==================== Power and root (libm) ====================
 
 #[vo_extern_std("math", "Sqrt")]
 fn sqrt(x: f64) -> f64 {
@@ -63,21 +45,26 @@ fn pow(x: f64, y: f64) -> f64 {
     x.powf(y)
 }
 
-#[vo_extern_std("math", "Pow10")]
-fn pow10(n: i64) -> f64 {
-    10.0_f64.powi(n as i32)
-}
-
 #[vo_extern_std("math", "Hypot")]
 fn hypot(x: f64, y: f64) -> f64 {
     x.hypot(y)
 }
 
-// ==================== Exponential and logarithm ====================
+// ==================== Exponential and logarithm (libm) ====================
 
 #[vo_extern_std("math", "Exp")]
 fn exp(x: f64) -> f64 {
     x.exp()
+}
+
+#[vo_extern_std("math", "Exp2")]
+fn exp2(x: f64) -> f64 {
+    x.exp2()
+}
+
+#[vo_extern_std("math", "Expm1")]
+fn expm1(x: f64) -> f64 {
+    x.exp_m1()
 }
 
 #[vo_extern_std("math", "Log")]
@@ -95,7 +82,12 @@ fn log10(x: f64) -> f64 {
     x.log10()
 }
 
-// ==================== Trigonometric ====================
+#[vo_extern_std("math", "Log1p")]
+fn log1p(x: f64) -> f64 {
+    x.ln_1p()
+}
+
+// ==================== Trigonometric (libm) ====================
 
 #[vo_extern_std("math", "Sin")]
 fn sin(x: f64) -> f64 {
@@ -132,7 +124,7 @@ fn atan2(y: f64, x: f64) -> f64 {
     y.atan2(x)
 }
 
-// ==================== Hyperbolic ====================
+// ==================== Hyperbolic (libm) ====================
 
 #[vo_extern_std("math", "Sinh")]
 fn sinh(x: f64) -> f64 {
@@ -149,30 +141,67 @@ fn tanh(x: f64) -> f64 {
     x.tanh()
 }
 
-// ==================== Other ====================
+#[vo_extern_std("math", "Asinh")]
+fn asinh(x: f64) -> f64 {
+    x.asinh()
+}
+
+#[vo_extern_std("math", "Acosh")]
+fn acosh(x: f64) -> f64 {
+    x.acosh()
+}
+
+#[vo_extern_std("math", "Atanh")]
+fn atanh(x: f64) -> f64 {
+    x.atanh()
+}
+
+// ==================== IEEE 754 operations ====================
 
 #[vo_extern_std("math", "Mod")]
 fn mod_fn(x: f64, y: f64) -> f64 {
     x % y
 }
 
-#[vo_extern_std("math", "Copysign")]
-fn copysign(x: f64, y: f64) -> f64 {
-    x.copysign(y)
+#[vo_extern_std("math", "Modf")]
+fn modf(x: f64) -> (f64, f64) {
+    let int_part = x.trunc();
+    let frac_part = x - int_part;
+    (int_part, frac_part)
 }
 
-#[vo_extern_std("math", "IsNaN")]
-fn is_nan(x: f64) -> bool {
-    x.is_nan()
-}
-
-#[vo_extern_std("math", "IsInf")]
-fn is_inf(x: f64, sign: i64) -> bool {
-    match sign {
-        1 => x == f64::INFINITY,
-        -1 => x == f64::NEG_INFINITY,
-        _ => x.is_infinite(),
+#[vo_extern_std("math", "Frexp")]
+fn frexp(x: f64) -> (f64, i64) {
+    if x == 0.0 || x.is_nan() || x.is_infinite() {
+        return (x, 0);
     }
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000_0000_0000;
+    let exp = ((bits >> 52) & 0x7FF) as i64;
+    let mantissa = bits & 0x000F_FFFF_FFFF_FFFF;
+    
+    if exp == 0 {
+        // Subnormal - normalize first
+        let normalized = x * (1u64 << 54) as f64;
+        let (frac, e) = frexp(normalized);
+        return (frac, e - 54);
+    }
+    
+    // Normal number: return mantissa in [0.5, 1) and exponent
+    let frac_bits = sign | 0x3FE0_0000_0000_0000 | mantissa;
+    let frac = f64::from_bits(frac_bits);
+    let e = exp - 1022;
+    (frac, e)
+}
+
+#[vo_extern_std("math", "Ldexp")]
+fn ldexp(frac: f64, exp: i64) -> f64 {
+    frac * (2.0_f64).powi(exp as i32)
+}
+
+#[vo_extern_std("math", "FMA")]
+fn fma(x: f64, y: f64, z: f64) -> f64 {
+    x.mul_add(y, z)
 }
 
 #[vo_extern_std("math", "Inf")]

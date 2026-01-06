@@ -345,7 +345,7 @@ impl Universe {
         )));
         let err_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Error".to_string(), Some(err_sig)));
+            .insert(LangObj::new_func(0, None, "Error".to_string(), Some(err_sig), false));
 
         // === Code() int ===
         let code_res_var = objs
@@ -360,7 +360,7 @@ impl Universe {
         )));
         let code_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Code".to_string(), Some(code_sig)));
+            .insert(LangObj::new_func(0, None, "Code".to_string(), Some(code_sig), false));
 
         // === Unwrap() error ===
         let unwrap_res_var = objs
@@ -375,7 +375,7 @@ impl Universe {
         )));
         let unwrap_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Unwrap".to_string(), Some(unwrap_sig)));
+            .insert(LangObj::new_func(0, None, "Unwrap".to_string(), Some(unwrap_sig), false));
 
         // === Data() any ===
         let data_res_var = objs
@@ -390,7 +390,7 @@ impl Universe {
         )));
         let data_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Data".to_string(), Some(data_sig)));
+            .insert(LangObj::new_func(0, None, "Data".to_string(), Some(data_sig), false));
 
         // Create underlying interface type
         let mut iface = InterfaceDetail::new(vec![err_method, code_method, unwrap_method, data_method], vec![]);

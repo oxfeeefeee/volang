@@ -9,5 +9,11 @@ func IsLower(r rune) bool
 func IsControl(r rune) bool
 func IsPrint(r rune) bool
 func IsPunct(r rune) bool
+func IsGraphic(r rune) bool
+func IsNumber(r rune) bool
+func IsMark(r rune) bool
+func IsSymbol(r rune) bool
 func ToLower(r rune) rune
 func ToUpper(r rune) rune
+func ToTitle(r rune) rune
+func SimpleFold(r rune) rune

@@ -478,11 +478,13 @@ impl Checker {
             }
             Decl::Func(func_decl) => {
                 let name_str = self.resolve_ident(&func_decl.name).to_string();
+                let has_body = func_decl.body.is_some();
                 let okey = self.tc_objs.new_func(
                     0, // pos
                     Some(self.pkg),
                     name_str.clone(),
                     None,
+                    has_body,
                 );
 
                 if func_decl.receiver.is_none() {

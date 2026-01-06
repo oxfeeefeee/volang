@@ -1,10 +1,16 @@
 package hex
 
-// Extern functions (implemented in Rust)
-func EncodeToString(src []byte) string
-func DecodeString(s string) ([]byte, error)
+import "errors"
 
-// GoX-implemented functions
+// Error codes for hex
+const (
+    ErrLength    = 4000 // Odd length hex string
+    ErrInvalidByte = 4001 // Invalid byte in hex string
+)
+
+const hextable = "0123456789abcdef"
+
+// Vo-implemented functions
 
 // EncodedLen returns the length of an encoding of n source bytes.
 func EncodedLen(n int) int {
@@ -14,4 +20,70 @@ func EncodedLen(n int) int {
 // DecodedLen returns the length of a decoding of n source bytes.
 func DecodedLen(n int) int {
     return n / 2
+}
+
+// Encode encodes src into EncodedLen(len(src)) bytes of dst.
+// Returns the number of bytes written to dst.
+func Encode(dst, src []byte) int {
+    j := 0
+    for _, v := range src {
+        dst[j] = hextable[v>>4]
+        dst[j+1] = hextable[v&0x0f]
+        j += 2
+    }
+    return len(src) * 2
+}
+
+// Decode decodes src into DecodedLen(len(src)) bytes.
+// Returns the number of bytes written to dst.
+func Decode(dst, src []byte) (int, error) {
+    if len(src)%2 != 0 {
+        return 0, errors.NewCode(ErrLength, "hex: odd length hex string")
+    }
+    j := 0
+    for i := 0; i < len(src); i += 2 {
+        a, ok := fromHexChar(src[i])
+        if !ok {
+            return j, errors.NewCode(ErrInvalidByte, "hex: invalid byte")
+        }
+        b, ok := fromHexChar(src[i+1])
+        if !ok {
+            return j, errors.NewCode(ErrInvalidByte, "hex: invalid byte")
+        }
+        dst[j] = (a << 4) | b
+        j++
+    }
+    return j, nil
+}
+
+// EncodeToString returns the hexadecimal encoding of src.
+func EncodeToString(src []byte) string {
+    dst := make([]byte, EncodedLen(len(src)))
+    Encode(dst, src)
+    return string(dst)
+}
+
+// DecodeString returns the bytes represented by the hexadecimal string s.
+func DecodeString(s string) ([]byte, error) {
+    src := []byte(s)
+    dst := make([]byte, DecodedLen(len(src)))
+    n, err := Decode(dst, src)
+    if err != nil {
+        return nil, err
+    }
+    return dst[:n], nil
+}
+
+// Internal helper: convert hex character to value
+func fromHexChar(c byte) (byte, bool) {
+    if c >= '0' && c <= '9' {
+        return c - '0', true
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10, true
+    }
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10, true
+    }
+    return 0, false
 }

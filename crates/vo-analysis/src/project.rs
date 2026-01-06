@@ -233,7 +233,9 @@ pub fn analyze_project_with_options<F: FileSystem>(
     // Pre-load all imports BEFORE swap (importer needs state.tc_objs)
     {
         let mut importer = ProjectImporter::new(vfs, &files.root, Rc::clone(&state));
-        preload_imports(&parsed_files, &mut importer);
+        if let Err(e) = preload_imports(&parsed_files, &mut importer) {
+            return Err(AnalysisError::Import(e));
+        }
     }
     
     // Type check the main package
@@ -424,21 +426,30 @@ fn parse_vfs_package(
 
 /// Pre-load all imports from the parsed files.
 /// This must be called BEFORE swapping tc_objs with checker.
-fn preload_imports<F: FileSystem>(files: &[File], importer: &mut ProjectImporter<F>) {
+/// Returns an error if any import fails (package not found, parse error, or type check error).
+fn preload_imports<F: FileSystem>(files: &[File], importer: &mut ProjectImporter<F>) -> Result<(), String> {
     // Always-link core packages required by runtime.
     // This does not inject a package name into user scopes (no auto-import),
     // but ensures the package is analyzed and compiled into the final module.
     let key = ImportKey::new("errors", ".");
-    let _ = importer.import(&key);
+    match importer.import(&key) {
+        ImportResult::Ok(_) => {}
+        ImportResult::Err(e) => return Err(e),
+        ImportResult::Cycle => return Err("import cycle detected for 'errors'".to_string()),
+    }
 
     for file in files {
         for import in &file.imports {
             let path = &import.path.value;
             let key = ImportKey::new(path, ".");
-            // Ignore errors during preload - they'll be reported during type check
-            let _ = importer.import(&key);
+            match importer.import(&key) {
+                ImportResult::Ok(_) => {}
+                ImportResult::Err(e) => return Err(e),
+                ImportResult::Cycle => return Err(format!("import cycle detected for '{}'", path)),
+            }
         }
     }
+    Ok(())
 }
 
 /// Project-level importer that uses VFS to resolve packages.

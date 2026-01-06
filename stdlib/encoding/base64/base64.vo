@@ -1,17 +1,215 @@
 package base64
 
-// Extern functions - Standard encoding (with padding)
-func EncodeToString(src []byte) string
-func DecodeString(s string) ([]byte, error)
+import "errors"
 
-// Extern functions - URL encoding (with padding)  
-func URLEncodeToString(src []byte) string
-func URLDecodeString(s string) ([]byte, error)
+// Error codes for base64
+const (
+    ErrCorruptInput = 4100 // Corrupt input
+)
 
-// Extern functions - Raw standard (no padding)
-func RawEncodeToString(src []byte) string
-func RawDecodeString(s string) ([]byte, error)
+// Standard encoding alphabet
+const encodeStd = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
-// Extern functions - Raw URL (no padding)
-func RawURLEncodeToString(src []byte) string
-func RawURLDecodeString(s string) ([]byte, error)
+// URL encoding alphabet
+const encodeURL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+// Vo-implemented functions
+
+// EncodedLen returns the length in bytes of the base64 encoding of an input buffer of length n.
+func EncodedLen(n int, padding bool) int {
+    if padding {
+        return (n + 2) / 3 * 4
+    }
+    return (n*8 + 5) / 6
+}
+
+// DecodedLen returns the maximum length in bytes of the decoded data
+// corresponding to n bytes of base64-encoded data.
+func DecodedLen(n int) int {
+    return n * 6 / 8
+}
+
+// EncodeToString returns the base64 encoding of src using standard alphabet with padding.
+func EncodeToString(src []byte) string {
+    return encode(src, encodeStd, true)
+}
+
+// DecodeString returns the bytes represented by the base64 string s using standard alphabet.
+func DecodeString(s string) ([]byte, error) {
+    return decode(s, decodeStdTable, true)
+}
+
+// URLEncodeToString returns the base64 encoding of src using URL alphabet with padding.
+func URLEncodeToString(src []byte) string {
+    return encode(src, encodeURL, true)
+}
+
+// URLDecodeString returns the bytes represented by the base64 string s using URL alphabet.
+func URLDecodeString(s string) ([]byte, error) {
+    return decode(s, decodeURLTable, true)
+}
+
+// RawEncodeToString returns the base64 encoding of src using standard alphabet without padding.
+func RawEncodeToString(src []byte) string {
+    return encode(src, encodeStd, false)
+}
+
+// RawDecodeString returns the bytes represented by the base64 string s using standard alphabet without padding.
+func RawDecodeString(s string) ([]byte, error) {
+    return decode(s, decodeStdTable, false)
+}
+
+// RawURLEncodeToString returns the base64 encoding of src using URL alphabet without padding.
+func RawURLEncodeToString(src []byte) string {
+    return encode(src, encodeURL, false)
+}
+
+// RawURLDecodeString returns the bytes represented by the base64 string s using URL alphabet without padding.
+func RawURLDecodeString(s string) ([]byte, error) {
+    return decode(s, decodeURLTable, false)
+}
+
+// Internal: encode bytes to base64
+func encode(src []byte, alphabet string, padding bool) string {
+    if len(src) == 0 {
+        return ""
+    }
+    
+    dst := make([]byte, EncodedLen(len(src), padding))
+    di := 0
+    si := 0
+    n := (len(src) / 3) * 3
+    
+    for si < n {
+        val := uint(src[si])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
+        dst[di] = alphabet[val>>18&0x3F]
+        dst[di+1] = alphabet[val>>12&0x3F]
+        dst[di+2] = alphabet[val>>6&0x3F]
+        dst[di+3] = alphabet[val&0x3F]
+        si += 3
+        di += 4
+    }
+    
+    remain := len(src) - si
+    if remain > 0 {
+        var val uint
+        if remain == 1 {
+            val = uint(src[si]) << 16
+            dst[di] = alphabet[val>>18&0x3F]
+            dst[di+1] = alphabet[val>>12&0x3F]
+            if padding {
+                dst[di+2] = '='
+                dst[di+3] = '='
+            }
+        } else {
+            val = uint(src[si])<<16 | uint(src[si+1])<<8
+            dst[di] = alphabet[val>>18&0x3F]
+            dst[di+1] = alphabet[val>>12&0x3F]
+            dst[di+2] = alphabet[val>>6&0x3F]
+            if padding {
+                dst[di+3] = '='
+            }
+        }
+    }
+    
+    return string(dst)
+}
+
+// Internal: decode base64 to bytes
+func decode(s string, table []int, padded bool) ([]byte, error) {
+    if len(s) == 0 {
+        return []byte{}, nil
+    }
+    
+    // Remove padding
+    end := len(s)
+    for end > 0 && s[end-1] == '=' {
+        end--
+    }
+    
+    dst := make([]byte, DecodedLen(end))
+    di := 0
+    si := 0
+    
+    for end-si >= 4 {
+        a := table[s[si]]
+        b := table[s[si+1]]
+        c := table[s[si+2]]
+        d := table[s[si+3]]
+        if a < 0 || b < 0 || c < 0 || d < 0 {
+            return nil, errors.NewCode(ErrCorruptInput, "base64: invalid character")
+        }
+        val := uint(a)<<18 | uint(b)<<12 | uint(c)<<6 | uint(d)
+        dst[di] = byte(val >> 16)
+        dst[di+1] = byte(val >> 8)
+        dst[di+2] = byte(val)
+        si += 4
+        di += 3
+    }
+    
+    remain := end - si
+    if remain > 0 {
+        if remain == 1 {
+            return nil, errors.NewCode(ErrCorruptInput, "base64: invalid input length")
+        }
+        a := table[s[si]]
+        b := table[s[si+1]]
+        if a < 0 || b < 0 {
+            return nil, errors.NewCode(ErrCorruptInput, "base64: invalid character")
+        }
+        val := uint(a)<<18 | uint(b)<<12
+        dst[di] = byte(val >> 16)
+        di++
+        
+        if remain > 2 {
+            c := table[s[si+2]]
+            if c < 0 {
+                return nil, errors.NewCode(ErrCorruptInput, "base64: invalid character")
+            }
+            val |= uint(c) << 6
+            dst[di] = byte(val >> 8)
+            di++
+        }
+    }
+    
+    return dst[:di], nil
+}
+
+// Decode tables (256 entries, -1 for invalid characters)
+var decodeStdTable = []int{
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+    -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+    -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+}
+
+var decodeURLTable = []int{
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1,
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+    -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, 63,
+    -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+}

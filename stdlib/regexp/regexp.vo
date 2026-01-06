@@ -1,7 +1,46 @@
 package regexp
 
+import "errors"
+
+// Error codes for regexp
+const (
+    ErrInvalidPattern = 5000 // Invalid regular expression pattern
+)
+
 // Extern functions (implemented in Rust)
-func MatchString(pattern, s string) (bool, error)
+func matchString(pattern, s string) (bool, bool)
+func matchBytes(pattern string, b []byte) (bool, bool)
+func findString(pattern, s string) string
+func findStringIndex(pattern, s string) (int, int)
+func findAllString(pattern, s string, n int) []string
+func replaceAllString(pattern, src, repl string) string
+func replaceAllLiteralString(pattern, src, repl string) string
+func splitString(pattern, s string, n int) []string
+func findStringSubmatch(pattern, s string) []string
+func quoteMeta(s string) string
+
+// MatchString reports whether the string s contains any match of the regular expression pattern.
+func MatchString(pattern, s string) (bool, error) {
+    matched, valid := matchString(pattern, s)
+    if !valid {
+        return false, errors.NewCode(ErrInvalidPattern, "invalid regexp pattern")
+    }
+    return matched, nil
+}
+
+// Match reports whether the byte slice b contains any match of the regular expression pattern.
+func Match(pattern string, b []byte) (bool, error) {
+    matched, valid := matchBytes(pattern, b)
+    if !valid {
+        return false, errors.NewCode(ErrInvalidPattern, "invalid regexp pattern")
+    }
+    return matched, nil
+}
+
+// QuoteMeta returns a string that escapes all regular expression metacharacters.
+func QuoteMeta(s string) string {
+    return quoteMeta(s)
+}
 
 // Regexp is the representation of a compiled regular expression.
 type Regexp struct {
@@ -12,9 +51,9 @@ type Regexp struct {
 // a Regexp object that can be used to match against text.
 func Compile(expr string) (*Regexp, error) {
     // Validate the pattern
-    _, err := MatchString(expr, "")
-    if err != nil {
-        return nil, err
+    _, valid := matchString(expr, "")
+    if !valid {
+        return nil, errors.NewCode(ErrInvalidPattern, "invalid regexp pattern")
     }
     return &Regexp{pattern: expr}, nil
 }
@@ -28,8 +67,53 @@ func MustCompile(expr string) *Regexp {
     return re
 }
 
-// MatchString reports whether the string s contains any match of the pattern.
+// MatchString reports whether the string s contains any match of the regular expression.
 func (re *Regexp) MatchString(s string) bool {
-    matched, _ := MatchString(re.pattern, s)
+    matched, _ := matchString(re.pattern, s)
     return matched
+}
+
+// Match reports whether the byte slice b contains any match of the regular expression.
+func (re *Regexp) Match(b []byte) bool {
+    matched, _ := matchBytes(re.pattern, b)
+    return matched
+}
+
+// FindString returns the leftmost match in s of the regular expression.
+func (re *Regexp) FindString(s string) string {
+    return findString(re.pattern, s)
+}
+
+// FindStringIndex returns the start and end indices of the leftmost match in s.
+func (re *Regexp) FindStringIndex(s string) []int {
+    start, end := findStringIndex(re.pattern, s)
+    if start < 0 {
+        return nil
+    }
+    return []int{start, end}
+}
+
+// FindAllString returns a slice of all successive matches in s.
+func (re *Regexp) FindAllString(s string, n int) []string {
+    return findAllString(re.pattern, s, n)
+}
+
+// ReplaceAllString returns a copy of src, replacing matches with repl.
+func (re *Regexp) ReplaceAllString(src, repl string) string {
+    return replaceAllString(re.pattern, src, repl)
+}
+
+// ReplaceAllLiteralString returns a copy of src, replacing matches with repl (literal).
+func (re *Regexp) ReplaceAllLiteralString(src, repl string) string {
+    return replaceAllLiteralString(re.pattern, src, repl)
+}
+
+// Split slices s into substrings separated by the expression.
+func (re *Regexp) Split(s string, n int) []string {
+    return splitString(re.pattern, s, n)
+}
+
+// FindStringSubmatch returns the leftmost match and captures in s.
+func (re *Regexp) FindStringSubmatch(s string) []string {
+    return findStringSubmatch(re.pattern, s)
 }

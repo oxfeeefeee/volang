@@ -405,6 +405,63 @@ impl FileSet {
     }
 }
 
+/// Overlay file system that combines two file systems.
+/// 
+/// Tries the primary file system first, falls back to secondary if not found.
+/// This is useful for combining a zip file (project files) with real fs (stdlib).
+#[derive(Debug, Clone)]
+pub struct OverlayFs<P: FileSystem, S: FileSystem> {
+    /// Primary file system (checked first)
+    primary: P,
+    /// Secondary file system (fallback)
+    secondary: S,
+}
+
+impl<P: FileSystem, S: FileSystem> OverlayFs<P, S> {
+    /// Create an overlay file system with primary and secondary layers.
+    pub fn new(primary: P, secondary: S) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+impl<P: FileSystem, S: FileSystem> FileSystem for OverlayFs<P, S> {
+    fn read_file(&self, path: &Path) -> io::Result<String> {
+        self.primary.read_file(path)
+            .or_else(|_| self.secondary.read_file(path))
+    }
+    
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        // Merge entries from both file systems
+        let mut entries = self.primary.read_dir(path).unwrap_or_default();
+        if let Ok(secondary_entries) = self.secondary.read_dir(path) {
+            for entry in secondary_entries {
+                if !entries.contains(&entry) {
+                    entries.push(entry);
+                }
+            }
+        }
+        if entries.is_empty() {
+            Err(io::Error::new(io::ErrorKind::NotFound, "directory not found"))
+        } else {
+            Ok(entries)
+        }
+    }
+    
+    fn exists(&self, path: &Path) -> bool {
+        self.primary.exists(path) || self.secondary.exists(path)
+    }
+    
+    fn is_dir(&self, path: &Path) -> bool {
+        self.primary.is_dir(path) || self.secondary.is_dir(path)
+    }
+}
+
+impl<P: FileSystem, S: FileSystem> SourceProvider for OverlayFs<P, S> {
+    fn read_source(&self, path: &str) -> Option<String> {
+        self.read_file(Path::new(path)).ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

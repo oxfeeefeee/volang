@@ -11,6 +11,14 @@ func divmod(a, b int) (quot int, rem int) {
 	return
 }
 
+// Go-style: multiple names sharing one type
+func cut(s, sep string) (before, after string, found bool) {
+	before = s
+	after = sep
+	found = true
+	return
+}
+
 func factorial(n int) (result int) {
 	if n <= 1 {
 		result = 1
@@ -22,11 +30,16 @@ func factorial(n int) (result int) {
 
 func main() {
 	r := sum(3, 4)
-	println("sum(3,4):", r)
+	assert(r == 7, "sum(3,4) should be 7")
 
 	q, m := divmod(17, 5)
-	println("divmod(17,5): quot=", q, "rem=", m)
+	assert(q == 3 && m == 2, "divmod(17,5) should be 3, 2")
+
+	b, a, found := cut("hello", "world")
+	assert(b == "hello" && a == "world" && found, "cut should work")
 
 	f := factorial(5)
-	println("factorial(5):", f)
+	assert(f == 120, "factorial(5) should be 120")
+
+	println("named_return: all tests passed")
 }

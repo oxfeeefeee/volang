@@ -1,24 +1,12 @@
 //! bytes package native function implementations.
 //!
-//! Provides byte slice manipulation functions for the bytes standard library package.
+//! Native functions for bytes that benefit from Rust's optimized implementations:
+//! - Index/LastIndex: Fast byte pattern search
+//! - ToLower/ToUpper: ASCII case conversion
+//! - Split/Fields: Memory allocation optimization
+//! - Replace: Complex byte manipulation
 
 use vo_ffi_macro::vo_extern_std;
-
-// ==================== Comparison ====================
-
-#[vo_extern_std("bytes", "Equal")]
-fn equal(a: &[u8], b: &[u8]) -> bool {
-    a == b
-}
-
-#[vo_extern_std("bytes", "Compare")]
-fn compare(a: &[u8], b: &[u8]) -> i64 {
-    match a.cmp(b) {
-        std::cmp::Ordering::Less => -1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 1,
-    }
-}
 
 // ==================== Search ====================
 
@@ -40,22 +28,6 @@ fn last_index(s: &[u8], sep: &[u8]) -> i64 {
     }
     s.windows(sep.len())
         .rposition(|w| w == sep)
-        .map(|i| i as i64)
-        .unwrap_or(-1)
-}
-
-#[vo_extern_std("bytes", "IndexByte")]
-fn index_byte(s: &[u8], c: u8) -> i64 {
-    s.iter()
-        .position(|&b| b == c)
-        .map(|i| i as i64)
-        .unwrap_or(-1)
-}
-
-#[vo_extern_std("bytes", "LastIndexByte")]
-fn last_index_byte(s: &[u8], c: u8) -> i64 {
-    s.iter()
-        .rposition(|&b| b == c)
         .map(|i| i as i64)
         .unwrap_or(-1)
 }
@@ -90,12 +62,32 @@ fn to_upper(s: &[u8]) -> Vec<u8> {
     s.to_ascii_uppercase()
 }
 
-// ==================== Repetition ====================
+// ==================== Replace ====================
 
-#[vo_extern_std("bytes", "Repeat")]
-fn repeat(s: &[u8], count: i64) -> Vec<u8> {
-    if count <= 0 {
-        return Vec::new();
+#[vo_extern_std("bytes", "Replace")]
+fn replace(s: &[u8], old: &[u8], new: &[u8], n: i64) -> Vec<u8> {
+    if old.is_empty() || n == 0 {
+        return s.to_vec();
     }
-    s.repeat(count as usize)
+    
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut count = 0i64;
+    
+    while start <= s.len() {
+        if n >= 0 && count >= n {
+            result.extend_from_slice(&s[start..]);
+            break;
+        }
+        if let Some(pos) = s[start..].windows(old.len()).position(|w| w == old) {
+            result.extend_from_slice(&s[start..start + pos]);
+            result.extend_from_slice(new);
+            start = start + pos + old.len();
+            count += 1;
+        } else {
+            result.extend_from_slice(&s[start..]);
+            break;
+        }
+    }
+    result
 }

@@ -295,6 +295,11 @@ impl<'a> TypeInfoWrapper<'a> {
         self.tc_objs().lobjs[obj].entity_type().is_pkg_name()
     }
 
+    /// Check if a function object has a body (is not extern).
+    pub fn func_has_body(&self, obj: ObjKey) -> bool {
+        self.tc_objs().lobjs[obj].entity_type().func_has_body()
+    }
+
     /// Check if identifier is a definition (vs re-assignment)
     pub fn is_def(&self, ident: &Ident) -> bool {
         self.type_info().defs.contains_key(&ident.id)

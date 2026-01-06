@@ -148,7 +148,7 @@ impl VoType {
             "int" => return Some(VoType::Int),
             "int8" => return Some(VoType::Int8),
             "int16" => return Some(VoType::Int16),
-            "int32" => return Some(VoType::Int32),
+            "int32" | "rune" => return Some(VoType::Int32),  // rune is alias for int32
             "int64" => return Some(VoType::Int64),
             "uint" => return Some(VoType::Uint),
             "uint8" | "byte" => return Some(VoType::Uint8),

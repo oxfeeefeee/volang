@@ -233,8 +233,9 @@ impl TCObjects {
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
+        has_body: bool,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_func(pos, pkg, name, typ);
+        let lobj = crate::obj::LangObj::new_func(pos, pkg, name, typ, has_body);
         self.lobjs.insert(lobj)
     }
 

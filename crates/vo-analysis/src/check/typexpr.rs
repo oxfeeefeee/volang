@@ -866,7 +866,7 @@ impl Checker {
                 let empty_tuple = self.new_t_tuple(vec![]);
                 let sig_type = self.new_t_signature(None, Some(recv_var), empty_tuple, empty_tuple, false);
 
-                let fun_key = self.new_func(0, Some(self.pkg), name.clone(), Some(sig_type));
+                let fun_key = self.new_func(0, Some(self.pkg), name.clone(), Some(sig_type), false);
                 
                 // Record definition for the method
                 self.result.record_def(method_ast.name.clone(), Some(fun_key));
