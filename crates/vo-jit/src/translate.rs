@@ -449,8 +449,53 @@ fn conv_f32_f64<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 // Slice operations
 // =============================================================================
 
-use vo_runtime::objects::slice::FIELD_DATA_PTR as SLICE_FIELD_DATA_PTR_SLOT;
+use vo_runtime::objects::slice::{FIELD_DATA_PTR as SLICE_FIELD_DATA_PTR_SLOT, FIELD_LEN as SLICE_FIELD_LEN_SLOT};
+use cranelift_codegen::ir::Value;
 const SLICE_FIELD_DATA_PTR: i32 = (SLICE_FIELD_DATA_PTR_SLOT * 8) as i32;
+const SLICE_FIELD_LEN: i32 = (SLICE_FIELD_LEN_SLOT * 8) as i32;
+
+/// Emit bounds check for slice access. Panics if idx >= len or slice is nil.
+/// Returns data_ptr for the slice (only valid if bounds check passed).
+fn emit_slice_bounds_check<'a>(e: &mut impl IrEmitter<'a>, s: Value, idx: Value) -> Value {
+    // If s is nil, len=0; otherwise load len from slice
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_nil = e.builder().ins().icmp(IntCC::Equal, s, zero);
+    let nil_block = e.builder().create_block();
+    let not_nil_block = e.builder().create_block();
+    let merge_block = e.builder().create_block();
+    e.builder().append_block_param(merge_block, types::I64); // len
+    e.builder().ins().brif(is_nil, nil_block, &[], not_nil_block, &[]);
+    
+    e.builder().switch_to_block(nil_block);
+    e.builder().seal_block(nil_block);
+    e.builder().ins().jump(merge_block, &[zero]);
+    
+    e.builder().switch_to_block(not_nil_block);
+    e.builder().seal_block(not_nil_block);
+    let len_from_slice = e.builder().ins().load(types::I64, MemFlags::trusted(), s, SLICE_FIELD_LEN);
+    e.builder().ins().jump(merge_block, &[len_from_slice]);
+    
+    e.builder().switch_to_block(merge_block);
+    e.builder().seal_block(merge_block);
+    let len = e.builder().block_params(merge_block)[0];
+    
+    // Check idx >= len
+    let out_of_bounds = e.builder().ins().icmp(IntCC::UnsignedGreaterThanOrEqual, idx, len);
+    let panic_block = e.builder().create_block();
+    let ok_block = e.builder().create_block();
+    e.builder().ins().brif(out_of_bounds, panic_block, &[], ok_block, &[]);
+    
+    e.builder().switch_to_block(panic_block);
+    e.builder().seal_block(panic_block);
+    let panic_ret_val = e.panic_return_value();
+    let panic_ret = e.builder().ins().iconst(types::I32, panic_ret_val as i64);
+    e.builder().ins().return_(&[panic_ret]);
+    
+    e.builder().switch_to_block(ok_block);
+    e.builder().seal_block(ok_block);
+    
+    e.builder().ins().load(types::I64, MemFlags::trusted(), s, SLICE_FIELD_DATA_PTR)
+}
 
 fn slice_new<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let slice_new_func = match e.helpers().slice_new {
@@ -491,7 +536,8 @@ fn slice_get<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
         0x44 => (4, false),
         f => (f as usize, false),
     };
-    let data_ptr = e.builder().ins().load(types::I64, MemFlags::trusted(), s, SLICE_FIELD_DATA_PTR);
+    
+    let data_ptr = emit_slice_bounds_check(e, s, idx);
     if elem_bytes <= 8 {
         let eb = e.builder().ins().iconst(types::I64, elem_bytes as i64);
         let off = e.builder().ins().imul(idx, eb);
@@ -539,7 +585,8 @@ fn slice_set<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
         0x84 | 0x44 => 4,
         f => f as usize,
     };
-    let data_ptr = e.builder().ins().load(types::I64, MemFlags::trusted(), s, SLICE_FIELD_DATA_PTR);
+    
+    let data_ptr = emit_slice_bounds_check(e, s, idx);
     if elem_bytes <= 8 {
         let eb = e.builder().ins().iconst(types::I64, elem_bytes as i64);
         let off = e.builder().ins().imul(idx, eb);
@@ -884,6 +931,23 @@ fn map_set<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let func = match e.helpers().map_set { Some(f) => f, None => return };
     let gc_ptr = e.gc_ptr();
     let m = e.read_var(inst.a);
+    
+    // nil map write panics (Go semantics)
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_nil = e.builder().ins().icmp(IntCC::Equal, m, zero);
+    let panic_block = e.builder().create_block();
+    let ok_block = e.builder().create_block();
+    e.builder().ins().brif(is_nil, panic_block, &[], ok_block, &[]);
+    
+    e.builder().switch_to_block(panic_block);
+    e.builder().seal_block(panic_block);
+    let panic_ret_val = e.panic_return_value();
+    let panic_ret = e.builder().ins().iconst(types::I32, panic_ret_val as i64);
+    e.builder().ins().return_(&[panic_ret]);
+    
+    e.builder().switch_to_block(ok_block);
+    e.builder().seal_block(ok_block);
+    
     let key = e.read_var(inst.b);
     let val = e.read_var(inst.c);
     let key_bytes = e.builder().ins().iconst(types::I64, (inst.flags & 0x0F) as i64);

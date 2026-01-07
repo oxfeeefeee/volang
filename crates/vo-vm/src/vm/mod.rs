@@ -762,6 +762,12 @@ impl Vm {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
                     let s = stack_get(stack, bp + inst.b as usize) as GcRef;
                     let idx = stack_get(stack, bp + inst.c as usize) as usize;
+                    // nil slice or out of bounds check
+                    let len = if s.is_null() { 0 } else { slice_len(s) };
+                    if idx >= len {
+                        fiber.panic_msg = Some(format!("runtime error: index out of range [{}] with length {}", idx, len));
+                        return ExecResult::Panic;
+                    }
                     let base = slice_data_ptr(s);
                     let dst = bp + inst.a as usize;
                     let val = match inst.flags {
@@ -798,6 +804,12 @@ impl Vm {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
                     let s = stack_get(stack, bp + inst.a as usize) as GcRef;
                     let idx = stack_get(stack, bp + inst.b as usize) as usize;
+                    // nil slice or out of bounds check
+                    let len = if s.is_null() { 0 } else { slice_len(s) };
+                    if idx >= len {
+                        fiber.panic_msg = Some(format!("runtime error: index out of range [{}] with length {}", idx, len));
+                        return ExecResult::Panic;
+                    }
                     let base = slice_data_ptr(s);
                     let src = bp + inst.c as usize;
                     let val = stack_get(stack, src);
@@ -866,10 +878,21 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::MapSet => {
+                    // nil map write panics (Go semantics)
+                    let m = stack_get(stack, bp + inst.a as usize) as GcRef;
+                    if m.is_null() {
+                        fiber.panic_msg = Some("runtime error: assignment to entry in nil map".to_string());
+                        return ExecResult::Panic;
+                    }
                     exec::exec_map_set(&stack, bp, &inst, &mut self.state.gc);
                     ExecResult::Continue
                 }
                 Opcode::MapDelete => {
+                    // nil map delete is a no-op (Go semantics: delete from nil map does nothing)
+                    let m = stack_get(stack, bp + inst.a as usize) as GcRef;
+                    if m.is_null() {
+                        return ExecResult::Continue;
+                    }
                     exec::exec_map_delete(&stack, bp, &inst);
                     ExecResult::Continue
                 }

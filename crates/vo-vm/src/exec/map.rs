@@ -25,10 +25,21 @@ pub fn exec_map_get(stack: &mut [u64], bp: usize, inst: &Instruction) {
     let val_slots = ((meta >> 1) & 0x7FFF) as usize;
     let has_ok = (meta & 1) != 0;
 
+    let dst_start = bp + inst.a as usize;
+
+    // nil map read returns zero value + ok=false (Go semantics)
+    if m.is_null() {
+        for i in 0..val_slots {
+            stack[dst_start + i] = 0;
+        }
+        if has_ok {
+            stack[dst_start + val_slots] = 0; // ok = false
+        }
+        return;
+    }
+
     let key_start = bp + inst.c as usize + 1;
     let key: &[u64] = &stack[key_start..key_start + key_slots];
-
-    let dst_start = bp + inst.a as usize;
 
     let (val_opt, ok) = map::get_with_ok(m, key);
     if let Some(val) = val_opt {
