@@ -28,8 +28,6 @@ tests:
     should_fail: true
     reason: "dynamic write requires function with error return value"
   - file: dyn_write_fast_path.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: embed_iface_simple.vo
   - file: embed_interface.vo
   - file: embed_interface_impl.vo
@@ -49,16 +47,12 @@ tests:
     reason: "goto is not supported"
   - file: hex_literal_debug.vo
   - file: iface_escape_closure.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: iface_to_iface_assertion.vo
   - file: init_call_error.vo
     should_fail: true
     reason: "init() cannot be called explicitly"
   - file: interface.vo
   - file: interface_closure.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: interface_complex_subset.vo
   - file: interface_conversion.vo
   - file: interface_method_set.vo
@@ -82,7 +76,7 @@ tests:
   - file: proj_taskman/
   - file: qualified_embed_iface.vo
     skip: [jit]
-    reason: "JIT bug"
+    reason: "JIT bug - segfault in release"
   - file: range_string.vo
     skip: [jit]
     reason: "JIT timeout"
@@ -103,10 +97,10 @@ tests:
   - file: slice_ops.vo
   - file: stack_array_iter.vo
     skip: [jit]
-    reason: "JIT bug"
+    reason: "JIT bug - segfault in release"
   - file: stack_vs_escaped_array.vo
     skip: [jit]
-    reason: "JIT bug"
+    reason: "JIT bug - segfault in release"
   - file: stdlib/base64.vo
     skip: [vm, jit]
     reason: "stdlib not ready"
@@ -198,51 +192,33 @@ tests:
   - file: dyn_access_interface_itab_bug.vo
   - file: dyn_access_slice_interface_elem.vo
   - file: dyn_call_args.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_call_methods.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_call_multi_slot_ret.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_call_question.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_call_ret_array.vo
     skip: [jit]
     reason: "JIT bug - ffi panic"
   - file: dyn_call_ret_types.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_call_simple.vo
   - file: dyn_get_attr.vo
   - file: dyn_get_method.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_get_method_simple.vo
   - file: dyn_member_method.vo
   - file: dyn_method_value_receiver.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_set_attr_iface_mismatch.vo
   - file: dyn_set_attr_interface_field.vo
   - file: dyn_try_unwrap.vo
   - file: dyn_write.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: error_handling_sugar.vo
     skip: [jit]
     reason: "JIT bug"
   - file: gc_closure_capture.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: iface_to_iface_assign.vo
     skip: [jit]
     reason: "JIT bug"
   - file: io_readfull_only.vo
     skip: [jit]
-    reason: "JIT bug"
+    reason: "JIT bug - segfault in release"
   - file: nil_slice_map.vo
     skip: [jit]
     reason: "JIT bug - slice panic"
@@ -280,8 +256,6 @@ tests:
     skip: [jit]
     reason: "JIT bug"
   - file: typechecker/method_sig_func_types.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: typechecker/type_assertion.vo
     skip: [jit]
     reason: "JIT bug"

@@ -289,23 +289,25 @@ fn compile_dyn_closure_call(
     let mut dst_off = 0u16;
     
     if expected_ret_count > 0 {
-        // dyn_unpack_all_returns(base_off[1], metas[N], is_any[N]) -> results
+        // dyn_unpack_all_returns(ret_slots[1], raw_values[64], metas[N], is_any[N]) -> results
         let unpack_extern_id = ctx.get_or_register_extern("dyn_unpack_all_returns");
         
-        // Args layout: [base_off, metas..., is_any...]
-        let unpack_args = func.alloc_temp(1 + 2 * expected_ret_count);
-        let (b, c) = encode_i32(args_start as i32);
-        func.emit_op(Opcode::LoadInt, unpack_args, b, c);  // base_off
+        // Args layout: [ret_slots, raw_values[max_dyn_ret_slots], metas..., is_any...]
+        let unpack_args = func.alloc_temp(1 + max_dyn_ret_slots + 2 * expected_ret_count);
+        
+        // Copy ret_slots from prepare result (stored at ret_slots_slot)
+        func.emit_op(Opcode::Copy, unpack_args, ret_slots_slot, 0);
+        
+        // Copy raw return values from args_start (where CallClosure wrote them)
+        func.emit_copy(unpack_args + 1, args_start, max_dyn_ret_slots);
         
         // Copy metas from prepare result
-        for i in 0..expected_ret_count {
-            func.emit_op(Opcode::Copy, unpack_args + 1 + i, metas_start + i, 0);
-        }
+        func.emit_copy(unpack_args + 1 + max_dyn_ret_slots, metas_start, expected_ret_count);
         
         // Set is_any flags
         for (i, &ret_type) in ret_types.iter().enumerate() {
             let is_any = info.is_any_type(ret_type);
-            func.emit_op(Opcode::LoadInt, unpack_args + 1 + expected_ret_count + i as u16, if is_any { 1 } else { 0 }, 0);
+            func.emit_op(Opcode::LoadInt, unpack_args + 1 + max_dyn_ret_slots + expected_ret_count + i as u16, if is_any { 1 } else { 0 }, 0);
         }
         
         // Calculate result slots: each any=2, each typed=min(slots,2) for extern return
@@ -327,9 +329,10 @@ fn compile_dyn_closure_call(
         }
         
         let unpack_result = func.alloc_temp(unpack_result_slots);
+        let unpack_arg_count = (1 + max_dyn_ret_slots + 2 * expected_ret_count) as u8;
         func.emit_with_flags(
             Opcode::CallExtern,
-            (1 + 2 * expected_ret_count) as u8,
+            unpack_arg_count,
             unpack_result,
             unpack_extern_id as u16,
             unpack_args,

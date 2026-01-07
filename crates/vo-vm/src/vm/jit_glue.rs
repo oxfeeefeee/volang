@@ -65,8 +65,19 @@ pub extern "C" fn call_extern_trampoline(
             }
             JitResult::Ok
         }
-        ExternResult::Yield => JitResult::Panic,
-        ExternResult::Panic(_) => JitResult::Panic,
+        ExternResult::Yield => {
+            // JIT doesn't support yield (async operations). This is a design limitation.
+            // Set panic msg to help debugging.
+            let fiber = unsafe { &mut *(ctx.fiber as *mut crate::fiber::Fiber) };
+            fiber.panic_msg = Some("extern function returned Yield, not supported in JIT".to_string());
+            JitResult::Panic
+        }
+        ExternResult::Panic(msg) => {
+            // Preserve panic message in fiber for proper error reporting
+            let fiber = unsafe { &mut *(ctx.fiber as *mut crate::fiber::Fiber) };
+            fiber.panic_msg = Some(msg);
+            JitResult::Panic
+        }
     }
 }
 

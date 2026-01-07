@@ -77,10 +77,6 @@ impl Vm {
         vm
     }
     
-    #[cfg(not(feature = "jit"))]
-    pub fn with_jit_config(_config: JitConfig) -> Self {
-        Self::new()
-    }
 
     /// Initialize JIT compiler (if jit feature is enabled).
     ///

@@ -320,10 +320,26 @@ pub extern "C" fn vo_call_closure(
     use crate::objects::closure;
     
     let ctx_ref = unsafe { &*ctx };
-    let func_id = closure::func_id(closure_ref as crate::gc::GcRef);
+    let closure_gcref = closure_ref as crate::gc::GcRef;
+    let func_id = closure::func_id(closure_gcref);
     
-    // Prepare args with closure as first slot
-    let mut full_args = vec![closure_ref];
+    // Get func_def to check recv_slots (for method closures)
+    let module = unsafe { &*ctx_ref.module };
+    let func_def = &module.functions[func_id as usize];
+    let recv_slots = func_def.recv_slots as usize;
+    let capture_count = closure::capture_count(closure_gcref);
+    
+    // Build full_args based on closure type (matches VM's exec_call_closure logic)
+    let mut full_args = Vec::with_capacity(1 + arg_count as usize);
+    
+    if recv_slots > 0 && capture_count > 0 {
+        // Method closure: receiver is in captures[0], pass it as first arg
+        full_args.push(closure::get_capture(closure_gcref, 0));
+    } else {
+        // Regular closure: closure ref is first arg
+        full_args.push(closure_ref);
+    }
+    
     for i in 0..arg_count {
         full_args.push(unsafe { *args.add(i as usize) });
     }
@@ -338,7 +354,7 @@ pub extern "C" fn vo_call_closure(
         ctx_ref.fiber,
         func_id,
         full_args.as_ptr(),
-        (arg_count + 1),
+        full_args.len() as u32,
         ret,
         ret_count,
     )

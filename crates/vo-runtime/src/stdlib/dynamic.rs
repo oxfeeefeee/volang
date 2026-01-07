@@ -799,10 +799,14 @@ static __VO_DYN_CALL_PREPARE: ExternEntryWithContext = ExternEntryWithContext {
     func: dyn_call_prepare,
 };
 
+/// Maximum return slots for dynamic calls.
+const MAX_DYN_RET_SLOTS: usize = crate::jit_api::MAX_DYN_RET_SLOTS as usize;
+
 /// dyn_unpack_all_returns: Process all return values in one call.
 ///
-/// Args: (base_off[1], metas[N], is_any[N]) where N = ret_count
-/// - base_off: stack position where call results start
+/// Args: (ret_slots[1], raw_values[64], metas[N], is_any[N]) where N = ret_count
+/// - ret_slots: actual number of return value slots
+/// - raw_values[0..ret_slots]: raw return values from closure call
 /// - metas[i]: (rttid << 8 | vk) for return value i
 /// - is_any[i]: 1 if LHS is any (needs boxing), 0 if typed
 ///
@@ -810,26 +814,31 @@ static __VO_DYN_CALL_PREPARE: ExternEntryWithContext = ExternEntryWithContext {
 /// - For is_any=1: 2 slots (interface format)
 /// - For is_any=0: raw slots (1-2 for primitives, GcRef for large structs)
 fn dyn_unpack_all_returns(call: &mut ExternCallContext) -> ExternResult {
-    let base_off = call.arg_u64(0) as u16;
-    let arg_count = call.arg_count();
+    let ret_slots = call.arg_u64(0) as usize;
+    let arg_count = call.arg_count() as usize;
     
-    // Derive ret_count from arg layout: 1 + N + N = arg_count => N = (arg_count - 1) / 2
-    let ret_count = ((arg_count - 1) / 2) as u16;
+    // Derive ret_count from arg layout: 1 + 64 + N + N = arg_count => N = (arg_count - 65) / 2
+    let ret_count = (arg_count - 1 - MAX_DYN_RET_SLOTS) / 2;
     
-    let mut src_off: u16 = 0;
+    // Offsets into args
+    let raw_values_start = 1usize;
+    let metas_start = 1 + MAX_DYN_RET_SLOTS;
+    let is_any_start = metas_start + ret_count;
+    
+    let mut src_off = 0usize;
     let mut ret_off: u16 = 0;
     
     for i in 0..ret_count {
-        let meta_raw = call.arg_u64(1 + i) as u32;
-        let is_any = call.arg_u64(1 + ret_count + i) != 0;
+        let meta_raw = call.arg_u64((metas_start + i) as u16) as u32;
+        let is_any = call.arg_u64((is_any_start + i) as u16) != 0;
         
         let rttid = meta_raw >> 8;
         let vk = ValueKind::from_u8((meta_raw & 0xFF) as u8);
-        let width = call.get_type_slot_count(rttid);
+        let width = call.get_type_slot_count(rttid) as usize;
         
-        // Read raw slots from source
+        // Read raw slots from args (not from stack position)
         let raw_slots: Vec<u64> = (0..width)
-            .map(|j| call.call().slot(base_off + src_off + j))
+            .map(|j| call.arg_u64((raw_values_start + src_off + j) as u16))
             .collect();
         
         src_off += width;
@@ -855,7 +864,7 @@ fn dyn_unpack_all_returns(call: &mut ExternCallContext) -> ExternResult {
                 if width > 1 {
                     call.ret_u64(ret_off + 1, raw_slots.get(1).copied().unwrap_or(0));
                 }
-                ret_off += width.min(2);
+                ret_off += width.min(2) as u16;
             }
         }
     }

@@ -460,15 +460,21 @@ impl<'a> LoopCompiler<'a> {
         
         self.check_call_result(result);
         
-        // For dynamic ret_slots, we can't statically unroll the loop
-        // For static case, unroll as before
-        if !is_dynamic_ret {
-            for i in 0..static_ret_slots {
+        // Copy return values from ret_slot to vars
+        // For dynamic mode, copy MAX_DYN_RET_SLOTS to ensure dyn_unpack_all_returns can read them
+        let copy_count = if is_dynamic_ret {
+            vo_runtime::jit_api::MAX_DYN_RET_SLOTS as usize
+        } else {
+            static_ret_slots
+        };
+        
+        let local_count = self.func_def.local_slots as usize;
+        for i in 0..copy_count {
+            if arg_start + i < local_count {
                 let val = self.builder.ins().stack_load(types::I64, ret_slot, (i * 8) as i32);
                 self.write_var((arg_start + i) as u16, val);
             }
         }
-        // For dynamic case, caller (dyn_access codegen) handles reading return values
     }
 
     fn call_iface(&mut self, inst: &Instruction) {
