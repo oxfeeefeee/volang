@@ -166,25 +166,65 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parses a method receiver.
+    /// Supports both named and anonymous receivers:
+    /// - `(r T)` or `(r *T)` - named receiver
+    /// - `(T)` or `(*T)` - anonymous receiver (Go allows this when receiver is unused)
     fn parse_receiver(&mut self) -> ParseResult<Receiver> {
         let start = self.current.span.start;
         self.expect(TokenKind::LParen)?;
-        let name = self.parse_ident()?;
-        // Check for pointer receiver (*T)
-        let is_pointer = if self.at(TokenKind::Star) {
+        
+        // Check for anonymous pointer receiver: (*T)
+        if self.at(TokenKind::Star) {
             self.advance();
-            true
+            let ty = self.parse_ident()?;
+            self.expect(TokenKind::RParen)?;
+            return Ok(Receiver {
+                name: None,
+                ty,
+                is_pointer: true,
+                span: Span::new(start, self.current.span.start),
+            });
+        }
+        
+        // Parse the first identifier
+        let first_ident = self.parse_ident()?;
+        
+        // Determine if this is named or anonymous receiver by looking at next token:
+        // - `)` means anonymous: (T)
+        // - `*` means named pointer: (r *T)
+        // - ident means named: (r T)
+        if self.at(TokenKind::RParen) {
+            // Anonymous receiver: (T)
+            self.advance();
+            Ok(Receiver {
+                name: None,
+                ty: first_ident,
+                is_pointer: false,
+                span: Span::new(start, self.current.span.start),
+            })
+        } else if self.at(TokenKind::Star) {
+            // Named pointer receiver: (r *T)
+            self.advance();
+            let ty = self.parse_ident()?;
+            self.expect(TokenKind::RParen)?;
+            Ok(Receiver {
+                name: Some(first_ident),
+                ty,
+                is_pointer: true,
+                span: Span::new(start, self.current.span.start),
+            })
         } else {
-            false
-        };
-        let ty = self.parse_ident()?;
-        self.expect(TokenKind::RParen)?;
-        Ok(Receiver {
-            name,
-            ty,
-            is_pointer,
-            span: Span::new(start, self.current.span.start),
-        })
+            // Named receiver: (r T)
+            let ty = self.parse_ident()?;
+            self.expect(TokenKind::RParen)?;
+            Ok(Receiver {
+                name: Some(first_ident),
+                ty,
+                is_pointer: false,
+                span: Span::new(start, self.current.span.start),
+            })
+        }
     }
 
     pub(crate) fn parse_func_sig(&mut self) -> ParseResult<FuncSig> {

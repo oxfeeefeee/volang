@@ -41,16 +41,24 @@ pub fn compile_project(project: &Project) -> Result<Module, CodegenError> {
     // 4. Generate __init__ and __entry__
     compile_init_and_entry(project, &mut ctx, &info)?;
     
-    // 5. Build runtime_types after all codegen (all types have been assigned rttid)
+    // 5. Collect promoted methods from embedded interfaces
+    // This must happen after compile_functions (direct methods registered)
+    // and before finalize_itabs (itabs need complete method set)
+    collect_promoted_methods(project, &mut ctx, &info);
+    
+    // 6. Build all pending itabs (from functions + __init__)
+    ctx.finalize_itabs(&info.project.tc_objs, &info.project.interner);
+    
+    // 7. Build runtime_types after all codegen (all types have been assigned rttid)
     build_runtime_types(project, &mut ctx, &info);
     
-    // 6. Fill WellKnownTypes for fast error creation
+    // 8. Fill WellKnownTypes for fast error creation
     ctx.fill_well_known_types(project);
     
-    // 7. Finalize debug info (sort entries by PC)
+    // 9. Finalize debug info (sort entries by PC)
     ctx.finalize_debug_info();
     
-    // 7. Final check: all IDs within 24-bit limit
+    // 10. Final check: all IDs within 24-bit limit
     ctx.check_id_limits().map_err(CodegenError::Internal)?;
     
     Ok(ctx.finish())
@@ -457,8 +465,8 @@ fn compile_functions(
     // Update NamedTypeMeta.methods with method func_ids (direct methods only)
     update_named_type_methods(ctx, &method_mappings, info);
     
-    // Build pending itabs - uses lookup_field_or_method to find methods (including promoted)
-    ctx.finalize_itabs(&info.project.tc_objs, &info.project.interner);
+    // Note: finalize_itabs is called in compile_project after compile_init_and_entry
+    // to handle itabs from both functions and global variable initialization
     
     Ok(())
 }
@@ -540,6 +548,176 @@ fn update_named_type_methods(
                     ctx.update_named_type_method(named_type_id, method_name.clone(), *func_id, *is_pointer_receiver, *signature_rttid);
                 }
             }
+        }
+    }
+}
+
+/// Collect promoted methods from embedded fields (interfaces and structs) for all struct types.
+/// This generates wrapper functions and registers them to NamedTypeMeta.methods,
+/// so that runtime itab building can find them.
+fn collect_promoted_methods(
+    _project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+) {
+    use vo_analysis::typ::Type;
+    use vo_analysis::lookup::{lookup_field_or_method, LookupResult};
+    use vo_analysis::check::type_info as layout;
+    
+    let tc_objs = &info.project.tc_objs;
+    let interner = &info.project.interner;
+    
+    // Collect all (type_key, obj_key, named_type_id) for Named struct types
+    let named_structs: Vec<_> = ctx.all_named_type_ids()
+        .filter_map(|(obj_key, named_type_id)| {
+            // Find the type_key for this obj_key
+            let type_key = tc_objs.types.iter()
+                .find(|(_, t)| {
+                    if let Type::Named(n) = t {
+                        n.obj().as_ref() == Some(&obj_key)
+                    } else {
+                        false
+                    }
+                })
+                .map(|(k, _)| k)?;
+            
+            // Check if underlying is struct
+            let underlying = vo_analysis::typ::underlying_type(type_key, tc_objs);
+            if tc_objs.types[underlying].try_as_struct().is_some() {
+                Some((type_key, obj_key, named_type_id))
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    // For each struct, find all promoted methods by collecting from embedded fields recursively
+    for (type_key, _obj_key, named_type_id) in named_structs {
+        // Get package for unexported method lookup
+        let pkg = tc_objs.types[type_key].try_as_named()
+            .and_then(|n| n.obj().and_then(|obj_key| tc_objs.lobjs[obj_key].pkg()));
+        
+        // Collect all potential method names from embedded types (recursively)
+        let mut method_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        collect_embedded_method_names(type_key, tc_objs, &mut method_names);
+        
+        // For each method name, use lookup_field_or_method to find it and generate wrapper
+        for method_name in method_names {
+            // Skip if already registered (direct method)
+            if ctx.get_method_from_named_type(named_type_id, &method_name).is_some() {
+                continue;
+            }
+            
+            // Look up method to get indices and determine wrapper type
+            match lookup_field_or_method(type_key, true, pkg, &method_name, tc_objs) {
+                LookupResult::Entry(obj_key, indices, _) => {
+                    // Skip if not promoted (indices.len() == 1 means direct method)
+                    if indices.len() <= 1 {
+                        continue;
+                    }
+                    
+                    let path_info = crate::embed::analyze_embed_path(type_key, &indices, tc_objs);
+                    
+                    let func_id = if let Some(embed_iface) = path_info.embedded_iface {
+                        // Method from embedded interface
+                        wrapper::generate_embedded_iface_wrapper(
+                            ctx,
+                            type_key,
+                            embed_iface.offset,
+                            embed_iface.iface_type,
+                            &method_name,
+                            obj_key,
+                            tc_objs,
+                            interner,
+                        )
+                    } else if let Some(base_iface_func) = ctx.get_iface_func_by_objkey(obj_key) {
+                        // Method from embedded struct
+                        let original_func_id = ctx.get_func_by_objkey(obj_key)
+                            .unwrap_or(base_iface_func);
+                        wrapper::generate_promoted_wrapper(
+                            ctx,
+                            type_key,
+                            &indices[..indices.len()-1],
+                            original_func_id,
+                            base_iface_func,
+                            &method_name,
+                            tc_objs,
+                        )
+                    } else {
+                        continue;
+                    };
+                    
+                    let sig_rttid = tc_objs.lobjs[obj_key].typ()
+                        .map(|sig_type| ctx.intern_signature_rttid(sig_type, tc_objs))
+                        .unwrap_or(0);
+                    
+                    ctx.update_named_type_method_if_absent(
+                        named_type_id,
+                        method_name,
+                        func_id,
+                        false,
+                        sig_rttid,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Recursively collect method names from embedded fields.
+fn collect_embedded_method_names(
+    type_key: vo_analysis::objects::TypeKey,
+    tc_objs: &vo_analysis::objects::TCObjects,
+    method_names: &mut std::collections::HashSet<String>,
+) {
+    use vo_analysis::typ::Type;
+    
+    let underlying = vo_analysis::typ::underlying_type(type_key, tc_objs);
+    let struct_detail = match tc_objs.types[underlying].try_as_struct() {
+        Some(s) => s,
+        None => return,
+    };
+    
+    for &field_obj in struct_detail.fields() {
+        let field = &tc_objs.lobjs[field_obj];
+        if !field.var_embedded() {
+            continue;
+        }
+        
+        let field_type = match field.typ() {
+            Some(t) => t,
+            None => continue,
+        };
+        
+        // Handle pointer embedding
+        let base_type = if let Some(ptr) = tc_objs.types[field_type].try_as_pointer() {
+            ptr.base()
+        } else {
+            field_type
+        };
+        
+        let field_underlying = vo_analysis::typ::underlying_type(base_type, tc_objs);
+        
+        // Collect methods from interface
+        if let Some(iface_detail) = tc_objs.types[field_underlying].try_as_interface() {
+            let all_methods = iface_detail.all_methods();
+            let methods: &[vo_analysis::objects::ObjKey] = match all_methods.as_ref() {
+                Some(v) => v.as_slice(),
+                None => iface_detail.methods(),
+            };
+            for &m in methods {
+                method_names.insert(tc_objs.lobjs[m].name().to_string());
+            }
+        }
+        
+        // Collect methods from Named type and recurse into its embedded fields
+        if let Some(named_detail) = tc_objs.types[base_type].try_as_named() {
+            for &m in named_detail.methods() {
+                method_names.insert(tc_objs.lobjs[m].name().to_string());
+            }
+            // Recurse into embedded fields of this type
+            collect_embedded_method_names(base_type, tc_objs, method_names);
         }
     }
 }
@@ -667,18 +845,28 @@ fn compile_func_decl(
         // Set recv_slots for interface method calls
         builder.set_recv_slots(slots);
         
-        // Receiver name
-        builder.define_param(recv.name.symbol, slots, &slot_types);
+        // Define receiver parameter (anonymous receivers pass None)
+        builder.define_param(recv.name.as_ref().map(|n| n.symbol), slots, &slot_types);
     }
     
     // Define parameters and collect escaped ones for boxing
     // Reference types (closure, slice, map, channel, pointer) don't need boxing - they're already GcRefs
     let mut escaped_params = Vec::new();
-    for param in &func_decl.sig.params {
-        let (slots, slot_types) = info.type_expr_layout(param.ty.id);
-        let type_key = info.type_expr_type(param.ty.id);
+    let num_params = func_decl.sig.params.len();
+    for (param_idx, param) in func_decl.sig.params.iter().enumerate() {
+        // For variadic parameter (last param when func is variadic), use slice layout (1 slot)
+        // instead of element type layout
+        let is_variadic_param = func_decl.sig.variadic && param_idx == num_params - 1;
+        let (slots, slot_types, type_key) = if is_variadic_param {
+            // Variadic param becomes []T, which is a slice (1 slot, GcRef)
+            (1, vec![vo_runtime::SlotType::GcRef], info.type_expr_type(param.ty.id))
+        } else {
+            let (slots, slot_types) = info.type_expr_layout(param.ty.id);
+            let type_key = info.type_expr_type(param.ty.id);
+            (slots, slot_types, type_key)
+        };
         for name in &param.names {
-            builder.define_param(name.symbol, slots, &slot_types);
+            builder.define_param(Some(name.symbol), slots, &slot_types);
             let obj_key = info.get_def(name);
             if info.is_escaped(obj_key) && !info.is_reference_type(type_key) {
                 escaped_params.push((name.symbol, type_key, slots, slot_types.clone()));
@@ -711,8 +899,8 @@ fn compile_func_decl(
     for result in &func_decl.sig.results {
         if let Some(name) = &result.name {
             let (slots, slot_types) = info.type_expr_layout(result.ty.id);
-            builder.define_local_stack(name.symbol, slots, &slot_types);
-            builder.register_named_return(name.symbol);
+            let slot = builder.define_local_stack(name.symbol, slots, &slot_types);
+            builder.register_named_return(slot, slots);
         }
     }
     
@@ -831,14 +1019,13 @@ fn compile_global_array_init(
     Ok(())
 }
 
-fn compile_init_and_entry(
+/// Compile global variable initialization for a single package.
+fn compile_package_globals(
     project: &Project,
     ctx: &mut CodegenContext,
+    init_builder: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // 1. Generate __init__ function for global variable initialization
-    let mut init_builder = FuncBuilder::new("__init__");
-    
     // Initialize global variables in dependency order (from type checker analysis)
     for initializer in info.init_order() {
         // Each initializer has lhs (variables) and rhs (expression)
@@ -858,8 +1045,16 @@ fn compile_init_and_entry(
                         if info.is_array(tk) {
                             compile_global_array_init(
                                 &initializer.rhs, tk, global_idx,
-                                ctx, &mut init_builder, info
+                                ctx, init_builder, info
                             )?;
+                            continue;
+                        }
+                        
+                        // Special handling for interface: use compile_iface_assign for proper itab setup
+                        if info.is_interface(tk) {
+                            let tmp = init_builder.alloc_temp(2);
+                            crate::stmt::compile_iface_assign(tmp, &initializer.rhs, tk, ctx, init_builder, info)?;
+                            emit_global_set(init_builder, global_idx, tmp, 2);
                             continue;
                         }
                     }
@@ -870,8 +1065,8 @@ fn compile_init_and_entry(
                         .unwrap_or_else(|| vec![vo_runtime::SlotType::Value]);
                     
                     let tmp = init_builder.alloc_temp_typed(&slot_types);
-                    crate::expr::compile_expr_to(&initializer.rhs, tmp, ctx, &mut init_builder, info)?;
-                    emit_global_set(&mut init_builder, global_idx, tmp, slots);
+                    crate::expr::compile_expr_to(&initializer.rhs, tmp, ctx, init_builder, info)?;
+                    emit_global_set(init_builder, global_idx, tmp, slots);
                 }
             }
         } else {
@@ -893,14 +1088,34 @@ fn compile_init_and_entry(
                         // For multi-var, compile rhs once and extract values
                         // For now, just compile rhs for each (inefficient but correct)
                         let tmp = init_builder.alloc_temp_typed(&slot_types);
-                        crate::expr::compile_expr_to(&initializer.rhs, tmp, ctx, &mut init_builder, info)?;
-                        emit_global_set(&mut init_builder, global_idx, tmp, slots);
+                        crate::expr::compile_expr_to(&initializer.rhs, tmp, ctx, init_builder, info)?;
+                        emit_global_set(init_builder, global_idx, tmp, slots);
                     }
                 }
                 let _ = i; // suppress unused warning
             }
         }
     }
+    Ok(())
+}
+
+fn compile_init_and_entry(
+    project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // 1. Generate __init__ function for global variable initialization
+    let mut init_builder = FuncBuilder::new("__init__");
+    
+    // Initialize imported packages' global variables in dependency order
+    // (dependencies are initialized before dependents)
+    for (_, pkg_type_info) in project.imported_packages_in_order() {
+        let pkg_info = TypeInfoWrapper::for_package(project, pkg_type_info);
+        compile_package_globals(project, ctx, &mut init_builder, &pkg_info)?;
+    }
+    
+    // Then, initialize main package's global variables
+    compile_package_globals(project, ctx, &mut init_builder, info)?;
     
     // Add return
     init_builder.emit_op(vo_vm::instruction::Opcode::Return, 0, 0, 0);

@@ -1,0 +1,636 @@
+package io
+
+import "errors"
+
+// ==================== Error Codes ====================
+
+// Error codes for io operations
+const (
+	ErrCodeEOF           = 3000 // End of file
+	ErrCodeUnexpectedEOF = 3001 // Unexpected end of file
+	ErrCodeShortWrite    = 3002 // Short write
+	ErrCodeShortBuffer   = 3003 // Short buffer
+	ErrCodeNoProgress    = 3004 // Multiple Read calls return no data or error
+	ErrCodeClosedPipe    = 3005 // Read/write on closed pipe
+	ErrCodeInvalidWrite  = 3006 // Write returned impossible count
+	ErrCodeWhence        = 3007 // Invalid Seek whence
+	ErrCodeOffset        = 3008 // Invalid Seek offset
+)
+
+// Seek whence values
+const (
+	SeekStart   = 0 // Seek relative to the origin of the file
+	SeekCurrent = 1 // Seek relative to the current offset
+	SeekEnd     = 2 // Seek relative to the end
+)
+
+// EOF is returned by Read when no more input is available.
+var EOF = errors.NewCode(ErrCodeEOF, "EOF")
+
+// ErrUnexpectedEOF means that EOF was encountered in the middle of reading a fixed-size block or data structure.
+var ErrUnexpectedEOF = errors.NewCode(ErrCodeUnexpectedEOF, "unexpected EOF")
+
+// ErrShortWrite means that a write accepted fewer bytes than requested but failed to return an explicit error.
+var ErrShortWrite = errors.NewCode(ErrCodeShortWrite, "short write")
+
+// ErrShortBuffer means that a read required a longer buffer than was provided.
+var ErrShortBuffer = errors.NewCode(ErrCodeShortBuffer, "short buffer")
+
+// ErrNoProgress is returned by some clients of a Reader when many calls to Read have failed to return any data or error.
+var ErrNoProgress = errors.NewCode(ErrCodeNoProgress, "multiple Read calls return no data or error")
+
+// ErrClosedPipe is the error used for read or write operations on a closed pipe.
+var ErrClosedPipe = errors.NewCode(ErrCodeClosedPipe, "io: read/write on closed pipe")
+
+// ==================== Core Interfaces ====================
+
+// Reader is the interface that wraps the basic Read method.
+type Reader interface {
+	Read(p []byte) (n int, err error)
+}
+
+// Writer is the interface that wraps the basic Write method.
+type Writer interface {
+	Write(p []byte) (n int, err error)
+}
+
+// Closer is the interface that wraps the basic Close method.
+type Closer interface {
+	Close() error
+}
+
+// Seeker is the interface that wraps the basic Seek method.
+type Seeker interface {
+	Seek(offset int64, whence int) (int64, error)
+}
+
+// ==================== Byte-level Interfaces ====================
+
+// ByteReader is the interface that wraps the ReadByte method.
+type ByteReader interface {
+	ReadByte() (byte, error)
+}
+
+// ByteScanner is the interface that adds the UnreadByte method to the basic ReadByte method.
+type ByteScanner interface {
+	ByteReader
+	UnreadByte() error
+}
+
+// ByteWriter is the interface that wraps the WriteByte method.
+type ByteWriter interface {
+	WriteByte(c byte) error
+}
+
+// ==================== Rune-level Interfaces ====================
+
+// RuneReader is the interface that wraps the ReadRune method.
+type RuneReader interface {
+	ReadRune() (r rune, size int, err error)
+}
+
+// RuneScanner is the interface that adds the UnreadRune method to the basic ReadRune method.
+type RuneScanner interface {
+	RuneReader
+	UnreadRune() error
+}
+
+// ==================== String Writer ====================
+
+// StringWriter is the interface that wraps the WriteString method.
+type StringWriter interface {
+	WriteString(s string) (n int, err error)
+}
+
+// ==================== Position-based Interfaces ====================
+
+// ReaderAt is the interface that wraps the basic ReadAt method.
+type ReaderAt interface {
+	ReadAt(p []byte, off int64) (n int, err error)
+}
+
+// WriterAt is the interface that wraps the basic WriteAt method.
+type WriterAt interface {
+	WriteAt(p []byte, off int64) (n int, err error)
+}
+
+// ==================== Combined Interfaces ====================
+
+// ReadWriter is the interface that groups the basic Read and Write methods.
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+// ReadCloser is the interface that groups the basic Read and Close methods.
+type ReadCloser interface {
+	Reader
+	Closer
+}
+
+// WriteCloser is the interface that groups the basic Write and Close methods.
+type WriteCloser interface {
+	Writer
+	Closer
+}
+
+// ReadWriteCloser is the interface that groups the basic Read, Write and Close methods.
+type ReadWriteCloser interface {
+	Reader
+	Writer
+	Closer
+}
+
+// ReadSeeker is the interface that groups the basic Read and Seek methods.
+type ReadSeeker interface {
+	Reader
+	Seeker
+}
+
+// ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
+type ReadSeekCloser interface {
+	Reader
+	Seeker
+	Closer
+}
+
+// WriteSeeker is the interface that groups the basic Write and Seek methods.
+type WriteSeeker interface {
+	Writer
+	Seeker
+}
+
+// ReadWriteSeeker is the interface that groups the basic Read, Write and Seek methods.
+type ReadWriteSeeker interface {
+	Reader
+	Writer
+	Seeker
+}
+
+// ==================== ReaderFrom / WriterTo ====================
+
+// ReaderFrom is the interface that wraps the ReadFrom method.
+type ReaderFrom interface {
+	ReadFrom(r Reader) (n int64, err error)
+}
+
+// WriterTo is the interface that wraps the WriteTo method.
+type WriterTo interface {
+	WriteTo(w Writer) (n int64, err error)
+}
+
+// ==================== Utility Functions ====================
+
+// WriteString writes the contents of the string s to w, which accepts a slice of bytes.
+func WriteString(w Writer, s string) (n int, err error) {
+	if sw, ok := w.(StringWriter); ok {
+		return sw.WriteString(s)
+	}
+	return w.Write([]byte(s))
+}
+
+// ReadAtLeast reads from r into buf until it has read at least min bytes.
+// It returns the number of bytes copied and an error if fewer bytes were read.
+// The error is EOF only if no bytes were read.
+// If an EOF happens after reading fewer than min bytes, ReadAtLeast returns ErrUnexpectedEOF.
+// If min is greater than the length of buf, ReadAtLeast returns ErrShortBuffer.
+func ReadAtLeast(r Reader, buf []byte, min int) (n int, err error) {
+	if len(buf) < min {
+		return 0, ErrShortBuffer
+	}
+	for n < min && err == nil {
+		var nn int
+		nn, err = r.Read(buf[n:])
+		n += nn
+	}
+	if n >= min {
+		err = nil
+	} else if n > 0 && errors.IsCode(err, ErrCodeEOF) {
+		err = ErrUnexpectedEOF
+	}
+	return
+}
+
+// ReadFull reads exactly len(buf) bytes from r into buf.
+// It returns the number of bytes copied and an error if fewer bytes were read.
+// The error is EOF only if no bytes were read.
+// If an EOF happens after reading some but not all the bytes, ReadFull returns ErrUnexpectedEOF.
+func ReadFull(r Reader, buf []byte) (n int, err error) {
+	return ReadAtLeast(r, buf, len(buf))
+}
+
+// CopyN copies n bytes (or until an error) from src to dst.
+// It returns the number of bytes copied and the earliest error encountered while copying.
+func CopyN(dst Writer, src Reader, n int64) (written int64, err error) {
+	written, err = Copy(dst, LimitReader(src, n))
+	if written == n {
+		return n, nil
+	}
+	if written < n && err == nil {
+		err = EOF
+	}
+	return
+}
+
+// Copy copies from src to dst until either EOF is reached on src or an error occurs.
+// It returns the number of bytes copied and the first error encountered while copying, if any.
+func Copy(dst Writer, src Reader) (written int64, err error) {
+	return copyBuffer(dst, src, nil)
+}
+
+// CopyBuffer is identical to Copy except that it stages through the provided buffer.
+func CopyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
+	if buf != nil && len(buf) == 0 {
+		panic("empty buffer in CopyBuffer")
+	}
+	return copyBuffer(dst, src, buf)
+}
+
+// copyBuffer is the actual implementation of Copy and CopyBuffer.
+func copyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
+	// If the reader has a WriteTo method, use it to do the copy.
+	if wt, ok := src.(WriterTo); ok {
+		return wt.WriteTo(dst)
+	}
+	// Similarly, if the writer has a ReadFrom method, use it to do the copy.
+	if rf, ok := dst.(ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	if buf == nil {
+		size := 32 * 1024
+		if l, ok := src.(*LimitedReader); ok && int64(size) > l.N {
+			if l.N < 1 {
+				size = 1
+			} else {
+				size = int(l.N)
+			}
+		}
+		buf = make([]byte, size)
+	}
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = errors.NewCode(ErrCodeInvalidWrite, "invalid write result")
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			if er != EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return written, err
+}
+
+// ReadAll reads from r until an error or EOF and returns the data it read.
+// A successful call returns err == nil, not err == EOF.
+func ReadAll(r Reader) ([]byte, error) {
+	b := make([]byte, 0, 512)
+	for {
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err != nil {
+			if errors.IsCode(err, ErrCodeEOF) {
+				err = nil
+			}
+			return b, err
+		}
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
+	}
+}
+
+// ==================== LimitedReader ====================
+
+// LimitedReader reads from R but limits the amount of data returned to just N bytes.
+// Each call to Read updates N to reflect the new amount remaining.
+// Read returns EOF when N <= 0 or when the underlying R returns EOF.
+type LimitedReader struct {
+	R Reader // underlying reader
+	N int64  // max bytes remaining
+}
+
+// Read implements Reader for LimitedReader.
+func (l *LimitedReader) Read(p []byte) (n int, err error) {
+	if l.N <= 0 {
+		return 0, EOF
+	}
+	if int64(len(p)) > l.N {
+		p = p[0:l.N]
+	}
+	n, err = l.R.Read(p)
+	l.N -= int64(n)
+	return
+}
+
+// LimitReader returns a Reader that reads from r but stops with EOF after n bytes.
+func LimitReader(r Reader, n int64) Reader {
+	return &LimitedReader{R: r, N: n}
+}
+
+// ==================== SectionReader ====================
+
+// SectionReader implements Read, Seek, and ReadAt on a section of an underlying ReaderAt.
+type SectionReader struct {
+	r     ReaderAt // underlying reader
+	base  int64    // base offset
+	off   int64    // current offset
+	limit int64    // end offset (exclusive)
+	n     int64    // size of section (computed as limit - base)
+}
+
+// NewSectionReader returns a SectionReader that reads from r starting at offset off and stops with EOF after n bytes.
+func NewSectionReader(r ReaderAt, off int64, n int64) *SectionReader {
+	remaining := n
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &SectionReader{r: r, base: off, off: off, limit: off + remaining, n: remaining}
+}
+
+// Read implements Reader for SectionReader.
+func (s *SectionReader) Read(p []byte) (n int, err error) {
+	if s.off >= s.limit {
+		return 0, EOF
+	}
+	if max := s.limit - s.off; int64(len(p)) > max {
+		p = p[0:max]
+	}
+	n, err = s.r.ReadAt(p, s.off)
+	s.off += int64(n)
+	return
+}
+
+// Seek implements Seeker for SectionReader.
+func (s *SectionReader) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case SeekStart:
+		abs = s.base + offset
+	case SeekCurrent:
+		abs = s.off + offset
+	case SeekEnd:
+		abs = s.limit + offset
+	default:
+		return 0, errors.NewCode(ErrCodeWhence, "invalid whence")
+	}
+	if abs < s.base {
+		return 0, errors.NewCode(ErrCodeOffset, "negative position")
+	}
+	s.off = abs
+	return abs - s.base, nil
+}
+
+// ReadAt implements ReaderAt for SectionReader.
+func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
+	if off < 0 || off >= s.n {
+		return 0, EOF
+	}
+	off += s.base
+	if max := s.limit - off; int64(len(p)) > max {
+		p = p[0:max]
+		n, err = s.r.ReadAt(p, off)
+		if err == nil {
+			err = EOF
+		}
+		return n, err
+	}
+	return s.r.ReadAt(p, off)
+}
+
+// Size returns the size of the section in bytes.
+func (s *SectionReader) Size() int64 {
+	return s.n
+}
+
+// Outer returns the underlying ReaderAt and offsets for the section.
+func (s *SectionReader) Outer() (r ReaderAt, off int64, n int64) {
+	return s.r, s.base, s.n
+}
+
+// ==================== Discard ====================
+
+// devNull is a Writer on which all Write calls succeed without doing anything.
+type devNull struct{}
+
+func (devNull) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (devNull) WriteString(s string) (int, error) {
+	return len(s), nil
+}
+
+func (devNull) ReadFrom(r Reader) (n int64, err error) {
+	buf := make([]byte, 8192)
+	for {
+		readSize, err := r.Read(buf)
+		n += int64(readSize)
+		if err != nil {
+			if errors.IsCode(err, ErrCodeEOF) {
+				return n, nil
+			}
+			return n, err
+		}
+	}
+}
+
+// Discard is a Writer on which all Write calls succeed without doing anything.
+var Discard Writer = devNull{}
+
+// ==================== NopCloser ====================
+
+// nopCloser wraps a Reader to add a no-op Close method.
+type nopCloser struct {
+	Reader
+}
+
+func (nopCloser) Close() error { return nil }
+
+// NopCloser returns a ReadCloser with a no-op Close method wrapping the provided Reader r.
+func NopCloser(r Reader) ReadCloser {
+	return nopCloser{r}
+}
+
+// ==================== TeeReader ====================
+
+// teeReader wraps a Reader to write to a Writer as it reads.
+type teeReader struct {
+	r Reader
+	w Writer
+}
+
+// Read implements Reader for teeReader.
+func (t *teeReader) Read(p []byte) (n int, err error) {
+	n, err = t.r.Read(p)
+	if n > 0 {
+		if n, err := t.w.Write(p[:n]); err != nil {
+			return n, err
+		}
+	}
+	return
+}
+
+// TeeReader returns a Reader that writes to w what it reads from r.
+// All reads from r performed through it are matched with corresponding writes to w.
+func TeeReader(r Reader, w Writer) Reader {
+	return &teeReader{r: r, w: w}
+}
+
+// ==================== MultiReader ====================
+
+// multiReader wraps multiple Readers into a single Reader.
+type multiReader struct {
+	readers []Reader
+}
+
+// Read implements Reader for multiReader.
+func (mr *multiReader) Read(p []byte) (n int, err error) {
+	for len(mr.readers) > 0 {
+		n, err = mr.readers[0].Read(p)
+		if errors.IsCode(err, ErrCodeEOF) {
+			mr.readers = mr.readers[1:]
+			continue
+		}
+		if n > 0 || err != nil {
+			if errors.IsCode(err, ErrCodeEOF) && len(mr.readers) > 0 {
+				err = nil
+			}
+			return
+		}
+		mr.readers = mr.readers[1:]
+	}
+	return 0, EOF
+}
+
+// MultiReader returns a Reader that's the logical concatenation of the provided input readers.
+func MultiReader(readers ...Reader) Reader {
+	r := make([]Reader, len(readers))
+	copy(r, readers)
+	return &multiReader{readers: r}
+}
+
+// ==================== MultiWriter ====================
+
+// multiWriter wraps multiple Writers into a single Writer.
+type multiWriter struct {
+	writers []Writer
+}
+
+// Write implements Writer for multiWriter.
+func (t *multiWriter) Write(p []byte) (n int, err error) {
+	for _, w := range t.writers {
+		n, err = w.Write(p)
+		if err != nil {
+			return
+		}
+		if n != len(p) {
+			err = ErrShortWrite
+			return
+		}
+	}
+	return len(p), nil
+}
+
+// WriteString implements StringWriter for multiWriter.
+func (t *multiWriter) WriteString(s string) (n int, err error) {
+	var p []byte // lazily initialized if needed
+	for _, w := range t.writers {
+		if sw, ok := w.(StringWriter); ok {
+			n, err = sw.WriteString(s)
+		} else {
+			if p == nil {
+				p = []byte(s)
+			}
+			n, err = w.Write(p)
+		}
+		if err != nil {
+			return
+		}
+		if n != len(s) {
+			err = ErrShortWrite
+			return
+		}
+	}
+	return len(s), nil
+}
+
+// MultiWriter creates a writer that duplicates its writes to all the provided writers.
+func MultiWriter(writers ...Writer) Writer {
+	allWriters := make([]Writer, 0, len(writers))
+	for _, w := range writers {
+		if mw, ok := w.(*multiWriter); ok {
+			allWriters = append(allWriters, mw.writers...)
+		} else {
+			allWriters = append(allWriters, w)
+		}
+	}
+	return &multiWriter{writers: allWriters}
+}
+
+// ==================== OffsetWriter ====================
+
+// OffsetWriter maps writes at offset base to offset base+off in the underlying writer.
+type OffsetWriter struct {
+	w    WriterAt
+	base int64 // the original offset
+	off  int64 // the current offset
+}
+
+// NewOffsetWriter returns an OffsetWriter that writes to w starting at offset off.
+func NewOffsetWriter(w WriterAt, off int64) *OffsetWriter {
+	return &OffsetWriter{w: w, base: off, off: off}
+}
+
+// Write implements Writer for OffsetWriter.
+func (o *OffsetWriter) Write(p []byte) (n int, err error) {
+	n, err = o.w.WriteAt(p, o.off)
+	o.off += int64(n)
+	return
+}
+
+// WriteAt implements WriterAt for OffsetWriter.
+func (o *OffsetWriter) WriteAt(p []byte, off int64) (n int, err error) {
+	if off < 0 {
+		return 0, errors.NewCode(ErrCodeOffset, "negative offset")
+	}
+	off += o.base
+	return o.w.WriteAt(p, off)
+}
+
+// Seek implements Seeker for OffsetWriter.
+func (o *OffsetWriter) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case SeekStart:
+		abs = o.base + offset
+	case SeekCurrent:
+		abs = o.off + offset
+	case SeekEnd:
+		return 0, errors.NewCode(ErrCodeWhence, "SeekEnd not supported")
+	default:
+		return 0, errors.NewCode(ErrCodeWhence, "invalid whence")
+	}
+	if abs < o.base {
+		return 0, errors.NewCode(ErrCodeOffset, "negative position")
+	}
+	o.off = abs
+	return abs - o.base, nil
+}

@@ -95,6 +95,9 @@ tests:
     skip: [vm, jit]
     reason: "stdlib not ready"
   - file: stdlib/bytes.vo
+  - file: io_package.vo
+    skip: [vm, jit]
+    reason: "waiting for Bug 5 (cross-package interface global nil compare) and Bug 6 (variadic interface params)"
   - file: stdlib/errors.vo
     skip: [vm, jit]
     reason: "stdlib not ready"

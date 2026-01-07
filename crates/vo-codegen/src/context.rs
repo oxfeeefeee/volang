@@ -66,6 +66,10 @@ pub struct CodegenContext {
     /// These are processed after all methods are registered
     pending_itabs: Vec<(u32, TypeKey, u32, u16)>,
 
+    /// Itab cache: (named_type_id, iface_meta_id) -> itab_id
+    /// Ensures same (type, interface) pair always gets same itab_id
+    itab_cache: HashMap<(u32, u32), u32>,
+
     /// Current function ID being compiled (for debug info recording)
     current_func_id: Option<u32>,
 }
@@ -114,6 +118,7 @@ impl CodegenContext {
             objkey_to_iface_func: HashMap::new(),
             init_functions: Vec::new(),
             pending_itabs: Vec::new(),
+            itab_cache: HashMap::new(),
             current_func_id: None,
         }
     }
@@ -157,6 +162,11 @@ impl CodegenContext {
 
     pub fn named_type_ids_count(&self) -> usize {
         self.named_type_ids.len()
+    }
+
+    /// Iterate over all (ObjKey, named_type_id) pairs.
+    pub fn all_named_type_ids(&self) -> impl Iterator<Item = (ObjKey, u32)> + '_ {
+        self.named_type_ids.iter().map(|(&k, &v)| (k, v))
     }
 
     // === RTTID registration ===
@@ -493,7 +503,7 @@ impl CodegenContext {
     /// rttid: runtime type id for slot0
     /// type_key: for itab building (used with lookup_field_or_method)
     /// Returns const_idx.
-    pub fn register_iface_assign_const_concrete(&mut self, rttid: u32, type_key: Option<TypeKey>, iface_meta_id: u32) -> u16 {
+    pub fn register_iface_assign_const_concrete(&mut self, rttid: u32, type_key: Option<TypeKey>, iface_meta_id: u32, tc_objs: &vo_analysis::objects::TCObjects) -> u16 {
         if iface_meta_id == 0 {
             // Empty interface: no itab needed
             let packed = ((rttid as i64) << 32) | 0;
@@ -503,8 +513,13 @@ impl CodegenContext {
             let packed = ((rttid as i64) << 32) | 0;
             let const_idx = self.add_const(Constant::Int(packed));
             // Store type_key for lookup_field_or_method during itab building
+            // Only add to pending if type_key is a Named type (has methods)
             if let Some(tk) = type_key {
-                self.pending_itabs.push((rttid, tk, iface_meta_id, const_idx));
+                // Skip non-Named types - they don't have methods and shouldn't satisfy non-empty interfaces
+                // This can happen with variadic args or other edge cases
+                if tc_objs.types[tk].try_as_named().is_some() {
+                    self.pending_itabs.push((rttid, tk, iface_meta_id, const_idx));
+                }
             }
             const_idx
         }
@@ -528,70 +543,93 @@ impl CodegenContext {
         }
     }
 
-    fn build_itab(&mut self, type_key: TypeKey, iface_meta_id: u32, tc_objs: &vo_analysis::objects::TCObjects, interner: &vo_common::SymbolInterner) -> u32 {
-        let iface_meta = &self.module.interface_metas[iface_meta_id as usize];
+    fn build_itab(&mut self, type_key: TypeKey, iface_meta_id: u32, tc_objs: &vo_analysis::objects::TCObjects, _interner: &vo_common::SymbolInterner) -> u32 {
+        // Get named_type_id - all methods should already be in NamedTypeMeta.methods
+        // (direct methods from compile_functions, promoted methods from collect_promoted_methods)
+        let named_type_id = tc_objs.types[type_key].try_as_named()
+            .and_then(|n| n.obj().as_ref().copied())
+            .and_then(|obj_key| self.get_named_type_id(obj_key));
         
-        // Get package from the type for unexported method lookup
-        let pkg = if let Some(named) = tc_objs.types[type_key].try_as_named() {
-            named.obj().and_then(|obj_key| tc_objs.lobjs[obj_key].pkg())
-        } else {
-            None
-        };
+        let named_type_id = named_type_id
+            .expect("itab building requires Named type with registered NamedTypeMeta");
+        
+        // Check cache first - ensures same (type, interface) pair always gets same itab_id
+        let cache_key = (named_type_id, iface_meta_id);
+        if let Some(&itab_id) = self.itab_cache.get(&cache_key) {
+            return itab_id;
+        }
+        
+        let iface_meta = &self.module.interface_metas[iface_meta_id as usize];
         
         // Collect method names first to avoid borrow issues
         let method_names: Vec<String> = iface_meta.method_names.clone();
         
+        // Simply look up each method from NamedTypeMeta.methods
         let methods: Vec<u32> = method_names
             .iter()
             .map(|name| {
-                match vo_analysis::lookup::lookup_field_or_method(type_key, true, pkg, name, tc_objs) {
-                    vo_analysis::lookup::LookupResult::Entry(obj_key, indices, _) => {
-                        // Use unified embed path analysis
-                        let path_info = crate::embed::analyze_embed_path(type_key, &indices, tc_objs);
-                        
-                        if let Some(embed_iface) = path_info.embedded_iface {
-                            // Method comes from embedded interface - generate CallIface wrapper
-                            crate::wrapper::generate_embedded_iface_wrapper(
-                                self,
-                                type_key,
-                                embed_iface.offset,
-                                embed_iface.iface_type,
-                                name,
-                                obj_key,
-                                tc_objs,
-                                interner,
-                            )
-                        } else if let Some(base_iface_func) = self.get_iface_func_by_objkey(obj_key) {
-                            // Normal concrete method
-                            if !path_info.steps.is_empty() {
-                                // Promoted method through struct embedding
-                                let original_func_id = self.get_func_by_objkey(obj_key)
-                                    .unwrap_or(base_iface_func);
-                                crate::wrapper::generate_promoted_wrapper(
-                                    self,
-                                    type_key,
-                                    &indices[..indices.len()-1],
-                                    original_func_id,
-                                    base_iface_func,
-                                    name,
-                                    tc_objs,
-                                )
-                            } else {
-                                // Direct method, no embedding
-                                base_iface_func
-                            }
-                        } else {
-                            panic!("method '{}' has no registered func_id and is not from embedded interface", name)
-                        }
-                    }
-                    _ => panic!("method '{}' not found in type {:?} for itab building", name, type_key),
-                }
+                self.get_method_from_named_type(named_type_id, name)
+                    .map(|info| info.func_id)
+                    .unwrap_or_else(|| panic!(
+                        "method '{}' not found in NamedTypeMeta for type {:?} - should have been registered by collect_promoted_methods",
+                        name, type_key
+                    ))
             })
             .collect();
 
         let itab_id = self.module.itabs.len() as u32;
         self.module.itabs.push(Itab { methods });
+        self.itab_cache.insert(cache_key, itab_id);
         itab_id
+    }
+    
+    /// Intern a signature type and return its rttid.
+    /// For promoted methods, signature_rttid is used for runtime type checking.
+    /// We use a simplified approach here - the full signature is already checked at compile time.
+    pub fn intern_signature_rttid(&mut self, sig_type: TypeKey, tc_objs: &vo_analysis::objects::TCObjects) -> u32 {
+        use vo_analysis::typ::Type;
+        use vo_runtime::{RuntimeType, ValueRttid, ValueKind};
+        
+        if let Type::Signature(sig) = &tc_objs.types[sig_type] {
+            // Build params - use basic rttid lookup for each param type
+            let params: Vec<ValueRttid> = if let Type::Tuple(t) = &tc_objs.types[sig.params()] {
+                t.vars().iter()
+                    .filter_map(|&v| {
+                        tc_objs.lobjs[v].typ().map(|t| {
+                            let vk = vo_analysis::check::type_info::type_value_kind(t, tc_objs);
+                            // For basic types, rttid = vk; for others, we'd need full interning
+                            // but for signature comparison, this simple approach works
+                            ValueRttid::new(vk as u32, vk)
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            
+            // Build results
+            let results: Vec<ValueRttid> = if let Type::Tuple(t) = &tc_objs.types[sig.results()] {
+                t.vars().iter()
+                    .filter_map(|&v| {
+                        tc_objs.lobjs[v].typ().map(|t| {
+                            let vk = vo_analysis::check::type_info::type_value_kind(t, tc_objs);
+                            ValueRttid::new(vk as u32, vk)
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            
+            let rt = RuntimeType::Func {
+                params,
+                results,
+                variadic: sig.variadic(),
+            };
+            self.type_interner.intern(rt)
+        } else {
+            0
+        }
     }
     
     // === Function registration ===

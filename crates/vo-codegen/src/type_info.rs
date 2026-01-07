@@ -32,7 +32,7 @@ impl<'a> TypeInfoWrapper<'a> {
         Self { project, type_info }
     }
 
-    fn tc_objs(&self) -> &TCObjects {
+    pub fn tc_objs(&self) -> &TCObjects {
         &self.project.tc_objs
     }
 

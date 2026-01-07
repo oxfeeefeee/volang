@@ -61,19 +61,10 @@ pub fn compile_call(
     // Get function type and parameter types for interface conversion
     let func_type = info.expr_type(call.func.id);
     let param_types = info.func_param_types(func_type);
+    let is_variadic = info.is_variadic(func_type);
     
-    // Compute total arg slots using PARAMETER types (not expression types)
-    // This handles interface parameters correctly
-    let mut total_arg_slots = 0u16;
-    for (i, arg) in call.args.iter().enumerate() {
-        let param_type = param_types.get(i).copied();
-        let slots = if let Some(pt) = param_type {
-            info.type_slot_count(pt)
-        } else {
-            info.expr_slots(arg.id)
-        };
-        total_arg_slots += slots;
-    }
+    // Compute total arg slots using calc_method_arg_slots (handles variadic packing)
+    let total_arg_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
     
     // Check if calling a closure (local variable with Signature type)
     if let ExprKind::Ident(ident) = &call.func.kind {
@@ -90,8 +81,8 @@ pub fn compile_call(
                 func.alloc_temp(need_slots)
             };
             
-            // Compile args to args_start
-            compile_args_with_types(&call.args, &param_types, args_start, ctx, func, info)?;
+            // Compile args with variadic packing support
+            compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
             
             // Call: a=func_id, b=args_start, c=(arg_slots<<8|ret_slots), flags=func_id_high
             let c = crate::type_info::encode_call_args(total_arg_slots as u16, ret_slots as u16);
@@ -285,12 +276,19 @@ fn compile_method_call(
             
             // Check if it's a Vo function (has body) or extern (no body)
             if ctx.is_vo_function(sel.sel.symbol) {
-                // Vo function - use normal Call
+                // Vo function - use normal Call with proper interface conversion
                 let func_idx = ctx.get_function_index(sel.sel.symbol).unwrap();
                 let ret_slots = info.type_slot_count(info.expr_type(expr.id));
                 let func_type = info.expr_type(call.func.id);
+                let param_types = info.func_param_types(func_type);
                 let is_variadic = info.is_variadic(func_type);
-                let (args_start, total_arg_slots) = compile_call_args(call, is_variadic, ctx, func, info)?;
+                
+                // Compute total arg slots using PARAMETER types (handles interface conversion)
+                let total_arg_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
+                let args_start = func.alloc_temp(total_arg_slots.max(ret_slots).max(1));
+                
+                // Compile arguments with interface conversion
+                compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
                 
                 let c = crate::type_info::encode_call_args(total_arg_slots, ret_slots);
                 let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
@@ -477,7 +475,7 @@ pub fn compile_extern_call(
     let extern_id = ctx.get_or_register_extern(extern_name);
     let func_type = info.expr_type(call.func.id);
     let is_variadic = info.is_variadic(func_type);
-    let (args_start, total_slots) = compile_call_args(call, is_variadic, ctx, func, info)?;
+    let (args_start, total_slots) = compile_extern_args(call, is_variadic, ctx, func, info)?;
     func.emit_with_flags(Opcode::CallExtern, total_slots as u8, dst, extern_id as u16, args_start);
     Ok(())
 }
@@ -486,8 +484,11 @@ pub fn compile_extern_call(
 // Argument Compilation Helpers
 // =============================================================================
 
-/// Compile arguments and return (args_start, total_slots)
-pub fn compile_call_args(
+/// Compile arguments for extern/builtin calls.
+/// For variadic: emits (value, value_kind) pairs.
+/// For non-variadic: uses compile_args_simple (no interface conversion).
+/// NOTE: This is NOT for normal Vo function calls - use compile_method_args instead.
+fn compile_extern_args(
     call: &vo_syntax::ast::CallExpr,
     is_variadic: bool,
     ctx: &mut CodegenContext,

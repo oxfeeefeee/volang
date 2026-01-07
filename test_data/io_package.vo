@@ -1,0 +1,151 @@
+package main
+
+import (
+	"bytes"
+	"io"
+)
+
+func main() {
+	testEOF()
+	testWriteString()
+	testReadFull()
+	testCopy()
+	testCopyN()
+	testReadAll()
+	
+	testLimitReader()
+	testDiscard()
+	testNopCloser()
+	
+	testTeeReader()
+	testMultiReader()
+	testMultiWriter()
+	println("All io package tests passed!")
+}
+
+func testEOF() {
+	assert(io.EOF != nil, "EOF should not be nil")
+	assert(io.EOF.Code() == io.ErrCodeEOF, "EOF should have correct code")
+}
+
+func testWriteString() {
+	var buf bytes.Buffer
+	n, err := io.WriteString(&buf, "hello")
+	assert(err == nil, "WriteString: should not return error")
+	assert(n == 5, "WriteString: should write 5 bytes")
+	assert(buf.String() == "hello", "WriteString: content should be 'hello'")
+}
+
+func testReadFull() {
+	buf := bytes.NewBufferString("hello world")
+	p := make([]byte, 5)
+	n, err := io.ReadFull(buf, p)
+	assert(err == nil, "ReadFull: should not return error")
+	assert(n == 5, "ReadFull: should read 5 bytes")
+	assert(string(p) == "hello", "ReadFull: should read 'hello'")
+	
+	// Test ReadFull with short buffer
+	buf2 := bytes.NewBufferString("hi")
+	p2 := make([]byte, 5)
+	n2, err2 := io.ReadFull(buf2, p2)
+	assert(err2 != nil, "ReadFull: should return error for short read")
+	assert(n2 == 2, "ReadFull: should read available bytes")
+}
+
+func testCopy() {
+	src := bytes.NewBufferString("hello world")
+	var dst bytes.Buffer
+	n, err := io.Copy(&dst, src)
+	assert(err == nil, "Copy: should not return error")
+	assert(n == 11, "Copy: should copy 11 bytes")
+	assert(dst.String() == "hello world", "Copy: content should be 'hello world'")
+}
+
+func testCopyN() {
+	src := bytes.NewBufferString("hello world")
+	var dst bytes.Buffer
+	n, err := io.CopyN(&dst, src, 5)
+	assert(err == nil, "CopyN: should not return error")
+	assert(n == 5, "CopyN: should copy 5 bytes")
+	assert(dst.String() == "hello", "CopyN: content should be 'hello'")
+}
+
+func testReadAll() {
+	buf := bytes.NewBufferString("hello world")
+	data, err := io.ReadAll(buf)
+	assert(err == nil, "ReadAll: should not return error")
+	assert(len(data) == 11, "ReadAll: should read 11 bytes")
+	assert(string(data) == "hello world", "ReadAll: content should be 'hello world'")
+}
+
+func testLimitReader() {
+	src := bytes.NewBufferString("hello world")
+	limited := io.LimitReader(src, 5)
+	data, err := io.ReadAll(limited)
+	assert(err == nil, "LimitReader: should not return error")
+	assert(len(data) == 5, "LimitReader: should read 5 bytes")
+	assert(string(data) == "hello", "LimitReader: content should be 'hello'")
+}
+
+func testDiscard() {
+	n, err := io.Discard.Write([]byte("hello"))
+	assert(err == nil, "Discard: should not return error")
+	assert(n == 5, "Discard: should return correct count")
+	
+	n, err = io.WriteString(io.Discard, "world")
+	assert(err == nil, "Discard WriteString: should not return error")
+	assert(n == 5, "Discard WriteString: should return correct count")
+}
+
+func testNopCloser() {
+	buf := bytes.NewBufferString("hello")
+	rc := io.NopCloser(buf)
+	
+	p := make([]byte, 5)
+	n, err := rc.Read(p)
+	assert(err == nil, "NopCloser: Read should not return error")
+	assert(n == 5, "NopCloser: should read 5 bytes")
+	
+	err = rc.Close()
+	assert(err == nil, "NopCloser: Close should not return error")
+}
+
+func testTeeReader() {
+	src := bytes.NewBufferString("hello")
+	var tee bytes.Buffer
+	tr := io.TeeReader(src, &tee)
+	
+	data, err := io.ReadAll(tr)
+	assert(err == nil, "TeeReader: should not return error")
+	assert(string(data) == "hello", "TeeReader: read data should be 'hello'")
+	assert(tee.String() == "hello", "TeeReader: tee buffer should be 'hello'")
+}
+
+func testMultiReader() {
+	r1 := bytes.NewBufferString("hello")
+	r2 := bytes.NewBufferString(" ")
+	r3 := bytes.NewBufferString("world")
+	mr := io.MultiReader(r1, r2, r3)
+	
+	data, err := io.ReadAll(mr)
+	assert(err == nil, "MultiReader: should not return error")
+	assert(string(data) == "hello world", "MultiReader: content should be 'hello world'")
+}
+
+func testMultiWriter() {
+	var buf1 bytes.Buffer
+	var buf2 bytes.Buffer
+	mw := io.MultiWriter(&buf1, &buf2)
+	
+	n, err := mw.Write([]byte("hello"))
+	assert(err == nil, "MultiWriter: should not return error")
+	assert(n == 5, "MultiWriter: should write 5 bytes")
+	assert(buf1.String() == "hello", "MultiWriter: buf1 should be 'hello'")
+	assert(buf2.String() == "hello", "MultiWriter: buf2 should be 'hello'")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("ASSERT FAILED: " + msg)
+	}
+}

@@ -218,6 +218,11 @@ pub fn compile_expr_to(
                 return Ok(());
             }
             
+            // Short-circuit evaluation MUST be handled before computing operands
+            if matches!(bin.op, BinaryOp::LogAnd | BinaryOp::LogOr) {
+                return compile_short_circuit(expr, &bin.op, &bin.left, &bin.right, dst, ctx, func, info);
+            }
+            
             let left_reg = compile_expr(&bin.left, ctx, func, info)?;
             let right_reg = compile_expr(&bin.right, ctx, func, info)?;
             let operand_type = info.expr_type(bin.left.id);
@@ -272,9 +277,8 @@ pub fn compile_expr_to(
                 (BinaryOp::Shl, _, _, _) => Opcode::Shl,
                 (BinaryOp::Shr, _, _, false) => Opcode::ShrS,
                 (BinaryOp::Shr, _, _, true) => Opcode::ShrU,
-                (BinaryOp::LogAnd, _, _, _) | (BinaryOp::LogOr, _, _, _) => {
-                    return compile_short_circuit(expr, &bin.op, &bin.left, &bin.right, dst, ctx, func, info);
-                }
+                // LogAnd/LogOr handled earlier with short-circuit evaluation
+                (BinaryOp::AndNot, _, _, _) => Opcode::AndNot,
                 _ => return Err(CodegenError::UnsupportedExpr(format!("binary op {:?}", bin.op))),
             };
 

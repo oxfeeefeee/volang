@@ -4,7 +4,7 @@
 //! handling package imports and producing type-checked results.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -133,9 +133,11 @@ pub struct Project {
     /// Parsed files from the main package.
     pub files: Vec<File>,
     /// Parsed files from all imported packages (package path -> files).
-    pub imported_files: HashMap<String, Vec<File>>,
+    /// Uses BTreeMap to ensure deterministic iteration order for codegen.
+    pub imported_files: BTreeMap<String, Vec<File>>,
     /// Type checking results for imported packages (package path -> type_info).
-    pub imported_type_infos: HashMap<String, crate::check::TypeInfo>,
+    /// Uses BTreeMap to ensure deterministic iteration order for codegen.
+    pub imported_type_infos: BTreeMap<String, crate::check::TypeInfo>,
     /// Source map for position lookup (used by codegen and runtime error reporting).
     pub source_map: SourceMap,
 }
@@ -170,6 +172,20 @@ impl Project {
     pub fn type_info(&self) -> &crate::check::TypeInfo {
         &self.type_info
     }
+
+    /// Returns imported packages in dependency order (dependencies first).
+    /// Each item is (package_path, type_info).
+    /// This order ensures that when initializing global variables,
+    /// dependencies are initialized before dependents.
+    pub fn imported_packages_in_order(&self) -> Vec<(&str, &crate::check::TypeInfo)> {
+        self.packages.iter()
+            .filter(|&&pkg_key| pkg_key != self.main_package)
+            .filter_map(|&pkg_key| {
+                let path = self.tc_objs.pkgs[pkg_key].path();
+                self.imported_type_infos.get(path).map(|ti| (path, ti))
+            })
+            .collect()
+    }
 }
 
 /// Shared state for project analysis.
@@ -189,9 +205,9 @@ struct ProjectState {
     /// Type checking results from main package.
     type_info: Option<crate::check::TypeInfo>,
     /// Parsed files from imported packages (package path -> files).
-    imported_files: HashMap<String, Vec<File>>,
+    imported_files: BTreeMap<String, Vec<File>>,
     /// Type checking results from imported packages (package path -> type_info).
-    imported_type_infos: HashMap<String, crate::check::TypeInfo>,
+    imported_type_infos: BTreeMap<String, crate::check::TypeInfo>,
 }
 
 /// Analyze a project starting from the given source files.
@@ -220,8 +236,8 @@ pub fn analyze_project_with_options<F: FileSystem>(
         in_progress: HashSet::new(),
         checked_packages: Vec::new(),
         type_info: None,
-        imported_files: HashMap::new(),
-        imported_type_infos: HashMap::new(),
+        imported_files: BTreeMap::new(),
+        imported_type_infos: BTreeMap::new(),
     }));
     
     // Create the main package
@@ -334,8 +350,8 @@ pub fn analyze_single_file_with_options(
         main_package: main_pkg_key,
         type_info: checker.result,
         files: vec![file],
-        imported_files: HashMap::new(),
-        imported_type_infos: HashMap::new(),
+        imported_files: BTreeMap::new(),
+        imported_type_infos: BTreeMap::new(),
         source_map: SourceMap::new(),
     })
 }

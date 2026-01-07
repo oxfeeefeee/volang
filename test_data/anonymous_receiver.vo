@@ -1,0 +1,36 @@
+package main
+
+type Counter struct {
+    value int
+}
+
+// Named receiver - uses receiver
+func (c Counter) Get() int {
+    return c.value
+}
+
+// Named pointer receiver - uses receiver
+func (c *Counter) Set(v int) {
+    c.value = v
+}
+
+// Anonymous receiver - doesn't use receiver
+func (Counter) Zero() int {
+    return 0
+}
+
+// Anonymous pointer receiver - doesn't use receiver
+func (*Counter) Default() int {
+    return 100
+}
+
+func main() {
+    var c Counter
+    c.Set(42)
+    
+    assert(c.Get() == 42, "Get should return 42")
+    assert(c.Zero() == 0, "Zero should return 0")
+    assert(c.Default() == 100, "Default should return 100")
+    
+    println("PASS: anonymous receiver test")
+}

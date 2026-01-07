@@ -336,7 +336,7 @@ pub fn compile_func_lit(
         let (slots, slot_types) = info.type_expr_layout(param.ty.id);
         let type_key = info.type_expr_type(param.ty.id);
         for name in &param.names {
-            closure_builder.define_param(name.symbol, slots, &slot_types);
+            closure_builder.define_param(Some(name.symbol), slots, &slot_types);
             let obj_key = info.get_def(name);
             if info.is_escaped(obj_key) && !info.is_reference_type(type_key) {
                 escaped_params.push((name.symbol, type_key, slots, slot_types.clone()));

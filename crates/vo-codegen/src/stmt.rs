@@ -744,25 +744,16 @@ fn compile_stmt_with_label(
         // === Return ===
         StmtKind::Return(ret) => {
             if ret.values.is_empty() {
-                // Bare return - check for named returns
-                let named_syms = func.named_return_symbols();
-                if named_syms.is_empty() {
+                // Bare return - use pre-recorded slot info (not affected by shadow variables)
+                let named_return_slots: Vec<_> = func.named_return_slots().to_vec();
+                if named_return_slots.is_empty() {
                     func.emit_op(Opcode::Return, 0, 0, 0);
                 } else {
-                    // Look up named return variables in locals
-                    let named_return_info: Vec<_> = named_syms.iter()
-                        .map(|&sym| {
-                            let local = func.lookup_local(sym)
-                                .expect("named return variable must exist in locals");
-                            (local.storage.slot(), local.storage.value_slots())
-                        })
-                        .collect();
-                    
                     // Copy named return values to return area
-                    let total_ret_slots: u16 = named_return_info.iter().map(|(_, s)| *s).sum();
+                    let total_ret_slots: u16 = named_return_slots.iter().map(|(_, s)| *s).sum();
                     let ret_start = func.alloc_temp(total_ret_slots);
                     let mut offset = 0u16;
-                    for &(slot, slots) in &named_return_info {
+                    for &(slot, slots) in &named_return_slots {
                         func.emit_copy(ret_start + offset, slot, slots);
                         offset += slots;
                     }
@@ -900,6 +891,11 @@ fn compile_stmt_with_label(
                     
                     for pc in exit_info.break_patches {
                         func.patch_jump(pc, exit_pc);
+                    }
+                    
+                    // Patch continue jumps to loop_start (re-evaluate condition)
+                    for pc in exit_info.continue_patches {
+                        func.patch_jump(pc, loop_start);
                     }
                 }
 
@@ -2049,7 +2045,7 @@ pub fn compile_iface_assign(
             src_type
         };
         // Pass type_key for lookup_field_or_method during itab building
-        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id)
+        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id, info.tc_objs())
     };
     
     if src_vk.needs_boxing() {

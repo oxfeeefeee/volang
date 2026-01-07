@@ -1,0 +1,29 @@
+package main
+
+import "io"
+import "errors"
+
+// Local package-level interface variable
+var TestErr error = errors.NewCode(1000, "test error")
+
+func main() {
+	// Test local package-level interface
+	println("=== Local package interface ===")
+	println("TestErr:", TestErr)
+	println("TestErr == nil:", TestErr == nil)
+	
+	// Test cross-package interface
+	println("\n=== Cross-package interface (io.EOF) ===")
+	println("io.EOF:", io.EOF)
+	println("io.EOF == nil:", io.EOF == nil)
+	
+	// Additional checks
+	println("\n=== Additional checks ===")
+	var localNil error = nil
+	println("localNil == nil:", localNil == nil)
+	
+	var assigned error = io.EOF
+	println("assigned = io.EOF")
+	println("assigned:", assigned)
+	println("assigned == nil:", assigned == nil)
+}

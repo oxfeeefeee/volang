@@ -143,7 +143,8 @@ fn builtin_copy(call: &mut ExternCallContext) -> ExternResult {
     let dst_ptr = slice::data_ptr(dst);
     let src_ptr = slice::data_ptr(src);
     
-    unsafe { core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, copy_len * elem_bytes) };
+    // Use copy (not copy_nonoverlapping) to support overlapping regions (Go semantics)
+    unsafe { core::ptr::copy(src_ptr, dst_ptr, copy_len * elem_bytes) };
     
     call.ret_i64(0, copy_len as i64);
     ExternResult::Ok

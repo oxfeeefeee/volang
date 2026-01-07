@@ -1,0 +1,24 @@
+package main
+
+// Test: private (lowercase) type assigned to interface
+
+type Writer interface {
+	Write(p []byte) (n int, err error)
+}
+
+// devNull is a private type (lowercase)
+type devNull struct{}
+
+func (devNull) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+// Discard is a public variable of private type
+var Discard Writer = devNull{}
+
+func main() {
+	n, err := Discard.Write([]byte("hello"))
+	assert(n == 5, "should write 5 bytes")
+	assert(err == nil, "should not have error")
+	println("private_type_itab: PASSED")
+}

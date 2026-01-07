@@ -478,12 +478,18 @@ impl Checker {
         };
 
         // Create param var and declare (like goscript's collect_params)
-        let recv_name = self.resolve_ident(&r.name).to_string();
+        // For anonymous receivers, use empty name (receiver is unused in method body)
+        let recv_name = r.name.as_ref()
+            .map(|n| self.resolve_ident(n).to_string())
+            .unwrap_or_default();
         let par = self.new_param_var(0, Some(self.pkg), recv_name, Some(recv_type));
         // Function parameters are visible from the start of the function scope
         let scope_pos = self.scope(scope_key).pos();
         self.declare(scope_key, par, scope_pos);
-        self.result.record_def(r.name.clone(), Some(par));
+        // Only record def if receiver has a name
+        if let Some(name) = &r.name {
+            self.result.record_def(name.clone(), Some(par));
+        }
 
         vec![par]
     }

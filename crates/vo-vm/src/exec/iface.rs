@@ -60,19 +60,19 @@ pub fn exec_iface_assign(
             // Get named_type_id from runtime_types
             // For Named types: Named(id) -> id
             // For Pointer types: Pointer(Named(id)) -> id (methods are on base type)
-            let named_type_id = module.runtime_types.get(src_rttid as usize)
-                .and_then(|rt| extract_named_type_id(rt, &module.runtime_types))
-                .unwrap_or(0);
+            // Note: named_type_id=0 is valid (e.g., bytes.Buffer), so use Option
+            let named_type_id_opt = module.runtime_types.get(src_rttid as usize)
+                .and_then(|rt| extract_named_type_id(rt, &module.runtime_types));
             
-            if named_type_id == 0 {
-                0  // primitive or nil - no methods
-            } else {
+            if let Some(named_type_id) = named_type_id_opt {
                 itab_cache.get_or_create(
                     named_type_id,
                     iface_meta_id,
                     &module.named_type_metas,
                     &module.interface_metas,
                 )
+            } else {
+                0  // primitive or nil - no methods, itab_id=0 means empty itab
             }
         };
         (src_rttid, src_vk, itab_id)

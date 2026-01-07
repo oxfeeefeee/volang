@@ -35,6 +35,12 @@ pub fn exec_slice_slice(stack: &mut [u64], bp: usize, inst: &Instruction, gc: &m
     let is_array = (inst.flags & 0b01) != 0;
     let has_max = (inst.flags & 0b10) != 0;
     
+    // nil slice slicing returns nil (Go semantics: nil[0:0] == nil)
+    if s.is_null() && !is_array {
+        stack[bp + inst.a as usize] = 0;
+        return;
+    }
+    
     let result = if is_array {
         // Input is array: create slice from array range
         let cap = if has_max {

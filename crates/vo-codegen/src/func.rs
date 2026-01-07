@@ -117,7 +117,7 @@ pub struct FuncBuilder {
     next_slot: u16,
     locals: HashMap<Symbol, LocalVar>,
     captures: HashMap<Symbol, CaptureVar>,  // closure captures
-    named_return_symbols: Vec<Symbol>,      // symbols of named return variables
+    named_return_slots: Vec<(u16, u16)>,    // (slot, slots) for named return variables
     slot_types: Vec<SlotType>,
     code: Vec<Instruction>,
     loop_stack: Vec<LoopContext>,
@@ -138,7 +138,7 @@ impl FuncBuilder {
             next_slot: 0,
             locals: HashMap::new(),
             captures: HashMap::new(),
-            named_return_symbols: Vec::new(),
+            named_return_slots: Vec::new(),
             slot_types: Vec::new(),
             code: Vec::new(),
             loop_stack: Vec::new(),
@@ -173,15 +173,18 @@ impl FuncBuilder {
 
     // === Parameter definition ===
 
-    pub fn define_param(&mut self, sym: Symbol, slots: u16, types: &[SlotType]) -> u16 {
+    /// Define a parameter. If `sym` is None, allocates slots without name binding (anonymous parameter).
+    pub fn define_param(&mut self, sym: Option<Symbol>, slots: u16, types: &[SlotType]) -> u16 {
         let slot = self.next_slot;
-        self.locals.insert(
-            sym,
-            LocalVar {
-                symbol: sym,
-                storage: StorageKind::StackValue { slot, slots },
-            },
-        );
+        if let Some(s) = sym {
+            self.locals.insert(
+                s,
+                LocalVar {
+                    symbol: s,
+                    storage: StorageKind::StackValue { slot, slots },
+                },
+            );
+        }
         self.slot_types.extend_from_slice(types);
         self.next_slot += slots;
         self.param_count += 1;
@@ -281,14 +284,14 @@ impl FuncBuilder {
         slot
     }
 
-    /// Register a named return variable symbol.
-    pub fn register_named_return(&mut self, sym: Symbol) {
-        self.named_return_symbols.push(sym);
+    /// Register a named return variable's slot info (for bare return).
+    pub fn register_named_return(&mut self, slot: u16, slots: u16) {
+        self.named_return_slots.push((slot, slots));
     }
 
-    /// Get named return variable symbols (for bare return statement).
-    pub fn named_return_symbols(&self) -> &[Symbol] {
-        &self.named_return_symbols
+    /// Get named return variable slots (for bare return statement).
+    pub fn named_return_slots(&self) -> &[(u16, u16)] {
+        &self.named_return_slots
     }
 
     // === Query ===

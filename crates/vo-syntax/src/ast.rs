@@ -238,8 +238,8 @@ impl FuncDecl {
 /// A method receiver.
 #[derive(Debug, Clone)]
 pub struct Receiver {
-    /// The receiver variable name.
-    pub name: Ident,
+    /// The receiver variable name (None for anonymous receiver like `func (T) Method()`).
+    pub name: Option<Ident>,
     /// The receiver type name.
     pub ty: Ident,
     /// Whether this is a pointer receiver (*T).

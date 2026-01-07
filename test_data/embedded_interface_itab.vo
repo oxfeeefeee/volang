@@ -1,0 +1,57 @@
+package main
+
+// Test: embedded interface method promotion for itab building
+
+type Reader interface {
+	Read(p []byte) (n int, err error)
+}
+
+type Closer interface {
+	Close() error
+}
+
+type ReadCloser interface {
+	Reader
+	Closer
+}
+
+// nopCloser embeds Reader interface - Read method should be promoted
+type nopCloser struct {
+	Reader
+}
+
+func (nopCloser) Close() error { return nil }
+
+// NopCloser returns a ReadCloser wrapping the provided Reader
+func NopCloser(r Reader) ReadCloser {
+	return nopCloser{r}  // This requires itab with Read + Close
+}
+
+// Simple Reader implementation for testing
+type stringReader struct {
+	s string
+	i int
+}
+
+func (r *stringReader) Read(p []byte) (int, error) {
+	if r.i >= len(r.s) {
+		return 0, nil
+	}
+	n := copy(p, []byte(r.s[r.i:]))
+	r.i += n
+	return n, nil
+}
+
+func main() {
+	var r Reader = &stringReader{s: "hello"}
+	rc := NopCloser(r)
+	
+	buf := make([]byte, 10)
+	n, _ := rc.Read(buf)
+	println("read", n, "bytes")
+	
+	err := rc.Close()
+	if err == nil {
+		println("close succeeded")
+	}
+}

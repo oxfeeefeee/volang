@@ -18,9 +18,9 @@ use crate::type_info::TypeInfoWrapper;
 /// Returns the first parameter slot if any parameters were defined.
 fn define_forwarded_params(builder: &mut FuncBuilder, param_slots: u16) -> Option<u16> {
     if param_slots > 0 {
-        let first = builder.define_param(Symbol::DUMMY, 1, &[SlotType::Value]);
+        let first = builder.define_param(None, 1, &[SlotType::Value]);
         for _ in 1..param_slots {
-            builder.define_param(Symbol::DUMMY, 1, &[SlotType::Value]);
+            builder.define_param(None, 1, &[SlotType::Value]);
         }
         Some(first)
     } else {
@@ -63,14 +63,14 @@ pub fn generate_iface_wrapper(
     // Wrapper receives interface data slot as first parameter (1 slot)
     builder.set_recv_slots(1);
     let slot_type = if needs_unbox { SlotType::GcRef } else { SlotType::Value };
-    let data_slot = builder.define_param(Symbol::DUMMY, 1, &[slot_type]);
+    let data_slot = builder.define_param(None, 1, &[slot_type]);
     
     // Define other parameters (forwarded from original function)
     let mut wrapper_param_slots = Vec::new();
     for param in &func_decl.sig.params {
         let (slots, slot_types) = info.type_expr_layout(param.ty.id);
         for name in &param.names {
-            let slot = builder.define_param(name.symbol, slots, &slot_types);
+            let slot = builder.define_param(Some(name.symbol), slots, &slot_types);
             wrapper_param_slots.push((slot, slots));
         }
     }
@@ -167,7 +167,7 @@ pub fn generate_promoted_wrapper(
     
     // Define receiver parameter (GcRef to outer type)
     builder.set_recv_slots(1);
-    let outer_gcref = builder.define_param(Symbol::DUMMY, 1, &[SlotType::GcRef]);
+    let outer_gcref = builder.define_param(None, 1, &[SlotType::GcRef]);
     
     // Define forwarded params
     let first_param_slot = define_forwarded_params(&mut builder, forwarded_param_slots);
@@ -290,7 +290,7 @@ pub fn generate_embedded_iface_wrapper(
     
     // Receiver: GcRef to outer struct
     builder.set_recv_slots(1);
-    let outer_gcref = builder.define_param(Symbol::DUMMY, 1, &[SlotType::GcRef]);
+    let outer_gcref = builder.define_param(None, 1, &[SlotType::GcRef]);
     
     // Forward parameters
     let first_param_slot = define_forwarded_params(&mut builder, param_slots);
