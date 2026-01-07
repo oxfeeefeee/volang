@@ -75,8 +75,6 @@ tests:
   - file: proj_multifile/
   - file: proj_taskman/
   - file: qualified_embed_iface.vo
-    skip: [jit]
-    reason: "JIT bug - segfault in release"
   - file: range_string.vo
     skip: [jit]
     reason: "JIT timeout"
@@ -96,11 +94,7 @@ tests:
   - file: slice_map.vo
   - file: slice_ops.vo
   - file: stack_array_iter.vo
-    skip: [jit]
-    reason: "JIT bug - segfault in release"
   - file: stack_vs_escaped_array.vo
-    skip: [jit]
-    reason: "JIT bug - segfault in release"
   - file: stdlib/base64.vo
     skip: [vm, jit]
     reason: "stdlib not ready"
@@ -209,8 +203,6 @@ tests:
   - file: gc_closure_capture.vo
   - file: iface_to_iface_assign.vo
   - file: io_readfull_only.vo
-    skip: [jit]
-    reason: "JIT bug - segfault in release"
   - file: nil_slice_map.vo
   - file: packed_array.vo
   - file: private_type_itab.vo

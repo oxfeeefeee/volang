@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::{types, Block, Function, InstBuilder, MemFlags, Value};
+use cranelift_codegen::ir::{types, Block, Function, InstBuilder, MemFlags, StackSlot, Value};
+use cranelift_codegen::ir::StackSlotData;
+use cranelift_codegen::ir::StackSlotKind;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 
@@ -22,7 +24,7 @@ pub struct FunctionCompiler<'a> {
     current_pc: usize,
     helpers: HelperFuncs,
     reg_consts: HashMap<u16, i64>,
-    args_ptr: Value,
+    locals_slot: Option<StackSlot>,
 }
 
 impl<'a> FunctionCompiler<'a> {
@@ -47,7 +49,7 @@ impl<'a> FunctionCompiler<'a> {
             current_pc: 0,
             helpers,
             reg_consts: HashMap::new(),
-            args_ptr: Value::from_u32(0),
+            locals_slot: None,
         }
     }
 
@@ -120,18 +122,43 @@ impl<'a> FunctionCompiler<'a> {
         let args = params[1];
         let _ret = params[2];
         
-        self.args_ptr = args;
-        
+        let num_slots = self.func_def.local_slots as usize;
         let param_slots = self.func_def.param_slots as usize;
-        for i in 0..param_slots {
-            let offset = (i * 8) as i32;
-            let val = self.builder.ins().load(types::I64, MemFlags::trusted(), args, offset);
-            self.builder.def_var(self.vars[i], val);
-        }
         
-        let zero = self.builder.ins().iconst(types::I64, 0);
-        for i in param_slots..self.vars.len() {
-            self.builder.def_var(self.vars[i], zero);
+        // Create stack slot for locals (used by SlotGet/SlotSet for stack arrays)
+        if num_slots > 0 {
+            let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (num_slots * 8) as u32,
+                8,
+            ));
+            self.locals_slot = Some(slot);
+            
+            // Initialize all slots to 0 (important for array initial values)
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            for i in 0..num_slots {
+                self.builder.ins().stack_store(zero, slot, (i * 8) as i32);
+            }
+            
+            // Load params from args into both SSA vars and stack_slot
+            for i in 0..param_slots {
+                let offset = (i * 8) as i32;
+                let val = self.builder.ins().load(types::I64, MemFlags::trusted(), args, offset);
+                self.builder.def_var(self.vars[i], val);
+                self.builder.ins().stack_store(val, slot, offset);
+            }
+            
+            // Initialize non-param SSA vars to 0
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            for i in param_slots..self.vars.len() {
+                self.builder.def_var(self.vars[i], zero);
+            }
+        } else {
+            // No locals, just initialize SSA vars
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            for i in 0..self.vars.len() {
+                self.builder.def_var(self.vars[i], zero);
+            }
         }
     }
 
@@ -494,7 +521,14 @@ impl<'a> FunctionCompiler<'a> {
 impl<'a> IrEmitter<'a> for FunctionCompiler<'a> {
     fn builder(&mut self) -> &mut FunctionBuilder<'a> { &mut self.builder }
     fn read_var(&mut self, slot: u16) -> Value { self.builder.use_var(self.vars[slot as usize]) }
-    fn write_var(&mut self, slot: u16, val: Value) { self.builder.def_var(self.vars[slot as usize], val) }
+    fn write_var(&mut self, slot: u16, val: Value) {
+        self.builder.def_var(self.vars[slot as usize], val);
+        // Also write to stack_slot to keep SSA and memory in sync
+        // (needed for array literal initialization which uses LoadInt but SlotGetN reads from memory)
+        if let Some(locals_slot) = self.locals_slot {
+            self.builder.ins().stack_store(val, locals_slot, (slot as i32) * 8);
+        }
+    }
     fn ctx_param(&mut self) -> Value { self.builder.block_params(self.entry_block)[0] }
     fn gc_ptr(&mut self) -> Value {
         let ctx = self.ctx_param();
@@ -512,7 +546,7 @@ impl<'a> IrEmitter<'a> for FunctionCompiler<'a> {
     fn get_reg_const(&self, reg: u16) -> Option<i64> { self.reg_consts.get(&reg).copied() }
     fn panic_return_value(&self) -> i32 { 1 }
     fn var_addr(&mut self, slot: u16) -> Value {
-        let offset = (slot as i64) * 8;
-        self.builder.ins().iadd_imm(self.args_ptr, offset)
+        let locals_slot = self.locals_slot.expect("var_addr called but no locals_slot");
+        self.builder.ins().stack_addr(types::I64, locals_slot, (slot as i32) * 8)
     }
 }
