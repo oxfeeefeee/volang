@@ -136,6 +136,10 @@ pub enum TypeError {
     EmbeddedPointerInterface = 2408,
     /// Field redeclared.
     FieldRedeclared = 2409,
+    /// Pointer type must point to struct.
+    PointerToNonStruct = 2410,
+    /// Address-of operand must be struct type.
+    AddrOfNonStruct = 2411,
 
     // === Statement (2500-2599) ===
     /// Missing return.
@@ -346,6 +350,8 @@ impl TypeError {
             TypeError::EmbeddedPointer => "embedded field type cannot be a pointer",
             TypeError::EmbeddedPointerInterface => "embedded field type cannot be a pointer to an interface",
             TypeError::FieldRedeclared => "field redeclared",
+            TypeError::PointerToNonStruct => "pointer type must point to a struct type",
+            TypeError::AddrOfNonStruct => "cannot take address of non-struct value",
 
             // Statement
             TypeError::MissingReturn => "missing return",

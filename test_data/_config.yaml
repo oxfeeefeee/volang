@@ -153,6 +153,14 @@ tests:
     zip_root: src/
     reason: "project in src/ subdirectory"
 
+  # Typechecker tests - should_fail: pointer must be struct
+  - file: typechecker/pointer_must_be_struct.vo
+    should_fail: true
+    reason: "pointer types must point to struct types (Vo spec)"
+  - file: typechecker/addr_of_must_be_struct.vo
+    should_fail: true
+    reason: "address-of operator only valid for struct types (Vo spec)"
+
   # Typechecker tests - complex test cases with multiple issues (parser/compiler bugs fixed, test cases need review)
   - file: typechecker/method_sig_complex_params.vo
   - file: typechecker/method_sig_func_types.vo

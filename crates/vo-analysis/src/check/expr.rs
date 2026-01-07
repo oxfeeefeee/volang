@@ -134,8 +134,22 @@ impl Checker {
                         }
                     }
                 }
+                
+                // Spec: &x is only valid when x is a struct type
+                let xtype = x.typ.unwrap();
+                let underlying = typ::underlying_type(xtype, self.objs());
+                if self.otype(underlying).try_as_struct().is_none() {
+                    self.error_code_msg(
+                        TypeError::AddrOfNonStruct,
+                        operand_expr.span,
+                        format!("cannot take address of {} (only struct types allowed)", self.type_str(xtype)),
+                    );
+                    x.mode = OperandMode::Invalid;
+                    return;
+                }
+                
                 x.mode = OperandMode::Value;
-                x.typ = Some(self.new_t_pointer(x.typ.unwrap()));
+                x.typ = Some(self.new_t_pointer(xtype));
             }
             UnaryOp::Deref => {
                 // Dereference operation

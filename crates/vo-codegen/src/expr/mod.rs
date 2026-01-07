@@ -713,6 +713,8 @@ fn compile_try_unwrap(
     Ok(())
 }
 
+/// Compile address-of operator (&x).
+/// Spec: only struct types can have their address taken.
 fn compile_addr_of(
     operand: &Expr,
     dst: u16,
@@ -720,6 +722,7 @@ fn compile_addr_of(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Case 1: &ident - variable on heap
     if let ExprKind::Ident(ident) = &operand.kind {
         if let Some(local) = func.lookup_local(ident.symbol) {
             if local.storage.is_heap() {
@@ -729,6 +732,7 @@ fn compile_addr_of(
         }
     }
     
+    // Case 2: &slice[i] or &array[i] - get element address (element must be struct, validated by checker)
     if let ExprKind::Index(index_expr) = &operand.kind {
         let container_type = info.expr_type(index_expr.expr.id);
         if info.is_slice(container_type) || info.is_array(container_type) {
@@ -736,6 +740,7 @@ fn compile_addr_of(
         }
     }
     
+    // Case 3: &CompositeLit{} - allocate struct on heap
     if let ExprKind::CompositeLit(lit) = &operand.kind {
         let type_key = info.expr_type(operand.id);
         let slots = info.type_slot_count(type_key);

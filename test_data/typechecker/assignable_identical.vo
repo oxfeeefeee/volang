@@ -133,13 +133,17 @@ func testPointerAssignment() {
     assert(p.x == 150, "testPointerAssignment: p.x should be 150")
 }
 
-func testPointerToNamedType() {
-    var a MyInt = 77
-    var ptr *MyInt = &a
-    assert(*ptr == 77, "testPointerToNamedType: *ptr should be 77")
+func testPointerToNamedStruct() {
+    // Vo spec: pointers only for struct types
+    // MyInt is not a struct, so *MyInt is not valid
+    // Test with struct instead
+    type MyPoint struct{ x, y int }
+    var p MyPoint = MyPoint{x: 77, y: 88}
+    var ptr *MyPoint = &p
+    assert(ptr.x == 77, "testPointerToNamedType: ptr.x should be 77")
     
-    *ptr = 88
-    assert(a == 88, "testPointerToNamedType: a should be 88")
+    ptr.x = 99
+    assert(p.x == 99, "testPointerToNamedType: p.x should be 99")
 }
 
 // ============================================
@@ -192,7 +196,7 @@ func main() {
     testSliceLiteralToNamed()
     testMapLiteralToNamed()
     testPointerAssignment()
-    testPointerToNamedType()
+    testPointerToNamedStruct()
     testFunctionReturnAssignment()
     testMultipleAssignment()
     

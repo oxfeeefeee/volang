@@ -8,9 +8,7 @@ package main
 // ============================================
 
 func testNilToPointer() {
-    var p *int = nil
-    assert(p == nil, "testNilToPointer: p should be nil")
-    
+    // Vo spec: pointers only for struct types
     type Point struct{ x, y int }
     var pp *Point = nil
     assert(pp == nil, "testNilToPointer: pp should be nil")
@@ -56,7 +54,9 @@ func testNilToInterface() {
 // ============================================
 
 func testNilComparison() {
-    var p *int = nil
+    // Vo spec: pointers only for struct types
+    type Point struct{ x, y int }
+    var p *Point = nil
     var s []int = nil
     var m map[string]int = nil
     var ch chan int = nil
@@ -69,7 +69,7 @@ func testNilComparison() {
     assert(e == nil, "testNilComparison: e == nil")
     
     // Not nil after assignment
-    p2 := new(int)
+    p2 := &Point{x: 1, y: 2}
     assert(p2 != nil, "testNilComparison: p2 != nil")
     
     s2 := make([]int, 0)
@@ -129,10 +129,11 @@ func testNilInterfaceMethodCall() {
 // Part 4: nil in Function Returns
 // ============================================
 
-func mayReturnNilPointer(flag bool) *int {
+type IntWrapper struct{ value int }
+
+func mayReturnNilPointer(flag bool) *IntWrapper {
     if flag {
-        x := 42
-        return &x
+        return &IntWrapper{value: 42}
     }
     return nil
 }
@@ -164,7 +165,7 @@ func testNilFunctionReturns() {
     
     p2 := mayReturnNilPointer(true)
     assert(p2 != nil, "testNilFunctionReturns: p2 should not be nil")
-    assert(*p2 == 42, "testNilFunctionReturns: *p2 should be 42")
+    assert(p2.value == 42, "testNilFunctionReturns: p2.value should be 42")
     
     s := mayReturnNilSlice(false)
     assert(s == nil, "testNilFunctionReturns: s should be nil")
@@ -190,13 +191,13 @@ func testNilFunctionReturns() {
 // ============================================
 
 func testNilReassignment() {
-    var p *int
+    type Value struct{ n int }
+    var p *Value
     assert(p == nil, "testNilReassignment: initial p should be nil")
     
-    x := 10
-    p = &x
+    p = &Value{n: 10}
     assert(p != nil, "testNilReassignment: p should not be nil")
-    assert(*p == 10, "testNilReassignment: *p should be 10")
+    assert(p.n == 10, "testNilReassignment: p.n should be 10")
     
     p = nil
     assert(p == nil, "testNilReassignment: p should be nil again")

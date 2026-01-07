@@ -170,6 +170,27 @@ impl Checker {
                 let base_type = self.indirect_type(base);
                 let t = self.new_t_pointer(base_type);
                 set_underlying(Some(t), &mut self.tc_objs);
+                
+                // Spec: pointer types are only valid when base type is a struct
+                // Delay this check because the base type may not be fully resolved yet
+                // (e.g., recursive types like `type Node struct { left *Node }`)
+                let base_span = base.span;
+                let f = move |checker: &mut Checker| {
+                    let invalid_type = checker.invalid_type();
+                    if base_type == invalid_type {
+                        return;
+                    }
+                    let underlying = typ::underlying_type(base_type, checker.objs());
+                    if checker.otype(underlying).try_as_struct().is_none() {
+                        checker.error_code_msg(
+                            TypeError::PointerToNonStruct,
+                            base_span,
+                            format!("invalid pointer type *{} (base must be struct)", checker.type_str(base_type)),
+                        );
+                    }
+                };
+                self.later(Box::new(f));
+                
                 Some(t)
             }
             TypeExprKind::Interface(iface) => {
