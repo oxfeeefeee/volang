@@ -430,43 +430,43 @@ impl Checker {
     }
     
     #[inline]
-    pub(crate) fn new_pkg_name(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, imported: PackageKey) -> ObjKey {
-        self.tc_objs.new_pkg_name(pos, pkg, name, imported)
+    pub(crate) fn new_pkg_name(&mut self, span: Span, pkg: Option<PackageKey>, name: String, imported: PackageKey) -> ObjKey {
+        self.tc_objs.new_pkg_name(span, pkg, name, imported)
     }
     
     #[inline]
-    pub(crate) fn new_const(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, val: crate::constant::Value) -> ObjKey {
-        self.tc_objs.new_const(pos, pkg, name, typ, val)
+    pub(crate) fn new_const(&mut self, span: Span, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, val: crate::constant::Value) -> ObjKey {
+        self.tc_objs.new_const(span, pkg, name, typ, val)
     }
     
     #[inline]
-    pub(crate) fn new_var(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
-        self.tc_objs.new_var(pos, pkg, name, typ)
+    pub(crate) fn new_var(&mut self, span: Span, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
+        self.tc_objs.new_var(span, pkg, name, typ)
     }
     
     #[inline]
-    pub(crate) fn new_param_var(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
-        self.tc_objs.new_param_var(pos, pkg, name, typ)
+    pub(crate) fn new_param_var(&mut self, span: Span, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
+        self.tc_objs.new_param_var(span, pkg, name, typ)
     }
     
     #[inline]
-    pub(crate) fn new_field(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, embedded: bool) -> ObjKey {
-        self.tc_objs.new_field(pos, pkg, name, typ, embedded)
+    pub(crate) fn new_field(&mut self, span: Span, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, embedded: bool) -> ObjKey {
+        self.tc_objs.new_field(span, pkg, name, typ, embedded)
     }
     
     #[inline]
-    pub(crate) fn new_func(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, has_body: bool) -> ObjKey {
-        self.tc_objs.new_func(pos, pkg, name, typ, has_body)
+    pub(crate) fn new_func(&mut self, span: Span, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>, has_body: bool) -> ObjKey {
+        self.tc_objs.new_func(span, pkg, name, typ, has_body)
     }
     
     #[inline]
-    pub(crate) fn new_type_name(&mut self, pos: usize, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
-        self.tc_objs.new_type_name(pos, pkg, name, typ)
+    pub(crate) fn new_type_name(&mut self, span: Span, pkg: Option<PackageKey>, name: String, typ: Option<TypeKey>) -> ObjKey {
+        self.tc_objs.new_type_name(span, pkg, name, typ)
     }
     
     #[inline]
-    pub(crate) fn new_label(&mut self, pos: usize, pkg: Option<PackageKey>, name: String) -> ObjKey {
-        self.tc_objs.new_label(pos, pkg, name)
+    pub(crate) fn new_label(&mut self, span: Span, pkg: Option<PackageKey>, name: String) -> ObjKey {
+        self.tc_objs.new_label(span, pkg, name)
     }
     
     // Type creation wrappers
@@ -531,5 +531,15 @@ impl Checker {
     #[inline]
     pub(crate) fn new_t_named(&mut self, obj: Option<ObjKey>, underlying: Option<TypeKey>, methods: Vec<ObjKey>) -> TypeKey {
         self.tc_objs.new_t_named(obj, underlying, methods)
+    }
+    
+    /// Format a type as a string for error messages.
+    pub(crate) fn type_str(&self, t: TypeKey) -> String {
+        crate::display::type_string(t, &self.tc_objs)
+    }
+    
+    /// Get span from an object.
+    pub(crate) fn obj_span(&self, okey: ObjKey) -> Span {
+        self.lobj(okey).span()
     }
 }

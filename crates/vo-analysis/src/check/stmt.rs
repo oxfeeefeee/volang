@@ -184,7 +184,7 @@ impl Checker {
         use crate::obj::EntityType;
 
         let scope = &self.scope(skey);
-        let mut unused: Vec<(usize, String)> = scope
+        let mut unused: Vec<(Span, String)> = scope
             .elems()
             .iter()
             .filter_map(|(_, &okey)| {
@@ -192,7 +192,7 @@ impl Checker {
                 match lobj.entity_type() {
                     EntityType::Var(var) => {
                         if !var.used {
-                            Some((lobj.pos(), lobj.name().to_string()))
+                            Some((lobj.span(), lobj.name().to_string()))
                         } else {
                             None
                         }
@@ -201,10 +201,10 @@ impl Checker {
                 }
             })
             .collect();
-        unused.sort_by(|a, b| a.0.cmp(&b.0));
+        unused.sort_by(|a, b| a.0.start.cmp(&b.0.start));
 
-        for (pos, name) in unused {
-            self.error_code_msg(TypeError::UnusedVar, Span::new(vo_common::BytePos(pos as u32), vo_common::BytePos(pos as u32)), format!("{} declared but not used", name));
+        for (span, name) in unused {
+            self.error_code_msg(TypeError::UnusedVar, span, format!("{} declared but not used", name));
         }
 
         // Recursively check children scopes (but not function literal scopes)
@@ -846,7 +846,7 @@ impl Checker {
                             t = x.typ;
                         }
                         let name = self.resolve_symbol(lhs_ident.symbol).to_string();
-                        let okey = self.new_var(lhs_ident.span.start.to_usize(), Some(self.pkg), name, t);
+                        let okey = self.new_var(lhs_ident.span, Some(self.pkg), name, t);
                         // Type switch case variable scope starts at the case clause
                         let scope_pos = clause.types.last()
                             .and_then(|te| te.as_ref())
@@ -946,7 +946,7 @@ impl Checker {
                                         for (i, ident) in recv.lhs.iter().enumerate() {
                                             let name = self.resolve_symbol(ident.symbol).to_string();
                                             let var_type = rhs_types.get(i).copied().flatten();
-                                            let okey = self.new_var(ident.span.start.to_usize(), Some(self.pkg), name.clone(), var_type);
+                                            let okey = self.new_var(ident.span, Some(self.pkg), name.clone(), var_type);
                                             self.result.record_def(ident.clone(), Some(okey));
                                             if name != "_" {
                                                 new_vars.push(okey);
@@ -1085,7 +1085,7 @@ impl Checker {
                                 let name = self.resolve_ident(&ident).to_string();
                                 let has_name = name != "_";
                                 // Create var with type None - init_var will set type
-                                let okey = self.new_var(lhs_e.span.start.to_usize(), Some(self.pkg), name, None);
+                                let okey = self.new_var(lhs_e.span, Some(self.pkg), name, None);
                                 self.result.record_def(ident, Some(okey));
                                 if has_name {
                                     vars.push(okey);
@@ -1193,12 +1193,12 @@ impl Checker {
                 } else {
                     self.error_code_msg(TypeError::CannotAssign, ident.span, format!("cannot assign to {}", name));
                     // dummy variable
-                    let dummy = self.new_var(ident.span.start.to_usize(), Some(self.pkg), "_".to_string(), None);
+                    let dummy = self.new_var(ident.span, Some(self.pkg), "_".to_string(), None);
                     lhs_vars.push(dummy);
                 }
             } else {
                 // Declare new variable with type=None (init_var will set type)
-                let okey = self.new_var(ident.span.start.to_usize(), Some(self.pkg), name.clone(), None);
+                let okey = self.new_var(ident.span, Some(self.pkg), name.clone(), None);
                 if name != "_" {
                     new_vars.push(okey);
                 }

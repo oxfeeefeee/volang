@@ -10,6 +10,7 @@ use crate::typ::{self, BasicType};
 use crate::universe::Universe;
 use crate::package::Package;
 use std::borrow::Cow;
+use vo_common::span::Span;
 
 /// Returns a unique identifier for a (package, name) pair.
 pub fn get_id<'a>(pkg: Option<&'a Package>, name: &'a str) -> Cow<'a, str> {
@@ -206,7 +207,7 @@ pub(crate) enum ObjColor {
     Gray(usize),
 }
 
-/// Position type (will be replaced with proper span later).
+/// Position type for backward compatibility.
 pub type Pos = usize;
 
 /// A LangObj describes a named language entity.
@@ -214,7 +215,7 @@ pub type Pos = usize;
 pub struct LangObj {
     entity_type: EntityType,
     parent: Option<ScopeKey>,
-    pos: Pos,
+    span: Span,
     pkg: Option<PackageKey>,
     name: String,
     typ: Option<TypeKey>,
@@ -226,7 +227,7 @@ pub struct LangObj {
 impl LangObj {
     fn new(
         entity_type: EntityType,
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
@@ -239,7 +240,7 @@ impl LangObj {
         LangObj {
             entity_type,
             parent: None,
-            pos,
+            span,
             pkg,
             name,
             typ,
@@ -250,7 +251,7 @@ impl LangObj {
     }
 
     pub fn new_pkg_name(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         imported: PackageKey,
@@ -262,7 +263,7 @@ impl LangObj {
                 imported,
                 used: false,
             },
-            pos,
+            span,
             pkg,
             name,
             Some(t),
@@ -270,33 +271,33 @@ impl LangObj {
     }
 
     pub fn new_const(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
         val: ConstValue,
     ) -> LangObj {
-        LangObj::new(EntityType::Const { val }, pos, pkg, name, typ)
+        LangObj::new(EntityType::Const { val }, span, pkg, name, typ)
     }
 
     pub fn new_type_name(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
     ) -> LangObj {
-        LangObj::new(EntityType::TypeName, pos, pkg, name, typ)
+        LangObj::new(EntityType::TypeName, span, pkg, name, typ)
     }
 
     pub fn new_var(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
     ) -> LangObj {
         LangObj::new(
             EntityType::Var(VarProperty::new(false, false, false)),
-            pos,
+            span,
             pkg,
             name,
             typ,
@@ -304,14 +305,14 @@ impl LangObj {
     }
 
     pub fn new_param(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
     ) -> LangObj {
         LangObj::new(
             EntityType::Var(VarProperty::new(false, false, true)),
-            pos,
+            span,
             pkg,
             name,
             typ,
@@ -319,7 +320,7 @@ impl LangObj {
     }
 
     pub fn new_field(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
@@ -327,7 +328,7 @@ impl LangObj {
     ) -> LangObj {
         LangObj::new(
             EntityType::Var(VarProperty::new(embedded, true, false)),
-            pos,
+            span,
             pkg,
             name,
             typ,
@@ -335,7 +336,7 @@ impl LangObj {
     }
 
     pub fn new_func(
-        pos: Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
@@ -343,22 +344,22 @@ impl LangObj {
     ) -> LangObj {
         LangObj::new(
             EntityType::Func { has_ptr_recv: false, has_body },
-            pos,
+            span,
             pkg,
             name,
             typ,
         )
     }
 
-    pub fn new_label(pos: Pos, pkg: Option<PackageKey>, name: String, univ: &Universe) -> LangObj {
+    pub fn new_label(span: Span, pkg: Option<PackageKey>, name: String, univ: &Universe) -> LangObj {
         let t = univ.types()[&BasicType::Invalid];
-        LangObj::new(EntityType::Label { used: false }, pos, pkg, name, Some(t))
+        LangObj::new(EntityType::Label { used: false }, span, pkg, name, Some(t))
     }
 
     pub fn new_builtin(builtin: Builtin, typ: TypeKey) -> LangObj {
         LangObj::new(
             EntityType::Builtin(builtin),
-            0,
+            Span::default(),
             None,
             builtin.name().to_string(),
             Some(typ),
@@ -366,7 +367,7 @@ impl LangObj {
     }
 
     pub fn new_nil(typ: TypeKey) -> LangObj {
-        LangObj::new(EntityType::Nil, 0, None, "nil".to_string(), Some(typ))
+        LangObj::new(EntityType::Nil, Span::default(), None, "nil".to_string(), Some(typ))
     }
 
     // Getters
@@ -383,7 +384,11 @@ impl LangObj {
     }
 
     pub fn pos(&self) -> Pos {
-        self.pos
+        self.span.start.to_usize()
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
     }
 
     pub fn name(&self) -> &str {

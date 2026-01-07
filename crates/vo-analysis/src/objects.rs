@@ -12,6 +12,7 @@ use crate::typ::Type;
 use crate::universe::Universe;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use vo_common::span::Span;
 
 // Define all key types used in type checking
 crate::define_key! {
@@ -161,91 +162,91 @@ impl TCObjects {
 
     pub fn new_pkg_name(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         imported: PackageKey,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_pkg_name(pos, pkg, name, imported, self.universe());
+        let lobj = crate::obj::LangObj::new_pkg_name(span, pkg, name, imported, self.universe());
         self.lobjs.insert(lobj)
     }
 
     pub fn new_const(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
         val: crate::obj::ConstValue,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_const(pos, pkg, name, typ, val);
+        let lobj = crate::obj::LangObj::new_const(span, pkg, name, typ, val);
         self.lobjs.insert(lobj)
     }
 
     pub fn new_type_name(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_type_name(pos, pkg, name, typ);
+        let lobj = crate::obj::LangObj::new_type_name(span, pkg, name, typ);
         self.lobjs.insert(lobj)
     }
 
     pub fn new_var(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_var(pos, pkg, name, typ);
+        let lobj = crate::obj::LangObj::new_var(span, pkg, name, typ);
         self.lobjs.insert(lobj)
     }
 
     pub fn new_param_var(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_param(pos, pkg, name, typ);
+        let lobj = crate::obj::LangObj::new_param(span, pkg, name, typ);
         self.lobjs.insert(lobj)
     }
 
     pub fn new_field(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
         embedded: bool,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_field(pos, pkg, name, typ, embedded);
+        let lobj = crate::obj::LangObj::new_field(span, pkg, name, typ, embedded);
         self.lobjs.insert(lobj)
     }
 
     pub fn new_func(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
         typ: Option<TypeKey>,
         has_body: bool,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_func(pos, pkg, name, typ, has_body);
+        let lobj = crate::obj::LangObj::new_func(span, pkg, name, typ, has_body);
         self.lobjs.insert(lobj)
     }
 
     pub fn new_label(
         &mut self,
-        pos: crate::obj::Pos,
+        span: Span,
         pkg: Option<PackageKey>,
         name: String,
     ) -> ObjKey {
-        let lobj = crate::obj::LangObj::new_label(pos, pkg, name, self.universe());
+        let lobj = crate::obj::LangObj::new_label(span, pkg, name, self.universe());
         self.lobjs.insert(lobj)
     }
 

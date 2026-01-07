@@ -185,14 +185,14 @@ impl Checker {
         } else if sig_val.variadic() {
             self.lobj(params.vars()[n - 1]).typ().unwrap()
         } else {
-            self.error_code(TypeError::TooManyArgs, Span::default());
+            self.error_code(TypeError::TooManyArgs, x.pos());
             return;
         };
 
         if ellipsis {
             // Argument is of the form x... and x is single-valued
             if i != n - 1 {
-                self.error_code(TypeError::SpreadMismatch, Span::default());
+                self.error_code(TypeError::SpreadMismatch, x.pos());
                 return;
             }
             // Check that x is assignable to the slice type
@@ -200,7 +200,7 @@ impl Checker {
             if self.otype(xtype).underlying_val(self.objs()).try_as_slice().is_none()
                 && xtype != self.basic_type(typ::BasicType::UntypedNil)
             {
-                self.error_code(TypeError::InvalidVariadicArg, Span::default());
+                self.error_code(TypeError::InvalidVariadicArg, x.pos());
                 return;
             }
         } else if sig_val.variadic() && i >= n - 1 {

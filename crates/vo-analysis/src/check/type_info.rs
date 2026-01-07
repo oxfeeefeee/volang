@@ -152,13 +152,13 @@ impl TypeInfo {
     ) {
         use vo_syntax::ast::ExprKind;
         
-        let pos = expr.span.start.to_usize();
+        let span = expr.span;
         let mut e = expr;
         loop {
             let tv = self.types.get_mut(&e.id).unwrap();
             let vars = vec![
-                tc_objs.lobjs.insert(obj::LangObj::new_var(pos, Some(pkg), String::new(), Some(t[0]))),
-                tc_objs.lobjs.insert(obj::LangObj::new_var(pos, Some(pkg), String::new(), Some(t[1]))),
+                tc_objs.lobjs.insert(obj::LangObj::new_var(span, Some(pkg), String::new(), Some(t[0]))),
+                tc_objs.lobjs.insert(obj::LangObj::new_var(span, Some(pkg), String::new(), Some(t[1]))),
             ];
             tv.typ = tc_objs.new_t_tuple(vars);
             match &e.kind {

@@ -212,15 +212,16 @@ impl Checker {
         if cycle.is_empty() {
             return;
         }
-        let o = self.lobj(cycle[0]);
-        self.error_code_msg(TypeError::InitCycle, Span::default(), format!("initialization cycle for {}", o.name()));
-        self.error_code_msg(TypeError::RefersTo, Span::default(), format!("\t{} refers to", o.name()));
+        let first = cycle[0];
+        let o = self.lobj(first);
+        self.error_code_msg(TypeError::InitCycle, self.obj_span(first), format!("initialization cycle for {}", o.name()));
+        self.error_code_msg(TypeError::RefersTo, self.obj_span(first), format!("\t{} refers to", o.name()));
         for okey in cycle[1..].iter().rev() {
             let o = self.lobj(*okey);
-            self.error_code_msg(TypeError::RefersTo, Span::default(), format!("\t{} refers to", o.name()));
+            self.error_code_msg(TypeError::RefersTo, self.obj_span(*okey), format!("\t{} refers to", o.name()));
         }
-        let o = self.lobj(cycle[0]);
-        self.error_code_msg(TypeError::RefersTo, Span::default(), format!("\t{}", o.name()));
+        let o = self.lobj(first);
+        self.error_code_msg(TypeError::RefersTo, self.obj_span(first), format!("\t{}", o.name()));
     }
 }
 

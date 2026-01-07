@@ -6,6 +6,7 @@
 
 use crate::obj::{Builtin, ConstValue, LangObj};
 use crate::objects::{ObjKey, PackageKey, ScopeKey, TCObjects, TypeKey};
+use vo_common::span::Span;
 use crate::package::Package;
 use crate::scope::Scope;
 use crate::typ::{
@@ -102,7 +103,7 @@ impl Universe {
         let no_value_tuple = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
         
         // Create indir sentinel for type cycle detection
-        let indir = objs.lobjs.insert(LangObj::new_type_name(0, None, "*".to_string(), None));
+        let indir = objs.lobjs.insert(LangObj::new_type_name(Span::default(), None, "*".to_string(), None));
         
         // Create guard_sig for func cycle detection
         let guard_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
@@ -186,7 +187,7 @@ impl Universe {
         let any_type = objs.types.insert(Type::Interface(InterfaceDetail::new_empty()));
 
         let type_name = objs.lobjs.insert(LangObj::new_type_name(
-            0,
+            Span::default(),
             None,
             "any".to_string(),
             Some(any_type),
@@ -304,7 +305,7 @@ impl Universe {
                 continue;
             }
 
-            let obj = LangObj::new_type_name(0, None, name.clone(), Some(type_key));
+            let obj = LangObj::new_type_name(Span::default(), None, name.clone(), Some(type_key));
             let obj_key = objs.lobjs.insert(obj);
             Scope::insert(universe_scope, obj_key, objs);
         }
@@ -335,7 +336,7 @@ impl Universe {
         // === Error() string ===
         let err_res_var = objs
             .lobjs
-            .insert(LangObj::new_var(0, None, "".to_string(), Some(string_type)));
+            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(string_type)));
         let err_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
         let err_results = objs
             .types
@@ -345,12 +346,12 @@ impl Universe {
         )));
         let err_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Error".to_string(), Some(err_sig), false));
+            .insert(LangObj::new_func(Span::default(), None, "Error".to_string(), Some(err_sig), false));
 
         // === Code() int ===
         let code_res_var = objs
             .lobjs
-            .insert(LangObj::new_var(0, None, "".to_string(), Some(int_type)));
+            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(int_type)));
         let code_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
         let code_results = objs
             .types
@@ -360,12 +361,12 @@ impl Universe {
         )));
         let code_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Code".to_string(), Some(code_sig), false));
+            .insert(LangObj::new_func(Span::default(), None, "Code".to_string(), Some(code_sig), false));
 
         // === Unwrap() error ===
         let unwrap_res_var = objs
             .lobjs
-            .insert(LangObj::new_var(0, None, "".to_string(), Some(error_type)));
+            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(error_type)));
         let unwrap_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
         let unwrap_results = objs
             .types
@@ -375,12 +376,12 @@ impl Universe {
         )));
         let unwrap_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Unwrap".to_string(), Some(unwrap_sig), false));
+            .insert(LangObj::new_func(Span::default(), None, "Unwrap".to_string(), Some(unwrap_sig), false));
 
         // === Data() any ===
         let data_res_var = objs
             .lobjs
-            .insert(LangObj::new_var(0, None, "".to_string(), Some(any_type)));
+            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(any_type)));
         let data_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
         let data_results = objs
             .types
@@ -390,7 +391,7 @@ impl Universe {
         )));
         let data_method = objs
             .lobjs
-            .insert(LangObj::new_func(0, None, "Data".to_string(), Some(data_sig), false));
+            .insert(LangObj::new_func(Span::default(), None, "Data".to_string(), Some(data_sig), false));
 
         // Create underlying interface type
         let mut iface = InterfaceDetail::new(vec![err_method, code_method, unwrap_method, data_method], vec![]);
@@ -407,7 +408,7 @@ impl Universe {
 
         // Create type name object
         let type_name = objs.lobjs.insert(LangObj::new_type_name(
-            0,
+            Span::default(),
             None,
             "error".to_string(),
             Some(error_type),
@@ -444,7 +445,7 @@ impl Universe {
 
         for (name, typ, val, is_iota) in consts {
             let type_key = types[&typ];
-            let obj = LangObj::new_const(0, None, name.to_string(), Some(type_key), val);
+            let obj = LangObj::new_const(Span::default(), None, name.to_string(), Some(type_key), val);
             let obj_key = objs.lobjs.insert(obj);
             Scope::insert(universe_scope, obj_key, objs);
             if is_iota {

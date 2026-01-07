@@ -230,7 +230,7 @@ impl Checker {
                         let pkg_val = self.package(*imported);
                         self.error_code_msg(
                             TypeError::Redeclared,
-                            Span::default(),
+                            self.obj_span(okey),
                             format!(
                                 "{} already declared through import of {}",
                                 alt_val.name(),
@@ -242,7 +242,7 @@ impl Checker {
                             let pkg_val = self.package(pkg_key);
                             self.error_code_msg(
                                 TypeError::Redeclared,
-                                Span::default(),
+                                self.obj_span(okey),
                                 format!(
                                     "{} already declared through dot-import of {}",
                                     alt_val.name(),
@@ -319,7 +319,7 @@ impl Checker {
 
         // Create package name object
         let pkg_name_obj = self.tc_objs.new_pkg_name(
-            0, // pos
+            import.span,
             Some(self.pkg),
             name.clone(),
             imp,
@@ -380,7 +380,7 @@ impl Checker {
                     for (i, name) in spec.names.iter().enumerate() {
                         let name_str = self.resolve_ident(name);
                         let okey = self.tc_objs.new_const(
-                            0, // pos
+                            name.span,
                             Some(self.pkg),
                             name_str.to_string(),
                             None,
@@ -414,7 +414,7 @@ impl Checker {
                         .map(|name| {
                             let name_str = self.resolve_ident(name).to_string();
                             self.tc_objs.new_var(
-                                0, // pos
+                                name.span,
                                 Some(self.pkg),
                                 name_str,
                                 None,
@@ -462,7 +462,7 @@ impl Checker {
             Decl::Type(type_decl) => {
                 let name_str = self.resolve_ident(&type_decl.name);
                 let okey = self.tc_objs.new_type_name(
-                    0, // pos
+                    type_decl.name.span,
                     Some(self.pkg),
                     name_str.to_string(),
                     None,
@@ -480,7 +480,7 @@ impl Checker {
                 let name_str = self.resolve_ident(&func_decl.name).to_string();
                 let has_body = func_decl.body.is_some();
                 let okey = self.tc_objs.new_func(
-                    0, // pos
+                    func_decl.name.span,
                     Some(self.pkg),
                     name_str.clone(),
                     None,
@@ -785,7 +785,7 @@ impl Checker {
                     if !used {
                         let pkg = self.package(*imported);
                         self.emit(TypeError::UnusedImport.at_with_message(
-                            Span::default(),
+                            self.obj_span(okey),
                             format!("{} imported but not used", pkg.path()),
                         ));
                     }

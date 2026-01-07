@@ -27,7 +27,7 @@ impl Checker {
     /// Reports the location of an alternative declaration.
     pub(crate) fn report_alt_decl(&self, okey: ObjKey) {
         let lobj = self.lobj(okey);
-        self.error_code_msg(TypeError::OtherDeclaration, Span::default(), format!("\tother declaration of {}", lobj.name()));
+        self.error_code_msg(TypeError::OtherDeclaration, self.obj_span(okey), format!("\tother declaration of {}", lobj.name()));
     }
 
     /// Declares an object in a scope at the given position.
@@ -48,7 +48,7 @@ impl Checker {
                 let lobj = self.lobj(okey);
                 self.error_code_msg(
                     TypeError::Redeclared,
-                    Span::default(),
+                    self.obj_span(okey),
                     format!("{} redeclared in this block", lobj.name()),
                 );
                 self.report_alt_decl(o);
@@ -220,18 +220,19 @@ impl Checker {
         }
 
         // Report error
+        let okey_span = self.obj_span(okey);
         self.error_code_msg(
             TypeError::IllegalCycle,
-            Span::default(),
+            okey_span,
             format!("illegal cycle in declaration of {}", lobj.name()),
         );
         for o in self.obj_path.iter() {
             if self.universe().indir() == *o {
                 continue;
             }
-            self.error_code_msg(TypeError::RefersTo, Span::default(), format!("\t{} refers to", self.lobj(*o).name()));
+            self.error_code_msg(TypeError::RefersTo, self.obj_span(*o), format!("\t{} refers to", self.lobj(*o).name()));
         }
-        self.error_code_msg(TypeError::RefersTo, Span::default(), format!("\t{} refers to", lobj.name()));
+        self.error_code_msg(TypeError::RefersTo, okey_span, format!("\t{} refers to", lobj.name()));
 
         true
     }
@@ -259,7 +260,7 @@ impl Checker {
             if !tval.is_const_type(self.objs()) {
                 let invalid_type = self.invalid_type();
                 if tval.underlying().unwrap_or(t) != invalid_type {
-                    self.error_code(TypeError::InvalidConstType, Span::default());
+                    self.error_code(TypeError::InvalidConstType, self.obj_span(okey));
                 }
                 self.lobj_mut(okey).set_type(Some(invalid_type));
                 self.octx.iota = None;
@@ -384,7 +385,7 @@ impl Checker {
                 && lobj.name() == "init"
                 && (sig.params_count(self.objs()) > 0 || sig.results_count(self.objs()) > 0)
             {
-                self.error_code(TypeError::InvalidInitSignature, Span::default());
+                self.error_code(TypeError::InvalidInitSignature, self.obj_span(okey));
             }
 
             // Queue function body for later checking
@@ -447,14 +448,14 @@ impl Checker {
                     EntityType::Var { .. } => {
                         self.error_code_msg(
                             TypeError::FieldMethodConflict,
-                            Span::default(),
+                            self.obj_span(m),
                             format!("field and method with the same name {}", mname),
                         );
                     }
                     EntityType::Func { .. } => {
                         self.error_code_msg(
                             TypeError::MethodRedeclared,
-                            Span::default(),
+                            self.obj_span(m),
                             format!("method {} already declared", mname),
                         );
                     }
@@ -499,7 +500,7 @@ impl Checker {
                         .enumerate()
                         .map(|(i, name)| {
                             let okey = self.new_const(
-                                0,
+                                name.span,
                                 Some(self.pkg),
                                 self.resolve_ident(name).to_string(),
                                 None,
@@ -546,7 +547,7 @@ impl Checker {
                         .iter()
                         .map(|name| {
                             let okey = self.new_var(
-                                0,
+                                name.span,
                                 Some(self.pkg),
                                 self.resolve_ident(name).to_string(),
                                 None,
@@ -599,7 +600,7 @@ impl Checker {
 
             Decl::Type(tdecl) => {
                 let okey = self.new_type_name(
-                    0,
+                    tdecl.name.span,
                     Some(self.pkg),
                     self.resolve_ident(&tdecl.name).to_string(),
                     None,
@@ -621,8 +622,8 @@ impl Checker {
                 self.lobj_mut(popped).set_color(ObjColor::Black);
             }
 
-            Decl::Func(_) => {
-                self.error_code(TypeError::UnexpectedFuncDecl, Span::default());
+            Decl::Func(fdecl) => {
+                self.error_code(TypeError::UnexpectedFuncDecl, fdecl.name.span);
             }
         }
     }

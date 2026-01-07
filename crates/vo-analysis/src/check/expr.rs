@@ -75,13 +75,13 @@ impl Checker {
         if let Some(ok) = pred(op, x.typ.unwrap()) {
             if !ok {
                 self.invalid_op(
-                    Span::default(),
-                    &format!("operator {:?} not defined for operand", op),
+                    x.pos(),
+                    &format!("operator {:?} not defined for {}", op, self.type_str(x.typ.unwrap())),
                 );
             }
             ok
         } else {
-            self.invalid_ast(Span::default(), &format!("unknown operator {:?}", op));
+            self.invalid_ast(x.pos(), &format!("unknown operator {:?}", op));
             false
         }
     }
@@ -101,8 +101,8 @@ impl Checker {
         if let Some(ok) = pred(op, x.typ.unwrap()) {
             if !ok {
                 self.invalid_op(
-                    Span::default(),
-                    &format!("operator {:?} not defined for operand", op),
+                    x.pos(),
+                    &format!("operator {:?} not defined for {}", op, self.type_str(x.typ.unwrap())),
                 );
             }
             ok
@@ -128,7 +128,7 @@ impl Checker {
                     ExprKind::CompositeLit(_) => {}
                     _ => {
                         if x.mode != OperandMode::Variable {
-                            self.invalid_op(Span::default(), "cannot take address of expression");
+                            self.invalid_op(x.pos(), "cannot take address of expression");
                             x.mode = OperandMode::Invalid;
                             return;
                         }
@@ -143,7 +143,7 @@ impl Checker {
                     x.mode = OperandMode::Variable;
                     x.typ = Some(ptr.base());
                 } else {
-                    self.invalid_op(Span::default(), "cannot dereference non-pointer");
+                    self.invalid_op(x.pos(), &format!("cannot dereference {}", self.type_str(x.typ.unwrap())));
                     x.mode = OperandMode::Invalid;
                 }
             }
@@ -212,16 +212,18 @@ impl Checker {
                 // integer -> float   : overflows (actually not possible)
                 // float   -> integer : truncated
                 // float   -> float   : overflows
+                let from_type = self.type_str(x.typ.unwrap());
+                let to_type = self.type_str(t);
                 let msg = if xtval.is_numeric(self.objs()) && tval.is_numeric(self.objs()) {
                     if !xtval.is_integer(self.objs()) && tval.is_integer(self.objs()) {
-                        "truncated".to_string()
+                        format!("{} truncated to {}", from_type, to_type)
                     } else {
-                        "overflows".to_string()
+                        format!("{} overflows {}", from_type, to_type)
                     }
                 } else {
-                    "cannot convert".to_string()
+                    format!("cannot convert {} to {}", from_type, to_type)
                 };
-                self.error_code_msg(TypeError::TypeMismatch, Span::default(), msg);
+                self.error_code_msg(TypeError::TypeMismatch, x.pos(), msg);
                 x.mode = OperandMode::Invalid;
             }
         }
@@ -378,7 +380,9 @@ impl Checker {
                         }
                     }
                 } else {
-                    self.error_code_msg(TypeError::TypeMismatch, Span::default(), "cannot convert untyped value".to_string());
+                    let from_type = self.type_str(x.typ.unwrap());
+                    let to_type = self.type_str(target);
+                    self.error_code_msg(TypeError::TypeMismatch, x.pos(), format!("cannot convert {} to {}", from_type, to_type));
                     x.mode = OperandMode::Invalid;
                     return;
                 }
@@ -1403,8 +1407,8 @@ impl Checker {
                 // Result is (any, error)
                 let any_type = self.new_t_empty_interface();
                 let error_type = self.universe().error_type();
-                let any_var = self.new_var(0, None, String::new(), Some(any_type));
-                let err_var = self.new_var(0, None, String::new(), Some(error_type));
+                let any_var = self.new_var(Span::default(), None, String::new(), Some(any_type));
+                let err_var = self.new_var(Span::default(), None, String::new(), Some(error_type));
                 x.mode = OperandMode::Value;
                 x.typ = Some(self.new_t_tuple(vec![any_var, err_var]));
             }
@@ -1681,7 +1685,7 @@ impl Checker {
                 // argument of the method expression's function type
                 let var = self
                     .tc_objs
-                    .new_var(0, Some(self.pkg), "".to_string(), x.typ);
+                    .new_var(Span::default(), Some(self.pkg), "".to_string(), x.typ);
                 let lobj = self.lobj(okey);
                 let sig = self.otype(lobj.typ().unwrap()).try_as_signature().unwrap();
                 let (p, r, v) = (sig.params(), sig.results(), sig.variadic());

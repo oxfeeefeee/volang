@@ -528,7 +528,7 @@ impl Checker {
 
             let tuple_vars: Vec<_> = elem_types
                 .iter()
-                .map(|&t| self.new_var(0, None, String::new(), Some(t)))
+                .map(|&t| self.new_var(Span::default(), None, String::new(), Some(t)))
                 .collect();
             let tuple_type = self.new_t_tuple(tuple_vars);
 

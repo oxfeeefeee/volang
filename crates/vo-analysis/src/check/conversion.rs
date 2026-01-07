@@ -57,10 +57,12 @@ impl Checker {
         };
 
         if !ok {
+            let from_type = self.type_str(xtype);
+            let to_type = self.type_str(t);
             self.error_code_msg(
                 TypeError::TypeMismatch,
-                Span::default(),
-                "cannot convert value to type",
+                x.pos(),
+                format!("cannot convert {} to {}", from_type, to_type),
             );
             x.mode = OperandMode::Invalid;
             return;

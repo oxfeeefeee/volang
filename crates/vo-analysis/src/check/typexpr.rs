@@ -5,6 +5,7 @@
 
 
 use vo_syntax::ast::Ident;
+use vo_common::span::Span;
 
 use crate::obj::EntityType;
 use crate::objects::{ObjKey, ScopeKey, TypeKey};
@@ -342,7 +343,7 @@ impl Checker {
             let name = param.names.first()
                 .map(|n| self.resolve_ident(n).to_string())
                 .unwrap_or_default();
-            let var = self.new_param_var(0, Some(self.pkg), name, Some(ty));
+            let var = self.new_param_var(Span::default(), Some(self.pkg), name, Some(ty));
             params.push(var);
         }
         let variadic = false; // FuncType in Vo doesn't have variadic marker
@@ -354,7 +355,7 @@ impl Checker {
             let name = result.names.first()
                 .map(|n| self.resolve_ident(n).to_string())
                 .unwrap_or_default();
-            let var = self.new_param_var(0, Some(self.pkg), name, Some(ty));
+            let var = self.new_param_var(Span::default(), Some(self.pkg), name, Some(ty));
             results.push(var);
         }
 
@@ -400,7 +401,7 @@ impl Checker {
             let recv_var = if recv_list.is_empty() {
                 // This shouldn't happen with valid Vo syntax, but handle like goscript
                 self.error_code(TypeError::MissingReceiver, r.span);
-                self.new_param_var(0, None, String::new(), Some(invalid_type))
+                self.new_param_var(Span::default(), None, String::new(), Some(invalid_type))
             } else {
                 recv_list[0]
             };
@@ -482,7 +483,7 @@ impl Checker {
         let recv_name = r.name.as_ref()
             .map(|n| self.resolve_ident(n).to_string())
             .unwrap_or_default();
-        let par = self.new_param_var(0, Some(self.pkg), recv_name, Some(recv_type));
+        let par = self.new_param_var(r.span, Some(self.pkg), recv_name, Some(recv_type));
         // Function parameters are visible from the start of the function scope
         let scope_pos = self.scope(scope_key).pos();
         self.declare(scope_key, par, scope_pos);
@@ -517,7 +518,7 @@ impl Checker {
 
             if param.names.is_empty() {
                 // Anonymous parameter
-                let var = self.new_param_var(0, Some(self.pkg), String::new(), Some(param_type));
+                let var = self.new_param_var(param.ty.span, Some(self.pkg), String::new(), Some(param_type));
                 // Record implicit object (like goscript: self.result.record_implicit(fkey, par))
                 self.result.record_implicit(param.ty.span, var);
                 vars.push(var);
@@ -529,7 +530,7 @@ impl Checker {
                     if name_str.is_empty() {
                         // This is an invalid case, but continue like goscript
                     }
-                    let var = self.new_param_var(0, Some(self.pkg), name_str, Some(param_type));
+                    let var = self.new_param_var(name.span, Some(self.pkg), name_str, Some(param_type));
                     let scope_pos = self.scope(scope_key).pos();
                     self.declare(scope_key, var, scope_pos);
                     self.result.record_def(name.clone(), Some(var));
@@ -577,13 +578,13 @@ impl Checker {
 
             if let Some(name) = &result.name {
                 let name_str = self.resolve_ident(name).to_string();
-                let var = self.new_param_var(0, Some(self.pkg), name_str, Some(result_type));
+                let var = self.new_param_var(name.span, Some(self.pkg), name_str, Some(result_type));
                 let scope_pos = self.scope(scope_key).pos();
                 self.declare(scope_key, var, scope_pos);
                 self.result.record_def(name.clone(), Some(var));
                 vars.push(var);
             } else {
-                let var = self.new_param_var(0, Some(self.pkg), String::new(), Some(result_type));
+                let var = self.new_param_var(result.ty.span, Some(self.pkg), String::new(), Some(result_type));
                 vars.push(var);
             }
         }
@@ -666,7 +667,7 @@ impl Checker {
 
                 let final_type = if is_valid { field_type } else { invalid_type };
                 let fld = self.new_field(
-                    0,
+                    field.ty.span,
                     Some(self.pkg),
                     embedded_name.clone(),
                     Some(final_type),
@@ -689,7 +690,7 @@ impl Checker {
                 for name in &field.names {
                     let name_str = self.resolve_ident(name).to_string();
                     let fld = self.new_field(
-                        0,
+                        name.span,
                         Some(self.pkg),
                         name_str.clone(),
                         Some(field_type),
@@ -866,13 +867,13 @@ impl Checker {
                 let name = self.resolve_ident(&method_ast.name).to_string();
                 
                 // Create receiver
-                let recv_var = self.new_var(0, Some(self.pkg), String::new(), Some(recv_type));
+                let recv_var = self.new_var(Span::default(), Some(self.pkg), String::new(), Some(recv_type));
                 
                 // Create empty signature (will be fixed in phase 2)
                 let empty_tuple = self.new_t_tuple(vec![]);
                 let sig_type = self.new_t_signature(None, Some(recv_var), empty_tuple, empty_tuple, false);
 
-                let fun_key = self.new_func(0, Some(self.pkg), name.clone(), Some(sig_type), false);
+                let fun_key = self.new_func(method_ast.name.span, Some(self.pkg), name.clone(), Some(sig_type), false);
                 
                 // Record definition for the method
                 self.result.record_def(method_ast.name.clone(), Some(fun_key));

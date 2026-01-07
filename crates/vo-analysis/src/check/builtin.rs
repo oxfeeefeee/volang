@@ -341,7 +341,7 @@ impl Checker {
         let invalid_type = self.invalid_type();
         if mode == OperandMode::Invalid && ty != invalid_type {
             let name = if id == Builtin::Len { "len" } else { "cap" };
-            self.error_code_msg(TypeError::InvalidLenCapArg, Span::default(), format!("invalid argument for {}", name));
+            self.error_code_msg(TypeError::InvalidLenCapArg, x.pos(), format!("invalid argument {} for {}", self.type_str(x.typ.unwrap()), name));
             return false;
         }
 
@@ -356,14 +356,14 @@ impl Checker {
         match &self.otype(tkey) {
             Type::Chan(detail) => {
                 if detail.dir() == typ::ChanDir::RecvOnly {
-                    self.error_code(TypeError::CloseRecvOnly, Span::default());
+                    self.error_code(TypeError::CloseRecvOnly, x.pos());
                     return false;
                 }
                 x.mode = OperandMode::NoValue;
                 true
             }
             _ => {
-                self.error_code(TypeError::CloseNotChan, Span::default());
+                self.error_code(TypeError::CloseNotChan, x.pos());
                 false
             }
         }
@@ -712,12 +712,12 @@ fn make_sig(
         .iter()
         .map(|&x| {
             let ty = Some(typ::untyped_default_type(x, objs));
-            objs.new_var(0, None, String::new(), ty)
+            objs.new_var(Span::default(), None, String::new(), ty)
         })
         .collect();
     let params = objs.new_t_tuple(list);
     let rlist = res.map_or(vec![], |x| {
-        vec![objs.new_var(0, None, String::new(), Some(x))]
+        vec![objs.new_var(Span::default(), None, String::new(), Some(x))]
     });
     let results = objs.new_t_tuple(rlist);
     objs.new_t_signature(None, None, params, results, variadic)
