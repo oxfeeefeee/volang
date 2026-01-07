@@ -834,6 +834,42 @@ fn check_interface_satisfaction(
     false // non-named types can't implement interfaces with methods
 }
 
+/// Interface to interface assignment with runtime itab lookup.
+/// src_slot0/slot1: source interface (2 slots)
+/// iface_meta_id: target interface meta id
+/// Returns: new slot0 with updated itab_id
+#[no_mangle]
+pub extern "C" fn vo_iface_to_iface(
+    ctx: *mut JitContext,
+    src_slot0: u64,
+    iface_meta_id: u32,
+) -> u64 {
+    use crate::objects::interface;
+    
+    let src_rttid = interface::unpack_rttid(src_slot0);
+    let src_vk = interface::unpack_value_kind(src_slot0);
+    
+    let ctx_ref = unsafe { &*ctx };
+    let module = unsafe { &*ctx_ref.module };
+    let itab_cache = unsafe { &mut *ctx_ref.itab_cache };
+    
+    let named_type_id_opt = module.runtime_types.get(src_rttid as usize)
+        .and_then(|rt| extract_named_type_id(rt, &module.runtime_types));
+    
+    let new_itab_id = if let Some(named_type_id) = named_type_id_opt {
+        itab_cache.get_or_create(
+            named_type_id,
+            iface_meta_id,
+            &module.named_type_metas,
+            &module.interface_metas,
+        )
+    } else {
+        0
+    };
+    
+    interface::pack_slot0(new_itab_id, src_rttid, src_vk)
+}
+
 /// Interface assertion.
 /// Returns: 1 if matches, 0 if not (when has_ok), or panics (when !has_ok && !matches)
 /// dst layout: [result_slots...][ok_flag if has_ok]
@@ -1027,6 +1063,7 @@ pub fn get_runtime_symbols() -> &'static [(&'static str, *const u8)] {
         ("vo_slice_from_array", vo_slice_from_array as *const u8),
         ("vo_slice_from_array3", vo_slice_from_array3 as *const u8),
         ("vo_iface_pack_slot0", vo_iface_pack_slot0 as *const u8),
+        ("vo_iface_to_iface", vo_iface_to_iface as *const u8),
         ("vo_iface_assert", vo_iface_assert as *const u8),
         ("vo_ptr_clone", vo_ptr_clone as *const u8),
         ("vo_map_new", vo_map_new as *const u8),

@@ -1163,9 +1163,16 @@ fn iface_assign<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
             let new_slot0 = e.builder().ins().band(src_slot0, mask);
             (new_slot0, src_slot1)
         } else {
-            // Target is non-empty interface: would need runtime itab lookup
-            // For now, just copy (this is incomplete but matches previous behavior)
-            (src_slot0, src_slot1)
+            // Target is non-empty interface: runtime itab lookup
+            if let Some(iface_to_iface_func) = e.helpers().iface_to_iface {
+                let ctx = e.ctx_param();
+                let iface_meta_id_val = e.builder().ins().iconst(types::I32, iface_meta_id as i64);
+                let call = e.builder().ins().call(iface_to_iface_func, &[ctx, src_slot0, iface_meta_id_val]);
+                let new_slot0 = e.builder().inst_results(call)[0];
+                (new_slot0, src_slot1)
+            } else {
+                (src_slot0, src_slot1)
+            }
         }
     } else {
         // Concrete type source: use compile-time constants

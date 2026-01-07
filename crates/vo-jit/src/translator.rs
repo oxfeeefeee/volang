@@ -54,6 +54,7 @@ pub struct HelperFuncs {
     pub map_delete: Option<FuncRef>,
     pub map_iter_get: Option<FuncRef>,
     pub iface_assert: Option<FuncRef>,
+    pub iface_to_iface: Option<FuncRef>,
 }
 
 /// IR emitter trait - implemented by FunctionCompiler and LoopCompiler

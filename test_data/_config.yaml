@@ -208,8 +208,6 @@ tests:
     reason: "JIT bug"
   - file: gc_closure_capture.vo
   - file: iface_to_iface_assign.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: io_readfull_only.vo
     skip: [jit]
     reason: "JIT bug - segfault in release"
@@ -234,21 +232,15 @@ tests:
     skip: [jit]
     reason: "JIT bug"
   - file: typechecker/assignable_interface.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: typechecker/assignable_nil.vo
     skip: [jit]
     reason: "JIT bug"
   - file: typechecker/interface_embedding.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: typechecker/method_sig_complex_params.vo
     skip: [jit]
     reason: "JIT bug"
   - file: typechecker/method_sig_func_types.vo
   - file: typechecker/type_assertion.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: typechecker/type_conversion.vo
     skip: [jit]
     reason: "JIT bug"
