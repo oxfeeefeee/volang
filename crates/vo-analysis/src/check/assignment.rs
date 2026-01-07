@@ -26,6 +26,42 @@ enum DynAccessLhs<'a> {
     Init(&'a [ObjKey]),
 }
 
+/// Result of extracting DynAccess from an expression.
+/// Handles both direct DynAccess and TryUnwrap(DynAccess) patterns.
+struct ExtractedDynAccess<'a> {
+    dyn_access: &'a vo_syntax::ast::DynAccessExpr,
+    /// The expression containing DynAccess (either DynAccess itself or TryUnwrap's inner)
+    dyn_access_expr: &'a Expr,
+    /// True if wrapped in TryUnwrap (i.e., `a~>field?`)
+    has_try_unwrap: bool,
+}
+
+/// Try to extract DynAccess from an expression.
+/// Returns Some if expr is DynAccess or TryUnwrap(DynAccess).
+fn extract_dyn_access(expr: &Expr) -> Option<ExtractedDynAccess> {
+    use vo_syntax::ast::ExprKind;
+    
+    match &expr.kind {
+        ExprKind::DynAccess(dyn_access) => Some(ExtractedDynAccess {
+            dyn_access,
+            dyn_access_expr: expr,
+            has_try_unwrap: false,
+        }),
+        ExprKind::TryUnwrap(inner) => {
+            if let ExprKind::DynAccess(dyn_access) = &inner.kind {
+                Some(ExtractedDynAccess {
+                    dyn_access,
+                    dyn_access_expr: inner,
+                    has_try_unwrap: true,
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 impl<'a> DynAccessLhs<'a> {
     fn len(&self) -> usize {
         match self {
@@ -302,10 +338,10 @@ impl Checker {
         let invalid_type = self.invalid_type();
         let ll = lhs.len();
         
-        // Special handling for DynAccess: generate return type based on lhs types
+        // Special handling for DynAccess (including TryUnwrap(DynAccess)): generate return type based on lhs types
         if rhs.len() == 1 && return_pos.is_none() {
-            if let ExprKind::DynAccess(dyn_access) = &rhs[0].kind {
-                self.init_vars_dyn_access(lhs, &rhs[0], dyn_access);
+            if let Some(extracted) = extract_dyn_access(&rhs[0]) {
+                self.init_vars_dyn_access_with_unwrap(lhs, &rhs[0], extracted.dyn_access, extracted.dyn_access_expr, extracted.has_try_unwrap);
                 return;
             }
         }
@@ -378,10 +414,10 @@ impl Checker {
         
         let ll = lhs.len();
         
-        // Special handling for DynAccess: generate return type based on lhs types
+        // Special handling for DynAccess (including TryUnwrap(DynAccess)): generate return type based on lhs types
         if rhs.len() == 1 {
-            if let ExprKind::DynAccess(dyn_access) = &rhs[0].kind {
-                self.assign_vars_dyn_access(lhs, &rhs[0], dyn_access);
+            if let Some(extracted) = extract_dyn_access(&rhs[0]) {
+                self.assign_vars_dyn_access_with_unwrap(lhs, &rhs[0], extracted.dyn_access, extracted.dyn_access_expr, extracted.has_try_unwrap);
                 return;
             }
         }
@@ -425,26 +461,32 @@ impl Checker {
         }
     }
 
-    /// Handle DynAccess assignment: v1, v2, err = obj~>Method()
-    /// Delegates to unified check_dyn_access_lhs.
-    fn assign_vars_dyn_access(
+    /// Handle DynAccess assignment with optional TryUnwrap: 
+    /// - `v1, v2, err = obj~>Method()` (has_try_unwrap = false)
+    /// - `v1, v2 = obj~>Method()?` (has_try_unwrap = true)
+    fn assign_vars_dyn_access_with_unwrap(
         &mut self,
         lhs: &[Expr],
         rhs_expr: &Expr,
         dyn_access: &vo_syntax::ast::DynAccessExpr,
+        dyn_access_expr: &Expr,
+        has_try_unwrap: bool,
     ) {
-        self.check_dyn_access_lhs(DynAccessLhs::Assign(lhs), rhs_expr, dyn_access);
+        self.check_dyn_access_lhs(DynAccessLhs::Assign(lhs), rhs_expr, dyn_access, dyn_access_expr, has_try_unwrap);
     }
 
-    /// Handle DynAccess initialization: v1, v2, err := obj~>Method()
-    /// Delegates to unified check_dyn_access_lhs.
-    fn init_vars_dyn_access(
+    /// Handle DynAccess initialization with optional TryUnwrap:
+    /// - `v1, v2, err := obj~>Method()` (has_try_unwrap = false)
+    /// - `v1, v2 := obj~>Method()?` (has_try_unwrap = true)
+    fn init_vars_dyn_access_with_unwrap(
         &mut self,
         lhs: &[ObjKey],
         rhs_expr: &Expr,
         dyn_access: &vo_syntax::ast::DynAccessExpr,
+        dyn_access_expr: &Expr,
+        has_try_unwrap: bool,
     ) {
-        self.check_dyn_access_lhs(DynAccessLhs::Init(lhs), rhs_expr, dyn_access);
+        self.check_dyn_access_lhs(DynAccessLhs::Init(lhs), rhs_expr, dyn_access, dyn_access_expr, has_try_unwrap);
     }
 
     /// Unified handler for dynamic access type checking.
@@ -453,14 +495,25 @@ impl Checker {
     /// The LHS determines the expected return types:
     /// - For Init: all values default to `any`, last is `error`
     /// - For Assign: values use their declared types, last is `error`
+    /// 
+    /// When `has_try_unwrap` is true (i.e., `x = a~>field?`):
+    /// - The error is consumed by `?`, so LHS doesn't need to include error
+    /// - The dyn operation still returns `(T..., error)` but we only assign `T...` to LHS
+    /// - dyn_access_expr is the inner DynAccess expression whose type needs to be recorded
     fn check_dyn_access_lhs(
         &mut self,
         lhs: DynAccessLhs,
         rhs_expr: &Expr,
         dyn_access: &vo_syntax::ast::DynAccessExpr,
+        dyn_access_expr: &Expr,
+        has_try_unwrap: bool,
     ) {
         let ll = lhs.len();
-        if ll < 1 {
+        // When has_try_unwrap, error is consumed by ?, so dyn returns ll+1 values (ll values + error)
+        // When !has_try_unwrap, LHS must include error, so dyn returns ll values
+        let dyn_ret_count = if has_try_unwrap { ll + 1 } else { ll };
+        
+        if dyn_ret_count < 1 {
             self.error_code_msg(
                 TypeError::AssignmentMismatch,
                 rhs_expr.span,
@@ -510,17 +563,32 @@ impl Checker {
         let error_type = self.universe().error_type();
         let any_type = self.new_t_empty_interface();
 
-        if ll == 1 {
-            // No return values, only error
-            self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, error_type);
-            self.finish_dyn_access_lhs_single(&lhs, rhs_expr, error_type);
+        if dyn_ret_count == 1 {
+            // No return values, only error (e.g., `err = a~>Do()` or `a~>Do()?`)
+            // Record type for dyn_access_expr (the DynAccess returns just error)
+            self.result.record_type_and_value(dyn_access_expr.id, OperandMode::Value, error_type);
+            if has_try_unwrap {
+                // TryUnwrap of error produces NoValue
+                self.result.record_type_and_value(rhs_expr.id, OperandMode::NoValue, error_type);
+            }
+            if !has_try_unwrap {
+                // Only assign error to LHS when not using ?
+                self.finish_dyn_access_lhs_single(&lhs, rhs_expr, error_type);
+            }
+            // When has_try_unwrap and dyn_ret_count==1, ll==0, nothing to assign (just side effect)
         } else {
-            // Build tuple type based on LHS
-            let elem_types: Vec<TypeKey> = (0..ll)
+            // Build tuple type: (T1, T2, ..., error) based on LHS types + error
+            // When has_try_unwrap: ll values from LHS + 1 error = dyn_ret_count
+            // When !has_try_unwrap: ll-1 values from LHS + 1 error = ll = dyn_ret_count
+            let value_count = dyn_ret_count - 1; // Number of non-error values
+            
+            let elem_types: Vec<TypeKey> = (0..dyn_ret_count)
                 .map(|i| {
-                    if i == ll - 1 {
+                    if i == dyn_ret_count - 1 {
+                        // Last element is always error
                         error_type
                     } else {
+                        // Get type from LHS
                         lhs.get_elem_type(i, self, any_type)
                     }
                 })
@@ -532,8 +600,30 @@ impl Checker {
                 .collect();
             let tuple_type = self.new_t_tuple(tuple_vars);
 
-            self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, tuple_type);
-            self.finish_dyn_access_lhs_multi(&lhs, rhs_expr, &elem_types, tuple_type);
+            // Record type for the DynAccess expression (tuple_type includes error)
+            // When has_try_unwrap, dyn_access_expr is the inner DynAccess, rhs_expr is TryUnwrap
+            // When !has_try_unwrap, dyn_access_expr == rhs_expr
+            self.result.record_type_and_value(dyn_access_expr.id, OperandMode::Value, tuple_type);
+            if has_try_unwrap {
+                // For TryUnwrap, also record the unwrapped type (without error)
+                let unwrapped_type = if value_count == 1 {
+                    elem_types[0]
+                } else {
+                    let unwrapped_vars: Vec<_> = elem_types[..value_count]
+                        .iter()
+                        .map(|&t| self.new_var(Span::default(), None, String::new(), Some(t)))
+                        .collect();
+                    self.new_t_tuple(unwrapped_vars)
+                };
+                self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, unwrapped_type);
+                
+                // Only assign non-error values to LHS
+                let value_types = &elem_types[..value_count];
+                self.finish_dyn_access_lhs_multi_no_error(&lhs, rhs_expr, value_types);
+            } else {
+                // Assign all values including error to LHS
+                self.finish_dyn_access_lhs_multi(&lhs, rhs_expr, &elem_types, tuple_type);
+            }
         }
     }
 
@@ -558,7 +648,7 @@ impl Checker {
         }
     }
 
-    /// Finish multi-value dynamic access.
+    /// Finish multi-value dynamic access (including error in LHS).
     fn finish_dyn_access_lhs_multi(
         &mut self,
         lhs: &DynAccessLhs,
@@ -582,6 +672,32 @@ impl Checker {
             DynAccessLhs::Init(objs) => {
                 for (i, &obj) in objs.iter().enumerate() {
                     self.lobj_mut(obj).set_type(Some(elem_types[i]));
+                }
+            }
+        }
+    }
+    
+    /// Finish multi-value dynamic access without error (for TryUnwrap case).
+    /// Only assigns non-error values to LHS since error is consumed by ?.
+    fn finish_dyn_access_lhs_multi_no_error(
+        &mut self,
+        lhs: &DynAccessLhs,
+        rhs_expr: &Expr,
+        value_types: &[TypeKey],
+    ) {
+        match lhs {
+            DynAccessLhs::Assign(exprs) => {
+                for (i, expr) in exprs.iter().enumerate() {
+                    let mut x = Operand::new();
+                    x.mode = OperandMode::Value;
+                    x.typ = Some(value_types[i]);
+                    x.set_expr(rhs_expr);
+                    self.assign_var(expr, &mut x);
+                }
+            }
+            DynAccessLhs::Init(objs) => {
+                for (i, &obj) in objs.iter().enumerate() {
+                    self.lobj_mut(obj).set_type(Some(value_types[i]));
                 }
             }
         }

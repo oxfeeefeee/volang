@@ -29,18 +29,100 @@ Vo provides simplified error handling with `?`, `fail`, and `errdefer`.
 
 #### 1.3.1 The `?` operator
 
-`expr?` is valid when `expr` has type `(T, error)` or `error`.
+**Syntax**: `expr?`
 
-- If `expr` has type `(T, error)`: evaluate `expr` to `(v, err)`. If `err != nil`, `fail err`. Otherwise the result of `expr?` is `v`.
-- If `expr` has type `error`: evaluate `expr` to `err`. If `err != nil`, `fail err`. Otherwise `expr?` produces no value and is only valid where a value is not required.
+**Type constraints**:
+- `expr` must have type `(T1, T2, ..., error)` (tuple with error as last element) or `error`
+
+**Usage constraint**:
+- `?` can only be used in a function whose last return value is assignable to `error`
+- Using `?` in a function without error return is a compile error
+
+**Result type**:
+- `(T1, T2, ..., error)?` → `(T1, T2, ...)` (tuple without error)
+  - Special case: `(T, error)?` → `T` (single value)
+- `error?` → no value (only valid where a value is not required)
+
+**Runtime semantics**:
+```
+1. Evaluate expr to get (values..., err)
+2. If err != nil:
+   a. Set all non-error return values of current function to zero values
+   b. Set the error return value to err
+   c. Execute all registered errdefer statements (LIFO order)
+   d. Return from function
+3. Otherwise: result is values... (without error)
+```
+
+**Side effects**:
+- May cause early function return (when error != nil)
+- Triggers `errdefer` (not regular `defer`)
+- Non-error return values are set to zero values (not preserved)
+
+**Examples**:
+```vo
+func readConfig() (Config, error) {
+    data := readFile("config.json")?  // propagates error if any
+    return parseConfig(data)
+}
+
+func process() error {
+    err?  // propagates error if err != nil
+    return nil
+}
+```
 
 #### 1.3.2 `fail`
 
-`fail e` aborts the current function and returns the error `e` (and runs `errdefer` actions).
+`fail e` aborts the current function and returns the error `e`.
+
+**Semantics**:
+1. Set all non-error return values to zero values
+2. Set the error return value to `e`
+3. Execute all registered `errdefer` statements (LIFO order)
+4. Return from function
+
+`expr?` when error != nil is equivalent to `fail err`.
 
 #### 1.3.3 `errdefer`
 
 `errdefer stmt` registers `stmt` to run only on the error path (when the function exits via `fail` or a `?` that triggers `fail`).
+
+#### 1.3.4 The `?` operator with Dynamic Access
+
+When `?` is used with dynamic access in an assignment context, LHS types drive the expected return types and runtime type checking is performed.
+
+**Syntax**: `lhs = dyn_expr?` or `lhs1, lhs2, ... = dyn_expr?`
+
+**Semantics** (for `x = a~>field?` where `x` has type `T`):
+```
+1. Execute dynamic operation: (__any, __err1) = a~>field
+2. If __err1 != nil: fail __err1
+3. Type assert __any to T: (__typed, __ok) = __any.(T)
+4. If !__ok: fail dyn.TypeError("expected T, got actual_type")
+5. Assign: x = __typed
+```
+
+**Key points**:
+- Two error check points: dynamic operation error, then type assertion error
+- Type mismatch produces `dyn.TypeError` (not panic)
+- Both errors trigger `errdefer` via `fail`
+
+**Examples**:
+```vo
+func getInt(obj any) (int, error) {
+    var x int
+    x = obj~>value?  // LHS type (int) drives expected type
+    return x, nil
+}
+
+func getPair(obj any) (int, string, error) {
+    var a int
+    var b string
+    a, b = obj~>Pair()?  // multiple return values
+    return a, b, nil
+}
+```
 
 ---
 

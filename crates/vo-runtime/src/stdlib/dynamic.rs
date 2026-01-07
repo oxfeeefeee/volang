@@ -869,3 +869,40 @@ static __VO_DYN_UNPACK_ALL_RETURNS: ExternEntryWithContext = ExternEntryWithCont
     func: dyn_unpack_all_returns,
 };
 
+/// dyn_type_assert_error: Create a type assertion error for dynamic access.
+///
+/// Args: (expected_rttid[1], expected_vk[1], got_rttid[1], got_vk[1]) -> error[2]
+/// - expected_rttid: expected runtime type id
+/// - expected_vk: expected value kind
+/// - got_rttid: actual runtime type id from interface
+/// - got_vk: actual value kind from interface
+///
+/// Returns (2 slots): error interface
+///
+/// This is used by codegen when IfaceAssert fails during typed dynamic access.
+fn dyn_type_assert_error(call: &mut ExternCallContext) -> ExternResult {
+    let expected_rttid = call.arg_u64(0) as u32;
+    let expected_vk = call.arg_u64(1) as u8;
+    // Args 2 and 3 are both the raw slot0 from the interface
+    // slot0 format: [itab_id:32 | rttid:24 | value_kind:8]
+    let got_slot0 = call.arg_u64(2);
+    
+    let expected_vk = ValueKind::from_u8(expected_vk);
+    let got_vk = interface::unpack_value_kind(got_slot0);
+    let got_rttid = interface::unpack_rttid(got_slot0);
+    
+    let msg = format!(
+        "type assertion failed: expected {:?} (rttid {}), got {:?} (rttid {})",
+        expected_vk, expected_rttid, got_vk, got_rttid
+    );
+    
+    write_error_to(call, 0, call.dyn_err().type_mismatch, &msg);
+    ExternResult::Ok
+}
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_TYPE_ASSERT_ERROR: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_type_assert_error",
+    func: dyn_type_assert_error,
+};
+

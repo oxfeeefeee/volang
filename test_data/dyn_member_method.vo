@@ -27,7 +27,12 @@ func main() {
 	var box interface{} = c
 	
 	// Type assert to Counter
-	counter, ok :=  box~>counter?.(Counter)
+	counterAny, err := box~>counter
+	if err != nil {
+		println("dyn access failed:", err.Error())
+		return
+	}
+	counter, ok := counterAny.(Counter)
 	assert(ok, "type assert to Counter failed")
 	
 	// Call method on extracted Counter

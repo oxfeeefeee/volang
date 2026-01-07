@@ -182,6 +182,8 @@ pub enum TypeError {
     ErrDeferNoErrorReturn = 2520,
     /// dynamic write (~>field= / ~>[k]=) in function without error return.
     DynWriteNoErrorReturn = 2521,
+    /// ? operator in function without error return.
+    TryUnwrapNoErrorReturn = 2522,
 
     // === Builtin Function (2600-2699) ===
     /// First argument to append must be slice.
@@ -417,6 +419,7 @@ impl TypeError {
             // Errdefer
             TypeError::ErrDeferNoErrorReturn => "errdefer requires function with error return value",
             TypeError::DynWriteNoErrorReturn => "dynamic write requires function with error return value",
+            TypeError::TryUnwrapNoErrorReturn => "? operator requires function with error return value",
         }
     }
 

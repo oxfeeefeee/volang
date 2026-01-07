@@ -137,13 +137,10 @@ fn compile_dyn_op(
             let result = func.alloc_temp(4);
             func.emit_with_flags(Opcode::CallExtern, 3, result, extern_id as u16, args_start);
             
-            // Unbox interface to LHS type
+            // Unbox with type check, merge dyn error and type assertion error
             let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
-            let dst_offset = emit_unbox_interface(ret_type, dst, result, func, info);
-            
-            // Copy error
-            func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
-            func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 3, 0);
+            let error_slot = dst + info.type_slot_count(ret_type);
+            emit_unbox_with_type_check(ret_type, dst, result, error_slot, ctx, func, info);
         }
         DynAccessOp::Index(index_expr) => {
             // dyn_get_index(base[2], key[2]) -> (data[2], error[2])
@@ -169,13 +166,10 @@ fn compile_dyn_op(
             let result = func.alloc_temp(4);
             func.emit_with_flags(Opcode::CallExtern, 4, result, extern_id as u16, args_start);
             
-            // Unbox interface to LHS type
+            // Unbox with type check, merge dyn error and type assertion error
             let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
-            let dst_offset = emit_unbox_interface(ret_type, dst, result, func, info);
-            
-            // Copy error
-            func.emit_op(Opcode::Copy, dst + dst_offset, result + 2, 0);
-            func.emit_op(Opcode::Copy, dst + dst_offset + 1, result + 3, 0);
+            let error_slot = dst + info.type_slot_count(ret_type);
+            emit_unbox_with_type_check(ret_type, dst, result, error_slot, ctx, func, info);
         }
         DynAccessOp::Call { args, spread: _ } => {
             compile_dyn_closure_call(base_reg, args, dst, ret_types, ctx, func, info)?;
@@ -382,45 +376,130 @@ fn compile_dyn_closure_call(
     Ok(())
 }
 
-/// Unbox interface value to concrete type based on LHS type.
-/// Runtime always returns interface format (slot0=meta, slot1=data).
-/// This function extracts the value according to the target type.
-/// Returns the number of dst slots consumed.
-///
-/// See `ExternCallContext::box_to_interface` for design rationale on why
-/// boxing is in runtime and unboxing is in codegen.
+/// Unbox interface + type check + merge errors (main entry for dyn field/index get).
+/// 
+/// Handles: result[0-1] = data (any), result[2-3] = dyn_error
+/// Output: dst = typed value, error_slot = merged error (dyn_error or type_assert_error)
+fn emit_unbox_with_type_check(
+    ret_type: vo_analysis::TypeKey,
+    dst: u16,
+    result: u16,  // result[0-1]=data, result[2-3]=dyn_error
+    error_slot: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) {
+    // Step 1: Unbox with type assertion (writes type_assert_error to error_slot)
+    emit_unbox_interface(ret_type, dst, result, error_slot, ctx, func, info);
+    
+    // Step 2: Merge errors - dyn_error takes priority over type_assert_error
+    // If dyn_error != nil, overwrite error_slot with dyn_error
+    let skip = func.emit_jump(Opcode::JumpIfNot, result + 2);
+    func.emit_op(Opcode::Copy, error_slot, result + 2, 0);
+    func.emit_op(Opcode::Copy, error_slot + 1, result + 3, 0);
+    func.patch_jump(skip, func.current_pc());
+}
+
+/// Unbox interface value to concrete type with runtime type check.
+/// 
+/// - If ret_type is `any`: just copy interface slots (no check needed)
+/// - Otherwise: emit IfaceAssert, on failure write error to error_slot
 fn emit_unbox_interface(
     ret_type: vo_analysis::TypeKey,
     dst: u16,
-    result: u16,  // result[0-1] is interface format
+    src: u16,  // src[0-1] is interface format
+    error_slot: u16,
+    ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
-) -> u16 {
-    let is_any = info.is_any_type(ret_type);
-    
-    if is_any {
+) {
+    if info.is_any_type(ret_type) {
         // LHS is any: keep interface format
-        func.emit_op(Opcode::Copy, dst, result, 0);
-        func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
-        2
+        func.emit_op(Opcode::Copy, dst, src, 0);
+        func.emit_op(Opcode::Copy, dst + 1, src + 1, 0);
+        // Clear error slot
+        func.emit_op(Opcode::LoadInt, error_slot, 0, 0);
+        func.emit_op(Opcode::LoadInt, error_slot + 1, 0, 0);
+        return;
+    }
+    
+    // Concrete type: emit IfaceAssert with ok flag
+    let slots = info.type_slot_count(ret_type);
+    let vk = info.type_value_kind(ret_type);
+    let (assert_kind, target_id) = compute_assert_params(ret_type, ctx, info);
+    
+    let target_slots = if assert_kind == 1 { 2 } else { slots };
+    let assert_result = func.alloc_temp(target_slots + 1);
+    let ok_slot = assert_result + target_slots;
+    
+    let flags = assert_kind | (1 << 2) | ((target_slots as u8) << 3);
+    func.emit_with_flags(Opcode::IfaceAssert, flags, assert_result, src, target_id as u16);
+    
+    // Branch on ok flag
+    let ok_jump = func.emit_jump(Opcode::JumpIf, ok_slot);
+    
+    // Fail path: create type assertion error
+    emit_type_assert_error(assert_kind, target_id, vk, src, error_slot, ctx, func);
+    let end_jump = func.emit_jump(Opcode::Jump, 0);
+    
+    // Success path: copy value, clear error
+    func.patch_jump(ok_jump, func.current_pc());
+    copy_slots(dst, assert_result, slots, vk, assert_kind, func);
+    func.emit_op(Opcode::LoadInt, error_slot, 0, 0);
+    func.emit_op(Opcode::LoadInt, error_slot + 1, 0, 0);
+    
+    func.patch_jump(end_jump, func.current_pc());
+}
+
+/// Compute IfaceAssert parameters for a target type.
+fn compute_assert_params(
+    ret_type: vo_analysis::TypeKey,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+) -> (u8, u32) {
+    if info.is_interface(ret_type) {
+        (1, info.get_or_create_interface_meta_id(ret_type, ctx))
     } else {
-        // LHS is concrete type: unbox from interface
-        let slots = info.type_slot_count(ret_type);
-        let vk = info.type_value_kind(ret_type);
-        
-        if slots == 1 {
-            // Single slot: extract from slot1
-            func.emit_op(Opcode::Copy, dst, result + 1, 0);
-            1
-        } else if vk == ValueKind::Interface {
-            // Interface type: copy both slots as-is
-            func.emit_op(Opcode::Copy, dst, result, 0);
-            func.emit_op(Opcode::Copy, dst + 1, result + 1, 0);
-            2
-        } else {
-            // Struct/Array (any size): slot1 is GcRef, use PtrGet to read all slots
-            func.emit_ptr_get(dst, result + 1, 0, slots);
-            slots
+        let rt = info.type_to_runtime_type(ret_type, ctx);
+        (0, ctx.intern_rttid(rt))
+    }
+}
+
+/// Emit code to create a type assertion error.
+fn emit_type_assert_error(
+    assert_kind: u8,
+    target_id: u32,
+    expected_vk: ValueKind,
+    src: u16,  // interface slot0 with actual type info
+    err_dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+) {
+    let extern_id = ctx.get_or_register_extern("dyn_type_assert_error");
+    let args = func.alloc_temp(4);
+    
+    // Expected: (rttid, vk)
+    let expected_rttid = if assert_kind == 1 { 0 } else { target_id };
+    func.emit_op(Opcode::LoadConst, args, ctx.const_int(expected_rttid as i64), 0);
+    func.emit_op(Opcode::LoadConst, args + 1, ctx.const_int(expected_vk as i64), 0);
+    
+    // Got: pass raw slot0 (runtime extracts rttid/vk)
+    func.emit_op(Opcode::Copy, args + 2, src, 0);
+    func.emit_op(Opcode::Copy, args + 3, src, 0);
+    
+    func.emit_with_flags(Opcode::CallExtern, 4, err_dst, extern_id as u16, args);
+}
+
+/// Copy slots from src to dst based on type characteristics.
+fn copy_slots(dst: u16, src: u16, slots: u16, vk: ValueKind, assert_kind: u8, func: &mut FuncBuilder) {
+    if slots == 1 {
+        func.emit_op(Opcode::Copy, dst, src, 0);
+    } else if vk == ValueKind::Interface || assert_kind == 1 {
+        func.emit_op(Opcode::Copy, dst, src, 0);
+        func.emit_op(Opcode::Copy, dst + 1, src + 1, 0);
+    } else {
+        for i in 0..slots {
+            func.emit_op(Opcode::Copy, dst + i, src + i, 0);
         }
     }
 }
