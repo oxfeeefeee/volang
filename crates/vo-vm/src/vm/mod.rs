@@ -974,32 +974,20 @@ impl Vm {
                     ExecResult::Continue
                 }
 
-                // Select operations - not supported in trampoline fibers
+                // Select operations - allowed on trampoline, if it yields execute_jit_call handles it
                 Opcode::SelectBegin => {
-                    if is_trampoline {
-                        panic!("SelectBegin not supported in trampoline fiber");
-                    }
                     exec::exec_select_begin(&mut fiber.select_state, &inst);
                     ExecResult::Continue
                 }
                 Opcode::SelectSend => {
-                    if is_trampoline {
-                        panic!("SelectSend not supported in trampoline fiber");
-                    }
                     exec::exec_select_send(&mut fiber.select_state, &inst);
                     ExecResult::Continue
                 }
                 Opcode::SelectRecv => {
-                    if is_trampoline {
-                        panic!("SelectRecv not supported in trampoline fiber");
-                    }
                     exec::exec_select_recv(&mut fiber.select_state, &inst);
                     ExecResult::Continue
                 }
                 Opcode::SelectExec => {
-                    if is_trampoline {
-                        panic!("SelectExec not supported in trampoline fiber");
-                    }
                     exec::exec_select_exec(stack, bp, &mut fiber.select_state, &inst)
                 }
 
