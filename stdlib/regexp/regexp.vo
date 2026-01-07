@@ -2,10 +2,13 @@ package regexp
 
 import "errors"
 
-// Error codes for regexp
+// Error codes for regexp (internal, range 5000-5099)
 const (
-    ErrInvalidPattern = 5000 // Invalid regular expression pattern
+    codeInvalidPattern = 5000 // Invalid regular expression pattern
 )
+
+// ErrInvalidPattern indicates an invalid regular expression pattern.
+var ErrInvalidPattern = errors.NewCode(codeInvalidPattern, "invalid regexp pattern")
 
 // Extern functions (implemented in Rust)
 func matchString(pattern, s string) (bool, bool)
@@ -23,7 +26,7 @@ func quoteMeta(s string) string
 func MatchString(pattern, s string) (bool, error) {
     matched, valid := matchString(pattern, s)
     if !valid {
-        return false, errors.NewCode(ErrInvalidPattern, "invalid regexp pattern")
+        return false, ErrInvalidPattern
     }
     return matched, nil
 }
@@ -32,7 +35,7 @@ func MatchString(pattern, s string) (bool, error) {
 func Match(pattern string, b []byte) (bool, error) {
     matched, valid := matchBytes(pattern, b)
     if !valid {
-        return false, errors.NewCode(ErrInvalidPattern, "invalid regexp pattern")
+        return false, ErrInvalidPattern
     }
     return matched, nil
 }
@@ -53,7 +56,7 @@ func Compile(expr string) (*Regexp, error) {
     // Validate the pattern
     _, valid := matchString(expr, "")
     if !valid {
-        return nil, errors.NewCode(ErrInvalidPattern, "invalid regexp pattern")
+        return nil, ErrInvalidPattern
     }
     return &Regexp{pattern: expr}, nil
 }

@@ -2,23 +2,45 @@ package json
 
 import "errors"
 
-// JSON error codes (range 2000-2099)
+// JSON error codes (internal, range 4000-4099)
 const (
-    ErrSyntax        = 2000 // JSON syntax error
-    ErrUnexpectedEOF = 2001 // Unexpected end of input
-    ErrInvalidValue  = 2002 // Invalid value
-    ErrTypeMismatch  = 2003 // Type mismatch
-    ErrPathNotFound  = 2004 // Path not found
-    ErrNotObject     = 2005 // Not an object type
-    ErrNotArray      = 2006 // Not an array type
-    ErrMarshal       = 2007 // Serialization error
-    ErrUnmarshal     = 2008 // Deserialization error
+    codeSyntax        = 4000 // JSON syntax error
+    codeUnexpectedEOF = 4001 // Unexpected end of input
+    codeInvalidValue  = 4002 // Invalid value
+    codeTypeMismatch  = 4003 // Type mismatch
+    codePathNotFound  = 4004 // Path not found
+    codeNotObject     = 4005 // Not an object type
+    codeNotArray      = 4006 // Not an array type
+    codeMarshal       = 4007 // Serialization error
+    codeUnmarshal     = 4008 // Deserialization error
 )
 
-// NewError creates a JSON error with the given code and message.
-func NewError(code int, msg string) error {
-    return errors.NewCode(code, msg)
-}
+// ErrSyntax indicates a JSON syntax error.
+var ErrSyntax = errors.NewCode(codeSyntax, "json syntax error")
+
+// ErrUnexpectedEOF indicates unexpected end of input.
+var ErrUnexpectedEOF = errors.NewCode(codeUnexpectedEOF, "unexpected end of JSON input")
+
+// ErrInvalidValue indicates an invalid value.
+var ErrInvalidValue = errors.NewCode(codeInvalidValue, "invalid JSON value")
+
+// ErrTypeMismatch indicates a type mismatch.
+var ErrTypeMismatch = errors.NewCode(codeTypeMismatch, "JSON type mismatch")
+
+// ErrPathNotFound indicates a path was not found.
+var ErrPathNotFound = errors.NewCode(codePathNotFound, "JSON path not found")
+
+// ErrNotObject indicates the value is not an object.
+var ErrNotObject = errors.NewCode(codeNotObject, "not a JSON object")
+
+// ErrNotArray indicates the value is not an array.
+var ErrNotArray = errors.NewCode(codeNotArray, "not a JSON array")
+
+// ErrMarshal indicates a serialization error.
+var ErrMarshal = errors.NewCode(codeMarshal, "JSON marshal error")
+
+// ErrUnmarshal indicates a deserialization error.
+var ErrUnmarshal = errors.NewCode(codeUnmarshal, "JSON unmarshal error")
 
 // Number represents a JSON number literal.
 // It preserves the original string representation for precision.
@@ -44,7 +66,7 @@ func (n Number) IsInt() bool {
 // Int converts to int. Returns error if not representable.
 func (n Number) Int() (int, error) {
     if !n.IsInt() {
-        return 0, errors.NewCode(ErrInvalidValue, "json.Number is not an integer")
+        return 0, errors.Wrap(ErrInvalidValue, "json.Number is not an integer")
     }
     s := string(n)
     neg := false
@@ -59,7 +81,7 @@ func (n Number) Int() (int, error) {
     for i := start; i < len(s); i++ {
         c := s[i]
         if c < '0' || c > '9' {
-            return 0, errors.NewCode(ErrInvalidValue, "invalid integer")
+            return 0, errors.Wrap(ErrInvalidValue, "invalid integer")
         }
         result = result*10 + int(c-'0')
     }

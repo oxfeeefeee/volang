@@ -4,17 +4,19 @@ import "errors"
 
 // ==================== Error Codes ====================
 
-// Error codes for io operations
+// Error codes for io operations (internal, use error values below instead)
 const (
-	ErrCodeEOF           = 3000 // End of file
-	ErrCodeUnexpectedEOF = 3001 // Unexpected end of file
-	ErrCodeShortWrite    = 3002 // Short write
-	ErrCodeShortBuffer   = 3003 // Short buffer
-	ErrCodeNoProgress    = 3004 // Multiple Read calls return no data or error
-	ErrCodeClosedPipe    = 3005 // Read/write on closed pipe
-	ErrCodeInvalidWrite  = 3006 // Write returned impossible count
-	ErrCodeWhence        = 3007 // Invalid Seek whence
-	ErrCodeOffset        = 3008 // Invalid Seek offset
+	codeEOF           = 2000 // End of file
+	codeUnexpectedEOF = 2001 // Unexpected end of file
+	codeShortWrite    = 2002 // Short write
+	codeShortBuffer   = 2003 // Short buffer
+	codeNoProgress    = 2004 // Multiple Read calls return no data or error
+	codeClosedPipe    = 2005 // Read/write on closed pipe
+	codeInvalidWrite  = 2006 // Write returned impossible count
+	codeWhence        = 2007 // Invalid Seek whence
+	codeOffset        = 2008 // Invalid Seek offset
+	codeNegativeRead  = 2009 // Reader returned negative count
+	codeNegativeCount = 2010 // Negative count
 )
 
 // Seek whence values
@@ -25,22 +27,37 @@ const (
 )
 
 // EOF is returned by Read when no more input is available.
-var EOF = errors.NewCode(ErrCodeEOF, "EOF")
+var EOF = errors.NewCode(codeEOF, "EOF")
 
 // ErrUnexpectedEOF means that EOF was encountered in the middle of reading a fixed-size block or data structure.
-var ErrUnexpectedEOF = errors.NewCode(ErrCodeUnexpectedEOF, "unexpected EOF")
+var ErrUnexpectedEOF = errors.NewCode(codeUnexpectedEOF, "unexpected EOF")
 
 // ErrShortWrite means that a write accepted fewer bytes than requested but failed to return an explicit error.
-var ErrShortWrite = errors.NewCode(ErrCodeShortWrite, "short write")
+var ErrShortWrite = errors.NewCode(codeShortWrite, "short write")
 
 // ErrShortBuffer means that a read required a longer buffer than was provided.
-var ErrShortBuffer = errors.NewCode(ErrCodeShortBuffer, "short buffer")
+var ErrShortBuffer = errors.NewCode(codeShortBuffer, "short buffer")
 
 // ErrNoProgress is returned by some clients of a Reader when many calls to Read have failed to return any data or error.
-var ErrNoProgress = errors.NewCode(ErrCodeNoProgress, "multiple Read calls return no data or error")
+var ErrNoProgress = errors.NewCode(codeNoProgress, "multiple Read calls return no data or error")
 
 // ErrClosedPipe is the error used for read or write operations on a closed pipe.
-var ErrClosedPipe = errors.NewCode(ErrCodeClosedPipe, "io: read/write on closed pipe")
+var ErrClosedPipe = errors.NewCode(codeClosedPipe, "io: read/write on closed pipe")
+
+// ErrInvalidWrite means that a write returned an impossible count.
+var ErrInvalidWrite = errors.NewCode(codeInvalidWrite, "invalid write result")
+
+// ErrWhence means an invalid Seek whence value.
+var ErrWhence = errors.NewCode(codeWhence, "invalid whence")
+
+// ErrOffset means an invalid Seek offset.
+var ErrOffset = errors.NewCode(codeOffset, "invalid offset")
+
+// ErrNegativeRead means a Reader returned a negative count.
+var ErrNegativeRead = errors.NewCode(codeNegativeRead, "negative read count")
+
+// ErrNegativeCount means a negative count was passed.
+var ErrNegativeCount = errors.NewCode(codeNegativeCount, "negative count")
 
 // ==================== Core Interfaces ====================
 
@@ -205,7 +222,7 @@ func ReadAtLeast(r Reader, buf []byte, min int) (n int, err error) {
 	}
 	if n >= min {
 		err = nil
-	} else if n > 0 && errors.IsCode(err, ErrCodeEOF) {
+	} else if n > 0 && errors.Is(err, EOF) {
 		err = ErrUnexpectedEOF
 	}
 	return
@@ -274,7 +291,7 @@ func copyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
 			if nw < 0 || nr < nw {
 				nw = 0
 				if ew == nil {
-					ew = errors.NewCode(ErrCodeInvalidWrite, "invalid write result")
+					ew = ErrInvalidWrite
 				}
 			}
 			written += int64(nw)
@@ -305,7 +322,7 @@ func ReadAll(r Reader) ([]byte, error) {
 		n, err := r.Read(b[len(b):cap(b)])
 		b = b[:len(b)+n]
 		if err != nil {
-			if errors.IsCode(err, ErrCodeEOF) {
+			if errors.Is(err, EOF) {
 				err = nil
 			}
 			return b, err
@@ -389,10 +406,10 @@ func (s *SectionReader) Seek(offset int64, whence int) (int64, error) {
 	case SeekEnd:
 		abs = s.limit + offset
 	default:
-		return 0, errors.NewCode(ErrCodeWhence, "invalid whence")
+		return 0, ErrWhence
 	}
 	if abs < s.base {
-		return 0, errors.NewCode(ErrCodeOffset, "negative position")
+		return 0, ErrOffset
 	}
 	s.off = abs
 	return abs - s.base, nil
@@ -444,7 +461,7 @@ func (devNull) ReadFrom(r Reader) (n int64, err error) {
 		readSize, err := r.Read(buf)
 		n += int64(readSize)
 		if err != nil {
-			if errors.IsCode(err, ErrCodeEOF) {
+			if errors.Is(err, EOF) {
 				return n, nil
 			}
 			return n, err
@@ -505,12 +522,12 @@ type multiReader struct {
 func (mr *multiReader) Read(p []byte) (n int, err error) {
 	for len(mr.readers) > 0 {
 		n, err = mr.readers[0].Read(p)
-		if errors.IsCode(err, ErrCodeEOF) {
+		if errors.Is(err, EOF) {
 			mr.readers = mr.readers[1:]
 			continue
 		}
 		if n > 0 || err != nil {
-			if errors.IsCode(err, ErrCodeEOF) && len(mr.readers) > 0 {
+			if errors.Is(err, EOF) && len(mr.readers) > 0 {
 				err = nil
 			}
 			return
@@ -609,7 +626,7 @@ func (o *OffsetWriter) Write(p []byte) (n int, err error) {
 // WriteAt implements WriterAt for OffsetWriter.
 func (o *OffsetWriter) WriteAt(p []byte, off int64) (n int, err error) {
 	if off < 0 {
-		return 0, errors.NewCode(ErrCodeOffset, "negative offset")
+		return 0, ErrOffset
 	}
 	off += o.base
 	return o.w.WriteAt(p, off)
@@ -624,12 +641,12 @@ func (o *OffsetWriter) Seek(offset int64, whence int) (int64, error) {
 	case SeekCurrent:
 		abs = o.off + offset
 	case SeekEnd:
-		return 0, errors.NewCode(ErrCodeWhence, "SeekEnd not supported")
+		return 0, errors.Wrap(ErrWhence, "SeekEnd not supported")
 	default:
-		return 0, errors.NewCode(ErrCodeWhence, "invalid whence")
+		return 0, ErrWhence
 	}
 	if abs < o.base {
-		return 0, errors.NewCode(ErrCodeOffset, "negative position")
+		return 0, ErrOffset
 	}
 	o.off = abs
 	return abs - o.base, nil

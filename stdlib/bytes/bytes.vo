@@ -390,17 +390,21 @@ func indexRuneInString(s string, r rune) int {
 
 // ==================== Buffer ====================
 
-// Error codes for Buffer operations (io package error codes)
+// Error codes for bytes-specific errors (internal)
 const (
-    ErrEOF            = 2000 // End of file/buffer
-    ErrShortBuffer    = 2001 // Buffer too small
-    ErrShortWrite     = 2002 // Write accepted fewer bytes than requested
-    ErrUnreadByte     = 2003 // UnreadByte: previous operation was not a read
-    ErrUnreadRune     = 2004 // UnreadRune: previous operation was not ReadRune
-    ErrNegativeRead   = 2005 // Reader returned negative count
-    ErrNegativeCount  = 2006 // Negative count
-    ErrTooLarge       = 2007 // Buffer too large
+    codeUnreadByte = 6000 // UnreadByte: previous operation was not a read
+    codeUnreadRune = 6001 // UnreadRune: previous operation was not ReadRune
+    codeTooLarge   = 6002 // Buffer too large
 )
+
+// ErrUnreadByte is returned by UnreadByte when the previous operation was not a read.
+var ErrUnreadByte = errors.NewCode(codeUnreadByte, "bytes.Buffer: UnreadByte: previous operation was not a successful read")
+
+// ErrUnreadRune is returned by UnreadRune when the previous operation was not ReadRune.
+var ErrUnreadRune = errors.NewCode(codeUnreadRune, "bytes.Buffer: UnreadRune: previous operation was not a successful ReadRune")
+
+// ErrTooLarge is passed to panic if memory cannot be allocated to store data in a buffer.
+var ErrTooLarge = errors.NewCode(codeTooLarge, "bytes.Buffer: too large")
 
 // smallBufferSize is an initial allocation minimal capacity.
 const smallBufferSize = 64
@@ -619,7 +623,7 @@ func (b *Buffer) Read(p []byte) (int, error) {
         if len(p) == 0 {
             return 0, nil
         }
-        return 0, newEOFError()
+        return 0, io.EOF
     }
     n := copy(p, b.buf[b.off:])
     b.off += n
@@ -653,7 +657,7 @@ func (b *Buffer) ReadByte() (byte, error) {
     if b.empty() {
         // Buffer is empty, reset to recover space.
         b.Reset()
-        return 0, newEOFError()
+        return 0, io.EOF
     }
     c := b.buf[b.off]
     b.off++
@@ -668,7 +672,7 @@ func (b *Buffer) ReadRune() (rune, int, error) {
     if b.empty() {
         // Buffer is empty, reset to recover space.
         b.Reset()
-        return 0, 0, newEOFError()
+        return 0, 0, io.EOF
     }
     c := b.buf[b.off]
     if c < utf8.RuneSelf {
@@ -687,7 +691,7 @@ func (b *Buffer) ReadRune() (rune, int, error) {
 // UnreadRune returns an error.
 func (b *Buffer) UnreadRune() error {
     if b.lastRead <= opInvalid {
-        return newUnreadRuneError()
+        return ErrUnreadRune
     }
     if b.off >= int(b.lastRead) {
         b.off -= int(b.lastRead)
@@ -701,7 +705,7 @@ func (b *Buffer) UnreadRune() error {
 // if the last read returned an error, or if the read read zero bytes, UnreadByte returns an error.
 func (b *Buffer) UnreadByte() error {
     if b.lastRead == opInvalid {
-        return newUnreadByteError()
+        return ErrUnreadByte
     }
     b.lastRead = opInvalid
     if b.off > 0 {
@@ -733,7 +737,7 @@ func (b *Buffer) readSlice(delim byte) ([]byte, error) {
     b.off = end
     b.lastRead = opRead
     if i < 0 {
-        return line, newEOFError()
+        return line, io.EOF
     }
     return line, nil
 }
@@ -753,15 +757,3 @@ func (b *Buffer) empty() bool {
     return len(b.buf) <= b.off
 }
 
-// Error constructors for Buffer operations
-func newEOFError() error {
-    return errors.NewCode(io.ErrCodeEOF, "EOF")
-}
-
-func newUnreadRuneError() error {
-    return errors.NewCode(ErrUnreadRune, "bytes.Buffer: UnreadRune: previous operation was not a successful ReadRune")
-}
-
-func newUnreadByteError() error {
-    return errors.NewCode(ErrUnreadByte, "bytes.Buffer: UnreadByte: previous operation was not a successful read")
-}

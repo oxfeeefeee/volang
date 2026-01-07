@@ -2,10 +2,13 @@ package base64
 
 import "errors"
 
-// Error codes for base64
+// Error codes for base64 (internal, range 4200-4299)
 const (
-    ErrCorruptInput = 4100 // Corrupt input
+    codeCorruptInput = 4200 // Corrupt input
 )
+
+// ErrCorruptInput indicates corrupt base64 input.
+var ErrCorruptInput = errors.NewCode(codeCorruptInput, "base64: corrupt input")
 
 // Standard encoding alphabet
 const encodeStd = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -137,7 +140,7 @@ func decode(s string, table []int, padded bool) ([]byte, error) {
         c := table[s[si+2]]
         d := table[s[si+3]]
         if a < 0 || b < 0 || c < 0 || d < 0 {
-            return nil, errors.NewCode(ErrCorruptInput, "base64: invalid character")
+            return nil, errors.Wrap(ErrCorruptInput, "base64: invalid character")
         }
         val := uint(a)<<18 | uint(b)<<12 | uint(c)<<6 | uint(d)
         dst[di] = byte(val >> 16)
@@ -150,12 +153,12 @@ func decode(s string, table []int, padded bool) ([]byte, error) {
     remain := end - si
     if remain > 0 {
         if remain == 1 {
-            return nil, errors.NewCode(ErrCorruptInput, "base64: invalid input length")
+            return nil, errors.Wrap(ErrCorruptInput, "base64: invalid input length")
         }
         a := table[s[si]]
         b := table[s[si+1]]
         if a < 0 || b < 0 {
-            return nil, errors.NewCode(ErrCorruptInput, "base64: invalid character")
+            return nil, errors.Wrap(ErrCorruptInput, "base64: invalid character")
         }
         val := uint(a)<<18 | uint(b)<<12
         dst[di] = byte(val >> 16)
@@ -164,7 +167,7 @@ func decode(s string, table []int, padded bool) ([]byte, error) {
         if remain > 2 {
             c := table[s[si+2]]
             if c < 0 {
-                return nil, errors.NewCode(ErrCorruptInput, "base64: invalid character")
+                return nil, errors.Wrap(ErrCorruptInput, "base64: invalid character")
             }
             val |= uint(c) << 6
             dst[di] = byte(val >> 8)

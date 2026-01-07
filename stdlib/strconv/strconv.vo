@@ -3,11 +3,17 @@ package strconv
 import "errors"
 import "unicode/utf8"
 
-// Error codes for strconv
+// Error codes for strconv (internal)
 const (
-    ErrSyntax = 3000 // Invalid syntax
-    ErrRange  = 3001 // Value out of range
+    codeSyntax = 3000 // Invalid syntax
+    codeRange  = 3001 // Value out of range
 )
+
+// ErrSyntax indicates that a value does not have the right syntax.
+var ErrSyntax = errors.NewCode(codeSyntax, "invalid syntax")
+
+// ErrRange indicates that a value is out of range.
+var ErrRange = errors.NewCode(codeRange, "value out of range")
 
 // Extern functions (implemented in Rust)
 func ParseFloat(s string, bitSize int) (float64, bool)
@@ -28,10 +34,10 @@ func Itoa(i int) string {
 // ParseInt interprets a string s in the given base (2 to 36) and returns the corresponding value.
 func ParseInt(s string, base int) (int, error) {
     if len(s) == 0 {
-        return 0, errors.NewCode(ErrSyntax, "empty string")
+        return 0, errors.Wrap(ErrSyntax, "empty string")
     }
     if base < 2 || base > 36 {
-        return 0, errors.NewCode(ErrSyntax, "invalid base")
+        return 0, errors.Wrap(ErrSyntax, "invalid base")
     }
 
     neg := false
@@ -44,7 +50,7 @@ func ParseInt(s string, base int) (int, error) {
     }
 
     if start >= len(s) {
-        return 0, errors.NewCode(ErrSyntax, "invalid syntax")
+        return 0, errors.Wrap(ErrSyntax, "invalid syntax")
     }
 
     var result int
@@ -58,10 +64,10 @@ func ParseInt(s string, base int) (int, error) {
         } else if c >= 'A' && c <= 'Z' {
             digit = int(c - 'A' + 10)
         } else {
-            return 0, errors.NewCode(ErrSyntax, "invalid character")
+            return 0, errors.Wrap(ErrSyntax, "invalid character")
         }
         if digit >= base {
-            return 0, errors.NewCode(ErrSyntax, "invalid digit for base")
+            return 0, errors.Wrap(ErrSyntax, "invalid digit for base")
         }
         result = result*base + digit
     }
@@ -75,10 +81,10 @@ func ParseInt(s string, base int) (int, error) {
 // ParseUint is like ParseInt but for unsigned integers.
 func ParseUint(s string, base int) (uint, error) {
     if len(s) == 0 {
-        return 0, errors.NewCode(ErrSyntax, "empty string")
+        return 0, errors.Wrap(ErrSyntax, "empty string")
     }
     if base < 2 || base > 36 {
-        return 0, errors.NewCode(ErrSyntax, "invalid base")
+        return 0, errors.Wrap(ErrSyntax, "invalid base")
     }
 
     start := 0
@@ -87,7 +93,7 @@ func ParseUint(s string, base int) (uint, error) {
     }
 
     if start >= len(s) {
-        return 0, errors.NewCode(ErrSyntax, "invalid syntax")
+        return 0, errors.Wrap(ErrSyntax, "invalid syntax")
     }
 
     var result uint
@@ -101,10 +107,10 @@ func ParseUint(s string, base int) (uint, error) {
         } else if c >= 'A' && c <= 'Z' {
             digit = uint(c - 'A' + 10)
         } else {
-            return 0, errors.NewCode(ErrSyntax, "invalid character")
+            return 0, errors.Wrap(ErrSyntax, "invalid character")
         }
         if digit >= uint(base) {
-            return 0, errors.NewCode(ErrSyntax, "invalid digit for base")
+            return 0, errors.Wrap(ErrSyntax, "invalid digit for base")
         }
         result = result*uint(base) + digit
     }
@@ -120,7 +126,7 @@ func ParseBool(s string) (bool, error) {
     if s == "0" || s == "f" || s == "F" || s == "false" || s == "FALSE" || s == "False" {
         return false, nil
     }
-    return false, errors.NewCode(ErrSyntax, "invalid bool syntax")
+    return false, errors.Wrap(ErrSyntax, "invalid bool syntax")
 }
 
 // FormatInt returns the string representation of i in the given base.
@@ -215,12 +221,12 @@ func QuoteToASCII(s string) string {
 func Unquote(s string) (string, error) {
     n := len(s)
     if n < 2 {
-        return "", errors.NewCode(ErrSyntax, "invalid quoted string")
+        return "", errors.Wrap(ErrSyntax, "invalid quoted string")
     }
 
     quote := s[0]
     if quote != s[n-1] {
-        return "", errors.NewCode(ErrSyntax, "mismatched quotes")
+        return "", errors.Wrap(ErrSyntax, "mismatched quotes")
     }
 
     s = s[1 : n-1]
@@ -230,7 +236,7 @@ func Unquote(s string) (string, error) {
     }
 
     if quote != '"' && quote != '\'' {
-        return "", errors.NewCode(ErrSyntax, "invalid quote character")
+        return "", errors.Wrap(ErrSyntax, "invalid quote character")
     }
 
     buf := make([]byte, 0, len(s))
@@ -277,7 +283,7 @@ func Unquote(s string) (string, error) {
                     buf = append(buf, byte(v))
                     i += 4
                 } else {
-                    return "", errors.NewCode(ErrSyntax, "invalid hex escape")
+                    return "", errors.Wrap(ErrSyntax, "invalid hex escape")
                 }
             case 'u':
                 if i+5 < len(s) {
@@ -288,7 +294,7 @@ func Unquote(s string) (string, error) {
                     buf = appendRune(buf, rune(v))
                     i += 6
                 } else {
-                    return "", errors.NewCode(ErrSyntax, "invalid unicode escape")
+                    return "", errors.Wrap(ErrSyntax, "invalid unicode escape")
                 }
             case 'U':
                 if i+9 < len(s) {
@@ -299,7 +305,7 @@ func Unquote(s string) (string, error) {
                     buf = appendRune(buf, rune(v))
                     i += 10
                 } else {
-                    return "", errors.NewCode(ErrSyntax, "invalid unicode escape")
+                    return "", errors.Wrap(ErrSyntax, "invalid unicode escape")
                 }
             default:
                 if c >= '0' && c <= '7' {
@@ -308,10 +314,10 @@ func Unquote(s string) (string, error) {
                         buf = append(buf, byte(v))
                         i += 4
                     } else {
-                        return "", errors.NewCode(ErrSyntax, "invalid octal escape")
+                        return "", errors.Wrap(ErrSyntax, "invalid octal escape")
                     }
                 } else {
-                    return "", errors.NewCode(ErrSyntax, "invalid escape sequence")
+                    return "", errors.Wrap(ErrSyntax, "invalid escape sequence")
                 }
             }
         } else {

@@ -51,9 +51,9 @@ func NewCode(code int, msg string) error {
     return &Error{code: code, msg: msg}
 }
 
-// Wrap returns a new error with a cause and default code CodeUnknown.
+// Wrap returns a new error that wraps cause, inheriting its code.
 func Wrap(cause error, msg string) error {
-    return &Error{code: CodeUnknown, msg: msg, cause: cause}
+    return &Error{code: cause.Code(), msg: msg, cause: cause}
 }
 
 // WrapCode returns a new error with a cause and the given code.
@@ -64,6 +64,21 @@ func WrapCode(cause error, code int, msg string) error {
 // WithData returns a new error that wraps cause and attaches data.
 func WithData(cause error, data any) error {
     return &Error{code: cause.Code(), msg: cause.Error(), cause: cause, data: data}
+}
+
+// Is reports whether any error in err's unwrap chain matches target by code.
+func Is(err error, target error) bool {
+    if target == nil {
+        return err == nil
+    }
+    targetCode := target.Code()
+    for err != nil {
+        if err.Code() == targetCode {
+            return true
+        }
+        err = err.Unwrap()
+    }
+    return false
 }
 
 // IsCode checks whether any error in the unwrap chain matches code.

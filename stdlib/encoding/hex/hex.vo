@@ -2,11 +2,17 @@ package hex
 
 import "errors"
 
-// Error codes for hex
+// Error codes for hex (internal, range 4100-4199)
 const (
-    ErrLength    = 4000 // Odd length hex string
-    ErrInvalidByte = 4001 // Invalid byte in hex string
+    codeLength      = 4100 // Odd length hex string
+    codeInvalidByte = 4101 // Invalid byte in hex string
 )
+
+// ErrLength indicates an odd length hex string.
+var ErrLength = errors.NewCode(codeLength, "hex: odd length hex string")
+
+// ErrInvalidByte indicates an invalid byte in hex string.
+var ErrInvalidByte = errors.NewCode(codeInvalidByte, "hex: invalid byte")
 
 const hextable = "0123456789abcdef"
 
@@ -38,17 +44,17 @@ func Encode(dst, src []byte) int {
 // Returns the number of bytes written to dst.
 func Decode(dst, src []byte) (int, error) {
     if len(src)%2 != 0 {
-        return 0, errors.NewCode(ErrLength, "hex: odd length hex string")
+        return 0, ErrLength
     }
     j := 0
     for i := 0; i < len(src); i += 2 {
         a, ok := fromHexChar(src[i])
         if !ok {
-            return j, errors.NewCode(ErrInvalidByte, "hex: invalid byte")
+            return j, ErrInvalidByte
         }
         b, ok := fromHexChar(src[i+1])
         if !ok {
-            return j, errors.NewCode(ErrInvalidByte, "hex: invalid byte")
+            return j, ErrInvalidByte
         }
         dst[j] = (a << 4) | b
         j++

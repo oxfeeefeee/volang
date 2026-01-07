@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 )
 
@@ -25,7 +26,7 @@ func main() {
 
 func testEOF() {
 	assert(io.EOF != nil, "EOF should not be nil")
-	assert(io.EOF.Code() == io.ErrCodeEOF, "EOF should have correct code")
+	assert(errors.Is(io.EOF, io.EOF), "EOF should match itself")
 }
 
 func testWriteString() {

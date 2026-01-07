@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 )
 
@@ -60,7 +61,7 @@ func testWriteAndRead() {
 	
 	n, err = buf.Read(p)
 	assert(err != nil, "Read: should return EOF error")
-	assert(err.Code() == io.ErrCodeEOF, "Read: error should be EOF")
+	assert(errors.Is(err, io.EOF), "Read: error should be EOF")
 }
 
 func testWriteString() {
@@ -119,7 +120,7 @@ func testReadByte() {
 	
 	c, err = buf.ReadByte()
 	assert(err != nil, "ReadByte: should return EOF")
-	assert(err.Code() == io.ErrCodeEOF, "ReadByte: error should be EOF")
+	assert(errors.Is(err, io.EOF), "ReadByte: error should be EOF")
 }
 
 func testReadRune() {
@@ -143,7 +144,7 @@ func testReadRune() {
 	
 	r, size, err = buf.ReadRune()
 	assert(err != nil, "ReadRune: should return EOF")
-	assert(err.Code() == io.ErrCodeEOF, "ReadRune: error should be EOF")
+	assert(errors.Is(err, io.EOF), "ReadRune: error should be EOF")
 }
 
 func testUnreadRune() {
@@ -197,7 +198,7 @@ func testReadBytes() {
 	
 	line, err = buf.ReadBytes('\n')
 	assert(err != nil, "ReadBytes: should return EOF when no delimiter found")
-	assert(err.Code() == io.ErrCodeEOF, "ReadBytes: error should be EOF")
+	assert(errors.Is(err, io.EOF), "ReadBytes: error should be EOF")
 }
 
 func testReadString() {
