@@ -212,17 +212,11 @@ tests:
     skip: [jit]
     reason: "JIT bug - segfault in release"
   - file: nil_slice_map.vo
-    skip: [jit]
-    reason: "JIT bug - slice panic"
   - file: packed_array.vo
   - file: private_type_itab.vo
   - file: jit/native_math.vo
   - file: jit/native_strings.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: jit/string_split.vo
-    skip: [jit]
-    reason: "JIT bug"
 
   # Typechecker tests - JIT bugs
   - file: typechecker/assignable_channel.vo
@@ -233,8 +227,6 @@ tests:
     reason: "JIT bug"
   - file: typechecker/assignable_interface.vo
   - file: typechecker/assignable_nil.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: typechecker/interface_embedding.vo
   - file: typechecker/method_sig_complex_params.vo
     skip: [jit]

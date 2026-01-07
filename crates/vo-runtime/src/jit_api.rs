@@ -693,6 +693,7 @@ pub extern "C" fn vo_slice_new(gc: *mut Gc, elem_meta: u32, elem_bytes: u32, len
 /// Get slice length.
 #[no_mangle]
 pub extern "C" fn vo_slice_len(s: u64) -> u64 {
+    if s == 0 { return 0; }
     use crate::objects::slice;
     slice::len(s as crate::gc::GcRef) as u64
 }
@@ -700,6 +701,7 @@ pub extern "C" fn vo_slice_len(s: u64) -> u64 {
 /// Get slice capacity.
 #[no_mangle]
 pub extern "C" fn vo_slice_cap(s: u64) -> u64 {
+    if s == 0 { return 0; }
     use crate::objects::slice;
     slice::cap(s as crate::gc::GcRef) as u64
 }
