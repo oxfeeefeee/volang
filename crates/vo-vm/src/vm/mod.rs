@@ -73,8 +73,12 @@ impl Vm {
     ///
     /// Call this after creating the VM to enable JIT compilation.
     /// If JIT initialization fails, the VM will continue with interpretation only.
+    /// Note: Does nothing if JIT manager already exists (e.g., from with_jit_thresholds).
     #[cfg(feature = "jit")]
     pub fn init_jit(&mut self) {
+        if self.jit_mgr.is_some() {
+            return; // Already initialized (e.g., by with_jit_thresholds)
+        }
         match JitManager::new() {
             Ok(mgr) => {
                 self.jit_mgr = Some(mgr);

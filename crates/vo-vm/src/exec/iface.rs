@@ -56,7 +56,11 @@ pub fn exec_iface_assign(
         let src_vk = interface::unpack_value_kind(src_slot0);
         let iface_meta_id = low;  // low = target iface_meta_id
         
-        let itab_id = {
+        let itab_id = if iface_meta_id == 0 {
+            // Target is any (empty interface): itab_id must be 0
+            // This invariant is relied upon by codegen optimizations
+            0
+        } else {
             // Get named_type_id from runtime_types
             // For Named types: Named(id) -> id
             // For Pointer types: Pointer(Named(id)) -> id (methods are on base type)

@@ -1081,27 +1081,58 @@ fn iface_assign<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     use vo_runtime::bytecode::Constant;
     let vk = inst.flags;
     let src = e.read_var(inst.b);
-    let const_idx = inst.c as usize;
-    let (rttid, itab_id) = if let Constant::Int(packed) = &e.vo_module().constants[const_idx] {
-        let rttid = (*packed >> 32) as u32;
-        let itab_id = (*packed & 0xFFFFFFFF) as u32;
-        (rttid, itab_id)
+    
+    // ValueKind: Array=14, Struct=15, Interface=16
+    let (slot0, slot1) = if vk == 16 {
+        // Interface source: preserve rttid/vk from source, update itab_id
+        // For interface->any (iface_meta_id=0), itab_id must be 0
+        // For interface->other interface, would need runtime itab lookup (not implemented)
+        let const_idx = inst.c as usize;
+        let iface_meta_id = if let Constant::Int(packed) = &e.vo_module().constants[const_idx] {
+            (*packed & 0xFFFFFFFF) as u32
+        } else { 0 };
+        
+        let src_slot0 = src;
+        let src_slot1 = e.read_var(inst.b + 1);
+        
+        if iface_meta_id == 0 {
+            // Target is any: itab_id=0, preserve rttid and vk from source
+            // slot0 format: [itab_id:32 | rttid:24 | vk:8]
+            // Clear top 32 bits (itab_id), keep bottom 32 bits (rttid | vk)
+            let mask = e.builder().ins().iconst(types::I64, 0x00000000_FFFFFFFF_u64 as i64);
+            let new_slot0 = e.builder().ins().band(src_slot0, mask);
+            (new_slot0, src_slot1)
+        } else {
+            // Target is non-empty interface: would need runtime itab lookup
+            // For now, just copy (this is incomplete but matches previous behavior)
+            (src_slot0, src_slot1)
+        }
     } else {
-        (0, 0)
+        // Concrete type source: use compile-time constants
+        let const_idx = inst.c as usize;
+        let (rttid, itab_id) = if let Constant::Int(packed) = &e.vo_module().constants[const_idx] {
+            let rttid = (*packed >> 32) as u32;
+            let itab_id = (*packed & 0xFFFFFFFF) as u32;
+            (rttid, itab_id)
+        } else {
+            (0, 0)
+        };
+        let itab_shifted = (itab_id as u64) << 32;
+        let rttid_shifted = (rttid as u64) << 8;
+        let slot0_val = itab_shifted | rttid_shifted | (vk as u64);
+        let slot0 = e.builder().ins().iconst(types::I64, slot0_val as i64);
+        
+        let slot1 = if vk == 14 || vk == 15 {
+            // Struct or Array: ptr_clone the GcRef
+            if let Some(ptr_clone_func) = e.helpers().ptr_clone {
+                let gc_ptr = e.gc_ptr();
+                let call = e.builder().ins().call(ptr_clone_func, &[gc_ptr, src]);
+                e.builder().inst_results(call)[0]
+            } else { src }
+        } else { src };
+        (slot0, slot1)
     };
-    let itab_shifted = (itab_id as u64) << 32;
-    let rttid_shifted = (rttid as u64) << 8;
-    let slot0_val = itab_shifted | rttid_shifted | (vk as u64);
-    let slot0 = e.builder().ins().iconst(types::I64, slot0_val as i64);
-    let slot1 = if vk == 7 || vk == 8 {
-        if let Some(ptr_clone_func) = e.helpers().ptr_clone {
-            let gc_ptr = e.gc_ptr();
-            let call = e.builder().ins().call(ptr_clone_func, &[gc_ptr, src]);
-            e.builder().inst_results(call)[0]
-        } else { src }
-    } else if vk == 11 {
-        e.read_var(inst.b + 1)
-    } else { src };
+    
     e.write_var(inst.a, slot0);
     e.write_var(inst.a + 1, slot1);
 }
