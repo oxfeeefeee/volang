@@ -52,8 +52,6 @@ tests:
     skip: [jit]
     reason: "JIT bug"
   - file: iface_to_iface_assertion.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: init_call_error.vo
     should_fail: true
     reason: "init() cannot be called explicitly"
@@ -155,11 +153,7 @@ tests:
     reason: "JIT bug"
   - file: type_switch.vo
   - file: type_assertion.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: type_assertion_ok.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: typed_nil_interface.vo
   - file: type_debug.vo
   - file: value_receiver_bug.vo
@@ -203,20 +197,10 @@ tests:
     skip: [jit]
     reason: "JIT bug"
   - file: dyn_access.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: dyn_access_big_struct.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_access_interface_field.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_access_interface_itab_bug.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: dyn_access_slice_interface_elem.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: dyn_call_args.vo
     skip: [jit]
     reason: "JIT bug - ffi panic"
@@ -236,32 +220,18 @@ tests:
     skip: [jit]
     reason: "JIT bug - ffi panic"
   - file: dyn_call_simple.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_get_attr.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_get_method.vo
     skip: [jit]
     reason: "JIT bug - ffi panic"
   - file: dyn_get_method_simple.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_member_method.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_method_value_receiver.vo
     skip: [jit]
     reason: "JIT bug - ffi panic"
   - file: dyn_set_attr_iface_mismatch.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: dyn_set_attr_interface_field.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: dyn_try_unwrap.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: dyn_write.vo
     skip: [jit]
     reason: "JIT bug"
@@ -287,8 +257,6 @@ tests:
     skip: [jit]
     reason: "JIT bug - func_compiler panic"
   - file: jit/native_math.vo
-    skip: [jit]
-    reason: "JIT bug - ffi panic"
   - file: jit/native_strings.vo
     skip: [jit]
     reason: "JIT bug"

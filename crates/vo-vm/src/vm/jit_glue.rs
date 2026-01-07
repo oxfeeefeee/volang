@@ -1,8 +1,8 @@
 //! JIT trampolines, context building, and JIT call implementations.
 
 use vo_runtime::jit_api::{JitResult, JitContext, JitCallContext};
+use vo_runtime::itab::ItabCache;
 use vo_jit::JitFunc;
-
 
 use crate::bytecode::Module;
 use crate::fiber::Fiber;
@@ -13,18 +13,6 @@ use super::{Vm, VmState, ExecResult};
 // =============================================================================
 // JIT Trampolines
 // =============================================================================
-
-pub extern "C" fn itab_lookup_trampoline(
-    itabs: *const std::ffi::c_void,
-    itab_id: u32,
-    method_idx: u32,
-) -> u32 {
-    unsafe {
-        let itabs = itabs as *const crate::bytecode::Itab;
-        let itab = &*itabs.add(itab_id as usize);
-        itab.methods[method_idx as usize]
-    }
-}
 
 pub extern "C" fn call_extern_trampoline(
     ctx: *mut vo_runtime::jit_api::JitContext,
@@ -44,7 +32,7 @@ pub extern "C" fn call_extern_trampoline(
     let gc = unsafe { &mut *gc };
     let module = unsafe { &*(module as *const Module) };
     let ctx = unsafe { &mut *ctx };
-    let itab_cache = unsafe { &mut *(ctx.itab_cache as *mut vo_runtime::itab::ItabCache) };
+    let itab_cache = unsafe { &mut *ctx.itab_cache };
     
     // Buffer must be large enough for both args and return values
     let buffer_size = (arg_count as usize).max(ret_slots as usize).max(1);
@@ -105,7 +93,7 @@ pub fn build_jit_ctx(
     jit_func_count: u32,
     vm_ptr: *mut std::ffi::c_void,
     fiber_ptr: *mut std::ffi::c_void,
-    module_ptr: *const std::ffi::c_void,
+    module_ptr: *const Module,
     safepoint_flag: *const bool,
     panic_flag: *mut bool,
 ) -> JitContext {
@@ -117,13 +105,10 @@ pub fn build_jit_ctx(
         vm: vm_ptr,
         fiber: fiber_ptr,
         call_vm_fn: Some(vm_call_trampoline),
-        itabs: state.itab_cache.itabs_ptr(),
-        itab_lookup_fn: Some(itab_lookup_trampoline),
+        itab_cache: &mut state.itab_cache as *mut _,
         extern_registry: &state.extern_registry as *const _ as *const std::ffi::c_void,
         call_extern_fn: Some(call_extern_trampoline),
-        itab_cache: &mut state.itab_cache as *mut _ as *mut std::ffi::c_void,
         module: module_ptr,
-        iface_assert_fn: None,
         jit_func_table,
         jit_func_count,
     }
@@ -180,7 +165,7 @@ impl JitCallContext for Vm {
             &mut self.scheduler.fibers[fiber_id as usize] as *mut Fiber as *mut std::ffi::c_void
         };
         let vm_ptr = self as *mut _ as *mut std::ffi::c_void;
-        let module_ptr = self.module.as_ref().map(|m| m as *const _ as *const std::ffi::c_void).unwrap_or(std::ptr::null());
+        let module_ptr = self.module.as_ref().map(|m| m as *const _).unwrap_or(std::ptr::null());
         
         build_jit_ctx(
             &mut self.state, func_table_ptr, func_table_len,
@@ -209,7 +194,7 @@ impl Vm {
         let mut panic_flag = false;
         let vm_ptr = self as *mut _ as *mut std::ffi::c_void;
         let module_ptr = self.module.as_ref()
-            .map(|m| m as *const _ as *const std::ffi::c_void)
+            .map(|m| m as *const _)
             .unwrap_or(std::ptr::null());
         
         let mut ctx = build_jit_ctx(
@@ -392,7 +377,7 @@ impl Vm {
         let mut panic_flag = false;
         let vm_ptr = self as *mut _ as *mut std::ffi::c_void;
         let module_ptr = self.module.as_ref()
-            .map(|m| m as *const _ as *const std::ffi::c_void)
+            .map(|m| m as *const _)
             .unwrap_or(std::ptr::null());
         
         // Build JIT context

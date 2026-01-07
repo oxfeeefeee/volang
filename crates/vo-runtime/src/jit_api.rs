@@ -21,6 +21,8 @@
 use std::ffi::c_void;
 
 use crate::gc::{Gc, GcRef};
+use crate::itab::ItabCache;
+use vo_common_core::bytecode::Module;
 
 // =============================================================================
 // JitContext
@@ -76,13 +78,8 @@ pub struct JitContext {
     /// Set by VM when creating JitContext.
     pub call_vm_fn: Option<VmCallFn>,
     
-    /// Pointer to itab array for interface method dispatch.
-    /// Each Itab contains a Vec<u32> of method func_ids.
-    /// Layout: *const Vec<Itab> (opaque, used by vo_call_iface)
-    pub itabs: *const c_void,
-    
-    /// Function to lookup method from itab: (itabs, itab_id, method_idx) -> func_id
-    pub itab_lookup_fn: Option<extern "C" fn(*const c_void, u32, u32) -> u32>,
+    /// Pointer to ItabCache for interface method dispatch and dynamic itab creation.
+    pub itab_cache: *mut ItabCache,
     
     /// Pointer to ExternRegistry for calling extern functions.
     pub extern_registry: *const c_void,
@@ -90,15 +87,8 @@ pub struct JitContext {
     /// Callback to call extern function: (ctx, registry, gc, module, extern_id, args, arg_count, ret, ret_slots) -> JitResult
     pub call_extern_fn: Option<extern "C" fn(*mut JitContext, *const c_void, *mut Gc, *const c_void, u32, *const u64, u32, *mut u64, u32) -> JitResult>,
     
-    /// Pointer to ItabCache for interface assertions.
-    pub itab_cache: *mut c_void,
-    
     /// Pointer to Module for type information.
-    pub module: *const c_void,
-    
-    /// Callback for interface assertion: (ctx, slot0, slot1, target_id, flags, dst) -> JitResult
-    /// Returns matches in dst[0], and result values in subsequent slots
-    pub iface_assert_fn: Option<extern "C" fn(*mut JitContext, u64, u64, u32, u16, *mut u64) -> u64>,
+    pub module: *const Module,
     
     /// JIT function pointer table: jit_func_table[func_id] = pointer to JIT function (or null if not compiled).
     /// Used for direct JIT-to-JIT calls without going through VM trampoline.
@@ -297,7 +287,7 @@ pub extern "C" fn vo_call_extern(
         None => return JitResult::Panic,
     };
     
-    call_fn(ctx, ctx_ref.extern_registry, ctx_ref.gc, ctx_ref.module, extern_id, args, arg_count, ret, ret_slots)
+    call_fn(ctx, ctx_ref.extern_registry, ctx_ref.gc, ctx_ref.module as *const c_void, extern_id, args, arg_count, ret, ret_slots)
 }
 
 /// Call a closure from JIT code.
@@ -386,10 +376,10 @@ pub extern "C" fn vo_call_iface(
     // Extract itab_id from slot0 (high 32 bits)
     let itab_id = (iface_slot0 >> 32) as u32;
     
-    // Lookup func_id from itab
-    let func_id = match ctx_ref.itab_lookup_fn {
-        Some(lookup) => lookup(ctx_ref.itabs, itab_id, method_idx),
-        None => return JitResult::Panic, // No lookup function registered
+    // Lookup func_id from itab directly
+    let func_id = unsafe {
+        let itab_cache = &*ctx_ref.itab_cache;
+        itab_cache.lookup_method(itab_id, method_idx as usize)
     };
     
     // Prepare args with receiver as first slot
@@ -782,6 +772,52 @@ pub extern "C" fn vo_slice_from_array3(gc: *mut Gc, arr: u64, lo: u64, hi: u64, 
 // Interface Helpers
 // =============================================================================
 
+/// Extract named_type_id from RuntimeType (recursively unwraps Pointer).
+fn extract_named_type_id(rt: &crate::RuntimeType, runtime_types: &[crate::RuntimeType]) -> Option<u32> {
+    use crate::RuntimeType;
+    match rt {
+        RuntimeType::Named { id, .. } => Some(*id),
+        RuntimeType::Pointer(elem_value_rttid) => {
+            runtime_types.get(elem_value_rttid.rttid() as usize)
+                .and_then(|inner| extract_named_type_id(inner, runtime_types))
+        }
+        _ => None,
+    }
+}
+
+/// Check if src type satisfies target interface.
+fn check_interface_satisfaction(
+    src_rttid: u32,
+    target_id: u32,
+    module: &Module,
+) -> bool {
+    let iface_meta = match module.interface_metas.get(target_id as usize) {
+        Some(m) => m,
+        None => return false,
+    };
+    
+    if iface_meta.methods.is_empty() {
+        return true; // empty interface always satisfied
+    }
+    
+    // Look up RuntimeType to find named_type_id for method lookup
+    if let Some(named_type_id) = module.runtime_types.get(src_rttid as usize)
+        .and_then(|rt| extract_named_type_id(rt, &module.runtime_types))
+    {
+        if let Some(named_type) = module.named_type_metas.get(named_type_id as usize) {
+            // Check each interface method: name must exist AND signature_rttid must match
+            return iface_meta.methods.iter().all(|iface_method| {
+                if let Some(concrete_method) = named_type.methods.get(&iface_method.name) {
+                    iface_method.signature_rttid == concrete_method.signature_rttid
+                } else {
+                    false
+                }
+            });
+        }
+    }
+    false // non-named types can't implement interfaces with methods
+}
+
 /// Interface assertion.
 /// Returns: 1 if matches, 0 if not (when has_ok), or panics (when !has_ok && !matches)
 /// dst layout: [result_slots...][ok_flag if has_ok]
@@ -804,6 +840,9 @@ pub extern "C" fn vo_iface_assert(
     let src_rttid = interface::unpack_rttid(slot0);
     let src_vk = interface::unpack_value_kind(slot0);
     
+    let ctx_ref = unsafe { &*ctx };
+    let module = unsafe { &*ctx_ref.module };
+    
     // nil interface always fails
     let matches = if src_vk == ValueKind::Void {
         false
@@ -811,15 +850,8 @@ pub extern "C" fn vo_iface_assert(
         // Type comparison: check rttid
         src_rttid == target_id
     } else {
-        // Interface method check - call through callback
-        unsafe {
-            let ctx_ref = &*ctx;
-            if let Some(iface_assert_fn) = ctx_ref.iface_assert_fn {
-                iface_assert_fn(ctx, slot0, slot1, target_id, flags, dst) != 0
-            } else {
-                false
-            }
-        }
+        // Interface method check - direct implementation
+        check_interface_satisfaction(src_rttid, target_id, module)
     };
     
     unsafe {
@@ -864,15 +896,23 @@ unsafe fn write_iface_assert_success(
     let src_vk = interface::unpack_value_kind(slot0);
     
     if assert_kind == 1 {
-        // Interface assertion: call through callback to get new itab
+        // Interface assertion: create new itab and write result
         let ctx_ref = &*ctx;
-        if let Some(iface_assert_fn) = ctx_ref.iface_assert_fn {
-            // Callback handles writing dst
-            iface_assert_fn(ctx, slot0, slot1, target_id, 0x8000 | (assert_kind as u16), dst);
-        } else {
-            *dst = slot0;
-            *dst.add(1) = slot1;
-        }
+        let module = &*ctx_ref.module;
+        let itab_cache = &mut *ctx_ref.itab_cache;
+        
+        let named_type_id = module.runtime_types.get(src_rttid as usize)
+            .and_then(|rt| extract_named_type_id(rt, &module.runtime_types))
+            .unwrap_or(0);
+        let new_itab_id = itab_cache.get_or_create(
+            named_type_id,
+            target_id,
+            &module.named_type_metas,
+            &module.interface_metas,
+        );
+        let new_slot0 = interface::pack_slot0(new_itab_id, src_rttid, src_vk);
+        *dst = new_slot0;
+        *dst.add(1) = slot1;
     } else if src_vk == ValueKind::Struct || src_vk == ValueKind::Array {
         // Copy value from GcRef
         let gc_ref = slot1 as GcRef;
