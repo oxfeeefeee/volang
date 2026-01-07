@@ -28,6 +28,8 @@ pub struct JitConfig {
     pub call_threshold: u32,
     /// Backedge count threshold for loop OSR compilation (TODO).
     pub loop_threshold: u32,
+    /// Print Cranelift IR for compiled functions.
+    pub debug_ir: bool,
 }
 
 impl Default for JitConfig {
@@ -35,6 +37,7 @@ impl Default for JitConfig {
         Self {
             call_threshold: 100,
             loop_threshold: 50,
+            debug_ir: false,
         }
     }
 }
@@ -129,10 +132,11 @@ impl JitManager {
     
     /// Create a new JIT manager with custom config.
     pub fn with_config(config: JitConfig) -> Result<Self, JitError> {
+        let compiler = JitCompiler::with_debug(config.debug_ir)?;
         Ok(Self {
             funcs: Vec::new(),
             func_table: Vec::new(),
-            compiler: JitCompiler::new()?,
+            compiler,
             config,
         })
     }

@@ -230,7 +230,11 @@ impl<'a> FunctionCompiler<'a> {
         let func_id = (inst.a as u32) | ((inst.flags as u32) << 16);
         let arg_start = inst.b as usize;
         let arg_slots = (inst.c >> 8) as usize;
-        let ret_slots = (inst.c & 0xFF) as usize;
+        let call_ret_slots = (inst.c & 0xFF) as usize;
+        
+        // Get target function's actual ret_slots for buffer allocation
+        // (callee writes based on its func_def.ret_slots, not call instruction's ret_slots)
+        let func_ret_slots = self.vo_module.functions[func_id as usize].ret_slots as usize;
         
         let arg_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
@@ -239,7 +243,7 @@ impl<'a> FunctionCompiler<'a> {
         ));
         let ret_slot = self.builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-            (ret_slots.max(1) * 8) as u32,
+            (func_ret_slots.max(1) * 8) as u32,
             8,
         ));
         
@@ -253,14 +257,15 @@ impl<'a> FunctionCompiler<'a> {
         let ret_ptr = self.builder.ins().stack_addr(types::I64, ret_slot, 0);
         let func_id_val = self.builder.ins().iconst(types::I32, func_id as i64);
         let arg_count = self.builder.ins().iconst(types::I32, arg_slots as i64);
-        let ret_count = self.builder.ins().iconst(types::I32, ret_slots as i64);
+        let ret_count = self.builder.ins().iconst(types::I32, func_ret_slots as i64);
         
         let call = self.builder.ins().call(call_vm_func, &[ctx, func_id_val, args_ptr, arg_count, ret_ptr, ret_count]);
         let result = self.builder.inst_results(call)[0];
         
         self.check_call_result(result);
         
-        for i in 0..ret_slots {
+        // Only load call_ret_slots back to caller's variables
+        for i in 0..call_ret_slots {
             let val = self.builder.ins().stack_load(types::I64, ret_slot, (i * 8) as i32);
             self.builder.def_var(self.vars[arg_start + i], val);
         }

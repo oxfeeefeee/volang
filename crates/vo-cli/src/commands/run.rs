@@ -373,20 +373,26 @@ fn run_vm(module: Module, source_root: &Path) -> bool {
 /// Environment variables:
 /// - `VO_JIT_CALL_THRESHOLD`: Call count threshold (default: 100)
 /// - `VO_JIT_LOOP_THRESHOLD`: Loop back-edge threshold (default: 1000)
+/// - `VO_JIT_DEBUG`: Print Cranelift IR for compiled functions
 fn run_jit(module: Module, source_root: &Path) -> bool {
+    use vo_vm::JitConfig;
+    
     let call_threshold = std::env::var("VO_JIT_CALL_THRESHOLD")
         .ok()
-        .and_then(|s| s.parse().ok());
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
     let loop_threshold = std::env::var("VO_JIT_LOOP_THRESHOLD")
         .ok()
-        .and_then(|s| s.parse().ok());
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
+    let debug_ir = std::env::var("VO_JIT_DEBUG").is_ok();
     
-    let mut vm = match (call_threshold, loop_threshold) {
-        (Some(call), Some(loop_)) => Vm::with_jit_thresholds(call, loop_),
-        (Some(call), None) => Vm::with_jit_thresholds(call, 1000),
-        (None, Some(loop_)) => Vm::with_jit_thresholds(100, loop_),
-        (None, None) => Vm::new(),
+    let config = JitConfig {
+        call_threshold,
+        loop_threshold,
+        debug_ir,
     };
+    let mut vm = Vm::with_jit_config(config);
     vm.init_jit();
     vm.load(module);
     

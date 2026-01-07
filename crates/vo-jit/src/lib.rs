@@ -168,10 +168,15 @@ pub struct JitCompiler {
     ctx: cranelift_codegen::Context,
     cache: JitCache,
     helper_funcs: HelperFuncIds,
+    debug_ir: bool,
 }
 
 impl JitCompiler {
     pub fn new() -> Result<Self, JitError> {
+        Self::with_debug(false)
+    }
+    
+    pub fn with_debug(debug_ir: bool) -> Result<Self, JitError> {
         let mut flag_builder = settings::builder();
         flag_builder.set("opt_level", "speed").unwrap();
         
@@ -191,7 +196,7 @@ impl JitCompiler {
         let ptr_type = module.target_config().pointer_type();
         let helper_funcs = Self::declare_helpers(&mut module, ptr_type)?;
 
-        Ok(Self { module, ctx, cache: JitCache::new(), helper_funcs })
+        Ok(Self { module, ctx, cache: JitCache::new(), helper_funcs, debug_ir })
     }
 
     fn register_symbols(builder: &mut JITBuilder) {
@@ -669,6 +674,11 @@ impl JitCompiler {
         let helpers = self.get_helper_refs();
         let compiler = FunctionCompiler::new(&mut self.ctx.func, &mut func_ctx, func, vo_module, helpers);
         compiler.compile()?;
+        
+        if self.debug_ir {
+            eprintln!("=== JIT IR for func_{} {} ===", func_id, func.name);
+            eprintln!("{}", self.ctx.func.display());
+        }
         
         self.module.define_function(func_id_cl, &mut self.ctx)?;
         self.module.clear_context(&mut self.ctx);

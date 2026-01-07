@@ -240,12 +240,14 @@ impl Vm {
         let func_def = &module.functions[func_id as usize];
         let local_slots = func_def.local_slots;
         let param_slots = func_def.param_slots as usize;
+        let func_ret_slots = func_def.ret_slots as usize;
         
         let trampoline_id = self.scheduler.acquire_trampoline_fiber();
         
         {
             let fiber = self.scheduler.trampoline_fiber_mut(trampoline_id);
-            fiber.push_frame(func_id, local_slots, 0, ret_count as u16);
+            // Use func_def.ret_slots for frame allocation (function writes based on its definition)
+            fiber.push_frame(func_id, local_slots, 0, func_ret_slots as u16);
             let bp = fiber.frames.last().unwrap().bp;
             for i in 0..param_slots.min(arg_count as usize) {
                 let arg_val = unsafe { *args.add(i) };
@@ -268,6 +270,7 @@ impl Vm {
         
         if result == JitResult::Ok {
             let fiber = self.scheduler.trampoline_fiber(trampoline_id);
+            // Only copy back ret_count slots to caller's buffer
             for i in 0..(ret_count as usize) {
                 if i < fiber.stack.len() {
                     unsafe { *ret.add(i) = fiber.stack[i] };

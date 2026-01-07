@@ -151,9 +151,10 @@ impl FuncBuilder {
     /// Create a closure function builder (slot 0 reserved for closure ref)
     pub fn new_closure(name: &str) -> Self {
         let mut builder = Self::new(name);
-        // Reserve slot 0 for closure reference
+        // Reserve slot 0 for closure reference (counts as a param for JIT prologue)
         builder.slot_types.push(SlotType::GcRef);
         builder.next_slot = 1;
+        builder.param_slots = 1;  // closure ref is the first param slot
         builder
     }
 

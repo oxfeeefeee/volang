@@ -55,11 +55,22 @@ impl Vm {
     /// Create a VM with custom JIT thresholds.
     #[cfg(feature = "jit")]
     pub fn with_jit_thresholds(call_threshold: u32, loop_threshold: u32) -> Self {
-        let mut vm = Self::new();
-        let config = JitConfig {
+        Self::with_jit_config(JitConfig {
             call_threshold,
             loop_threshold,
-        };
+            ..Default::default()
+        })
+    }
+    
+    #[cfg(not(feature = "jit"))]
+    pub fn with_jit_thresholds(_call_threshold: u32, _loop_threshold: u32) -> Self {
+        Self::new()
+    }
+    
+    /// Create a VM with custom JIT configuration.
+    #[cfg(feature = "jit")]
+    pub fn with_jit_config(config: JitConfig) -> Self {
+        let mut vm = Self::new();
         if let Ok(mgr) = JitManager::with_config(config) {
             vm.jit_mgr = Some(mgr);
         }
@@ -67,7 +78,7 @@ impl Vm {
     }
     
     #[cfg(not(feature = "jit"))]
-    pub fn with_jit_thresholds(_call_threshold: u32, _loop_threshold: u32) -> Self {
+    pub fn with_jit_config(_config: JitConfig) -> Self {
         Self::new()
     }
 

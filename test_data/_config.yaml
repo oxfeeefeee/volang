@@ -164,8 +164,6 @@ tests:
   # Extension syntax tests
   - file: fail_stmt.vo
   - file: question_operator.vo
-    skip: [jit]
-    reason: "JIT bug"
   - file: errdefer_stmt.vo
     skip: [jit]
     reason: "JIT bug - errdefer not supported"
