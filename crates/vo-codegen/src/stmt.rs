@@ -840,18 +840,28 @@ fn compile_stmt_with_label(
                     // Standard path: allocate space and compile return values
                     let ret_start = func.alloc_temp(total_ret_slots);
                     
-                    // Compile return values with interface conversion if needed
-                    let mut offset = 0u16;
-                    for (i, result) in ret.values.iter().enumerate() {
-                        let ret_type = ret_types.get(i).copied();
-                        if let Some(rt) = ret_type {
-                            let slots = info.type_slot_count(rt);
-                            compile_value_to(result, ret_start + offset, rt, ctx, func, info)?;
-                            offset += slots;
-                        } else {
-                            let slots = info.expr_slots(result.id);
-                            compile_expr_to(result, ret_start + offset, ctx, func, info)?;
-                            offset += slots;
+                    // Check for multi-value case: return f() where f() returns a tuple
+                    let is_multi_value = ret.values.len() == 1 
+                        && ret_types.len() >= 2
+                        && info.is_tuple(info.expr_type(ret.values[0].id));
+                    
+                    if is_multi_value {
+                        // Multi-value: compile expr once to get all return values
+                        compile_expr_to(&ret.values[0], ret_start, ctx, func, info)?;
+                    } else {
+                        // Compile return values with interface conversion if needed
+                        let mut offset = 0u16;
+                        for (i, result) in ret.values.iter().enumerate() {
+                            let ret_type = ret_types.get(i).copied();
+                            if let Some(rt) = ret_type {
+                                let slots = info.type_slot_count(rt);
+                                compile_value_to(result, ret_start + offset, rt, ctx, func, info)?;
+                                offset += slots;
+                            } else {
+                                let slots = info.expr_slots(result.id);
+                                compile_expr_to(result, ret_start + offset, ctx, func, info)?;
+                                offset += slots;
+                            }
                         }
                     }
                     func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);

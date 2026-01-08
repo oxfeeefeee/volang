@@ -475,7 +475,13 @@ pub fn compile_extern_call(
     let extern_id = ctx.get_or_register_extern(extern_name);
     let func_type = info.expr_type(call.func.id);
     let is_variadic = info.is_variadic(func_type);
-    let (args_start, total_slots) = compile_extern_args(call, is_variadic, ctx, func, info)?;
+    let param_types = info.func_param_types(func_type);
+    
+    // Use compile_method_args for proper type conversion (e.g., boxing to `any`)
+    let total_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
+    let args_start = func.alloc_temp(total_slots.max(1));
+    compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
+    
     func.emit_with_flags(Opcode::CallExtern, total_slots as u8, dst, extern_id as u16, args_start);
     Ok(())
 }

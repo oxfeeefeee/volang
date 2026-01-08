@@ -10,9 +10,10 @@ const MAX_24BIT_ID: u32 = 0xFF_FFFF;
 fn builtin_extern_ret_slots(name: &str) -> u16 {
     match name {
         // Dynamic access: (data[2], error[2]) = 4 slots
-        "dyn_get_attr" | "dyn_get_index" => 4,
+        // Internal names (used by ~> operator) and public API names (dyn package)
+        "dyn_get_attr" | "dyn_get_index" | "dyn_GetAttr" | "dyn_GetIndex" => 4,
         // Dynamic set: error[2] = 2 slots
-        "dyn_set_attr" | "dyn_set_index" => 2,
+        "dyn_set_attr" | "dyn_set_index" | "dyn_SetAttr" | "dyn_SetIndex" => 2,
         // Dynamic call prepare: (ret_slots[1], metas[N], error[2]) - use max
         "dyn_call_prepare" => 67, // 1 + 64 + 2
         // Dynamic unpack: variable, use max

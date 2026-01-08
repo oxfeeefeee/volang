@@ -1,58 +1,142 @@
+// Package dyn provides dynamic access APIs for working with any/interface{} values.
+//
+// Vo supports two ways to access dynamic values:
+//
+// 1. The ~> operator (recommended for most cases):
+//
+//    val := data~>field?        // get field
+//    val := data~>[key]?        // get index
+//    data~>field = val          // set field (requires error return)
+//    data~>[key] = val          // set index (requires error return)
+//
+// 2. The dyn package functions (for explicit error handling):
+//
+//    val, err := dyn.GetAttr(data, "field")
+//    val, err := dyn.GetIndex(data, key)
+//    err := dyn.SetAttr(data, "field", val)
+//    err := dyn.SetIndex(data, key, val)
+//
+// The ~> operator desugars to these functions internally.
+//
+// # Supported Types
+//
+// Dynamic access works on:
+//   - Structs: field access by name
+//   - Pointers to structs: field access and method calls
+//   - Maps: key-based access
+//   - Slices/Arrays: integer index access
+//   - Custom types implementing dyn interfaces
+//
+// # Error Handling
+//
+// All operations return errors. Use errors.Is() to check:
+//
+//    if errors.Is(err, dyn.ErrBadField) { ... }
+//
 package dyn
 
 import "errors"
 
-// Dynamic access error values (use with errors.Is).
-var ErrUnknown      = errors.NewDynUnknown("dynamic access: unknown error")
-var ErrNilBase      = errors.NewDynNilBase("dynamic access: base value is nil")
-var ErrBadField     = errors.NewDynBadField("dynamic access: field does not exist")
-var ErrBadIndex     = errors.NewDynBadIndex("dynamic access: invalid index type")
-var ErrOutOfBounds  = errors.NewDynOutOfBounds("dynamic access: index out of bounds")
-var ErrBadCall      = errors.NewDynBadCall("dynamic access: cannot call value")
-var ErrSigMismatch  = errors.NewDynSigMismatch("dynamic access: signature mismatch")
+// =============================================================================
+// Error Values
+// =============================================================================
+
+// ErrUnknown indicates an unknown or unexpected error.
+var ErrUnknown = errors.NewDynUnknown("dynamic access: unknown error")
+
+// ErrNilBase indicates the base value is nil.
+var ErrNilBase = errors.NewDynNilBase("dynamic access: base value is nil")
+
+// ErrBadField indicates the field does not exist on the type.
+var ErrBadField = errors.NewDynBadField("dynamic access: field does not exist")
+
+// ErrBadIndex indicates the index type is invalid for the container.
+var ErrBadIndex = errors.NewDynBadIndex("dynamic access: invalid index type")
+
+// ErrOutOfBounds indicates the index is outside valid range.
+var ErrOutOfBounds = errors.NewDynOutOfBounds("dynamic access: index out of bounds")
+
+// ErrBadCall indicates the value cannot be called as a function.
+var ErrBadCall = errors.NewDynBadCall("dynamic access: cannot call value")
+
+// ErrSigMismatch indicates function signature does not match arguments.
+var ErrSigMismatch = errors.NewDynSigMismatch("dynamic access: signature mismatch")
+
+// ErrTypeMismatch indicates type assertion or conversion failed.
 var ErrTypeMismatch = errors.NewDynTypeMismatch("dynamic access: type mismatch")
 
+// =============================================================================
+// Public API Functions
+// =============================================================================
+
+// GetAttr retrieves a field or method from a struct/pointer by name.
+// For maps, use GetIndex instead.
+func GetAttr(base any, name string) (any, error)
+
+// GetIndex retrieves an element from a container by key.
+func GetIndex(base any, key any) (any, error)
+
+// SetAttr sets a field value on a struct pointer by name.
+// Note: base must be a pointer for the change to persist.
+func SetAttr(base any, name string, value any) error
+
+// SetIndex sets an element in a container by key.
+func SetIndex(base any, key any, value any) error
+
+// =============================================================================
+// Custom Dynamic Access Interfaces
+// =============================================================================
+//
+// Implement these interfaces to customize dynamic access for your types.
+// The runtime checks for these interfaces before using reflection.
+
+// AttrObject enables custom field/attribute access.
 type AttrObject interface {
     __attr(name string) (any, error)
 }
 
+// IndexObject enables custom index-based access.
 type IndexObject interface {
     __index(key any) (any, error)
 }
 
+// CallObject enables custom call behavior.
 type CallObject interface {
     __call(args ...any) (any, error)
 }
 
+// SetAttrObject enables custom field/attribute setting.
+type SetAttrObject interface {
+    __setattr(name string, value any) error
+}
+
+// SetIndexObject enables custom index-based setting.
+type SetIndexObject interface {
+    __setindex(key any, value any) error
+}
+
+// Object combines all read-only dynamic access interfaces.
 type Object interface {
     AttrObject
     IndexObject
     CallObject
 }
 
-type SetAttrObject interface {
-    __setattr(name string, value any) error
-}
-
-type SetIndexObject interface {
-    __setindex(key any, value any) error
-}
-
+// SetObject combines all write dynamic access interfaces.
 type SetObject interface {
     SetAttrObject
     SetIndexObject
 }
 
-// Extern functions (implemented in Rust)
-func SetAttr(base any, name string, value any) error
-func SetIndex(base any, key any, value any) error
+// =============================================================================
+// Built-in Dynamic Containers
+// =============================================================================
 
-// anymap is the standard dynamic object container.
+// MapObject is a dynamic object container using string keys.
 type MapObject map[string]any
 
 func (m MapObject) __attr(name string) (any, error) {
-    v, err := m.__index(name)
-    return v, err
+    return m.__index(name)
 }
 
 func (m MapObject) __index(key any) (any, error) {
@@ -80,7 +164,7 @@ func (m MapObject) __setindex(key any, value any) error {
     return nil
 }
 
-// anyslice is the standard dynamic array container.
+// SliceObject is a dynamic array container.
 type SliceObject []any
 
 func (s SliceObject) __index(key any) (any, error) {

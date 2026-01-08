@@ -915,3 +915,33 @@ static __VO_DYN_TYPE_ASSERT_ERROR: ExternEntryWithContext = ExternEntryWithConte
     func: dyn_type_assert_error,
 };
 
+// =============================================================================
+// Public API - exposed via dyn package in stdlib
+// =============================================================================
+// These extern entries use Vo package naming convention (dyn_FuncName)
+// to match the generated extern names from `dyn.FuncName()` calls.
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_PKG_GET_ATTR: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_GetAttr",
+    func: dyn_get_attr,
+};
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_PKG_GET_INDEX: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_GetIndex",
+    func: dyn_get_index,
+};
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_PKG_SET_ATTR: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_SetAttr",
+    func: dyn_set_attr,
+};
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DYN_PKG_SET_INDEX: ExternEntryWithContext = ExternEntryWithContext {
+    name: "dyn_SetIndex",
+    func: dyn_set_index,
+};
+

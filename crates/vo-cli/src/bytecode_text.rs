@@ -235,8 +235,8 @@ fn format_instruction(instr: &Instruction) -> String {
             let ret_slots = c & 0xFF;
             format!("Call          func_{}, args=r{}, arg_slots={}, ret_slots={}", func_id, b, arg_slots, ret_slots)
         }
-        // CallExtern: a=result_start, b=extern_id, c=arg_slots
-        Opcode::CallExtern => format!("CallExtern    r{}, extern_{}, args={}", a, b, c),
+        // CallExtern: a=result_start, b=extern_id, c=arg_start, flags=arg_count
+        Opcode::CallExtern => format!("CallExtern    r{}, extern_{}, args={}, count={}", a, b, c, flags),
         // CallClosure: a=closure_reg, b=args_start, c=(arg_slots<<8|ret_slots), flags=ret_slots_reg (if != 0)
         Opcode::CallClosure => {
             let arg_slots = c >> 8;

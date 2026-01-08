@@ -184,6 +184,7 @@ tests:
   - file: dyn_set_attr_interface_field.vo
   - file: dyn_try_unwrap.vo
   - file: dyn_write.vo
+  - file: dyn_api.vo
   - file: error_handling_sugar.vo
   - file: gc_closure_capture.vo
   - file: iface_to_iface_assign.vo
