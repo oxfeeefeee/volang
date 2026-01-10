@@ -37,6 +37,12 @@ fn prepare_interface_value(
 ) -> Result<(u64, u64), &'static str> {
     let val_vk = interface::unpack_value_kind(val_slot0);
     let val_rttid = interface::unpack_rttid(val_slot0);
+    
+    // For empty interface (any), meta_id is 0 - no itab needed
+    if target_iface_meta_id == 0 {
+        return Ok((val_slot0, val_slot1));
+    }
+    
     let named_type_id = call.get_named_type_id_from_rttid(val_rttid, true)
         .ok_or("value does not have methods")?;
     let itab_id = call.try_get_or_create_itab(named_type_id, target_iface_meta_id)
@@ -688,12 +694,9 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
             let elem_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
 
             if elem_vk == ValueKind::Interface {
-                let iface_meta_id = elem_meta.meta_id();
-                let (stored_slot0, stored_slot1) = match prepare_interface_value(call, val_slot0, val_slot1, iface_meta_id) {
-                    Ok(v) => v,
-                    Err(e) => return dyn_error_only(call, call.dyn_err().type_mismatch, e),
-                };
-                let src = [stored_slot0, stored_slot1];
+                // For slice elements of interface type, just store the value directly
+                // The value is already in interface format (slot0=type info, slot1=data)
+                let src = [val_slot0, val_slot1];
                 slice::set_n(base_ref, idx as usize, &src, elem_bytes);
 
                 call.ret_nil(0);
