@@ -189,22 +189,12 @@ tests:
   - file: dyn/dyn_write.vo
   - file: dyn/dyn_api.vo
 
-  # Dyn bugs to fix
+  # Dyn tests (previously skipped, now fixed)
   - file: dyn/chained_method_calls.vo
-    skip: [vm, jit]
-    reason: "BUG: segfault when calling dynamic method on result of previous dynamic call"
   - file: dyn/multi_level_chain.vo
-    skip: [vm, jit]
-    reason: "BUG: analysis panic at expr.rs:1135 on obj~>a?~>b?~>c? pattern"
   - file: dyn/nil_handling.vo
-    skip: [vm, jit]
-    reason: "BUG: nil slice/map dynamic access causes runtime panic instead of error"
   - file: dyn/nested_map_access.vo
-    skip: [vm, jit]
-    reason: "BUG: nested map[string]any access causes panic"
   - file: dyn/error_propagation_chain.vo
-    skip: [vm, jit]
-    reason: "BUG: multi-level chain with ? causes analysis panic"
 
   - file: error_handling_sugar.vo
   - file: gc_closure_capture.vo

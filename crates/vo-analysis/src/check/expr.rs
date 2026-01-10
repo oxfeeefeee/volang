@@ -1410,15 +1410,6 @@ impl Checker {
                 if x.invalid() { return }
 
                 let base_type = x.typ.unwrap_or(self.invalid_type());
-                if !self.is_dyn_access_base_type(base_type) {
-                    self.error_code_msg(
-                        TypeError::InvalidOp,
-                        e.span,
-                        "~> operator requires any/interface or (any, error) type",
-                    );
-                    x.mode = OperandMode::Invalid;
-                    return;
-                }
 
                 // Type check operation arguments - convert to any (interface{})
                 let any_type_for_args = self.new_t_empty_interface();
@@ -1467,43 +1458,6 @@ impl Checker {
     // =========================================================================
     // Part 10: Helper functions
     // =========================================================================
-
-    /// Check if type is valid for dynamic access (~> operator base).
-    /// 
-    /// Allowed: interface, (any, error) tuple, named types, pointers, structs, 
-    /// maps, slices, arrays, string.
-    /// 
-    /// Disallowed: primitive types (int, bool, float), func, chan.
-    pub(crate) fn is_dyn_access_base_type(&self, type_key: TypeKey) -> bool {
-        use crate::typ::BasicType;
-        
-        let typ = self.otype(type_key);
-        
-        // Disallow basic types except string
-        if let Some(basic) = typ.try_as_basic() {
-            return matches!(basic.typ(), BasicType::Str | BasicType::UntypedString);
-        }
-        
-        // Disallow func types - cannot access fields/methods dynamically
-        if typ.try_as_signature().is_some() {
-            return false;
-        }
-        
-        // Disallow channel types - no dynamic access semantics
-        if typ.try_as_chan().is_some() {
-            return false;
-        }
-        
-        // All other types are allowed:
-        // - interface: dynamic dispatch
-        // - named types: may have protocol methods
-        // - pointer: base may have methods
-        // - struct: field access
-        // - map: key access
-        // - slice/array: index access
-        // - tuple: (any, error) for chaining
-        true
-    }
 
     /// Resolve protocol method for dynamic access operation.
     /// 

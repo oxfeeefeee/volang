@@ -1,6 +1,7 @@
 //! Function and method call compilation.
 
 use vo_analysis::objects::TypeKey;
+use vo_runtime::SlotType;
 use vo_syntax::ast::{Expr, ExprKind};
 use vo_vm::instruction::Opcode;
 
@@ -10,6 +11,24 @@ use crate::func::{FuncBuilder, StorageKind};
 use crate::type_info::TypeInfoWrapper;
 
 use super::{compile_expr, compile_expr_to, get_gcref_slot};
+
+/// Allocate a call buffer with proper slot types for return values.
+/// 
+/// Return values are written to the beginning of the buffer after the call,
+/// so the first `ret_slots` slots must have correct types for GC tracking.
+/// The remaining slots (for arguments) are typed as Value.
+fn alloc_call_buffer(func: &mut FuncBuilder, buffer_size: u16, ret_slots: u16, ret_slot_types: &[SlotType]) -> u16 {
+    if ret_slots == 0 || buffer_size == 0 {
+        return func.alloc_temp(buffer_size.max(1));
+    }
+    
+    // Build combined slot types: ret_slot_types for return value, Value for the rest
+    let mut types = ret_slot_types.to_vec();
+    for _ in ret_slots..buffer_size {
+        types.push(SlotType::Value);
+    }
+    func.alloc_temp_typed(&types)
+}
 
 // =============================================================================
 // Call Expression - Main Entry
@@ -369,8 +388,12 @@ fn compile_method_call_dispatch(
             let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
             let (param_types, is_variadic) = info.get_interface_method_signature(recv_type, method_name);
             let arg_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
-            let ret_slots = info.type_slot_count(info.expr_type(expr.id));
-            let args_start = func.alloc_temp(arg_slots.max(ret_slots).max(1));
+            let ret_type = info.expr_type(expr.id);
+            let ret_slots = info.type_slot_count(ret_type);
+            // Return values are written to beginning of buffer, use proper types for GC tracking
+            let ret_slot_types = info.type_slot_types(ret_type);
+            let buffer_size = arg_slots.max(ret_slots).max(1);
+            let args_start = alloc_call_buffer(func, buffer_size, ret_slots, &ret_slot_types);
             
             compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
             
@@ -385,13 +408,17 @@ fn compile_method_call_dispatch(
         MethodDispatch::EmbeddedInterface { embed_offset, iface_type, method_idx } => {
             // Embedded interface dispatch
             let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
-            let iface_slot = func.alloc_temp(2);
+            let iface_slot = func.alloc_interface();  // Interface is 2 slots
             func.emit_ptr_get(iface_slot, recv_reg, *embed_offset, 2);
             
             let (param_types, is_variadic) = info.get_interface_method_signature(*iface_type, method_name);
             let arg_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
-            let ret_slots = info.type_slot_count(info.expr_type(expr.id));
-            let args_start = func.alloc_temp(arg_slots.max(ret_slots).max(1));
+            let ret_type = info.expr_type(expr.id);
+            let ret_slots = info.type_slot_count(ret_type);
+            // Return values are written to beginning of buffer, use proper types for GC tracking
+            let ret_slot_types = info.type_slot_types(ret_type);
+            let buffer_size = arg_slots.max(ret_slots).max(1);
+            let args_start = alloc_call_buffer(func, buffer_size, ret_slots, &ret_slot_types);
             
             compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
             
@@ -426,8 +453,12 @@ fn compile_method_call_dispatch(
             let recv_slots = if *expects_ptr_recv { 1 } else { info.type_slot_count(actual_recv_type) };
             let arg_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
             let total_slots = recv_slots + arg_slots;
-            let ret_slots = info.type_slot_count(info.expr_type(expr.id));
-            let args_start = func.alloc_temp(total_slots.max(ret_slots));
+            let ret_type = info.expr_type(expr.id);
+            let ret_slots = info.type_slot_count(ret_type);
+            // Return values are written to beginning of buffer, use proper types for GC tracking
+            let ret_slot_types = info.type_slot_types(ret_type);
+            let buffer_size = total_slots.max(ret_slots);
+            let args_start = alloc_call_buffer(func, buffer_size, ret_slots, &ret_slot_types);
             
             // Emit receiver
             let recv_storage = if let ExprKind::Ident(ident) = &sel.expr.kind {

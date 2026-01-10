@@ -2031,26 +2031,28 @@ fn compile_compound_assign(
     // Get the operation opcode based on AssignOp and type
     let lhs_type = info.expr_type(lhs.id);
     let is_float = info.is_float(lhs_type);
+    let is_string = info.is_string(lhs_type);
     let is_unsigned = info.is_unsigned(lhs_type);
     
-    let opcode = match (op, is_float, is_unsigned) {
-        (AssignOp::Add, false, _) => Opcode::AddI,
-        (AssignOp::Add, true, _) => Opcode::AddF,
-        (AssignOp::Sub, false, _) => Opcode::SubI,
-        (AssignOp::Sub, true, _) => Opcode::SubF,
-        (AssignOp::Mul, false, _) => Opcode::MulI,
-        (AssignOp::Mul, true, _) => Opcode::MulF,
-        (AssignOp::Div, false, _) => Opcode::DivI,
-        (AssignOp::Div, true, _) => Opcode::DivF,
-        (AssignOp::Rem, _, _) => Opcode::ModI,
-        (AssignOp::And, _, _) => Opcode::And,
-        (AssignOp::Or, _, _) => Opcode::Or,
-        (AssignOp::Xor, _, _) => Opcode::Xor,
-        (AssignOp::AndNot, _, _) => Opcode::AndNot,
-        (AssignOp::Shl, _, _) => Opcode::Shl,
-        (AssignOp::Shr, _, false) => Opcode::ShrS,
-        (AssignOp::Shr, _, true) => Opcode::ShrU,
-        (AssignOp::Assign, _, _) => unreachable!("plain assign handled separately"),
+    let opcode = match (op, is_float, is_string, is_unsigned) {
+        (AssignOp::Add, false, false, _) => Opcode::AddI,
+        (AssignOp::Add, true, false, _) => Opcode::AddF,
+        (AssignOp::Add, _, true, _) => Opcode::StrConcat,
+        (AssignOp::Sub, false, _, _) => Opcode::SubI,
+        (AssignOp::Sub, true, _, _) => Opcode::SubF,
+        (AssignOp::Mul, false, _, _) => Opcode::MulI,
+        (AssignOp::Mul, true, _, _) => Opcode::MulF,
+        (AssignOp::Div, false, _, _) => Opcode::DivI,
+        (AssignOp::Div, true, _, _) => Opcode::DivF,
+        (AssignOp::Rem, _, _, _) => Opcode::ModI,
+        (AssignOp::And, _, _, _) => Opcode::And,
+        (AssignOp::Or, _, _, _) => Opcode::Or,
+        (AssignOp::Xor, _, _, _) => Opcode::Xor,
+        (AssignOp::AndNot, _, _, _) => Opcode::AndNot,
+        (AssignOp::Shl, _, _, _) => Opcode::Shl,
+        (AssignOp::Shr, _, _, false) => Opcode::ShrS,
+        (AssignOp::Shr, _, _, true) => Opcode::ShrU,
+        (AssignOp::Assign, _, _, _) => unreachable!("plain assign handled separately"),
     };
     
     // Resolve LHS to an LValue
@@ -2067,11 +2069,12 @@ fn compile_compound_assign(
     
     // General path: read current value, apply operation, write back
     let slots = lvalue_slots(&lv);
-    let tmp = func.alloc_temp(slots);
+    // Use proper slot type for strings (GcRef) vs numeric types (Value)
+    let slot_type = if is_string { vo_runtime::SlotType::GcRef } else { vo_runtime::SlotType::Value };
+    let tmp = func.alloc_temp_typed(&[slot_type]);
     emit_lvalue_load(&lv, tmp, ctx, func);
     func.emit_op(opcode, tmp, tmp, rhs_reg);
-    // Compound assign is for numeric types - no GC refs
-    emit_lvalue_store(&lv, tmp, ctx, func, &[vo_runtime::SlotType::Value]);
+    emit_lvalue_store(&lv, tmp, ctx, func, &[slot_type]);
     
     Ok(())
 }

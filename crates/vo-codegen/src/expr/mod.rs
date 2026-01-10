@@ -152,8 +152,10 @@ pub fn compile_expr(
             _ => {}
         }
     }
-    let slots = info.expr_slots(expr.id);
-    let dst = func.alloc_temp(slots);
+    // Use expression type's slot types to ensure GcRefs (strings, pointers, etc.) are tracked by GC
+    let expr_type = info.expr_type(expr.id);
+    let slot_types = info.type_slot_types(expr_type);
+    let dst = func.alloc_temp_typed(&slot_types);
     compile_expr_to(expr, dst, ctx, func, info)?;
     Ok(dst)
 }

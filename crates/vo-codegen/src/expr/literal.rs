@@ -309,8 +309,16 @@ fn compile_map_lit(
                 }
             };
             
-            // Compile value
-            let val_reg = compile_expr(&elem.value, ctx, func, info)?;
+            // Compile value - if map value type is interface, need to box
+            let (_, val_type) = info.map_key_val_types(type_key);
+            let val_reg = if info.is_interface(val_type) {
+                // Value type is interface (e.g., any) - need to box the element
+                let val_reg = func.alloc_temp_typed(&val_slot_types);
+                crate::stmt::compile_iface_assign(val_reg, &elem.value, val_type, ctx, func, info)?;
+                val_reg
+            } else {
+                compile_expr(&elem.value, ctx, func, info)?
+            };
             
             // MapSet: a=map, b=meta_and_key, c=val
             func.emit_op(Opcode::MapSet, dst, meta_and_key_reg, val_reg);

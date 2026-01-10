@@ -368,6 +368,27 @@ impl FuncBuilder {
         slot
     }
 
+    /// Allocate a single GcRef slot (for closure refs, etc.)
+    pub fn alloc_gcref(&mut self) -> u16 {
+        self.alloc_temp_typed(&[SlotType::GcRef])
+    }
+
+    /// Allocate an interface slot (2 slots: Interface0, Interface1)
+    pub fn alloc_interface(&mut self) -> u16 {
+        self.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1])
+    }
+
+    /// Allocate N interface slots (2N slots total)
+    pub fn alloc_interfaces(&mut self, count: u16) -> u16 {
+        let slot = self.next_slot;
+        for _ in 0..count {
+            self.slot_types.push(SlotType::Interface0);
+            self.slot_types.push(SlotType::Interface1);
+        }
+        self.next_slot += count * 2;
+        slot
+    }
+
     pub fn next_slot(&self) -> u16 {
         self.next_slot
     }

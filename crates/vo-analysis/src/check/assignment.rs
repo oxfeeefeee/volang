@@ -549,16 +549,7 @@ impl Checker {
             return;
         }
 
-        // Check base type is valid for dynamic access
         let base_type = base_x.typ.unwrap_or(self.invalid_type());
-        if !self.is_dyn_access_base_type(base_type) {
-            self.error_code_msg(
-                TypeError::InvalidOp,
-                dyn_access.base.span,
-                "~> operator requires any/interface or (any, error) type".to_string(),
-            );
-            return;
-        }
 
         // Type check operation arguments - convert to any (interface{})
         let any_type = self.new_t_empty_interface();
