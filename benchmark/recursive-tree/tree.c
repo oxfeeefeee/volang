@@ -100,7 +100,7 @@ int main() {
     int treeSize = 100;
     int matrixSize = 20;
     
-    int totalSum = 0;
+    long long totalSum = 0;
     int totalCount = 0;
     int totalHeight = 0;
     
@@ -156,6 +156,6 @@ int main() {
         free(values);
     }
     
-    printf("%d %d %d\n", totalSum, totalCount, totalHeight);
+    printf("%lld %d %d\n", totalSum, totalCount, totalHeight);
     return 0;
 }

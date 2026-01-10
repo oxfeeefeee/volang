@@ -60,3 +60,4 @@ benchmark/sum-array/go_bench
 benchmark/sum-array/c_bench
 benchmark/recursive-tree/go_bench
 benchmark/recursive-tree/c_bench
+benchmark/sieve/go_bench
