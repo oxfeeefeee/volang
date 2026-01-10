@@ -283,6 +283,10 @@ fn register_types(
         }
     }
     
+    // Register builtin protocol interfaces (DynAttr, DynSetAttr, etc.)
+    // These don't depend on user imports - they're language-level semantics.
+    register_builtin_protocols(project, ctx, info);
+    
     register_pkg_types("main", &project.files, project, ctx, info)?;
 
     for (pkg_path, files) in &project.imported_files {
@@ -293,6 +297,98 @@ fn register_types(
     }
 
     Ok(())
+}
+
+/// Register builtin protocol interfaces (DynAttr, DynSetAttr, etc.)
+/// These enable protocol dispatch for ~> operator without requiring import "dyn".
+fn register_builtin_protocols(
+    project: &Project,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+) {
+    use vo_runtime::{RuntimeType, ValueKind, ValueRttid};
+    use vo_vm::bytecode::{InterfaceMeta, InterfaceMethodMeta};
+    
+    let tc_objs = &project.tc_objs;
+    
+    // Get ValueRttid for basic types
+    let string_rttid = ValueRttid::new(ValueKind::String as u32, ValueKind::String);
+    
+    // Get any type (empty interface) from universe and intern it
+    let any_type = tc_objs.universe().any_type();
+    let any_value_rttid = ctx.intern_type_key(any_type, info);
+    let any_rttid = ValueRttid::new(any_value_rttid, ValueKind::Interface);
+    
+    // Get error type from universe and intern it properly
+    let error_type = tc_objs.universe().error_type();
+    let error_value_rttid = ctx.intern_type_key(error_type, info);
+    let error_rttid = ValueRttid::new(error_value_rttid, ValueKind::Interface);
+    
+    // Helper to create signature rttid
+    let make_sig_rttid = |ctx: &mut CodegenContext, params: Vec<ValueRttid>, results: Vec<ValueRttid>, variadic: bool| -> u32 {
+        let rt = RuntimeType::Func { params, results, variadic };
+        ctx.intern_rttid(rt)
+    };
+    
+    // 1. AttrObject: DynAttr(name string) (any, error)
+    let attr_sig_rttid = make_sig_rttid(ctx, vec![string_rttid], vec![any_rttid, error_rttid], false);
+    let attr_meta = InterfaceMeta {
+        name: "AttrObject".to_string(),
+        method_names: vec!["DynAttr".to_string()],
+        methods: vec![InterfaceMethodMeta {
+            name: "DynAttr".to_string(),
+            signature_rttid: attr_sig_rttid,
+        }],
+    };
+    ctx.register_builtin_protocol("AttrObject", attr_meta);
+    
+    // 2. SetAttrObject: DynSetAttr(name string, value any) error
+    let set_attr_sig_rttid = make_sig_rttid(ctx, vec![string_rttid, any_rttid], vec![error_rttid], false);
+    let set_attr_meta = InterfaceMeta {
+        name: "SetAttrObject".to_string(),
+        method_names: vec!["DynSetAttr".to_string()],
+        methods: vec![InterfaceMethodMeta {
+            name: "DynSetAttr".to_string(),
+            signature_rttid: set_attr_sig_rttid,
+        }],
+    };
+    ctx.register_builtin_protocol("SetAttrObject", set_attr_meta);
+    
+    // 3. IndexObject: DynIndex(key any) (any, error)
+    let index_sig_rttid = make_sig_rttid(ctx, vec![any_rttid], vec![any_rttid, error_rttid], false);
+    let index_meta = InterfaceMeta {
+        name: "IndexObject".to_string(),
+        method_names: vec!["DynIndex".to_string()],
+        methods: vec![InterfaceMethodMeta {
+            name: "DynIndex".to_string(),
+            signature_rttid: index_sig_rttid,
+        }],
+    };
+    ctx.register_builtin_protocol("IndexObject", index_meta);
+    
+    // 4. SetIndexObject: DynSetIndex(key any, value any) error
+    let set_index_sig_rttid = make_sig_rttid(ctx, vec![any_rttid, any_rttid], vec![error_rttid], false);
+    let set_index_meta = InterfaceMeta {
+        name: "SetIndexObject".to_string(),
+        method_names: vec!["DynSetIndex".to_string()],
+        methods: vec![InterfaceMethodMeta {
+            name: "DynSetIndex".to_string(),
+            signature_rttid: set_index_sig_rttid,
+        }],
+    };
+    ctx.register_builtin_protocol("SetIndexObject", set_index_meta);
+    
+    // 5. CallObject: DynCall(args ...any) (any, error)
+    let call_sig_rttid = make_sig_rttid(ctx, vec![any_rttid], vec![any_rttid, error_rttid], true);
+    let call_meta = InterfaceMeta {
+        name: "CallObject".to_string(),
+        method_names: vec!["DynCall".to_string()],
+        methods: vec![InterfaceMethodMeta {
+            name: "DynCall".to_string(),
+            signature_rttid: call_sig_rttid,
+        }],
+    };
+    ctx.register_builtin_protocol("CallObject", call_meta);
 }
 
 /// Recursively collect type declarations from statements

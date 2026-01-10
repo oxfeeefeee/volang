@@ -11,6 +11,12 @@ use crate::expr::{compile_expr_to, get_expr_source};
 use crate::func::{ExprSource, FuncBuilder, StorageKind};
 use crate::type_info::{encode_i32, TypeInfoWrapper};
 
+/// IfaceAssert flags for protocol dispatch: has_ok=1, dst_slots=2, src_slots=2
+const IFACE_ASSERT_WITH_OK: u8 = 1 | (1 << 2) | (2 << 3);
+
+/// All protocol interfaces have exactly one method at index 0
+const PROTOCOL_METHOD_IDX: u8 = 0;
+
 /// Emit error propagation and return: fill return slots with nil, copy error, and return.
 /// `error_src` is the register containing the error (2 slots).
 fn emit_error_propagate_return(
@@ -590,15 +596,12 @@ fn compile_stmt_with_label(
 
                             let field_name = info.project.interner.resolve(ident.symbol).unwrap_or("");
 
-                            // Protocol-first: check if base implements dyn.SetAttrObject via IfaceAssert
-                            let end_jump = if let Some(set_attr_iface_type) = info.lookup_pkg_type("dyn", "SetAttrObject") {
-                                let set_attr_iface_meta_id = info.get_or_create_interface_meta_id(set_attr_iface_type, ctx);
-                                let set_attr_method_idx = info.get_iface_meta_method_index(set_attr_iface_type, "DynSetAttr", ctx);
-                                
+                            // Protocol-first: check if base implements SetAttrObject via IfaceAssert
+                            // Use builtin protocol meta_id (no dependency on user imports)
+                            let end_jump = if let Some(set_attr_iface_meta_id) = ctx.builtin_protocols().set_attr_object_meta_id {
                                 // IfaceAssert with has_ok flag to check interface implementation
                                 let iface_reg = func.alloc_temp(3);
-                                let flags = 1 | (1 << 2) | (2 << 3);
-                                func.emit_with_flags(Opcode::IfaceAssert, flags, iface_reg, any_base_reg, set_attr_iface_meta_id as u16);
+                                func.emit_with_flags(Opcode::IfaceAssert, IFACE_ASSERT_WITH_OK, iface_reg, any_base_reg, set_attr_iface_meta_id as u16);
                                 let fallback_jump = func.emit_jump(Opcode::JumpIfNot, iface_reg + 2);
 
                                 // Protocol method call: DynSetAttr(name string, value any) error
@@ -608,7 +611,7 @@ fn compile_stmt_with_label(
                                 compile_iface_assign(args_start + 1, &assign.rhs[0], any_type, ctx, func, info)?;
 
                                 let c = crate::type_info::encode_call_args(3, 2);
-                                func.emit_with_flags(Opcode::CallIface, set_attr_method_idx as u8, iface_reg, args_start, c);
+                                func.emit_with_flags(Opcode::CallIface, PROTOCOL_METHOD_IDX, iface_reg, args_start, c);
 
                                 // Check error from protocol method
                                 let ok_err_jump = func.emit_jump(Opcode::JumpIfNot, args_start);
@@ -664,15 +667,12 @@ fn compile_stmt_with_label(
                                 any_reg
                             };
 
-                            // Protocol-first: check if base implements dyn.SetIndexObject via IfaceAssert
-                            let end_jump = if let Some(set_index_iface_type) = info.lookup_pkg_type("dyn", "SetIndexObject") {
-                                let set_index_iface_meta_id = info.get_or_create_interface_meta_id(set_index_iface_type, ctx);
-                                let set_index_method_idx = info.get_iface_meta_method_index(set_index_iface_type, "DynSetIndex", ctx);
-                                
+                            // Protocol-first: check if base implements SetIndexObject via IfaceAssert
+                            // Use builtin protocol meta_id (no dependency on user imports)
+                            let end_jump = if let Some(set_index_iface_meta_id) = ctx.builtin_protocols().set_index_object_meta_id {
                                 // IfaceAssert with has_ok flag to check interface implementation
                                 let iface_reg = func.alloc_temp(3);
-                                let flags = 1 | (1 << 2) | (2 << 3);
-                                func.emit_with_flags(Opcode::IfaceAssert, flags, iface_reg, any_base_reg, set_index_iface_meta_id as u16);
+                                func.emit_with_flags(Opcode::IfaceAssert, IFACE_ASSERT_WITH_OK, iface_reg, any_base_reg, set_index_iface_meta_id as u16);
                                 let fallback_jump = func.emit_jump(Opcode::JumpIfNot, iface_reg + 2);
 
                                 // Protocol method call: DynSetIndex(key any, value any) error
@@ -681,7 +681,7 @@ fn compile_stmt_with_label(
                                 compile_iface_assign(args_start + 2, &assign.rhs[0], any_type, ctx, func, info)?;
 
                                 let c = crate::type_info::encode_call_args(4, 2);
-                                func.emit_with_flags(Opcode::CallIface, set_index_method_idx as u8, iface_reg, args_start, c);
+                                func.emit_with_flags(Opcode::CallIface, PROTOCOL_METHOD_IDX, iface_reg, args_start, c);
 
                                 // Check error from protocol method
                                 let ok_err_jump = func.emit_jump(Opcode::JumpIfNot, args_start);

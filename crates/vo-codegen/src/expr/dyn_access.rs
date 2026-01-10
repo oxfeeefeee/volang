@@ -12,6 +12,13 @@ use crate::type_info::TypeInfoWrapper;
 
 use super::compile_expr_to;
 
+/// IfaceAssert flags for protocol dispatch: has_ok=1, dst_slots=2, src_slots=2
+/// Format: has_ok | (dst_slots << 2) | (src_slots << 3)
+const IFACE_ASSERT_WITH_OK: u8 = 1 | (1 << 2) | (2 << 3);
+
+/// All protocol interfaces have exactly one method at index 0
+const PROTOCOL_METHOD_IDX: u8 = 0;
+
 /// Build expected function signature rttid from arguments and LHS return types.
 ///
 /// # Design: LHS determines expected signature
@@ -127,15 +134,12 @@ fn compile_dyn_op(
             let ret_slots = info.type_slot_count(ret_type);
             let error_slot = dst + ret_slots;
             
-            // Protocol-first: check if base implements dyn.AttrObject via IfaceAssert
-            let end_jump = if let Some(attr_iface_type) = info.lookup_pkg_type("dyn", "AttrObject") {
-                let attr_iface_meta_id = info.get_or_create_interface_meta_id(attr_iface_type, ctx);
-                let attr_method_idx = info.get_iface_meta_method_index(attr_iface_type, "DynAttr", ctx);
-                
+            // Protocol-first: check if base implements AttrObject via IfaceAssert
+            // Use builtin protocol meta_id (no dependency on user imports)
+            let end_jump = if let Some(attr_iface_meta_id) = ctx.builtin_protocols().attr_object_meta_id {
                 // IfaceAssert with has_ok flag
                 let iface_reg = func.alloc_temp(3);
-                let flags = 1 | (1 << 2) | (2 << 3);
-                func.emit_with_flags(Opcode::IfaceAssert, flags, iface_reg, base_reg, attr_iface_meta_id as u16);
+                func.emit_with_flags(Opcode::IfaceAssert, IFACE_ASSERT_WITH_OK, iface_reg, base_reg, attr_iface_meta_id as u16);
                 let fallback_jump = func.emit_jump(Opcode::JumpIfNot, iface_reg + 2);
                 
                 // Protocol method call: DynAttr(name string) (any, error)
@@ -146,7 +150,7 @@ fn compile_dyn_op(
                 
                 // CallIface: returns (any[2], error[2]) = 4 slots, writes to args_start
                 let c = crate::type_info::encode_call_args(1, 4);
-                func.emit_with_flags(Opcode::CallIface, attr_method_idx as u8, iface_reg, args_start, c);
+                func.emit_with_flags(Opcode::CallIface, PROTOCOL_METHOD_IDX, iface_reg, args_start, c);
                 
                 // Unbox result with type check (result is at args_start)
                 emit_unbox_with_type_check(ret_type, dst, args_start, error_slot, ctx, func, info);
@@ -175,7 +179,44 @@ fn compile_dyn_op(
             }
         }
         DynAccessOp::Index(index_expr) => {
-            // dyn_get_index(base[2], key[2]) -> (data[2], error[2])
+            let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
+            let ret_slots = info.type_slot_count(ret_type);
+            let error_slot = dst + ret_slots;
+            
+            // Protocol-first: check if base implements IndexObject via IfaceAssert
+            let end_jump = if let Some(index_iface_meta_id) = ctx.builtin_protocols().index_object_meta_id {
+                // IfaceAssert with has_ok flag
+                let iface_reg = func.alloc_temp(3);
+                func.emit_with_flags(Opcode::IfaceAssert, IFACE_ASSERT_WITH_OK, iface_reg, base_reg, index_iface_meta_id as u16);
+                let fallback_jump = func.emit_jump(Opcode::JumpIfNot, iface_reg + 2);
+                
+                // Protocol method call: DynIndex(key any) (any, error)
+                // Allocate max(args, returns) = max(2, 4) = 4 slots
+                let args_start = func.alloc_temp(4);
+                let any_type = info.any_type();
+                let key_type = info.expr_type(index_expr.id);
+                let key_slots = info.type_slot_count(key_type);
+                if key_slots == 2 && info.is_interface(key_type) {
+                    compile_expr_to(index_expr, args_start, ctx, func, info)?;
+                } else {
+                    crate::stmt::compile_iface_assign(args_start, index_expr, any_type, ctx, func, info)?;
+                }
+                
+                // CallIface: returns (any[2], error[2]) = 4 slots, writes to args_start
+                let c = crate::type_info::encode_call_args(2, 4);
+                func.emit_with_flags(Opcode::CallIface, PROTOCOL_METHOD_IDX, iface_reg, args_start, c);
+                
+                // Unbox result with type check (result is at args_start)
+                emit_unbox_with_type_check(ret_type, dst, args_start, error_slot, ctx, func, info);
+                let end_jump = func.emit_jump(Opcode::Jump, 0);
+                
+                func.patch_jump(fallback_jump, func.current_pc());
+                Some(end_jump)
+            } else {
+                None
+            };
+            
+            // Fallback: extern dyn_get_index for reflection
             let extern_id = ctx.get_or_register_extern("dyn_get_index");
             
             let key_type = info.expr_type(index_expr.id);
@@ -187,54 +228,95 @@ fn compile_dyn_op(
             func.emit_op(Opcode::Copy, args_start + 1, base_reg + 1, 0);
             
             // Box key to any
+            let any_type = info.any_type();
             if key_slots == 2 && info.is_interface(key_type) {
                 compile_expr_to(index_expr, args_start + 2, ctx, func, info)?;
             } else {
-                let any_type = info.any_type();
                 crate::stmt::compile_iface_assign(args_start + 2, index_expr, any_type, ctx, func, info)?;
             }
             
             // Call: 4 arg slots, 4 ret slots (data[2], error[2])
             let result = func.alloc_temp(4);
             func.emit_with_flags(Opcode::CallExtern, 4, result, extern_id as u16, args_start);
-            
-            // Unbox with type check, merge dyn error and type assertion error
-            let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
-            let error_slot = dst + info.type_slot_count(ret_type);
             emit_unbox_with_type_check(ret_type, dst, result, error_slot, ctx, func, info);
+            
+            if let Some(end_jump) = end_jump {
+                func.patch_jump(end_jump, func.current_pc());
+            }
         }
         DynAccessOp::Call { args, spread: _ } => {
             compile_dyn_closure_call(base_reg, args, dst, ret_types, ctx, func, info)?;
         }
         DynAccessOp::MethodCall { method, args, spread: _ } => {
             // a~>method(args) = dyn_get_attr(a, "method") then call closure
-            let extern_id = ctx.get_or_register_extern("dyn_get_attr");
             let method_name = info.project.interner.resolve(method.symbol).unwrap_or("");
+            let expected_dst_slots = info.dyn_access_dst_slots(ret_types);
             
-            // Args: base[2] + name[1] = 3 slots
-            let attr_args = func.alloc_temp(3);
-            func.emit_op(Opcode::Copy, attr_args, base_reg, 0);
-            func.emit_op(Opcode::Copy, attr_args + 1, base_reg + 1, 0);
-            let name_idx = ctx.const_string(method_name);
-            func.emit_op(Opcode::StrNew, attr_args + 2, name_idx, 0);
-            
-            // dyn_get_attr returns (data[2], error[2]) = 4 slots in interface format
-            let get_result = func.alloc_temp(4);
-            func.emit_with_flags(Opcode::CallExtern, 3, get_result, extern_id as u16, attr_args);
+            // Protocol-first: check if base implements AttrObject via IfaceAssert
+            let (get_result, protocol_done_jump) = if let Some(attr_iface_meta_id) = ctx.builtin_protocols().attr_object_meta_id {
+                let iface_reg = func.alloc_temp(3);
+                func.emit_with_flags(Opcode::IfaceAssert, IFACE_ASSERT_WITH_OK, iface_reg, base_reg, attr_iface_meta_id as u16);
+                let fallback_jump = func.emit_jump(Opcode::JumpIfNot, iface_reg + 2);
+                
+                // Protocol method call: DynAttr(name string) (any, error)
+                let protocol_args = func.alloc_temp(4);
+                let name_idx = ctx.const_string(method_name);
+                func.emit_op(Opcode::StrNew, protocol_args, name_idx, 0);
+                
+                let c = crate::type_info::encode_call_args(1, 4);
+                func.emit_with_flags(Opcode::CallIface, PROTOCOL_METHOD_IDX, iface_reg, protocol_args, c);
+                
+                // Check error from protocol
+                let skip_protocol_error = func.emit_jump(Opcode::JumpIfNot, protocol_args + 2);
+                let protocol_error_done = func.emit_error_propagation(protocol_args + 2, dst, expected_dst_slots);
+                func.patch_jump(skip_protocol_error, func.current_pc());
+                
+                // Call closure with protocol result
+                compile_dyn_closure_call(protocol_args, args, dst, ret_types, ctx, func, info)?;
+                func.patch_jump(protocol_error_done, func.current_pc());
+                let protocol_done = func.emit_jump(Opcode::Jump, 0);
+                
+                func.patch_jump(fallback_jump, func.current_pc());
+                
+                // Fallback path needs its own get_result
+                let extern_id = ctx.get_or_register_extern("dyn_get_attr");
+                let attr_args = func.alloc_temp(3);
+                func.emit_op(Opcode::Copy, attr_args, base_reg, 0);
+                func.emit_op(Opcode::Copy, attr_args + 1, base_reg + 1, 0);
+                let name_idx = ctx.const_string(method_name);
+                func.emit_op(Opcode::StrNew, attr_args + 2, name_idx, 0);
+                
+                let get_result = func.alloc_temp(4);
+                func.emit_with_flags(Opcode::CallExtern, 3, get_result, extern_id as u16, attr_args);
+                
+                (get_result, Some(protocol_done))
+            } else {
+                let extern_id = ctx.get_or_register_extern("dyn_get_attr");
+                let attr_args = func.alloc_temp(3);
+                func.emit_op(Opcode::Copy, attr_args, base_reg, 0);
+                func.emit_op(Opcode::Copy, attr_args + 1, base_reg + 1, 0);
+                let name_idx = ctx.const_string(method_name);
+                func.emit_op(Opcode::StrNew, attr_args + 2, name_idx, 0);
+                
+                let get_result = func.alloc_temp(4);
+                func.emit_with_flags(Opcode::CallExtern, 3, get_result, extern_id as u16, attr_args);
+                
+                (get_result, None)
+            };
             
             // Check if error (slot 2,3) is nil
             let skip_error = func.emit_jump(Opcode::JumpIfNot, get_result + 2);
-            // Error - use helper to propagate error
-            let expected_dst_slots = info.dyn_access_dst_slots(ret_types);
             let done_jump = func.emit_error_propagation(get_result + 2, dst, expected_dst_slots);
-            
-            // No error - call the closure
             func.patch_jump(skip_error, func.current_pc());
             
             // Use closure from get_result (slots 0,1) - already in any format
             compile_dyn_closure_call(get_result, args, dst, ret_types, ctx, func, info)?;
             
             func.patch_jump(done_jump, func.current_pc());
+            
+            if let Some(protocol_done_jump) = protocol_done_jump {
+                func.patch_jump(protocol_done_jump, func.current_pc());
+            }
         }
     }
     Ok(())

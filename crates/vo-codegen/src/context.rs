@@ -5,6 +5,22 @@ use std::collections::HashMap;
 /// Maximum value for 24-bit IDs (rttid, meta_id, etc.)
 const MAX_24BIT_ID: u32 = 0xFF_FFFF;
 
+/// Builtin protocol interface meta IDs.
+/// These are registered during register_types, after error type is available.
+#[derive(Debug, Clone, Default)]
+pub struct BuiltinProtocols {
+    /// AttrObject: DynAttr(name string) (any, error)
+    pub attr_object_meta_id: Option<u32>,
+    /// SetAttrObject: DynSetAttr(name string, value any) error
+    pub set_attr_object_meta_id: Option<u32>,
+    /// IndexObject: DynIndex(key any) (any, error)
+    pub index_object_meta_id: Option<u32>,
+    /// SetIndexObject: DynSetIndex(key any, value any) error
+    pub set_index_object_meta_id: Option<u32>,
+    /// CallObject: DynCall(args ...any) (any, error)
+    pub call_object_meta_id: Option<u32>,
+}
+
 /// Get ret_slots for known builtin extern functions.
 /// This is critical for JIT to allocate correct buffer sizes.
 fn builtin_extern_ret_slots(name: &str) -> u16 {
@@ -102,6 +118,9 @@ pub struct CodegenContext {
 
     /// Current function ID being compiled (for debug info recording)
     current_func_id: Option<u32>,
+    
+    /// Builtin protocol interface meta IDs
+    builtin_protocols: BuiltinProtocols,
 }
 
 impl CodegenContext {
@@ -150,7 +169,28 @@ impl CodegenContext {
             pending_itabs: Vec::new(),
             itab_cache: HashMap::new(),
             current_func_id: None,
+            builtin_protocols: BuiltinProtocols::default(),
         }
+    }
+    
+    /// Register a builtin protocol interface.
+    pub fn register_builtin_protocol(&mut self, name: &str, meta: InterfaceMeta) {
+        let meta_id = self.module.interface_metas.len() as u32;
+        self.module.interface_metas.push(meta);
+        
+        match name {
+            "AttrObject" => self.builtin_protocols.attr_object_meta_id = Some(meta_id),
+            "SetAttrObject" => self.builtin_protocols.set_attr_object_meta_id = Some(meta_id),
+            "IndexObject" => self.builtin_protocols.index_object_meta_id = Some(meta_id),
+            "SetIndexObject" => self.builtin_protocols.set_index_object_meta_id = Some(meta_id),
+            "CallObject" => self.builtin_protocols.call_object_meta_id = Some(meta_id),
+            _ => {}
+        }
+    }
+    
+    /// Get builtin protocol interface meta IDs.
+    pub fn builtin_protocols(&self) -> &BuiltinProtocols {
+        &self.builtin_protocols
     }
 
     // === Type meta_id registration ===
