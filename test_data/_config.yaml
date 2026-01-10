@@ -22,10 +22,10 @@ tests:
   - file: debug_iface_bugs.vo
   - file: debug_sequence.vo
   - file: defer_stmt.vo
-  - file: dyn_write_no_error_return.vo
+  - file: dyn/dyn_write_no_error_return.vo
     should_fail: true
     reason: "dynamic write requires function with error return value"
-  - file: dyn_write_fast_path.vo
+  - file: dyn/dyn_write_fast_path.vo
   - file: embed_iface_simple.vo
   - file: embed_interface.vo
   - file: embed_interface_impl.vo
@@ -166,28 +166,46 @@ tests:
   # JIT bugs - tests not in original config
   - file: array_slice_get_set.vo
   - file: bytes_buffer.vo
-  - file: dyn_access.vo
-  - file: dyn_access_big_struct.vo
-  - file: dyn_access_interface_field.vo
-  - file: dyn_access_interface_itab_bug.vo
-  - file: dyn_access_slice_interface_elem.vo
-  - file: dyn_call_args.vo
-  - file: dyn_call_methods.vo
-  - file: dyn_call_multi_slot_ret.vo
-  - file: dyn_call_question.vo
-  - file: dyn_call_ret_array.vo
-  - file: dyn_call_ret_types.vo
-  - file: dyn_call_simple.vo
-  - file: dyn_get_attr.vo
-  - file: dyn_get_method.vo
-  - file: dyn_get_method_simple.vo
-  - file: dyn_member_method.vo
-  - file: dyn_method_value_receiver.vo
-  - file: dyn_set_attr_iface_mismatch.vo
-  - file: dyn_set_attr_interface_field.vo
-  - file: dyn_try_unwrap.vo
-  - file: dyn_write.vo
-  - file: dyn_api.vo
+  - file: dyn/dyn_access.vo
+  - file: dyn/dyn_access_big_struct.vo
+  - file: dyn/dyn_access_interface_field.vo
+  - file: dyn/dyn_access_interface_itab_bug.vo
+  - file: dyn/dyn_access_slice_interface_elem.vo
+  - file: dyn/dyn_call_args.vo
+  - file: dyn/dyn_call_methods.vo
+  - file: dyn/dyn_call_multi_slot_ret.vo
+  - file: dyn/dyn_call_question.vo
+  - file: dyn/dyn_call_ret_array.vo
+  - file: dyn/dyn_call_ret_types.vo
+  - file: dyn/dyn_call_simple.vo
+  - file: dyn/dyn_get_attr.vo
+  - file: dyn/dyn_get_method.vo
+  - file: dyn/dyn_get_method_simple.vo
+  - file: dyn/dyn_member_method.vo
+  - file: dyn/dyn_method_value_receiver.vo
+  - file: dyn/dyn_set_attr_iface_mismatch.vo
+  - file: dyn/dyn_set_attr_interface_field.vo
+  - file: dyn/dyn_try_unwrap.vo
+  - file: dyn/dyn_write.vo
+  - file: dyn/dyn_api.vo
+
+  # Dyn bugs to fix
+  - file: dyn/chained_method_calls.vo
+    skip: [vm, jit]
+    reason: "BUG: segfault when calling dynamic method on result of previous dynamic call"
+  - file: dyn/multi_level_chain.vo
+    skip: [vm, jit]
+    reason: "BUG: analysis panic at expr.rs:1135 on obj~>a?~>b?~>c? pattern"
+  - file: dyn/nil_handling.vo
+    skip: [vm, jit]
+    reason: "BUG: nil slice/map dynamic access causes runtime panic instead of error"
+  - file: dyn/nested_map_access.vo
+    skip: [vm, jit]
+    reason: "BUG: nested map[string]any access causes panic"
+  - file: dyn/error_propagation_chain.vo
+    skip: [vm, jit]
+    reason: "BUG: multi-level chain with ? causes analysis panic"
+
   - file: error_handling_sugar.vo
   - file: gc_closure_capture.vo
   - file: iface_to_iface_assign.vo

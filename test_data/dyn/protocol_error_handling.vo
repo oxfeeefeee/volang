@@ -1,0 +1,83 @@
+// Test protocol methods that return errors
+// Verify that errors from DynAttr/DynIndex are properly propagated.
+package main
+
+import "dyn"
+import "errors"
+
+// ValidatedStore requires values to pass validation
+type ValidatedStore struct {
+    data      map[string]any
+    readOnly  bool
+}
+
+func NewValidatedStore() *ValidatedStore {
+    return &ValidatedStore{data: make(map[string]any), readOnly: false}
+}
+
+func (v *ValidatedStore) SetReadOnly() {
+    v.readOnly = true
+}
+
+func (v *ValidatedStore) DynAttr(name string) (any, error) {
+    if name == "" {
+        return nil, dyn.ErrBadField
+    }
+    val, ok := v.data[name]
+    if !ok {
+        return nil, dyn.ErrBadField
+    }
+    return val, nil
+}
+
+func (v *ValidatedStore) DynSetAttr(name string, value any) error {
+    if v.readOnly {
+        return dyn.ErrTypeMismatch
+    }
+    if name == "" {
+        return dyn.ErrBadField
+    }
+    v.data[name] = value
+    return nil
+}
+
+func writeKey1(store *ValidatedStore) error {
+    var obj any = store
+    obj~>key1 = "value1"
+    return nil
+}
+
+func writeKey2(store *ValidatedStore) error {
+    var obj any = store
+    obj~>key2 = "value2"
+    return nil
+}
+
+func main() {
+    store := NewValidatedStore()
+    var obj any = store
+    
+    // Successful write
+    err := writeKey1(store)
+    assert(err == nil, "write should succeed")
+    
+    v := obj~>key1?
+    assert(v.(string) == "value1", "should read back value1")
+    
+    // Read non-existent key
+    _, err = obj~>nonexistent
+    assert(err != nil, "read nonexistent should error")
+    assert(errors.Is(err, dyn.ErrBadField), "should be ErrBadField")
+    
+    // Make read-only and try to write
+    store.SetReadOnly()
+    err = writeKey2(store)
+    assert(err != nil, "write to readonly should error")
+    assert(errors.Is(err, dyn.ErrTypeMismatch), "should be ErrTypeMismatch")
+    
+    // Verify original value unchanged
+    v = obj~>key1?
+    assert(v.(string) == "value1", "original value should be unchanged")
+    
+    println("protocol_error_handling: ok")
+}

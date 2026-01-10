@@ -1,0 +1,52 @@
+// Test dyn.SliceObject built-in type
+package main
+
+import "dyn"
+
+func main() error {
+    // Create SliceObject
+    s := make(dyn.SliceObject, 4)
+    s[0] = "a"
+    s[1] = 42
+    s[2] = true
+    s[3] = 3.14
+    var obj any = s
+    
+    // Read via DynIndex
+    v0 := obj~>[0]?
+    assert(v0.(string) == "a", "index 0 should be 'a'")
+    
+    v1 := obj~>[1]?
+    assert(v1.(int) == 42, "index 1 should be 42")
+    
+    v2 := obj~>[2]?
+    assert(v2.(bool) == true, "index 2 should be true")
+    
+    // Modify via DynSetIndex
+    obj~>[0] = "modified"
+    obj~>[1] = 100
+    
+    // Verify modifications
+    v0 = obj~>[0]?
+    assert(v0.(string) == "modified", "index 0 should be 'modified'")
+    
+    v1 = obj~>[1]?
+    assert(v1.(int) == 100, "index 1 should be 100")
+    
+    // Test out of bounds
+    _, err := obj~>[10]
+    assert(err != nil, "out of bounds should error")
+    
+    func() error {
+        obj~>[10] = "overflow"
+        return nil
+    }()
+    // out of bounds write should have returned error in the function above
+    
+    // Test wrong key type
+    _, err = obj~>["string"]
+    assert(err != nil, "string key should error")
+    
+    println("slice_object: ok")
+    return nil
+}

@@ -218,7 +218,13 @@ impl CodegenContext {
     }
 
     /// Register named type meta using ObjKey as the identity key.
+    /// If already dynamically registered (via intern_type_key), updates the placeholder.
     pub fn register_named_type_meta(&mut self, obj_key: ObjKey, meta: NamedTypeMeta) -> u32 {
+        if let Some(&id) = self.named_type_ids.get(&obj_key) {
+            // Update the placeholder from dynamic registration
+            self.module.named_type_metas[id as usize] = meta;
+            return id;
+        }
         let id = self.module.named_type_metas.len() as u32;
         self.module.named_type_metas.push(meta);
         self.named_type_ids.insert(obj_key, id);
@@ -250,10 +256,12 @@ impl CodegenContext {
 
     /// Recursively intern a type_key, returning its rttid.
     /// For composite types, this first interns inner types to get their ValueRttids.
+    /// Named types are dynamically registered if not already present.
     pub fn intern_type_key(&mut self, type_key: vo_analysis::objects::TypeKey, info: &crate::type_info::TypeInfoWrapper) -> u32 {
         let tc_objs = &info.project.tc_objs;
-        let ctx = crate::type_interner::InternContext {
-            named_type_ids: &self.named_type_ids,
+        let mut ctx = crate::type_interner::InternContext {
+            named_type_ids: &mut self.named_type_ids,
+            named_type_metas: &mut self.module.named_type_metas,
             struct_meta_ids: &self.struct_meta_ids,
             interface_meta_ids: &self.interface_meta_ids,
         };
@@ -262,7 +270,7 @@ impl CodegenContext {
             type_key,
             tc_objs,
             &info.project.interner,
-            &ctx,
+            &mut ctx,
         );
         value_rttid.rttid()
     }
@@ -520,8 +528,9 @@ impl CodegenContext {
                     let obj = &tc_objs.lobjs[m];
                     let name = obj.name().to_string();
                     let sig_type = obj.typ().expect("interface method must have signature type");
-                    let ctx = crate::type_interner::InternContext {
-                        named_type_ids: &self.named_type_ids,
+                    let mut ctx = crate::type_interner::InternContext {
+                        named_type_ids: &mut self.named_type_ids,
+                        named_type_metas: &mut self.module.named_type_metas,
                         struct_meta_ids: &self.struct_meta_ids,
                         interface_meta_ids: &self.interface_meta_ids,
                     };
@@ -530,7 +539,7 @@ impl CodegenContext {
                         sig_type,
                         tc_objs,
                         interner,
-                        &ctx,
+                        &mut ctx,
                     )
                     .rttid();
                     vo_vm::bytecode::InterfaceMethodMeta { name, signature_rttid }

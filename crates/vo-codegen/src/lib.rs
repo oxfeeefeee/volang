@@ -107,6 +107,7 @@ fn register_types(
         }
 
         // Process all collected type declarations
+        // Named types are dynamically registered during intern_type_key if not already present
         for type_decl in &type_decls {
             let type_name = project
                 .interner

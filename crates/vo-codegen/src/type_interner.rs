@@ -88,8 +88,10 @@ impl Default for TypeInterner {
 }
 
 /// Additional metadata for type interning.
+/// Uses mutable references to allow dynamic registration of named types.
 pub struct InternContext<'a> {
-    pub named_type_ids: &'a std::collections::HashMap<ObjKey, u32>,
+    pub named_type_ids: &'a mut std::collections::HashMap<ObjKey, u32>,
+    pub named_type_metas: &'a mut Vec<vo_common_core::bytecode::NamedTypeMeta>,
     pub struct_meta_ids: &'a std::collections::HashMap<vo_analysis::objects::TypeKey, u32>,
     pub interface_meta_ids: &'a std::collections::HashMap<vo_analysis::objects::TypeKey, u32>,
 }
@@ -102,7 +104,7 @@ pub fn intern_type_key(
     type_key: TypeKey,
     tc_objs: &vo_analysis::objects::TCObjects,
     str_interner: &vo_common::SymbolInterner,
-    ctx: &InternContext,
+    ctx: &mut InternContext,
 ) -> ValueRttid {
     let (rt, vk) = type_key_to_runtime_type(interner, type_key, tc_objs, str_interner, ctx);
     let rttid = interner.intern(rt);
@@ -116,7 +118,7 @@ fn type_key_to_runtime_type(
     type_key: TypeKey,
     tc_objs: &vo_analysis::objects::TCObjects,
     str_interner: &vo_common::SymbolInterner,
-    ctx: &InternContext,
+    ctx: &mut InternContext,
 ) -> (RuntimeType, ValueKind) {
     match &tc_objs.types[type_key] {
         Type::Basic(basic) => {
@@ -146,10 +148,21 @@ fn type_key_to_runtime_type(
                     panic!("type_interner: unexpected Named underlying for a Named type")
                 }
             };
-            // Use ObjKey for lookup - the true identity of Named types
-            let id = named.obj().as_ref()
-                .and_then(|obj_key| ctx.named_type_ids.get(obj_key).copied())
-                .unwrap_or(0);
+            // Use ObjKey for lookup - dynamically register if not found
+            let id = if let Some(&obj_key) = named.obj().as_ref() {
+                *ctx.named_type_ids.entry(obj_key).or_insert_with(|| {
+                    let id = ctx.named_type_metas.len() as u32;
+                    // Push placeholder - will be filled in later by register_named_type_meta
+                    ctx.named_type_metas.push(vo_common_core::bytecode::NamedTypeMeta {
+                        name: String::new(),
+                        underlying_meta: vo_runtime::ValueMeta::new(0, vo_runtime::ValueKind::Void),
+                        methods: std::collections::HashMap::new(),
+                    });
+                    id
+                })
+            } else {
+                0
+            };
             // Get struct_meta_id from named_type's underlying type
             let struct_meta_id = ctx.struct_meta_ids.get(&type_key).copied();
             (RuntimeType::Named { id, struct_meta_id }, vk)

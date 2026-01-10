@@ -1,0 +1,69 @@
+// Test error propagation through chains of dynamic access
+// BUG: Multi-level chain with ? causes analysis panic
+package main
+
+type A struct {
+    b *B
+}
+
+type B struct {
+    c *C
+}
+
+type C struct {
+    value int
+}
+
+func getFullChain() (int, error) {
+    a := &A{
+        b: &B{
+            c: &C{value: 42},
+        },
+    }
+    var obj any = a
+    
+    // BUG: This chain pattern causes analysis panic
+    v := obj~>b?~>c?~>value?
+    return v.(int), nil
+}
+
+func getMidNilChain() (int, error) {
+    // b.c is nil
+    a := &A{
+        b: &B{c: nil},
+    }
+    var obj any = a
+    
+    // Should error at c access
+    v := obj~>b?~>c?~>value?
+    return v.(int), nil
+}
+
+func getEarlyNilChain() (int, error) {
+    // b is nil
+    a := &A{b: nil}
+    var obj any = a
+    
+    // Should error at b access (when trying to access c from nil)
+    v := obj~>b?~>c?~>value?
+    return v.(int), nil
+}
+
+func main() {
+    // Test successful chain
+    v, err := getFullChain()
+    assert(err == nil, "full chain should succeed")
+    assert(v == 42, "full chain value should be 42")
+    
+    // Test mid-chain nil
+    _, err = getMidNilChain()
+    assert(err != nil, "mid nil chain should error")
+    println("mid nil chain error:", err.Error())
+    
+    // Test early nil
+    _, err = getEarlyNilChain()
+    assert(err != nil, "early nil chain should error")
+    println("early nil chain error:", err.Error())
+    
+    println("error_propagation_chain: ok")
+}

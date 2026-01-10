@@ -1,0 +1,85 @@
+// Test custom DynSetIndex implementation
+// Custom types can implement DynSetIndex to provide dynamic index write access.
+package main
+
+import "dyn"
+
+// MutableArray implements DynSetIndex
+type MutableArray struct {
+    data []any
+}
+
+func NewMutableArray(size int) *MutableArray {
+    return &MutableArray{data: make([]any, size)}
+}
+
+func (m *MutableArray) DynIndex(key any) (any, error) {
+    idx, ok := key.(int)
+    if !ok {
+        return nil, dyn.ErrBadIndex
+    }
+    if idx < 0 || idx >= len(m.data) {
+        return nil, dyn.ErrOutOfBounds
+    }
+    return m.data[idx], nil
+}
+
+func (m *MutableArray) DynSetIndex(key any, value any) error {
+    idx, ok := key.(int)
+    if !ok {
+        return dyn.ErrBadIndex
+    }
+    if idx < 0 || idx >= len(m.data) {
+        return dyn.ErrOutOfBounds
+    }
+    m.data[idx] = value
+    return nil
+}
+
+func (m *MutableArray) Get(idx int) any {
+    return m.data[idx]
+}
+
+func testOutOfBounds(arr *MutableArray) error {
+    var obj any = arr
+    obj~>[10] = "overflow"
+    return nil
+}
+
+func testBadKeyType(arr *MutableArray) error {
+    var obj any = arr
+    obj~>["bad"] = "value"
+    return nil
+}
+
+func main() error {
+    arr := NewMutableArray(5)
+    var obj any = arr
+    
+    // Set via ~> with index
+    obj~>[0] = "first"
+    obj~>[1] = 42
+    obj~>[2] = true
+    obj~>[3] = 3.14
+    obj~>[4] = []int{1, 2, 3}
+    
+    // Verify via direct access
+    assert(arr.Get(0).(string) == "first", "index 0 should be 'first'")
+    assert(arr.Get(1).(int) == 42, "index 1 should be 42")
+    assert(arr.Get(2).(bool) == true, "index 2 should be true")
+    
+    // Read back via ~>
+    v0 := obj~>[0]?
+    assert(v0.(string) == "first", "read index 0 should be 'first'")
+    
+    // Test out of bounds write - use helper function to catch error
+    err := testOutOfBounds(arr)
+    assert(err != nil, "out of bounds write should error")
+    
+    // Test wrong key type write
+    err = testBadKeyType(arr)
+    assert(err != nil, "string key write should error")
+    
+    println("custom_dyn_set_index: ok")
+    return nil
+}

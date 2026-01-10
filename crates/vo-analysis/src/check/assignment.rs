@@ -84,6 +84,24 @@ impl<'a> DynAccessLhs<'a> {
 }
 
 impl Checker {
+    /// Set invalid_type for all LHS variables when dyn access fails.
+    /// This ensures subsequent code can still analyze without panic.
+    fn set_lhs_invalid_types(&mut self, lhs: &DynAccessLhs) {
+        let invalid_type = self.invalid_type();
+        match lhs {
+            DynAccessLhs::Init(objs) => {
+                for &obj in *objs {
+                    if self.lobj(obj).typ().is_none() {
+                        self.lobj_mut(obj).set_type(Some(invalid_type));
+                    }
+                }
+            }
+            DynAccessLhs::Assign(_) => {
+                // For assign, types are already declared - nothing to do
+            }
+        }
+    }
+
     /// Get LHS type for dynamic access. Returns None for blank identifier.
     fn get_lhs_type_for_dyn(&mut self, lhs: &Expr) -> Option<TypeKey> {
         use vo_syntax::ast::ExprKind;
@@ -526,6 +544,8 @@ impl Checker {
         let mut base_x = Operand::new();
         self.multi_expr(&mut base_x, &dyn_access.base);
         if base_x.invalid() {
+            // Set invalid_type for all LHS vars so subsequent code doesn't panic
+            self.set_lhs_invalid_types(&lhs);
             return;
         }
 

@@ -102,6 +102,12 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     // For Map types with string keys, treat field_name as map key
     if vk == ValueKind::Map {
         let base_ref = slot1 as GcRef;
+        
+        // Check for nil map
+        if base_ref.is_null() {
+            return dyn_error(call, call.dyn_err().nil_base, "cannot access field on nil map");
+        }
+        
         let map_key_vk = map::key_kind(base_ref);
         
         if map_key_vk != ValueKind::String {
@@ -118,6 +124,22 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         let val_value_rttid = call.get_elem_value_rttid_from_base(rttid);
         
         let found = map::get(base_ref, &key_data);
+        
+        // For map[string]any (val_vk == Interface), the value is already boxed
+        // Just return it directly without re-boxing
+        if val_vk == ValueKind::Interface {
+            if let Some(val_slice) = found {
+                call.ret_u64(0, val_slice[0]);
+                call.ret_u64(1, val_slice[1]);
+            } else {
+                // Key not found - return nil interface
+                call.ret_u64(0, 0);
+                call.ret_u64(1, 0);
+            }
+            call.ret_nil(2);
+            call.ret_nil(3);
+            return ExternResult::Ok;
+        }
         
         // Get raw slots from map value (or zeros if not found)
         let raw_slots: Vec<u64> = if let Some(val_slice) = found {
@@ -339,6 +361,10 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
     
     match base_vk {
         ValueKind::Slice => {
+            // Check for nil slice
+            if base_ref.is_null() {
+                return dyn_error(call, call.dyn_err().nil_base, "cannot index nil slice");
+            }
             let len = crate::objects::slice::len(base_ref);
             let idx = match check_int_index(key_slot0, key_slot1, len) {
                 Ok(i) => i,
@@ -382,6 +408,10 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             call.ret_nil(3);
         }
         ValueKind::Map => {
+            // Check for nil map
+            if base_ref.is_null() {
+                return dyn_error(call, call.dyn_err().nil_base, "cannot index nil map");
+            }
             let key_vk = interface::unpack_value_kind(key_slot0);
             let map_key_vk = crate::objects::map::key_kind(base_ref);
             
