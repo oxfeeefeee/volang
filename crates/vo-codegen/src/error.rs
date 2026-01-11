@@ -1,7 +1,6 @@
 //! Codegen errors.
 
 use std::fmt;
-use vo_common::span::Span;
 
 #[derive(Debug)]
 pub enum CodegenError {
@@ -39,35 +38,6 @@ impl CodegenError {
 impl fmt::Display for CodegenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.message())
-    }
-}
-
-/// Codegen error with optional source location.
-#[derive(Debug)]
-pub struct CodegenErrorWithSpan {
-    pub error: CodegenError,
-    pub span: Option<Span>,
-}
-
-impl CodegenErrorWithSpan {
-    pub fn new(error: CodegenError) -> Self {
-        Self { error, span: None }
-    }
-
-    pub fn with_span(error: CodegenError, span: Span) -> Self {
-        Self { error, span: Some(span) }
-    }
-}
-
-impl fmt::Display for CodegenErrorWithSpan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.error)
-    }
-}
-
-impl From<CodegenError> for CodegenErrorWithSpan {
-    fn from(error: CodegenError) -> Self {
-        Self::new(error)
     }
 }
 

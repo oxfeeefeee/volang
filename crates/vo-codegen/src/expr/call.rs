@@ -521,37 +521,6 @@ pub fn compile_extern_call(
 // Argument Compilation Helpers
 // =============================================================================
 
-/// Compile arguments for extern/builtin calls.
-/// For variadic: emits (value, value_kind) pairs.
-/// For non-variadic: uses compile_args_simple (no interface conversion).
-/// NOTE: This is NOT for normal Vo function calls - use compile_method_args instead.
-fn compile_extern_args(
-    call: &vo_syntax::ast::CallExpr,
-    is_variadic: bool,
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfoWrapper,
-) -> Result<(u16, u16), CodegenError> {
-    use crate::type_info::encode_i32;
-    
-    if is_variadic {
-        // Variadic: pass (value, value_kind) pairs
-        let total_slots = (call.args.len() * 2) as u16;
-        let args_start = func.alloc_temp(total_slots);
-        for (i, arg) in call.args.iter().enumerate() {
-            let slot = args_start + (i * 2) as u16;
-            compile_expr_to(arg, slot, ctx, func, info)?;
-            let arg_type = info.expr_type(arg.id);
-            let vk = info.type_value_kind(arg_type) as u8 as i32;
-            let (b, c) = encode_i32(vk);
-            func.emit_op(Opcode::LoadInt, slot + 1, b, c);
-        }
-        Ok((args_start, total_slots))
-    } else {
-        compile_args_simple(&call.args, ctx, func, info)
-    }
-}
-
 /// Compile arguments without type conversion, return (args_start, total_slots).
 /// Used by non-variadic calls and defer.
 pub fn compile_args_simple(

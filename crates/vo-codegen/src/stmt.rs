@@ -278,31 +278,13 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
     }
 
     /// Store a value from an already-compiled slot to an existing storage.
-    /// Used for re-assignment in short var declarations.
+    /// This copies the VALUE CONTENT, not just a reference.
+    /// For HeapArray, this copies elements one by one (initialization semantic).
+    /// For variable reassignment semantic (copying GcRef), use func.emit_storage_store.
     pub fn store_from_slot(&mut self, storage: StorageKind, src_slot: u16, slot_types: &[vo_runtime::SlotType]) {
         match storage {
-            StorageKind::StackValue { slot, slots } => {
-                self.func.emit_copy(slot, src_slot, slots);
-            }
-            StorageKind::StackArray { base_slot, elem_slots, len } => {
-                // Copy element by element using SlotSet
-                for i in 0..len {
-                    let idx_reg = self.func.alloc_temp(1);
-                    self.func.emit_op(Opcode::LoadInt, idx_reg, i, 0);
-                    let src_offset = src_slot + i * elem_slots;
-                    if elem_slots == 1 {
-                        self.func.emit_op(Opcode::SlotSet, base_slot, idx_reg, src_offset);
-                    } else {
-                        self.func.emit_with_flags(Opcode::SlotSetN, elem_slots as u8, base_slot, idx_reg, src_offset);
-                    }
-                }
-            }
-            StorageKind::HeapBoxed { gcref_slot, .. } => {
-                self.func.emit_ptr_set_with_slot_types(gcref_slot, 0, src_slot, slot_types);
-            }
+            // HeapArray needs special handling: copy elements, not GcRef
             StorageKind::HeapArray { gcref_slot, elem_slots } => {
-                // Copy element by element using ArraySet
-                // src_slot points to a stack array, copy to heap array
                 let arr_len = slot_types.len() as u16 / elem_slots;
                 for i in 0..arr_len {
                     let idx_reg = self.func.alloc_temp(1);
@@ -311,11 +293,9 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
                     self.func.emit_with_flags(Opcode::ArraySet, elem_slots as u8, gcref_slot, idx_reg, src_offset);
                 }
             }
-            StorageKind::Reference { slot } => {
-                self.func.emit_copy(slot, src_slot, 1);
-            }
-            StorageKind::Global { .. } => {
-                unreachable!("store_from_slot doesn't handle Global storage")
+            // All other cases delegate to emit_storage_store
+            _ => {
+                self.func.emit_storage_store(storage, src_slot, slot_types);
             }
         }
     }
@@ -344,7 +324,6 @@ pub fn compile_value_to(
 struct IndexLoop {
     idx_slot: u16,
     loop_start: usize,
-    begin_pc: usize,
     end_jump: usize,
 }
 
@@ -355,13 +334,13 @@ impl IndexLoop {
         func.emit_op(Opcode::LoadInt, idx_slot, 0, 0);
         
         let loop_start = func.current_pc();
-        let begin_pc = func.enter_loop(loop_start, label);
+        func.enter_loop(loop_start, label);
         
         let cmp_slot = func.alloc_temp(1);
         func.emit_op(Opcode::GeI, cmp_slot, idx_slot, len_slot);
         let end_jump = func.emit_jump(Opcode::JumpIf, cmp_slot);
         
-        Self { idx_slot, loop_start, begin_pc, end_jump }
+        Self { idx_slot, loop_start, end_jump }
     }
     
     /// Emit: i := __idx
