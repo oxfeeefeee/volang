@@ -303,9 +303,7 @@ tests:
     reason: "BUG: pointer receiver method value crashes VM (exec_closure_get index out of bounds)"
 
 # Bug reproductions (2026-01-11 coverage analysis)
-  - file: bug_ptr_receiver_method_value.vo
-    skip: [vm, jit]
-    reason: "BUG #1: exec_closure_get index out of bounds with pointer receiver method value"
+  # FIXED: bug_ptr_receiver_method_value.vo - escape analysis + codegen for pointer receiver method value
   - file: bug_global_func_var.vo
     skip: [vm, jit]
     reason: "BUG #2: codegen VariableNotFound for global func var"

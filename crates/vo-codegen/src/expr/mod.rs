@@ -587,13 +587,13 @@ fn compile_method_value(
         &info.project.interner,
     ).ok_or_else(|| CodegenError::Internal(format!("method {} not found on type {:?}", method_name, recv_type)))?;
     
-    let (method_func_id, _expects_ptr_recv) = match call_info.dispatch {
+    let (method_func_id, expects_ptr_recv) = match call_info.dispatch {
         crate::embed::MethodDispatch::Static { func_id, expects_ptr_recv } => (func_id, expects_ptr_recv),
         _ => return Err(CodegenError::Internal("method value requires static dispatch".to_string())),
     };
     
-    // Check if receiver expression is pointer type
-    let is_ptr_recv = info.is_pointer(recv_type);
+    // Check if receiver expression is already a pointer type
+    let expr_is_ptr = info.is_pointer(recv_type);
     
     // For method value, we need to create a closure that captures the receiver
     // and calls the method with it.
@@ -601,9 +601,16 @@ fn compile_method_value(
     // Pointer receiver (*T): capture the pointer directly
     // Value receiver (T): need to box the value and create wrapper that unboxes
     
-    if is_ptr_recv {
-        // Pointer receiver: capture the pointer, wrapper extracts it and calls method
-        let ptr_reg = compile_expr(&sel.expr, ctx, func, info)?;
+    if expects_ptr_recv {
+        // Pointer receiver method: capture the pointer, wrapper extracts it and calls method
+        // If expr is value type, take its address first
+        let ptr_reg = if expr_is_ptr {
+            compile_expr(&sel.expr, ctx, func, info)?
+        } else {
+            // Value type but method expects pointer - take address
+            // This handles: c.Method where c is T but Method has *T receiver
+            compile_addressable_to_ptr(&sel.expr, ctx, func, info)?
+        };
         
         // Get or create wrapper for pointer receiver
         let wrapper_id = ctx.get_or_create_method_value_wrapper_ptr(
@@ -958,6 +965,19 @@ fn compile_try_unwrap(
         func.emit_copy(dst, inner_start, value_slots);
     }
     Ok(())
+}
+
+/// Get pointer to an addressable expression, returning the register containing the pointer.
+/// Used for implicit address-of when calling pointer receiver methods on values.
+fn compile_addressable_to_ptr(
+    expr: &Expr,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<u16, CodegenError> {
+    let dst = func.alloc_temp_typed(&[SlotType::GcRef]);
+    compile_addr_of(expr, dst, ctx, func, info)?;
+    Ok(dst)
 }
 
 /// Compile address-of operator (&x).

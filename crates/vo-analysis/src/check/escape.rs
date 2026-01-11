@@ -341,26 +341,9 @@ impl<'a> EscapeAnalyzer<'a> {
             }
             ExprKind::Unary(u) => self.visit_expr(&u.operand),
             ExprKind::Call(c) => {
-                // 5. Method call with pointer receiver on value type → receiver escapes
+                // Method call with pointer receiver on value type → receiver escapes
                 if let ExprKind::Selector(sel) = &c.func.kind {
-                    // Check if this is a method call with pointer receiver
-                    // Selection is recorded on the entire selector expression (c.func.id)
-                    if let Some(selection) = self.type_info.selections.get(&c.func.id) {
-                        if matches!(selection.kind(), SelectionKind::MethodVal) {
-                            // Check if method has pointer receiver
-                            if self.method_has_pointer_receiver(selection.obj()) {
-                                // Check if caller is value type (not already pointer)
-                                if let Some(recv_type) = self.type_info.types.get(&sel.expr.id) {
-                                    if !self.is_pointer_type(recv_type.typ) {
-                                        // Value type calling pointer receiver method → escapes
-                                        if let Some(root) = self.find_root_var(&sel.expr) {
-                                            self.escaped.insert(root);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.check_ptr_recv_method_escape(c.func.id, &sel.expr);
                 }
                 self.visit_expr(&c.func);
                 for arg in &c.args {
@@ -371,7 +354,11 @@ impl<'a> EscapeAnalyzer<'a> {
                 self.visit_expr(&i.expr);
                 self.visit_expr(&i.index);
             }
-            ExprKind::Selector(s) => self.visit_expr(&s.expr),
+            ExprKind::Selector(s) => {
+                // Method value with pointer receiver → receiver escapes
+                self.check_ptr_recv_method_escape(expr.id, &s.expr);
+                self.visit_expr(&s.expr);
+            }
             ExprKind::TypeAssert(t) => self.visit_expr(&t.expr),
             ExprKind::CompositeLit(c) => {
                 for elem in &c.elems {
@@ -489,6 +476,20 @@ impl<'a> EscapeAnalyzer<'a> {
     fn is_pointer_type(&self, type_key: crate::objects::TypeKey) -> bool {
         let underlying = typ::underlying_type(type_key, self.tc_objs);
         self.tc_objs.types[underlying].try_as_pointer().is_some()
+    }
+
+    /// Check if selector expr is a pointer-receiver method on value type → mark receiver as escaped.
+    /// Used for both method calls (c.Method()) and method values (c.Method).
+    fn check_ptr_recv_method_escape(&mut self, selector_id: vo_syntax::ast::ExprId, recv_expr: &Expr) {
+        let Some(selection) = self.type_info.selections.get(&selector_id) else { return };
+        if !matches!(selection.kind(), SelectionKind::MethodVal) { return }
+        if !self.method_has_pointer_receiver(selection.obj()) { return }
+        let Some(recv_type) = self.type_info.types.get(&recv_expr.id) else { return };
+        if self.is_pointer_type(recv_type.typ) { return }
+        // Value type with pointer receiver method → escapes
+        if let Some(root) = self.find_root_var(recv_expr) {
+            self.escaped.insert(root);
+        }
     }
 }
 
