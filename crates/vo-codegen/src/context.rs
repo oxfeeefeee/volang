@@ -1010,7 +1010,9 @@ impl CodegenContext {
             param_count: wrapper_param_slots,
             param_slots: wrapper_param_slots,
             ret_slots,
-            local_slots: recv_slots as u16 + other_param_slots + ret_slots, // receiver + params copy + ret space
+            // Layout: [closure_ref(1)][other_params][recv][params_copy]
+            // ret goes in recv position, so no extra space needed
+            local_slots: wrapper_param_slots + recv_slots as u16 + other_param_slots,
             recv_slots: 0,
             code,
             slot_types: Vec::new(),

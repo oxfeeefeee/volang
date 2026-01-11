@@ -1,6 +1,4 @@
 // Test: method values - bound method references
-// BUG: Pointer receiver method value crashes VM (exec_closure_get index out of bounds)
-// SKIP: Vo implementation bug - pointer receiver method value
 package main
 
 type Counter struct {

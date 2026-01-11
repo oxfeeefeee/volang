@@ -297,8 +297,6 @@ tests:
 # Skipped due to Vo implementation bugs
   - file: global_func_var.vo
   - file: method_expression.vo
-    skip: [vm, jit]
-    reason: "BUG: pointer receiver method value crashes VM (exec_closure_get index out of bounds)"
 
 # Bug reproductions (2026-01-11 coverage analysis)
   # FIXED: bug_ptr_receiver_method_value.vo - escape analysis + codegen for pointer receiver method value
