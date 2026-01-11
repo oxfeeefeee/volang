@@ -189,22 +189,35 @@ pub fn resolve_lvalue(
                             index_reg,
                         })
                     }
-                    crate::func::ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, .. }) => {
+                    crate::func::ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, .. })
+                    | crate::func::ExprSource::Location(StorageKind::HeapArray { gcref_slot, .. }) => {
                         Ok(LValue::Index {
                             kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
                             container_reg: gcref_slot,
                             index_reg,
                         })
                     }
-                    crate::func::ExprSource::Location(StorageKind::HeapArray { gcref_slot, .. }) => {
+                    crate::func::ExprSource::Location(StorageKind::Global { .. })
+                    | crate::func::ExprSource::Location(StorageKind::Reference { .. }) => {
+                        // Global array or reference: compile to get GcRef
+                        let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
                         Ok(LValue::Index {
                             kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
-                            container_reg: gcref_slot,
+                            container_reg,
                             index_reg,
                         })
                     }
-                    _ => {
-                        // Compile container expression (temporary or other)
+                    crate::func::ExprSource::Location(StorageKind::StackValue { slot: base_slot, .. }) => {
+                        // Array stored as StackValue (e.g., struct field)
+                        let elem_slots = info.type_slot_count(elem_type);
+                        Ok(LValue::Index {
+                            kind: ContainerKind::StackArray { base_slot, elem_slots },
+                            container_reg: base_slot,
+                            index_reg,
+                        })
+                    }
+                    crate::func::ExprSource::NeedsCompile => {
+                        // Compile container expression (temporary or complex expression)
                         let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
                         Ok(LValue::Index {
                             kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
