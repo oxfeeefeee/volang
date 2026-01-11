@@ -25,23 +25,46 @@ pub struct DeferEntry {
     pub is_errdefer: bool,
 }
 
+/// How return values are stored while defers execute.
+/// Stack and Heap are mutually exclusive - a function uses one or the other.
 #[derive(Debug, Clone)]
-pub struct DeferState {
+pub enum PendingReturnKind {
+    /// Return values copied from stack before frame was popped.
+    Stack {
+        vals: Vec<u64>,
+        /// SlotTypes for GC scanning during defer execution.
+        slot_types: Vec<vo_runtime::SlotType>,
+    },
+    /// Escaped named returns: GcRefs to dereference after all defers complete.
+    /// The actual values are read from heap at the end, so defers can modify them.
+    Heap {
+        gcrefs: Vec<u64>,
+        slots_per_ref: usize,
+    },
+}
+
+/// State for a return-in-progress with pending defers.
+/// 
+/// Lifecycle:
+/// 1. Function returns with defers → DeferExecution created
+/// 2. Each defer executes and returns → next defer called or completion
+/// 3. All defers done → return values written to caller, state cleared
+#[derive(Debug, Clone)]
+pub struct DeferExecution {
+    /// Defers remaining to execute (LIFO order, first = next to run).
     pub pending: Vec<DeferEntry>,
-    pub ret_vals: Vec<u64>,
-    /// SlotTypes for ret_vals (for GC scanning)
-    pub ret_slot_types: Vec<vo_runtime::SlotType>,
+    /// How return values are stored.
+    pub return_kind: PendingReturnKind,
+    /// Caller's return register.
     pub caller_ret_reg: u16,
+    /// How many slots caller expects.
     pub caller_ret_count: usize,
+    /// Whether this is an error return (affects errdefer filtering).
     pub is_error_return: bool,
-    /// For escaped named returns: GcRefs to dereference after defers complete
-    pub heap_gcrefs: Vec<u64>,
-    /// Number of value slots per GcRef (for multi-slot returns)
-    pub value_slots_per_ref: usize,
-    /// Frame depth when defer execution started (depth of original function that returned)
-    /// Used to detect when the defer function itself returns vs when a function called
-    /// by the defer returns.
-    pub defer_caller_frame_depth: usize,
+    /// Frame depth after the returning function was popped.
+    /// Defer functions run at depth = target_depth + 1.
+    /// Used to distinguish "defer returned" vs "function inside defer returned".
+    pub target_depth: usize,
 }
 
 
@@ -81,7 +104,7 @@ pub struct Fiber {
     pub stack: Vec<u64>,
     pub frames: Vec<CallFrame>,
     pub defer_stack: Vec<DeferEntry>,
-    pub defer_state: Option<DeferState>,
+    pub defer_exec: Option<DeferExecution>,
     pub select_state: Option<SelectState>,
     pub panic_value: Option<GcRef>,
     pub panic_msg: Option<String>,
@@ -95,7 +118,7 @@ impl Fiber {
             stack: Vec::new(),
             frames: Vec::new(),
             defer_stack: Vec::new(),
-            defer_state: None,
+            defer_exec: None,
             select_state: None,
             panic_value: None,
             panic_msg: None,
@@ -108,7 +131,7 @@ impl Fiber {
         self.stack.clear();
         self.frames.clear();
         self.defer_stack.clear();
-        self.defer_state = None;
+        self.defer_exec = None;
         self.select_state = None;
         self.panic_value = None;
         self.panic_msg = None;

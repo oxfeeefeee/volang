@@ -610,7 +610,7 @@ impl Vm {
                 Opcode::Return => {
                     let func = &module.functions[func_id as usize];
                     let is_error_return = (inst.flags & 1) != 0;
-                    exec::exec_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.defer_state, &inst, func, module, is_error_return)
+                    exec::exec_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.defer_exec, &inst, func, module, is_error_return)
                 }
 
                 // String operations

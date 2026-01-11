@@ -7,7 +7,7 @@ use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::closure;
 
 use crate::bytecode::{FunctionDef, Module};
-use crate::fiber::{CallFrame, DeferEntry, DeferState};
+use crate::fiber::{CallFrame, DeferEntry, DeferExecution, PendingReturnKind};
 use crate::instruction::Instruction;
 use crate::vm::ExecResult;
 use vo_runtime::itab::ItabCache;
@@ -216,7 +216,7 @@ pub fn exec_return(
     stack: &mut Vec<u64>,
     frames: &mut Vec<CallFrame>,
     defer_stack: &mut Vec<DeferEntry>,
-    defer_state: &mut Option<DeferState>,
+    defer_exec: &mut Option<DeferExecution>,
     inst: &Instruction,
     func: &FunctionDef,
     module: &Module,
@@ -224,149 +224,128 @@ pub fn exec_return(
 ) -> ExecResult {
     let current_frame_depth = frames.len();
 
-    // Check if we're continuing defer execution (a defer just returned)
-    // Only handle defer completion when the current frame is at defer_caller_frame_depth + 1
-    // (i.e., the defer function itself is returning, not a function called by the defer)
-    if let Some(ref mut state) = defer_state {
-        if current_frame_depth == state.defer_caller_frame_depth + 1 {
-            // A defer just finished, check if more to execute
-            // pending is in LIFO order (first element = next to run)
-            if !state.pending.is_empty() {
-                let entry = state.pending.remove(0);
-                pop_frame(stack, frames);
-                return call_defer_entry(stack, frames, &entry, module);
-            } else {
-                // All defers done, complete the original return
-                let ret_vals = if !state.heap_gcrefs.is_empty() {
-                    read_heap_gcrefs(&state.heap_gcrefs, state.value_slots_per_ref)
-                } else {
-                    core::mem::take(&mut state.ret_vals)
-                };
-                let caller_ret_reg = state.caller_ret_reg;
-                let caller_ret_count = state.caller_ret_count;
-                *defer_state = None;
-
-                pop_frame(stack, frames);
-                return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 1: Check if a defer just finished (defer execution in progress)
+    // ─────────────────────────────────────────────────────────────────────────
+    if let Some(ref mut exec) = defer_exec {
+        // Only handle when the defer function itself returns (not nested calls)
+        if current_frame_depth == exec.target_depth + 1 {
+            pop_frame(stack, frames);
+            
+            if !exec.pending.is_empty() {
+                // More defers to run
+                let next_defer = exec.pending.remove(0);
+                return call_defer_entry(stack, frames, &next_defer, module);
             }
+            
+            // All defers complete - finalize return
+            let ret_vals = match &mut exec.return_kind {
+                PendingReturnKind::Stack { vals, .. } => core::mem::take(vals),
+                PendingReturnKind::Heap { gcrefs, slots_per_ref } => {
+                    read_heap_gcrefs(gcrefs, *slots_per_ref)
+                }
+            };
+            let caller_ret_reg = exec.caller_ret_reg;
+            let caller_ret_count = exec.caller_ret_count;
+            *defer_exec = None;
+            
+            return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
         }
-        // Otherwise, this is a normal return from a function called within the defer
-        // Continue with normal return handling below
+        // Not the defer function returning - fall through to normal return
     }
 
-    // Normal return - check for defers
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 2: Initial return - collect return values and check for defers
+    // ─────────────────────────────────────────────────────────────────────────
     let heap_returns = (inst.flags & 0x02) != 0;
-    let ret_start = inst.a as usize;
-    let ret_count = inst.b as usize;
-
-    // Check if there are any defers for current frame
     let has_defers = defer_stack.last()
         .map_or(false, |e| e.frame_depth == current_frame_depth);
 
-    // For heap_returns, we need special handling
-    if heap_returns {
-        // inst.a = gcref_start, inst.b = gcref_count, inst.c = value_slots_per_ref
+    // Fast path: no defers, small return count, stack returns
+    if !has_defers && !heap_returns {
+        let ret_start = inst.a as usize;
+        let ret_count = inst.b as usize;
+        
+        if ret_count <= 4 {
+            let frame = frames.last().unwrap();
+            let current_bp = frame.bp;
+            let ret_reg = frame.ret_reg;
+            let ret_slots = frame.ret_count;
+            let write_count = (ret_slots as usize).min(ret_count);
+            
+            let mut ret_buf = [0u64; 4];
+            for i in 0..write_count {
+                ret_buf[i] = stack[current_bp + ret_start + i];
+            }
+            
+            pop_frame(stack, frames);
+            return write_return_values(stack, frames, &ret_buf[..write_count], ret_reg, ret_slots as usize);
+        }
+    }
+
+    // Collect return values and pending defers
+    let (return_kind, pending_defers) = if heap_returns {
+        // Escaped named returns: store GcRefs, dereference after defers
         let gcref_start = inst.a as usize;
         let gcref_count = inst.b as usize;
-        let value_slots_per_ref = inst.c as usize;
+        let slots_per_ref = inst.c as usize;
         let current_bp = frames.last().unwrap().bp;
         
-        // Collect GcRefs before popping frame
-        let heap_gcrefs: Vec<u64> = (0..gcref_count)
+        let gcrefs: Vec<u64> = (0..gcref_count)
             .map(|i| stack[current_bp + gcref_start + i])
             .collect();
         
-        let pending_defers = collect_pending_defers(defer_stack, current_frame_depth, is_error_return);
+        let pending = collect_pending_defers(defer_stack, current_frame_depth, is_error_return);
+        (PendingReturnKind::Heap { gcrefs, slots_per_ref }, pending)
+    } else {
+        // Normal stack returns
+        let ret_start = inst.a as usize;
+        let ret_count = inst.b as usize;
+        let current_bp = frames.last().unwrap().bp;
         
-        let frame = pop_frame(stack, frames);
-        if frame.is_none() {
-            return ExecResult::Done;
-        }
-        let frame = frame.unwrap();
+        let vals: Vec<u64> = (0..ret_count)
+            .map(|i| stack[current_bp + ret_start + i])
+            .collect();
         
-        if !pending_defers.is_empty() {
-            // Has defers - save GcRefs and dereference after defers complete
-            let mut pending = pending_defers;
-            let first_defer = pending.remove(0);
-            *defer_state = Some(DeferState {
-                pending,
-                ret_vals: Vec::new(),
-                ret_slot_types: Vec::new(),
-                caller_ret_reg: frame.ret_reg,
-                caller_ret_count: frame.ret_count as usize,
-                is_error_return,
-                heap_gcrefs,
-                value_slots_per_ref,
-                defer_caller_frame_depth: frames.len(),
-            });
-            return call_defer_entry(stack, frames, &first_defer, module);
-        } else {
-            // No defers - dereference GcRefs immediately
-            let ret_vals = read_heap_gcrefs(&heap_gcrefs, value_slots_per_ref);
-            return write_return_values(stack, frames, &ret_vals, frame.ret_reg, frame.ret_count as usize);
-        }
-    }
+        let slot_types: Vec<vo_runtime::SlotType> = func.slot_types
+            .get(ret_start..ret_start + ret_count)
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        
+        let pending = collect_pending_defers(defer_stack, current_frame_depth, is_error_return);
+        (PendingReturnKind::Stack { vals, slot_types }, pending)
+    };
 
-    if !has_defers && ret_count <= 4 {
-        // Fast path: no defers AND small return count - use fixed buffer
-        let frame = frames.last().unwrap();
-        let current_bp = frame.bp;
-        let ret_reg = frame.ret_reg;
-        let ret_slots = frame.ret_count;
-        
-        let write_count = (ret_slots as usize).min(ret_count);
-        
-        // Read return values before pop_frame truncates stack
-        let mut ret_buf = [0u64; 4];
-        for i in 0..write_count {
-            ret_buf[i] = stack[current_bp + ret_start + i];
-        }
-        
-        // Pop frame (truncates stack)
-        pop_frame(stack, frames);
-        
-        return write_return_values(stack, frames, &ret_buf[..write_count], ret_reg, ret_slots as usize);
-    }
+    // Pop the returning function's frame
+    let frame = match pop_frame(stack, frames) {
+        Some(f) => f,
+        None => return ExecResult::Done,
+    };
 
-    // Slow path: has defers - need to save return values in Vec
-    let current_bp = frames.last().unwrap().bp;
-    let ret_vals: Vec<u64> = (0..ret_count)
-        .map(|i| stack[current_bp + ret_start + i])
-        .collect();
-    
-    // Get slot types for return values (for GC scanning)
-    let ret_slot_types: Vec<vo_runtime::SlotType> = func.slot_types
-        .get(ret_start..ret_start + ret_count)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
-
-    let pending_defers = collect_pending_defers(defer_stack, current_frame_depth, is_error_return);
-
-    let frame = pop_frame(stack, frames);
-    if frame.is_none() {
-        return ExecResult::Done;
-    }
-    let frame = frame.unwrap();
-
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 3: Execute defers or complete return
+    // ─────────────────────────────────────────────────────────────────────────
     if !pending_defers.is_empty() {
-        // Has defers to execute - save state and call first defer
         let mut pending = pending_defers;
         let first_defer = pending.remove(0);
-        *defer_state = Some(DeferState {
+        
+        *defer_exec = Some(DeferExecution {
             pending,
-            ret_vals,
-            ret_slot_types,
+            return_kind,
             caller_ret_reg: frame.ret_reg,
             caller_ret_count: frame.ret_count as usize,
             is_error_return,
-            heap_gcrefs: Vec::new(),
-            value_slots_per_ref: 0,
-            defer_caller_frame_depth: frames.len(),
+            target_depth: frames.len(),
         });
+        
         return call_defer_entry(stack, frames, &first_defer, module);
     }
 
-    // No defers after filtering - normal return
+    // No defers - complete return immediately
+    let ret_vals = match return_kind {
+        PendingReturnKind::Stack { vals, .. } => vals,
+        PendingReturnKind::Heap { gcrefs, slots_per_ref } => read_heap_gcrefs(&gcrefs, slots_per_ref),
+    };
     write_return_values(stack, frames, &ret_vals, frame.ret_reg, frame.ret_count as usize)
 }
 

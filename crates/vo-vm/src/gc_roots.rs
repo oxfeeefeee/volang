@@ -54,12 +54,27 @@ fn scan_fibers(gc: &mut Gc, fibers: &[Fiber], functions: &[FunctionDef]) {
             scan_defer_entry(gc, entry);
         }
 
-        // Scan defer_state
-        if let Some(state) = &fiber.defer_state {
-            for entry in &state.pending {
+        // Scan defer_exec (return-in-progress with pending defers)
+        if let Some(exec) = &fiber.defer_exec {
+            for entry in &exec.pending {
                 scan_defer_entry(gc, entry);
             }
-            scan_slots_by_types(gc, &state.ret_vals, &state.ret_slot_types);
+            // Scan return values based on kind
+            match &exec.return_kind {
+                crate::fiber::PendingReturnKind::Stack { vals, slot_types } => {
+                    scan_slots_by_types(gc, vals, slot_types);
+                }
+                crate::fiber::PendingReturnKind::Heap { gcrefs, .. } => {
+                    // These are GcRefs to escaped named return variables.
+                    // The original frame was popped, so we must mark them here.
+                    for &gcref_raw in gcrefs {
+                        let gcref = gcref_raw as GcRef;
+                        if !gcref.is_null() {
+                            gc.mark_gray(gcref);
+                        }
+                    }
+                }
+            }
         }
 
         // Scan panic value
