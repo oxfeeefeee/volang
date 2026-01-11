@@ -1,6 +1,6 @@
 //! Statement compilation.
 
-use vo_analysis::objects::TypeKey;
+use vo_analysis::objects::{ObjKey, TypeKey};
 use vo_common::symbol::Symbol;
 use vo_syntax::ast::{Block, Expr, Stmt, StmtKind};
 use vo_vm::instruction::Opcode;
@@ -118,6 +118,7 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         type_key: TypeKey,
         escapes: bool,
         init: Option<&Expr>,
+        obj_key: Option<ObjKey>,
     ) -> Result<StorageKind, CodegenError> {
         if let Some(expr) = init {
             // Compile init expression FIRST, before registering variable.
@@ -127,13 +128,13 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
             self.compile_value(expr, tmp, type_key)?;
             
             // Now allocate storage and register the variable name
-            let storage = self.alloc_storage(sym, type_key, escapes)?;
+            let storage = self.alloc_storage(sym, type_key, escapes, obj_key)?;
             
             // Copy from temp to the new storage
             self.store_from_slot(storage, tmp, &self.info.type_slot_types(type_key));
             Ok(storage)
         } else {
-            let storage = self.alloc_storage(sym, type_key, escapes)?;
+            let storage = self.alloc_storage(sym, type_key, escapes, obj_key)?;
             self.emit_zero_init(storage, type_key);
             Ok(storage)
         }
@@ -141,20 +142,32 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
 
     /// Allocate storage for a variable based on type and escape analysis.
     /// This is the single decision point for storage strategy.
+    /// 
+    /// `obj_key`: Used to check if variable is captured by closure (for reference type boxing decision)
     fn alloc_storage(
         &mut self,
         sym: Symbol,
         type_key: TypeKey,
         escapes: bool,
+        obj_key: Option<ObjKey>,
     ) -> Result<StorageKind, CodegenError> {
         let slots = self.info.type_slot_count(type_key);
         let slot_types = self.info.type_slot_types(type_key);
 
+        // Use centralized boxing decision logic
+        let needs_box = obj_key.map_or(escapes, |k| self.info.needs_boxing(k, type_key));
+
         if self.info.is_reference_type(type_key) {
-            // Reference types: 1 slot GcRef IS the value
-            let slot = self.func.define_local_reference(sym);
-            Ok(StorageKind::Reference { slot })
-        } else if escapes {
+            if needs_box {
+                // Reference type captured by closure: box to share storage
+                self.alloc_escaped_boxed(sym, type_key, slots, &slot_types)
+            } else {
+                // Reference type not captured: 1 slot GcRef IS the value
+                let slot = self.func.define_local_reference(sym);
+                Ok(StorageKind::Reference { slot })
+            }
+        } else if needs_box {
+            // Non-reference types that escape need boxing
             if self.info.is_array(type_key) {
                 self.alloc_escaped_array(sym, type_key)
             } else {
@@ -270,9 +283,10 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         type_key: TypeKey,
         escapes: bool,
         src_slot: u16,
+        obj_key: Option<ObjKey>,
     ) -> Result<StorageKind, CodegenError> {
         let slot_types = self.info.type_slot_types(type_key);
-        let storage = self.alloc_storage(sym, type_key, escapes)?;
+        let storage = self.alloc_storage(sym, type_key, escapes, obj_key)?;
         self.store_from_slot(storage, src_slot, &slot_types);
         Ok(storage)
     }
@@ -390,7 +404,7 @@ fn range_var_slot(
                     let obj_key = sc.info.get_def(ident);
                     let type_key = sc.info.obj_type(obj_key, "range var must have type");
                     let escapes = sc.info.is_escaped(obj_key);
-                    let storage = sc.define_local(ident.symbol, type_key, escapes, None)?;
+                    let storage = sc.define_local(ident.symbol, type_key, escapes, None, Some(obj_key))?;
                     Ok(storage.slot())
                 } else {
                     Ok(sc.func.lookup_local(ident.symbol)
@@ -444,7 +458,7 @@ fn compile_stmt_with_label(
                     let escapes = info.is_escaped(obj_key);
                     let init = spec.values.get(i);
 
-                    sc.define_local(name.symbol, type_key, escapes, init)?;
+                    sc.define_local(name.symbol, type_key, escapes, init, Some(obj_key))?;
                 }
             }
         }
@@ -481,7 +495,7 @@ fn compile_stmt_with_label(
                     if info.is_def(name) {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
-                        sc.define_local_from_slot(name.symbol, elem_type, escapes, tmp_base + offset)?;
+                        sc.define_local_from_slot(name.symbol, elem_type, escapes, tmp_base + offset, Some(obj_key))?;
                     } else if let Some(local) = sc.func.lookup_local(name.symbol) {
                         let elem_slot_types = info.type_slot_types(elem_type);
                         sc.store_from_slot(local.storage, tmp_base + offset, &elem_slot_types);
@@ -517,7 +531,7 @@ fn compile_stmt_with_label(
                     if info.is_def(name) {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
-                        sc.define_local_from_slot(name.symbol, type_key, escapes, tmp)?;
+                        sc.define_local_from_slot(name.symbol, type_key, escapes, tmp, Some(obj_key))?;
                     } else if let Some(local) = sc.func.lookup_local(name.symbol) {
                         let slot_types = sc.info.type_slot_types(type_key);
                         sc.func.emit_storage_store(local.storage, tmp, &slot_types);

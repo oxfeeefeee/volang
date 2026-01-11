@@ -950,7 +950,6 @@ fn compile_func_decl(
     }
     
     // Define parameters and collect escaped ones for boxing
-    // Reference types (closure, slice, map, channel, pointer) don't need boxing - they're already GcRefs
     let mut escaped_params = Vec::new();
     let num_params = func_decl.sig.params.len();
     for (param_idx, param) in func_decl.sig.params.iter().enumerate() {
@@ -968,7 +967,7 @@ fn compile_func_decl(
         for name in &param.names {
             builder.define_param(Some(name.symbol), slots, &slot_types);
             let obj_key = info.get_def(name);
-            if info.is_escaped(obj_key) && !info.is_reference_type(type_key) {
+            if info.needs_boxing(obj_key, type_key) {
                 escaped_params.push((name.symbol, type_key, slots, slot_types.clone()));
             }
         }

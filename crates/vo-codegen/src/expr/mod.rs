@@ -220,15 +220,14 @@ pub fn compile_expr_to(
                     func.emit_storage_load(storage, dst);
                 }
                 ExprSource::NeedsCompile => {
-                    // Closure capture: use ClosureGet to get the GcRef
+                    // Closure capture: ClosureGet returns GcRef to the captured storage
                     if let Some(capture) = func.lookup_capture(ident.symbol) {
                         func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
                         
-                        // Reference types (slice, map, string, channel, pointer, closure) and arrays
-                        // are already GcRefs - the captured value IS the reference, no PtrGet needed.
-                        // Struct/primitive/interface use [GcHeader][data] layout - need PtrGet to read.
+                        // Arrays: capture stores GcRef to [ArrayHeader][elems], use directly
+                        // Others: capture stores GcRef to box [value], need PtrGet to read value
                         let type_key = info.obj_type(info.get_use(ident), "captured var must have type");
-                        if !info.is_array(type_key) && !info.is_reference_type(type_key) {
+                        if !info.is_array(type_key) {
                             let value_slots = info.type_slot_count(type_key);
                             func.emit_ptr_get(dst, dst, 0, value_slots);
                         }

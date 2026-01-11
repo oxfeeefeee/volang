@@ -41,7 +41,7 @@
 
 ---
 
-### Bug 3: defer_capture (未解决)
+### Bug 3: defer_capture (已修复)
 
 **问题**：defer 闭包看到的是变量的原始值，而不是修改后的值。
 
@@ -52,21 +52,31 @@ s = "world"
 // 应该打印 "world"，实际打印 "hello"
 ```
 
-**错误的方案**（我尝试的）：
-- 让 escaped reference types 也被 box
-- 这是概念上的错误：reference types 本身就是引用，不应该再 box
+**之前的错误理解**：
+> "让 escaped reference types 也被 box 是概念上的错误：reference types 本身就是引用，不应该再 box"
 
-**根本原因分析**：
-- 闭包捕获 reference type 变量时，复制的是 GcRef 的值
-- 当 `s = "world"` 时，修改的是栈上的 slot
-- 闭包仍持有旧的 GcRef
+**正确分析**：
+这个说法是错的。Box 的目的是让闭包和外部共享**变量的存储位置**，与变量是 value type 还是 reference type 无关。
 
-**正确理解**：
-- Go 语义：闭包捕获变量的**引用**，能看到变量的修改
-- 当前 Vo 实现：reference types 被标记为 "no escape concept"（见 escape.rs 注释）
-- 这导致 reference type 变量被闭包捕获时，不会被放到堆上共享
+- **变量**：一个存储位置（slot）
+- **值**：存储位置里的内容
 
-**待解决**：需要重新设计方案，可能需要修改 escape 分析逻辑。核心问题是如何让闭包和外部作用域共享 reference type 变量的**位置**，而不仅是**值**。
+对于 reference type 变量 `s`：
+- 变量 `s` 是栈上的一个 slot
+- 值是一个 GcRef 指向 string 数据
+- 当 `s = "world"` 时，修改的是**栈上 slot 的内容**（换成新的 GcRef）
+
+**正确方案**：所有被闭包捕获的变量都需要 box，包括 reference types。
+
+Box 后的内存布局：
+```
+stack slot -> GcRef(box) -> [GcRef(string)]
+```
+
+**修改内容**：
+1. `stmt.rs alloc_storage`: 先检查 escapes，再检查 is_reference_type
+2. `literal.rs compile_func_lit`: 移除 `!info.is_reference_type(type_key)` 条件
+3. `expr/mod.rs`: 统一所有捕获变量的读取逻辑，都用 PtrGet
 
 ---
 
@@ -103,20 +113,27 @@ emit_op(Opcode::Call, args_start, func_id, c)
 ### is_reference_type 包括
 - string, slice, map, channel, closure, pointer
 
-### escape.rs 设计假设
+### escape.rs 注释（已过时）
 ```rust
 // Reference types (slice, map, chan, closure, pointer) are already GcRef, no escape concept.
 ```
-这个假设导致 reference types 被闭包捕获时不会被正确处理。
+这个注释的理解是错误的。Reference types 被闭包捕获时也需要 box，以共享存储位置。
 
 ---
 
 ## 测试状态
 
-回滚前：
 - switch_break: 已修复
 - short_var: 已修复  
 - method_value: 已修复
-- defer_capture: 错误方案，导致 dyn 测试回归
+- defer_capture: 已修复
 
-修改前基线：248 passed, 0 failed
+### 已知的独立 bug（非本次修复范围）
+
+1. **`defer func(val int){...}(c.value)` 返回 0**
+   - 闭包字面量作为 defer 目标，带参数时，参数值传递错误
+   - 影响 `defer_eval_timing.vo` 中的 Test 5
+
+2. **`escaped_array_init.vo` 数组切片初始化**
+   - `arr := [5]int{10,20,30}; return arr[1:4]` 返回全零
+   - 预先存在的 bug

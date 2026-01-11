@@ -348,6 +348,25 @@ impl<'a> TypeInfoWrapper<'a> {
         self.type_info().closure_captures.get(&func_lit_id)
     }
 
+    /// Check if a variable is captured by any closure
+    pub fn is_captured_by_closure(&self, obj: ObjKey) -> bool {
+        self.type_info().closure_captures.values()
+            .any(|captures| captures.contains(&obj))
+    }
+
+    /// Determine if a variable needs boxing based on type and escape analysis.
+    /// 
+    /// Boxing rules:
+    /// - Reference types: only box when captured by closure (to share storage location)
+    /// - Non-reference types: box when escaped for any reason
+    pub fn needs_boxing(&self, obj: ObjKey, type_key: TypeKey) -> bool {
+        if self.is_reference_type(type_key) {
+            self.is_captured_by_closure(obj)
+        } else {
+            self.is_escaped(obj)
+        }
+    }
+
     // === Selection queries ===
 
     pub fn get_selection(&self, expr_id: ExprId) -> Option<&vo_analysis::selection::Selection> {
@@ -465,8 +484,9 @@ impl<'a> TypeInfoWrapper<'a> {
         type_layout::is_value_type(type_key, self.tc_objs())
     }
 
-    /// Reference types (pointer, slice, map, channel, closure, string) are already GcRefs
-    /// They don't need boxing even when escaped
+    /// Reference types (pointer, slice, map, channel, closure, string) are already GcRefs.
+    /// They only need boxing when captured by closure (to share storage location).
+    /// Other escape reasons (e.g. assigned to interface) don't require boxing.
     pub fn is_reference_type(&self, type_key: TypeKey) -> bool {
         use vo_runtime::ValueKind;
         let vk = self.type_value_kind(type_key);
