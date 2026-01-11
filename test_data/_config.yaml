@@ -296,8 +296,6 @@ tests:
 
 # Skipped due to Vo implementation bugs
   - file: global_func_var.vo
-    skip: [vm, jit]
-    reason: "BUG: variadic global func var causes misaligned pointer (separate from global func var support)"
   - file: method_expression.vo
     skip: [vm, jit]
     reason: "BUG: pointer receiver method value crashes VM (exec_closure_get index out of bounds)"

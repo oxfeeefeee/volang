@@ -330,16 +330,22 @@ pub extern "C" fn vo_call_closure(
     let capture_count = closure::capture_count(closure_gcref);
     
     // Build full_args based on closure type (matches VM's exec_call_closure logic)
-    let mut full_args = Vec::with_capacity(1 + arg_count as usize);
+    // - Method closure (recv_slots > 0 && capture_count > 0): receiver from captures[0] to slot 0
+    // - Closure with captures or anonymous: closure ref to slot 0
+    // - Named function wrapper (no captures, param_slots == param_count): args start at slot 0
+    let param_slots = func_def.param_slots as usize;
+    let param_count = func_def.param_count as usize;
     
-    if recv_slots > 0 && capture_count > 0 {
-        // Method closure: receiver is in captures[0], pass it as first arg
-        full_args.push(closure::get_capture(closure_gcref, 0));
+    let slot0 = if recv_slots > 0 && capture_count > 0 {
+        Some(closure::get_capture(closure_gcref, 0))
+    } else if capture_count > 0 || param_slots > param_count {
+        Some(closure_ref)
     } else {
-        // Regular closure: closure ref is first arg
-        full_args.push(closure_ref);
-    }
+        None
+    };
     
+    let mut full_args = Vec::with_capacity(slot0.is_some() as usize + arg_count as usize);
+    full_args.extend(slot0);
     for i in 0..arg_count {
         full_args.push(unsafe { *args.add(i as usize) });
     }

@@ -120,9 +120,9 @@ pub fn compile_call(
             // Closure call - compile closure expression first
             let closure_reg = compile_expr(&call.func, ctx, func, info)?;
             
-            // Compile arguments - allocate max(arg_slots, ret_slots) for return values
+            // Compile arguments with variadic packing support
             let args_start = func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots.max(ret_slots) as usize]);
-            compile_args_with_types(&call.args, &[], args_start, ctx, func, info)?;
+            compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
             
             // CallClosure: a=closure, b=args_start, c=(arg_slots<<8|ret_slots)
             let c = crate::type_info::encode_call_args(total_arg_slots as u16, ret_slots as u16);
@@ -141,9 +141,9 @@ pub fn compile_call(
             // Global closure call - compile closure expression first (uses GlobalGet)
             let closure_reg = compile_expr(&call.func, ctx, func, info)?;
             
-            // Compile arguments - allocate max(arg_slots, ret_slots) for return values
+            // Compile arguments with variadic packing support
             let args_start = func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots.max(ret_slots) as usize]);
-            compile_args_with_types(&call.args, &[], args_start, ctx, func, info)?;
+            compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
             
             // CallClosure: a=closure, b=args_start, c=(arg_slots<<8|ret_slots)
             let c = crate::type_info::encode_call_args(total_arg_slots as u16, ret_slots as u16);
