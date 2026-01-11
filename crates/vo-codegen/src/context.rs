@@ -57,6 +57,10 @@ fn builtin_extern_ret_slots(name: &str) -> u16 {
         "vo_assert" => 0,
         // String conversion
         "vo_string_to_bytes" | "vo_bytes_to_string" => 1,
+        // Regexp: matchString/matchBytes return (bool, bool) = 2 slots
+        "regexp_matchString" | "regexp_matchBytes" => 2,
+        // Regexp: findStringIndex returns (int, int) = 2 slots
+        "regexp_findStringIndex" => 2,
         // Default: assume 1 slot return for safety
         _ => 1,
     }

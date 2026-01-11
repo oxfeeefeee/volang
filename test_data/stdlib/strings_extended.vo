@@ -1,0 +1,90 @@
+package main
+
+import "strings"
+
+func main() {
+    println("Testing extended strings functions...")
+    
+    // Test Cut
+    before, after, found := strings.Cut("hello:world", ":")
+    assert(found, "Cut should find separator")
+    assert(before == "hello", "Cut before should be 'hello'")
+    assert(after == "world", "Cut after should be 'world'")
+    
+    before2, after2, found2 := strings.Cut("no separator", ":")
+    assert(!found2, "Cut should not find missing separator")
+    assert(before2 == "no separator", "Cut before without separator")
+    assert(after2 == "", "Cut after without separator should be empty")
+    
+    // Test CutPrefix
+    afterPrefix, foundPrefix := strings.CutPrefix("hello world", "hello ")
+    assert(foundPrefix, "CutPrefix should find prefix")
+    assert(afterPrefix == "world", "CutPrefix result")
+    
+    afterPrefix2, foundPrefix2 := strings.CutPrefix("hello world", "bye ")
+    assert(!foundPrefix2, "CutPrefix should not find missing prefix")
+    assert(afterPrefix2 == "hello world", "CutPrefix without match")
+    
+    // Test CutSuffix
+    beforeSuffix, foundSuffix := strings.CutSuffix("hello world", " world")
+    assert(foundSuffix, "CutSuffix should find suffix")
+    assert(beforeSuffix == "hello", "CutSuffix result")
+    
+    // Test Clone
+    original := "test string"
+    cloned := strings.Clone(original)
+    assert(cloned == original, "Clone should equal original")
+    
+    // Test IndexByte
+    s := "hello world"
+    assert(strings.IndexByte(s, 'o') == 4, "IndexByte should find 'o' at 4")
+    assert(strings.IndexByte(s, 'x') == -1, "IndexByte should return -1 for missing")
+    
+    // Test LastIndexByte
+    assert(strings.LastIndexByte(s, 'o') == 7, "LastIndexByte should find last 'o' at 7")
+    
+    // Test IndexRune
+    utf8Str := "hello 世界"
+    idx := strings.IndexRune(utf8Str, '世')
+    assert(idx == 6, "IndexRune should find '世' at byte index 6")
+    assert(strings.IndexRune(utf8Str, 'x') == -1, "IndexRune should return -1 for missing")
+    
+    // Test ContainsRune
+    assert(strings.ContainsRune(utf8Str, '世'), "ContainsRune should find '世'")
+    assert(!strings.ContainsRune(utf8Str, '国'), "ContainsRune should not find '国'")
+    
+    // Test IndexAny
+    assert(strings.IndexAny("hello", "aeiou") == 1, "IndexAny should find first vowel at 1")
+    assert(strings.IndexAny("xyz", "aeiou") == -1, "IndexAny should return -1 for no match")
+    
+    // Test LastIndexAny
+    assert(strings.LastIndexAny("hello", "aeiou") == 4, "LastIndexAny should find last vowel at 4")
+    
+    // Test TrimLeft
+    assert(strings.TrimLeft("!!!hello!!!", "!") == "hello!!!", "TrimLeft")
+    
+    // Test TrimRight
+    assert(strings.TrimRight("!!!hello!!!", "!") == "!!!hello", "TrimRight")
+    
+    // Test Fields
+    fields := strings.Fields("  hello   world  foo  ")
+    assert(len(fields) == 3, "Fields should return 3 elements")
+    assert(fields[0] == "hello", "Fields first element")
+    assert(fields[1] == "world", "Fields second element")
+    assert(fields[2] == "foo", "Fields third element")
+    
+    // Test SplitAfter
+    parts := strings.SplitAfter("a,b,c", ",")
+    assert(len(parts) == 3, "SplitAfter should return 3 parts")
+    assert(parts[0] == "a,", "SplitAfter first part includes separator")
+    assert(parts[1] == "b,", "SplitAfter second part includes separator")
+    assert(parts[2] == "c", "SplitAfter last part")
+    
+    // Test SplitAfterN
+    parts2 := strings.SplitAfterN("a,b,c,d", ",", 2)
+    assert(len(parts2) == 2, "SplitAfterN should return 2 parts")
+    assert(parts2[0] == "a,", "SplitAfterN first part")
+    assert(parts2[1] == "b,c,d", "SplitAfterN second part contains rest")
+    
+    println("All extended strings tests passed!")
+}

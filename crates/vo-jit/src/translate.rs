@@ -294,18 +294,30 @@ fn and_not<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 
 fn shl<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
+    // Runtime panic if shift count is negative
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, b, zero);
+    emit_panic_if(e, is_negative, true);
     let r = e.builder().ins().ishl(a, b);
     e.write_var(inst.a, r);
 }
 
 fn shr_s<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
+    // Runtime panic if shift count is negative
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, b, zero);
+    emit_panic_if(e, is_negative, true);
     let r = e.builder().ins().sshr(a, b);
     e.write_var(inst.a, r);
 }
 
 fn shr_u<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
+    // Runtime panic if shift count is negative
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, b, zero);
+    emit_panic_if(e, is_negative, true);
     let r = e.builder().ins().ushr(a, b);
     e.write_var(inst.a, r);
 }

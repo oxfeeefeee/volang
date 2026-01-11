@@ -1,0 +1,72 @@
+package main
+
+import "slices"
+
+func main() {
+    println("Testing slices package...")
+    
+    // Test IndexInt
+    ints := []int{10, 20, 30, 40, 50}
+    assert(slices.IndexInt(ints, 30) == 2, "IndexInt should find 30 at index 2")
+    assert(slices.IndexInt(ints, 99) == -1, "IndexInt should return -1 for missing")
+    
+    // Test ContainsInt
+    assert(slices.ContainsInt(ints, 20), "ContainsInt should find 20")
+    assert(!slices.ContainsInt(ints, 99), "ContainsInt should not find 99")
+    
+    // Test EqualInt
+    ints2 := []int{10, 20, 30, 40, 50}
+    ints3 := []int{10, 20, 30}
+    assert(slices.EqualInt(ints, ints2), "EqualInt should be true for same slices")
+    assert(!slices.EqualInt(ints, ints3), "EqualInt should be false for different lengths")
+    
+    // Test CompareInt
+    a := []int{1, 2, 3}
+    b := []int{1, 2, 4}
+    c := []int{1, 2, 3}
+    assert(slices.CompareInt(a, c) == 0, "CompareInt equal should be 0")
+    assert(slices.CompareInt(a, b) == -1, "CompareInt a < b should be -1")
+    assert(slices.CompareInt(b, a) == 1, "CompareInt b > a should be 1")
+    
+    // Test BinarySearchInt
+    sorted := []int{1, 3, 5, 7, 9}
+    idx, found := slices.BinarySearchInt(sorted, 5)
+    assert(found, "BinarySearchInt should find 5")
+    assert(idx == 2, "BinarySearchInt should return index 2")
+    
+    idx2, found2 := slices.BinarySearchInt(sorted, 4)
+    assert(!found2, "BinarySearchInt should not find 4")
+    assert(idx2 == 2, "BinarySearchInt should return insertion point 2")
+    
+    // Test MinInt/MaxInt
+    vals := []int{5, 2, 8, 1, 9}
+    assert(slices.MinInt(vals) == 1, "MinInt should be 1")
+    assert(slices.MaxInt(vals) == 9, "MaxInt should be 9")
+    
+    // Test CloneInt
+    original := []int{1, 2, 3}
+    cloned := slices.CloneInt(original)
+    assert(slices.EqualInt(original, cloned), "CloneInt should create equal slice")
+    cloned[0] = 99
+    assert(original[0] == 1, "CloneInt should create independent copy")
+    
+    // Test ReverseInt
+    toReverse := []int{1, 2, 3, 4, 5}
+    slices.ReverseInt(toReverse)
+    assert(toReverse[0] == 5, "ReverseInt first should be 5")
+    assert(toReverse[4] == 1, "ReverseInt last should be 1")
+    
+    // Test IsSortedInt
+    sorted2 := []int{1, 2, 3, 4, 5}
+    unsorted := []int{3, 1, 4, 1, 5}
+    assert(slices.IsSortedInt(sorted2), "IsSortedInt should be true for sorted")
+    assert(!slices.IsSortedInt(unsorted), "IsSortedInt should be false for unsorted")
+    
+    // Test string slice functions
+    strs := []string{"apple", "banana", "cherry"}
+    assert(slices.IndexString(strs, "banana") == 1, "IndexString should find banana")
+    assert(slices.ContainsString(strs, "cherry"), "ContainsString should find cherry")
+    assert(!slices.ContainsString(strs, "grape"), "ContainsString should not find grape")
+    
+    println("All slices tests passed!")
+}

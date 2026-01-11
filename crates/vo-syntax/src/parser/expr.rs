@@ -15,8 +15,7 @@ pub enum Precedence {
     Equals,   // == !=
     Compare,  // < <= > >=
     Sum,      // + - | ^
-    Shift,    // << >>
-    Product,  // * / % & &^
+    Product,  // * / % << >> & &^
     Prefix,   // -x !x ^x +x
     Postfix,  // f(x) a[i] a.b x.(T)
 }
@@ -29,8 +28,7 @@ impl Precedence {
             TokenKind::EqEq | TokenKind::NotEq => Precedence::Equals,
             TokenKind::Lt | TokenKind::LtEq | TokenKind::Gt | TokenKind::GtEq => Precedence::Compare,
             TokenKind::Plus | TokenKind::Minus | TokenKind::Pipe | TokenKind::Caret => Precedence::Sum,
-            TokenKind::Shl | TokenKind::Shr => Precedence::Shift,
-            TokenKind::Star | TokenKind::Slash | TokenKind::Percent | TokenKind::Amp | TokenKind::AmpCaret => Precedence::Product,
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent | TokenKind::Shl | TokenKind::Shr | TokenKind::Amp | TokenKind::AmpCaret => Precedence::Product,
             TokenKind::LParen | TokenKind::LBracket | TokenKind::Dot | TokenKind::Question | TokenKind::TildeArrow => Precedence::Postfix,
             TokenKind::LBrace => Precedence::Postfix,
             _ => Precedence::Lowest,

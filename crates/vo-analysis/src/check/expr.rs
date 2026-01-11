@@ -560,19 +560,19 @@ impl Checker {
             return;
         }
 
-        // spec: "The right operand in a shift expression must have unsigned
-        // integer type or be an untyped constant representable by a value of type uint."
+        // Vo spec: "The right operand must be of integer type or an untyped integer constant."
+        // Runtime panics if shift count is negative.
         let ytval = self.otype(y.typ.unwrap());
-        if ytval.is_unsigned(self.objs()) {
-            // ok
+        if ytval.is_integer(self.objs()) {
+            // ok - both signed and unsigned integers are allowed
         } else if ytval.is_untyped(self.objs()) {
-            self.convert_untyped(y, self.basic_type(BasicType::Uint));
+            self.convert_untyped(y, self.basic_type(BasicType::Int));
             if y.invalid() {
                 x.mode = OperandMode::Invalid;
                 return;
             }
         } else {
-            self.error_code(TypeError::ShiftCountNotUnsigned, Span::default());
+            self.error_code(TypeError::ShiftCountNotInteger, Span::default());
             x.mode = OperandMode::Invalid;
             return;
         }
@@ -582,7 +582,7 @@ impl Checker {
                 // rhs must be an integer value
                 let yval = yv.to_int();
                 if !yval.is_int() {
-                    self.invalid_op(Span::default(), "shift count must be unsigned integer");
+                    self.invalid_op(Span::default(), "shift count must be integer");
                     x.mode = OperandMode::Invalid;
                     return;
                 }

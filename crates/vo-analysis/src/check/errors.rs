@@ -54,8 +54,8 @@ pub enum TypeError {
     DivisionByZero = 2104,
     /// Shifted operand must be integer.
     ShiftOperandNotInteger = 2105,
-    /// Shift count must be unsigned integer.
-    ShiftCountNotUnsigned = 2106,
+    /// Shift count must be integer.
+    ShiftCountNotInteger = 2106,
     /// Shift count must not be negative.
     ShiftCountNegative = 2107,
     /// Invalid shift count.
@@ -306,7 +306,7 @@ impl TypeError {
             TypeError::CannotSliceArray => "cannot slice array (value not addressable)",
             TypeError::DivisionByZero => "division by zero",
             TypeError::ShiftOperandNotInteger => "shifted operand must be integer",
-            TypeError::ShiftCountNotUnsigned => "shift count must be unsigned integer",
+            TypeError::ShiftCountNotInteger => "shift count must be integer",
             TypeError::ShiftCountNegative => "shift count must not be negative",
             TypeError::InvalidShiftCount => "invalid shift count",
             TypeError::CannotTakeAddress => "cannot take address of expression",
@@ -577,7 +577,7 @@ mod tests {
             TypeError::CannotSliceArray,
             TypeError::DivisionByZero,
             TypeError::ShiftOperandNotInteger,
-            TypeError::ShiftCountNotUnsigned,
+            TypeError::ShiftCountNotInteger,
             TypeError::ShiftCountNegative,
             TypeError::InvalidShiftCount,
             TypeError::CannotTakeAddress,

@@ -13,7 +13,7 @@ pub use helpers::{stack_get, stack_set};
 pub use types::{ExecResult, VmError, VmState, ErrorLocation, TIME_SLICE};
 
 use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index, runtime_panic, panic_unwind, user_panic,
-    ERR_NIL_POINTER, ERR_NIL_MAP_WRITE, ERR_UNHASHABLE_TYPE, ERR_UNCOMPARABLE_TYPE};
+    ERR_NIL_POINTER, ERR_NIL_MAP_WRITE, ERR_UNHASHABLE_TYPE, ERR_UNCOMPARABLE_TYPE, ERR_NEGATIVE_SHIFT};
 
 use crate::bytecode::Module;
 use crate::exec;
@@ -526,21 +526,33 @@ impl Vm {
                 }
                 Opcode::Shl => {
                     let a = stack_get(stack, bp + inst.b as usize);
-                    let b = stack_get(stack, bp + inst.c as usize) as u32;
-                    stack_set(stack, bp + inst.a as usize, a.wrapping_shl(b));
-                    ExecResult::Continue
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    if b < 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_NEGATIVE_SHIFT.to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_shl(b as u32));
+                        ExecResult::Continue
+                    }
                 }
                 Opcode::ShrS => {
                     let a = stack_get(stack, bp + inst.b as usize) as i64;
-                    let b = stack_get(stack, bp + inst.c as usize) as u32;
-                    stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b) as u64);
-                    ExecResult::Continue
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    if b < 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_NEGATIVE_SHIFT.to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b as u32) as u64);
+                        ExecResult::Continue
+                    }
                 }
                 Opcode::ShrU => {
                     let a = stack_get(stack, bp + inst.b as usize);
-                    let b = stack_get(stack, bp + inst.c as usize) as u32;
-                    stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b));
-                    ExecResult::Continue
+                    let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    if b < 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_NEGATIVE_SHIFT.to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b as u32));
+                        ExecResult::Continue
+                    }
                 }
                 Opcode::BoolNot => {
                     let a = stack_get(stack, bp + inst.b as usize);
