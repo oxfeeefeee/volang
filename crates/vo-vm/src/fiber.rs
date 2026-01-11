@@ -38,6 +38,10 @@ pub struct DeferState {
     pub heap_gcrefs: Vec<u64>,
     /// Number of value slots per GcRef (for multi-slot returns)
     pub value_slots_per_ref: usize,
+    /// Frame depth when defer execution started (depth of original function that returned)
+    /// Used to detect when the defer function itself returns vs when a function called
+    /// by the defer returns.
+    pub defer_caller_frame_depth: usize,
 }
 
 

@@ -225,27 +225,33 @@ pub fn exec_return(
     let current_frame_depth = frames.len();
 
     // Check if we're continuing defer execution (a defer just returned)
+    // Only handle defer completion when the current frame is at defer_caller_frame_depth + 1
+    // (i.e., the defer function itself is returning, not a function called by the defer)
     if let Some(ref mut state) = defer_state {
-        // A defer just finished, check if more to execute
-        // pending is in LIFO order (first element = next to run)
-        if !state.pending.is_empty() {
-            let entry = state.pending.remove(0);
-            pop_frame(stack, frames);
-            return call_defer_entry(stack, frames, &entry, module);
-        } else {
-            // All defers done, complete the original return
-            let ret_vals = if !state.heap_gcrefs.is_empty() {
-                read_heap_gcrefs(&state.heap_gcrefs, state.value_slots_per_ref)
+        if current_frame_depth == state.defer_caller_frame_depth + 1 {
+            // A defer just finished, check if more to execute
+            // pending is in LIFO order (first element = next to run)
+            if !state.pending.is_empty() {
+                let entry = state.pending.remove(0);
+                pop_frame(stack, frames);
+                return call_defer_entry(stack, frames, &entry, module);
             } else {
-                core::mem::take(&mut state.ret_vals)
-            };
-            let caller_ret_reg = state.caller_ret_reg;
-            let caller_ret_count = state.caller_ret_count;
-            *defer_state = None;
+                // All defers done, complete the original return
+                let ret_vals = if !state.heap_gcrefs.is_empty() {
+                    read_heap_gcrefs(&state.heap_gcrefs, state.value_slots_per_ref)
+                } else {
+                    core::mem::take(&mut state.ret_vals)
+                };
+                let caller_ret_reg = state.caller_ret_reg;
+                let caller_ret_count = state.caller_ret_count;
+                *defer_state = None;
 
-            pop_frame(stack, frames);
-            return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
+                pop_frame(stack, frames);
+                return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
+            }
         }
+        // Otherwise, this is a normal return from a function called within the defer
+        // Continue with normal return handling below
     }
 
     // Normal return - check for defers
@@ -291,6 +297,7 @@ pub fn exec_return(
                 is_error_return,
                 heap_gcrefs,
                 value_slots_per_ref,
+                defer_caller_frame_depth: frames.len(),
             });
             return call_defer_entry(stack, frames, &first_defer, module);
         } else {
@@ -354,6 +361,7 @@ pub fn exec_return(
             is_error_return,
             heap_gcrefs: Vec::new(),
             value_slots_per_ref: 0,
+            defer_caller_frame_depth: frames.len(),
         });
         return call_defer_entry(stack, frames, &first_defer, module);
     }
