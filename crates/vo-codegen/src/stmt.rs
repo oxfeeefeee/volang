@@ -54,6 +54,17 @@ fn emit_dyn_assign_error_short_circuit(
     func.patch_jump(ok_jump, func.current_pc());
 }
 
+/// Emit Return with heap_returns flag for escaped named returns.
+/// VM will read values from heap GcRefs after defer execution.
+fn emit_heap_returns(func: &mut FuncBuilder, named_return_slots: &[(u16, u16, bool)]) {
+    let gcref_count = named_return_slots.len() as u16;
+    let gcref_start = named_return_slots[0].0;
+    // value_slots_per_ref: assumes all named returns have same slot count
+    // TODO: support mixed slot counts if needed
+    let value_slots = named_return_slots[0].1;
+    func.emit_with_flags(Opcode::Return, 0x02, gcref_start, gcref_count, value_slots);
+}
+
 /// Compute IfaceAssert parameters for a target type.
 /// Returns (assert_kind, target_id) where:
 /// - assert_kind: 0 for concrete types (rttid), 1 for interface types (iface_meta_id)
@@ -806,88 +817,132 @@ fn compile_stmt_with_label(
                 if named_return_slots.is_empty() {
                     func.emit_op(Opcode::Return, 0, 0, 0);
                 } else {
-                    // Copy named return values to return area
-                    let total_ret_slots: u16 = named_return_slots.iter().map(|(_, s, _)| *s).sum();
-                    let ret_start = func.alloc_temp(total_ret_slots);
-                    let mut offset = 0u16;
-                    for &(slot, slots, escaped) in &named_return_slots {
-                        if escaped {
-                            // Escaped variable: slot is GcRef, need PtrGet to read value
-                            if slots == 1 {
-                                func.emit_op(Opcode::PtrGet, ret_start + offset, slot, 0);
+                    // Check if ALL named returns are escaped (for defer named return semantics)
+                    // When all are escaped, we pass GcRefs and let VM read after defer
+                    let all_escaped = named_return_slots.iter().all(|(_, _, escaped)| *escaped);
+                    
+                    if all_escaped {
+                        emit_heap_returns(func, &named_return_slots);
+                    } else {
+                        // Mixed or non-escaped: copy to return area as before
+                        let total_ret_slots: u16 = named_return_slots.iter().map(|(_, s, _)| *s).sum();
+                        let ret_start = func.alloc_temp(total_ret_slots);
+                        let mut offset = 0u16;
+                        for &(slot, slots, escaped) in &named_return_slots {
+                            if escaped {
+                                // Escaped variable: slot is GcRef, need PtrGet to read value
+                                if slots == 1 {
+                                    func.emit_op(Opcode::PtrGet, ret_start + offset, slot, 0);
+                                } else {
+                                    func.emit_with_flags(Opcode::PtrGetN, slots as u8, ret_start + offset, slot, 0);
+                                }
                             } else {
-                                func.emit_with_flags(Opcode::PtrGetN, slots as u8, ret_start + offset, slot, 0);
+                                func.emit_copy(ret_start + offset, slot, slots);
                             }
-                        } else {
-                            func.emit_copy(ret_start + offset, slot, slots);
+                            offset += slots;
                         }
-                        offset += slots;
+                        func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
                     }
-                    func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
                 }
             } else {
-                // Get function's return types (clone to avoid borrow issues)
-                let ret_types: Vec<_> = func.return_types().to_vec();
+                // Check if we have escaped named returns - if so, we need special handling
+                // to ensure defer can modify the return values
+                let named_return_slots: Vec<_> = func.named_return_slots().to_vec();
+                let all_escaped = !named_return_slots.is_empty() 
+                    && named_return_slots.iter().all(|(_, _, escaped)| *escaped);
                 
-                // Calculate total return slots needed (use declared return types)
-                let mut total_ret_slots = 0u16;
-                for ret_type in &ret_types {
-                    total_ret_slots += info.type_slot_count(*ret_type);
-                }
-                
-                // Optimization: single return value that's already in a usable slot
-                let optimized = if ret.values.len() == 1 && ret_types.len() == 1 {
-                    let result = &ret.values[0];
-                    let ret_type = ret_types[0];
-                    let expr_type = info.expr_type(result.id);
+                if all_escaped {
+                    // For escaped named returns with explicit return values:
+                    // 1. Store return values into the heap-allocated named return variables
+                    // 2. Use heap_returns mode so VM reads from heap after defer
+                    let ret_types: Vec<_> = func.return_types().to_vec();
                     
-                    // Only optimize if types match (no interface conversion needed)
-                    if expr_type == ret_type {
-                        if let ExprSource::Location(StorageKind::StackValue { slot, slots }) = 
-                            get_expr_source(result, ctx, func, info) 
-                        {
-                            // Direct return from existing slot
-                            func.emit_op(Opcode::Return, slot, slots, 0);
-                            true
+                    // Store each return value into the corresponding named return variable
+                    for (i, result) in ret.values.iter().enumerate() {
+                        let (gcref_slot, slots, _) = named_return_slots[i];
+                        let ret_type = ret_types.get(i).copied();
+                        
+                        // Compile value to temp, then store to heap
+                        let temp = func.alloc_temp(slots);
+                        if let Some(rt) = ret_type {
+                            compile_value_to(result, temp, rt, ctx, func, info)?;
+                        } else {
+                            compile_expr_to(result, temp, ctx, func, info)?;
+                        }
+                        
+                        // Store to heap: PtrSet gcref[0..slots] = temp
+                        if slots == 1 {
+                            func.emit_op(Opcode::PtrSet, gcref_slot, 0, temp);
+                        } else {
+                            func.emit_with_flags(Opcode::PtrSetN, slots as u8, gcref_slot, 0, temp);
+                        }
+                    }
+                    
+                    emit_heap_returns(func, &named_return_slots);
+                } else {
+                    // Get function's return types (clone to avoid borrow issues)
+                    let ret_types: Vec<_> = func.return_types().to_vec();
+                    
+                    // Calculate total return slots needed (use declared return types)
+                    let mut total_ret_slots = 0u16;
+                    for ret_type in &ret_types {
+                        total_ret_slots += info.type_slot_count(*ret_type);
+                    }
+                    
+                    // Optimization: single return value that's already in a usable slot
+                    let optimized = if ret.values.len() == 1 && ret_types.len() == 1 {
+                        let result = &ret.values[0];
+                        let ret_type = ret_types[0];
+                        let expr_type = info.expr_type(result.id);
+                        
+                        // Only optimize if types match (no interface conversion needed)
+                        if expr_type == ret_type {
+                            if let ExprSource::Location(StorageKind::StackValue { slot, slots }) = 
+                                get_expr_source(result, ctx, func, info) 
+                            {
+                                // Direct return from existing slot
+                                func.emit_op(Opcode::Return, slot, slots, 0);
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         }
                     } else {
                         false
-                    }
-                } else {
-                    false
-                };
-                
-                if !optimized {
-                    // Standard path: allocate space and compile return values
-                    let ret_start = func.alloc_temp(total_ret_slots);
+                    };
                     
-                    // Check for multi-value case: return f() where f() returns a tuple
-                    let is_multi_value = ret.values.len() == 1 
-                        && ret_types.len() >= 2
-                        && info.is_tuple(info.expr_type(ret.values[0].id));
-                    
-                    if is_multi_value {
-                        // Multi-value: compile expr once to get all return values
-                        compile_expr_to(&ret.values[0], ret_start, ctx, func, info)?;
-                    } else {
-                        // Compile return values with interface conversion if needed
-                        let mut offset = 0u16;
-                        for (i, result) in ret.values.iter().enumerate() {
-                            let ret_type = ret_types.get(i).copied();
-                            if let Some(rt) = ret_type {
-                                let slots = info.type_slot_count(rt);
-                                compile_value_to(result, ret_start + offset, rt, ctx, func, info)?;
-                                offset += slots;
-                            } else {
-                                let slots = info.expr_slots(result.id);
-                                compile_expr_to(result, ret_start + offset, ctx, func, info)?;
-                                offset += slots;
+                    if !optimized {
+                        // Standard path: allocate space and compile return values
+                        let ret_start = func.alloc_temp(total_ret_slots);
+                        
+                        // Check for multi-value case: return f() where f() returns a tuple
+                        let is_multi_value = ret.values.len() == 1 
+                            && ret_types.len() >= 2
+                            && info.is_tuple(info.expr_type(ret.values[0].id));
+                        
+                        if is_multi_value {
+                            // Multi-value: compile expr once to get all return values
+                            compile_expr_to(&ret.values[0], ret_start, ctx, func, info)?;
+                        } else {
+                            // Compile return values with interface conversion if needed
+                            let mut offset = 0u16;
+                            for (i, result) in ret.values.iter().enumerate() {
+                                let ret_type = ret_types.get(i).copied();
+                                if let Some(rt) = ret_type {
+                                    let slots = info.type_slot_count(rt);
+                                    compile_value_to(result, ret_start + offset, rt, ctx, func, info)?;
+                                    offset += slots;
+                                } else {
+                                    let slots = info.expr_slots(result.id);
+                                    compile_expr_to(result, ret_start + offset, ctx, func, info)?;
+                                    offset += slots;
+                                }
                             }
                         }
+                        func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
                     }
-                    func.emit_op(Opcode::Return, ret_start, total_ret_slots, 0);
                 }
             }
         }

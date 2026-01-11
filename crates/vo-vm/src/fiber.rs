@@ -34,6 +34,10 @@ pub struct DeferState {
     pub caller_ret_reg: u16,
     pub caller_ret_count: usize,
     pub is_error_return: bool,
+    /// For escaped named returns: GcRefs to dereference after defers complete
+    pub heap_gcrefs: Vec<u64>,
+    /// Number of value slots per GcRef (for multi-slot returns)
+    pub value_slots_per_ref: usize,
 }
 
 

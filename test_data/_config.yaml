@@ -231,8 +231,6 @@ tests:
 
 # Blind spot tests - known bugs to fix
   - file: defer_named_return.vo
-    skip: [vm, jit]
-    reason: "BUG: defer closure capturing named return causes GC crash"
   - file: interface_value_compare.vo
   - file: slice_append_semantics.vo
   - file: type_conversion_edge.vo

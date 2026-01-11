@@ -997,6 +997,17 @@ fn compile_func_decl(
     
     // Define named return variables as locals (zero-initialized)
     // Check if they escape (e.g. captured by defer closure)
+    // Two-pass approach for escaped returns to ensure contiguous GcRef slots:
+    // 1. First allocate all slots (so escaped GcRef slots are contiguous)
+    // 2. Then emit PtrNew instructions
+    struct EscapedReturn {
+        gcref_slot: u16,
+        slots: u16,
+        result_type: vo_analysis::objects::TypeKey,
+        slot_types: Vec<vo_runtime::SlotType>,
+    }
+    let mut escaped_returns: Vec<EscapedReturn> = Vec::new();
+    
     for result in &func_decl.sig.results {
         if let Some(name) = &result.name {
             let result_type = info.type_expr_type(result.ty.id);
@@ -1005,16 +1016,23 @@ fn compile_func_decl(
             let escapes = info.is_escaped(obj_key);
             
             let slot = if escapes {
-                // Named return escapes (e.g. captured by defer closure)
+                // Named return escapes - allocate GcRef slot only (PtrNew emitted later)
                 let gcref_slot = builder.define_local_heap_boxed(name.symbol, slots);
-                // Allocate heap storage and zero-initialize
-                builder.emit_with_flags(vo_vm::instruction::Opcode::PtrNew, slots as u8, gcref_slot, 0, 0);
+                escaped_returns.push(EscapedReturn { gcref_slot, slots, result_type, slot_types: slot_types.clone() });
                 gcref_slot
             } else {
                 builder.define_local_stack(name.symbol, slots, &slot_types)
             };
             builder.register_named_return(slot, slots, escapes);
         }
+    }
+    
+    // Now emit PtrNew for all escaped returns (after all GcRef slots are allocated contiguously)
+    for er in escaped_returns {
+        let meta_idx = ctx.get_or_create_value_meta(Some(er.result_type), er.slots, &er.slot_types);
+        let meta_reg = builder.alloc_temp(1);
+        builder.emit_op(vo_vm::instruction::Opcode::LoadConst, meta_reg, meta_idx, 0);
+        builder.emit_with_flags(vo_vm::instruction::Opcode::PtrNew, er.slots as u8, er.gcref_slot, meta_reg, 0);
     }
     
     // Compile function body
