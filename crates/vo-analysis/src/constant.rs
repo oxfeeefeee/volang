@@ -337,10 +337,90 @@ pub fn float_from_literal(lit: &str) -> Value {
     // Remove underscores
     let lit = lit.replace('_', "");
     
+    // Check for hex float literal (0x...p...)
+    if lit.starts_with("0x") || lit.starts_with("0X") {
+        return parse_hex_float(&lit);
+    }
+    
     match lit.parse::<f64>() {
         Ok(f) => make_float64(f),
         Err(_) => Value::Unknown,
     }
+}
+
+/// Parses a hexadecimal floating-point literal.
+/// Format: 0x[mantissa]p[exponent] where mantissa is hex and exponent is decimal.
+/// Examples: 0x1p0 = 1.0, 0x1p-2 = 0.25, 0x1.8p0 = 1.5
+fn parse_hex_float(lit: &str) -> Value {
+    // Remove 0x/0X prefix
+    let lit = &lit[2..];
+    
+    // Find 'p' or 'P' (required for hex float)
+    let p_pos = lit.find(|c| c == 'p' || c == 'P');
+    let p_pos = match p_pos {
+        Some(pos) => pos,
+        None => return Value::Unknown, // hex float must have exponent
+    };
+    
+    let mantissa_str = &lit[..p_pos];
+    let exp_str = &lit[p_pos + 1..];
+    
+    // Parse the mantissa (may have a decimal point)
+    let mantissa = parse_hex_mantissa(mantissa_str);
+    let mantissa = match mantissa {
+        Some(m) => m,
+        None => return Value::Unknown,
+    };
+    
+    // Parse the exponent (decimal integer, may be negative)
+    let exp: i32 = match exp_str.parse() {
+        Ok(e) => e,
+        Err(_) => return Value::Unknown,
+    };
+    
+    // Compute: mantissa * 2^exp
+    let result = mantissa * (2.0_f64).powi(exp);
+    make_float64(result)
+}
+
+/// Parses a hex mantissa (e.g., "1", "1.8", ".8", "FF").
+fn parse_hex_mantissa(s: &str) -> Option<f64> {
+    if s.is_empty() {
+        return None;
+    }
+    
+    let (int_part, frac_part) = if let Some(dot_pos) = s.find('.') {
+        (&s[..dot_pos], &s[dot_pos + 1..])
+    } else {
+        (s, "")
+    };
+    
+    // Parse integer part
+    let int_val: f64 = if int_part.is_empty() {
+        0.0
+    } else {
+        match u64::from_str_radix(int_part, 16) {
+            Ok(v) => v as f64,
+            Err(_) => return None,
+        }
+    };
+    
+    // Parse fractional part
+    let frac_val: f64 = if frac_part.is_empty() {
+        0.0
+    } else {
+        // Each hex digit after the point represents 1/16, 1/256, etc.
+        let mut val = 0.0;
+        let mut scale = 1.0 / 16.0;
+        for c in frac_part.chars() {
+            let digit = c.to_digit(16)? as f64;
+            val += digit * scale;
+            scale /= 16.0;
+        }
+        val
+    };
+    
+    Some(int_val + frac_val)
 }
 
 // ============================================================================

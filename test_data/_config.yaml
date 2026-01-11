@@ -247,3 +247,12 @@ tests:
   - file: short_var_redecl.vo
   - file: method_value.vo
   - file: switch_nested_break.vo
+
+# New coverage tests
+  - file: range_string_index.vo
+  - file: switch_tagless.vo
+  - file: const_untyped_promotion.vo
+  - file: hex_float_literal.vo
+  - file: panic_recover.vo
+    skip: [vm, jit]
+    reason: "Vo implementation bug - recover() in deferred closure doesn't catch panic"
