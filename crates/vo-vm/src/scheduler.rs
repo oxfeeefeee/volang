@@ -181,7 +181,7 @@ impl Scheduler {
     pub fn kill_current(&mut self) -> (Option<String>, Option<(u32, u32)>) {
         if let Some(id) = self.current {
             let fiber = &mut self.fibers[id as usize];
-            let msg = fiber.panic_msg.take();
+            let msg = fiber.panic_message();
             let loc = fiber.current_frame().map(|f| (f.func_id, f.pc as u32));
             fiber.status = FiberStatus::Dead;
             self.free_slots.push(id);

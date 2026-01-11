@@ -59,8 +59,9 @@ pub fn exec_map_get(stack: &mut [u64], bp: usize, inst: &Instruction) {
 /// MapSet: a=map, b=meta_slot, c=val_start
 /// meta format: key_slots<<8 | val_slots
 /// flags: bit0 = key may contain GcRef, bit1 = val may contain GcRef
+/// Returns true if successful, false if interface key has uncomparable type (should panic)
 #[inline]
-pub fn exec_map_set(stack: &[u64], bp: usize, inst: &Instruction, gc: &mut Gc) {
+pub fn exec_map_set(stack: &[u64], bp: usize, inst: &Instruction, gc: &mut Gc) -> bool {
     let m = stack[bp + inst.a as usize] as GcRef;
     let meta = stack[bp + inst.b as usize];
     let key_slots = ((meta >> 8) & 0xFF) as usize;
@@ -71,6 +72,25 @@ pub fn exec_map_set(stack: &[u64], bp: usize, inst: &Instruction, gc: &mut Gc) {
 
     let key: &[u64] = &stack[key_start..key_start + key_slots];
     let val: &[u64] = &stack[val_start..val_start + val_slots];
+
+    // Check if key is interface (2 slots) with uncomparable underlying type
+    if key_slots == 2 {
+        let key_vk = map::key_kind(m);
+        if key_vk == vo_runtime::ValueKind::Interface {
+            // Interface key: check if underlying type is comparable
+            let slot0 = key[0];
+            let inner_vk = vo_runtime::objects::interface::unpack_value_kind(slot0);
+            match inner_vk {
+                vo_runtime::ValueKind::Slice | 
+                vo_runtime::ValueKind::Map | 
+                vo_runtime::ValueKind::Closure | 
+                vo_runtime::ValueKind::Channel => {
+                    return false; // Uncomparable type - should panic
+                }
+                _ => {}
+            }
+        }
+    }
 
     map::set(m, key, val);
     
@@ -92,6 +112,7 @@ pub fn exec_map_set(stack: &[u64], bp: usize, inst: &Instruction, gc: &mut Gc) {
             }
         }
     }
+    true
 }
 
 #[inline]

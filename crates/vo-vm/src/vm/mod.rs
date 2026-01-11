@@ -12,7 +12,7 @@ mod types;
 pub use helpers::{stack_get, stack_set};
 pub use types::{ExecResult, VmError, VmState, ErrorLocation, TIME_SLICE};
 
-use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index};
+use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index, runtime_panic, panic_unwind, user_panic};
 
 use crate::bytecode::Module;
 use crate::exec;
@@ -575,7 +575,13 @@ impl Vm {
                         // Use func_def.ret_slots for buffer allocation (JIT writes based on func definition)
                         // but only copy back call_ret_slots to caller's stack
                         let func_ret_slots = target_func.ret_slots as usize;
-                        self.call_jit_inline(fiber_id, jit_func, arg_start, arg_slots, func_ret_slots, call_ret_slots)
+                        let result = self.call_jit_inline(fiber_id, jit_func, arg_start, arg_slots, func_ret_slots, call_ret_slots);
+                        // JIT already set fiber.panic_state, just run unwind to execute defers
+                        if matches!(result, ExecResult::Panic) {
+                            panic_unwind(fiber, stack, module)
+                        } else {
+                            result
+                        }
                     } else {
                         exec::exec_call(stack, &mut fiber.frames, &inst, module)
                     }
@@ -585,7 +591,8 @@ impl Vm {
                     exec::exec_call(stack, &mut fiber.frames, &inst, module)
                 }
                 Opcode::CallExtern => {
-                    exec::exec_call_extern(
+                    let mut extern_panic_msg: Option<String> = None;
+                    let result = exec::exec_call_extern(
                         stack,
                         bp,
                         &inst,
@@ -598,8 +605,18 @@ impl Vm {
                         &module.runtime_types,
                         &module.well_known,
                         &mut self.state.itab_cache,
-                        &mut fiber.panic_msg,
-                    )
+                        &mut extern_panic_msg,
+                    );
+                    // Convert extern panic to recoverable runtime panic
+                    if matches!(result, ExecResult::Panic) {
+                        if let Some(msg) = extern_panic_msg {
+                            runtime_panic(&mut self.state.gc, fiber, stack, module, msg)
+                        } else {
+                            result
+                        }
+                    } else {
+                        result
+                    }
                 }
                 Opcode::CallClosure => {
                     exec::exec_call_closure(stack, &mut fiber.frames, &inst, module)
@@ -614,14 +631,7 @@ impl Vm {
                         Some(crate::fiber::UnwindingState { kind: crate::fiber::UnwindingKind::Panic, .. })
                     );
                     if is_panic_unwinding {
-                        exec::exec_panic_unwind(
-                            stack,
-                            &mut fiber.frames,
-                            &mut fiber.defer_stack,
-                            &mut fiber.unwinding,
-                            &fiber.panic_value,
-                            module,
-                        )
+                        panic_unwind(fiber, stack, module)
                     } else {
                         let func = &module.functions[func_id as usize];
                         let is_error_return = (inst.flags & 1) != 0;
@@ -797,40 +807,43 @@ impl Vm {
                     // nil slice or out of bounds check
                     let len = if s.is_null() { 0 } else { slice_len(s) };
                     if idx >= len {
-                        fiber.panic_msg = Some(format!("runtime error: index out of range [{}] with length {}", idx, len));
-                        return ExecResult::Panic;
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: index out of range [{}] with length {}", idx, len)
+                        )
+                    } else {
+                        let base = slice_data_ptr(s);
+                        let dst = bp + inst.a as usize;
+                        let val = match inst.flags {
+                            1 => unsafe { *base.add(idx) as u64 },
+                            2 => unsafe { *(base.add(idx * 2) as *const u16) as u64 },
+                            4 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
+                            8 => unsafe { *(base.add(idx * 8) as *const u64) },
+                            129 => unsafe { *base.add(idx) as i8 as i64 as u64 },
+                            130 => unsafe { *(base.add(idx * 2) as *const i16) as i64 as u64 },
+                            132 => unsafe { *(base.add(idx * 4) as *const i32) as i64 as u64 },
+                            0x44 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
+                            0 => {
+                                // dynamic: elem_bytes in c+1 register
+                                let elem_bytes = stack_get(stack, bp + inst.c as usize + 1) as usize;
+                                for i in 0..(elem_bytes + 7) / 8 {
+                                    let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
+                                    stack_set(stack, dst + i, unsafe { *ptr });
+                                }
+                                return ExecResult::Continue;
+                            }
+                            _ => {
+                                let elem_bytes = inst.flags as usize;
+                                for i in 0..(elem_bytes + 7) / 8 {
+                                    let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
+                                    stack_set(stack, dst + i, unsafe { *ptr });
+                                }
+                                return ExecResult::Continue;
+                            }
+                        };
+                        stack_set(stack, dst, val);
+                        ExecResult::Continue
                     }
-                    let base = slice_data_ptr(s);
-                    let dst = bp + inst.a as usize;
-                    let val = match inst.flags {
-                        1 => unsafe { *base.add(idx) as u64 },
-                        2 => unsafe { *(base.add(idx * 2) as *const u16) as u64 },
-                        4 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
-                        8 => unsafe { *(base.add(idx * 8) as *const u64) },
-                        129 => unsafe { *base.add(idx) as i8 as i64 as u64 },
-                        130 => unsafe { *(base.add(idx * 2) as *const i16) as i64 as u64 },
-                        132 => unsafe { *(base.add(idx * 4) as *const i32) as i64 as u64 },
-                        0x44 => unsafe { *(base.add(idx * 4) as *const u32) as u64 },
-                        0 => {
-                            // dynamic: elem_bytes in c+1 register
-                            let elem_bytes = stack_get(stack, bp + inst.c as usize + 1) as usize;
-                            for i in 0..(elem_bytes + 7) / 8 {
-                                let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                                stack_set(stack, dst + i, unsafe { *ptr });
-                            }
-                            return ExecResult::Continue;
-                        }
-                        _ => {
-                            let elem_bytes = inst.flags as usize;
-                            for i in 0..(elem_bytes + 7) / 8 {
-                                let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *const u64 };
-                                stack_set(stack, dst + i, unsafe { *ptr });
-                            }
-                            return ExecResult::Continue;
-                        }
-                    };
-                    stack_set(stack, dst, val);
-                    ExecResult::Continue
                 }
                 Opcode::SliceSet => {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
@@ -839,35 +852,38 @@ impl Vm {
                     // nil slice or out of bounds check
                     let len = if s.is_null() { 0 } else { slice_len(s) };
                     if idx >= len {
-                        fiber.panic_msg = Some(format!("runtime error: index out of range [{}] with length {}", idx, len));
-                        return ExecResult::Panic;
-                    }
-                    let base = slice_data_ptr(s);
-                    let src = bp + inst.c as usize;
-                    let val = stack_get(stack, src);
-                    match inst.flags {
-                        1 | 129 => unsafe { *base.add(idx) = val as u8 },
-                        2 | 130 => unsafe { *(base.add(idx * 2) as *mut u16) = val as u16 },
-                        4 | 132 => unsafe { *(base.add(idx * 4) as *mut u32) = val as u32 },
-                        0x44 => unsafe { *(base.add(idx * 4) as *mut u32) = val as u32 },
-                        8 => unsafe { *(base.add(idx * 8) as *mut u64) = val },
-                        0 => {
-                            // dynamic: elem_bytes in b+1 register
-                            let elem_bytes = stack_get(stack, bp + inst.b as usize + 1) as usize;
-                            for i in 0..(elem_bytes + 7) / 8 {
-                                let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                                unsafe { *ptr = stack_get(stack, src + i) };
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: index out of range [{}] with length {}", idx, len)
+                        )
+                    } else {
+                        let base = slice_data_ptr(s);
+                        let src = bp + inst.c as usize;
+                        let val = stack_get(stack, src);
+                        match inst.flags {
+                            1 | 129 => unsafe { *base.add(idx) = val as u8 },
+                            2 | 130 => unsafe { *(base.add(idx * 2) as *mut u16) = val as u16 },
+                            4 | 132 => unsafe { *(base.add(idx * 4) as *mut u32) = val as u32 },
+                            0x44 => unsafe { *(base.add(idx * 4) as *mut u32) = val as u32 },
+                            8 => unsafe { *(base.add(idx * 8) as *mut u64) = val },
+                            0 => {
+                                // dynamic: elem_bytes in b+1 register
+                                let elem_bytes = stack_get(stack, bp + inst.b as usize + 1) as usize;
+                                for i in 0..(elem_bytes + 7) / 8 {
+                                    let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
+                                    unsafe { *ptr = stack_get(stack, src + i) };
+                                }
+                            }
+                            _ => {
+                                let elem_bytes = inst.flags as usize;
+                                for i in 0..(elem_bytes + 7) / 8 {
+                                    let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
+                                    unsafe { *ptr = stack_get(stack, src + i) };
+                                }
                             }
                         }
-                        _ => {
-                            let elem_bytes = inst.flags as usize;
-                            for i in 0..(elem_bytes + 7) / 8 {
-                                let ptr = unsafe { base.add(idx * elem_bytes + i * 8) as *mut u64 };
-                                unsafe { *ptr = stack_get(stack, src + i) };
-                            }
-                        }
+                        ExecResult::Continue
                     }
-                    ExecResult::Continue
                 }
                 Opcode::SliceLen => {
                     let s = stack_get(stack, bp + inst.b as usize) as GcRef;
@@ -913,11 +929,22 @@ impl Vm {
                     // nil map write panics (Go semantics)
                     let m = stack_get(stack, bp + inst.a as usize) as GcRef;
                     if m.is_null() {
-                        fiber.panic_msg = Some("runtime error: assignment to entry in nil map".to_string());
-                        return ExecResult::Panic;
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            "runtime error: assignment to entry in nil map".to_string()
+                        )
+                    } else {
+                        let ok = exec::exec_map_set(&stack, bp, &inst, &mut self.state.gc);
+                        if !ok {
+                            // Interface key has uncomparable underlying type
+                            runtime_panic(
+                                &mut self.state.gc, fiber, stack, module,
+                                "runtime error: hash of unhashable type".to_string()
+                            )
+                        } else {
+                            ExecResult::Continue
+                        }
                     }
-                    exec::exec_map_set(&stack, bp, &inst, &mut self.state.gc);
-                    ExecResult::Continue
                 }
                 Opcode::MapDelete => {
                     // nil map delete is a no-op (Go semantics: delete from nil map does nothing)
@@ -1040,19 +1067,10 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::Panic => {
-                    exec::exec_panic(&stack, bp, &mut fiber.panic_value, &inst);
-                    // Start panic unwinding - execute defers before propagating
-                    exec::exec_panic_unwind(
-                        stack,
-                        &mut fiber.frames,
-                        &mut fiber.defer_stack,
-                        &mut fiber.unwinding,
-                        &fiber.panic_value,
-                        module,
-                    )
+                    user_panic(fiber, stack, bp, inst.a, module)
                 }
                 Opcode::Recover => {
-                    exec::exec_recover(stack, bp, &mut fiber.panic_value, &inst);
+                    exec::exec_recover(stack, bp, fiber, &inst);
                     ExecResult::Continue
                 }
 
@@ -1065,7 +1083,15 @@ impl Vm {
                     exec::exec_iface_assert(stack, bp, &inst, &mut self.state.itab_cache, module)
                 }
                 Opcode::IfaceEq => {
-                    exec::exec_iface_eq(stack, bp, &inst, module)
+                    let result = exec::exec_iface_eq(stack, bp, &inst, module);
+                    if matches!(result, ExecResult::Panic) {
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            "runtime error: comparing uncomparable type in interface value".to_string()
+                        )
+                    } else {
+                        result
+                    }
                 }
 
                 // Type conversion - inline

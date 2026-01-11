@@ -165,8 +165,13 @@ pub fn resolve_lvalue(
         ExprKind::Index(idx) => {
             let container_type = info.expr_type(idx.expr.id);
             
-            // Compile index
-            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
+            // Compile index - for map with interface key, may need to box concrete type
+            let index_reg = if info.is_map(container_type) {
+                let (key_type, _) = info.map_key_val_types(container_type);
+                crate::expr::compile_map_key_expr(&idx.index, key_type, ctx, func, info)?
+            } else {
+                crate::expr::compile_expr(&idx.index, ctx, func, info)?
+            };
             
             if info.is_array(container_type) {
                 let elem_bytes = info.array_elem_bytes(container_type) as u16;

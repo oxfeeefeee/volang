@@ -1,4 +1,4 @@
-//! Defer instructions: DeferPush, ErrDeferPush, Panic, Recover
+//! Defer instructions: DeferPush, ErrDeferPush, Recover
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
@@ -8,7 +8,6 @@ use vo_runtime::{ValueKind, ValueMeta};
 
 use crate::fiber::{CallFrame, DeferEntry};
 use crate::instruction::Instruction;
-use crate::vm::ExecResult;
 
 /// DeferPush instruction format:
 /// - a: func_id (if flags bit 0 = 0) or closure_reg (if flags bit 0 = 1)
@@ -83,15 +82,10 @@ fn push_defer_entry(
     });
 }
 
+/// recover() - only catches recoverable panics.
+/// Uses Fiber::take_recoverable_panic() internally.
 #[inline]
-pub fn exec_panic(stack: &[u64], bp: usize, panic_value: &mut Option<GcRef>, inst: &Instruction) -> ExecResult {
-    let val = stack[bp + inst.a as usize] as GcRef;
-    *panic_value = Some(val);
-    ExecResult::Panic
-}
-
-#[inline]
-pub fn exec_recover(stack: &mut [u64], bp: usize, panic_value: &mut Option<GcRef>, inst: &Instruction) {
-    let val = panic_value.take().map(|v| v as u64).unwrap_or(0);
+pub fn exec_recover(stack: &mut [u64], bp: usize, fiber: &mut crate::fiber::Fiber, inst: &Instruction) {
+    let val = fiber.take_recoverable_panic().map(|v| v as u64).unwrap_or(0);
     stack[bp + inst.a as usize] = val;
 }

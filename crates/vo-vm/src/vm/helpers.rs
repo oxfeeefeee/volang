@@ -1,7 +1,12 @@
 //! Stack and memory access helpers.
 
-use vo_runtime::gc::GcRef;
+use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::{array, slice, string};
+
+use crate::bytecode::Module;
+use crate::fiber::Fiber;
+use crate::exec;
+use super::types::ExecResult;
 
 const ARRAY_DATA_OFFSET: usize = array::HEADER_SLOTS;
 const SLICE_FIELD_DATA_PTR: usize = slice::FIELD_DATA_PTR;
@@ -56,4 +61,51 @@ pub fn string_index(s: GcRef, idx: usize) -> u8 {
     let arr = unsafe { *((s as *const u64).add(STRING_FIELD_ARRAY) as *const GcRef) };
     let start = unsafe { *((s as *const u32).add(STRING_FIELD_START)) as usize };
     unsafe { *((arr.add(ARRAY_DATA_OFFSET) as *const u8).add(start + idx)) }
+}
+
+// =============================================================================
+// Runtime panic helper (recoverable via defer/recover)
+// =============================================================================
+
+/// Trigger a recoverable runtime panic with proper unwind mechanism.
+/// Use this for all user-triggerable runtime errors (bounds check, nil access, etc.)
+#[inline]
+pub fn runtime_panic(
+    gc: &mut Gc,
+    fiber: &mut Fiber,
+    stack: &mut Vec<u64>,
+    module: &Module,
+    msg: String,
+) -> ExecResult {
+    let panic_str = string::new_from_string(gc, msg);
+    fiber.set_recoverable_panic(panic_str);
+    panic_unwind(fiber, stack, module)
+}
+
+/// Continue panic unwinding (simplified interface).
+/// Use when panic_state is already set (e.g., from JIT or after defer returns).
+#[inline]
+pub fn panic_unwind(fiber: &mut Fiber, stack: &mut Vec<u64>, module: &Module) -> ExecResult {
+    exec::exec_panic_unwind(
+        stack,
+        &mut fiber.frames,
+        &mut fiber.defer_stack,
+        &mut fiber.unwinding,
+        &fiber.panic_state,
+        module,
+    )
+}
+
+/// User code panic() - set value and start unwinding in one call.
+#[inline]
+pub fn user_panic(
+    fiber: &mut Fiber,
+    stack: &mut Vec<u64>,
+    bp: usize,
+    val_reg: u16,
+    module: &Module,
+) -> ExecResult {
+    let val = stack[bp + val_reg as usize] as GcRef;
+    fiber.set_recoverable_panic(val);
+    panic_unwind(fiber, stack, module)
 }

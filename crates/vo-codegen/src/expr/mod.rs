@@ -101,6 +101,30 @@ pub fn get_gcref_slot(storage: &StorageKind) -> Option<u16> {
     }
 }
 
+/// Compile a map key expression, boxing to interface if needed.
+/// Used when the map's key type is interface but the index expression is concrete.
+pub fn compile_map_key_expr(
+    index_expr: &Expr,
+    key_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<u16, CodegenError> {
+    let index_type = info.expr_type(index_expr.id);
+    
+    if info.is_interface(key_type) && !info.is_interface(index_type) {
+        let src_reg = compile_expr(index_expr, ctx, func, info)?;
+        let key_slot_types = info.type_slot_types(key_type);
+        let iface_reg = func.alloc_temp_typed(&key_slot_types);
+        crate::stmt::emit_iface_assign_from_concrete(
+            iface_reg, src_reg, index_type, key_type, ctx, func, info
+        )?;
+        Ok(iface_reg)
+    } else {
+        compile_expr(index_expr, ctx, func, info)
+    }
+}
+
 /// Get the GcRef slot of an escaped variable without copying.
 fn get_escaped_var_gcref(
     expr: &Expr,
@@ -733,9 +757,9 @@ fn compile_index(
     
     if info.is_map(container_type) {
         let map_reg = compile_expr(&idx.expr, ctx, func, info)?;
-        let key_reg = compile_expr(&idx.index, ctx, func, info)?;
         let (key_slots, val_slots) = info.map_key_val_slots(container_type);
         let (key_type, _) = info.map_key_val_types(container_type);
+        let key_reg = compile_map_key_expr(&idx.index, key_type, ctx, func, info)?;
         let result_type = info.expr_type(expr.id);
         let is_comma_ok = info.is_tuple(result_type);
         let meta = crate::type_info::encode_map_get_meta(key_slots, val_slots, is_comma_ok);

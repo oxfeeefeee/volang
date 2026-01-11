@@ -1,0 +1,14 @@
+package main
+
+type Point struct {
+    x int
+}
+
+func (p *Point) Set(x int) {
+    p.x = x
+}
+
+func main() {
+    m := map[int]Point{0: Point{}}
+    m[0].Set(1)
+}

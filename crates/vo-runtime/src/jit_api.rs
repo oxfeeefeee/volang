@@ -465,14 +465,33 @@ pub extern "C" fn vo_map_get(m: u64, key_ptr: *const u64, key_slots: u32, val_pt
 }
 
 /// Set value in map.
+/// Returns: 0 = success, 1 = panic (interface key with uncomparable type)
 #[no_mangle]
-pub extern "C" fn vo_map_set(m: u64, key_ptr: *const u64, key_slots: u32, val_ptr: *const u64, val_slots: u32) {
-    use crate::objects::map;
-    if m == 0 { return; }
+pub extern "C" fn vo_map_set(m: u64, key_ptr: *const u64, key_slots: u32, val_ptr: *const u64, val_slots: u32) -> u64 {
+    use crate::objects::{map, interface};
+    use crate::ValueKind;
+    if m == 0 { return 0; }
     
     let key = unsafe { core::slice::from_raw_parts(key_ptr, key_slots as usize) };
     let val = unsafe { core::slice::from_raw_parts(val_ptr, val_slots as usize) };
+    
+    // Check if key is interface (2 slots) with uncomparable underlying type
+    if key_slots == 2 {
+        let key_vk = map::key_kind(m as crate::gc::GcRef);
+        if key_vk == ValueKind::Interface {
+            let slot0 = key[0];
+            let inner_vk = interface::unpack_value_kind(slot0);
+            match inner_vk {
+                ValueKind::Slice | ValueKind::Map | ValueKind::Closure | ValueKind::Channel => {
+                    return 1; // Uncomparable type - should panic
+                }
+                _ => {}
+            }
+        }
+    }
+    
     map::set(m as crate::gc::GcRef, key, val);
+    0
 }
 
 /// Delete key from map.

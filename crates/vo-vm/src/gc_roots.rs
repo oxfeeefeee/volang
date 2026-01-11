@@ -3,7 +3,7 @@
 use vo_runtime::gc::{scan_slots_by_types, Gc, GcRef};
 
 use crate::bytecode::{FunctionDef, GlobalDef};
-use crate::fiber::{DeferEntry, Fiber};
+use crate::fiber::{DeferEntry, Fiber, PanicState};
 use crate::vm::Vm;
 
 /// Scan DeferEntry for GC refs.
@@ -79,8 +79,8 @@ fn scan_fibers(gc: &mut Gc, fibers: &[Fiber], functions: &[FunctionDef]) {
             }
         }
 
-        // Scan panic value
-        if let Some(panic_val) = fiber.panic_value {
+        // Scan panic value (only Recoverable has GcRef)
+        if let Some(PanicState::Recoverable(panic_val)) = fiber.panic_state {
             if !panic_val.is_null() {
                 gc.mark_gray(panic_val);
             }

@@ -552,6 +552,7 @@ impl JitCompiler {
             sig.params.push(AbiParam::new(types::I32));
             sig.params.push(AbiParam::new(ptr));
             sig.params.push(AbiParam::new(types::I32));
+            sig.returns.push(AbiParam::new(types::I64)); // 0=ok, 1=panic (unhashable)
             sig
         })?;
         

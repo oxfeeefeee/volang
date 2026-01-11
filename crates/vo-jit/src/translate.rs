@@ -1052,7 +1052,21 @@ fn map_set<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let val = e.read_var(inst.c);
     let key_bytes = e.builder().ins().iconst(types::I64, (inst.flags & 0x0F) as i64);
     let val_bytes = e.builder().ins().iconst(types::I64, (inst.flags >> 4) as i64);
-    e.builder().ins().call(func, &[gc_ptr, m, key, val, key_bytes, val_bytes]);
+    let call = e.builder().ins().call(func, &[gc_ptr, m, key, val, key_bytes, val_bytes]);
+    let result = e.builder().inst_results(call)[0];
+    
+    // Check if vo_map_set returned panic (unhashable interface key)
+    let is_panic = e.builder().ins().icmp(IntCC::NotEqual, result, zero);
+    let panic_block2 = e.builder().create_block();
+    let cont_block = e.builder().create_block();
+    e.builder().ins().brif(is_panic, panic_block2, &[], cont_block, &[]);
+    
+    e.builder().switch_to_block(panic_block2);
+    e.builder().seal_block(panic_block2);
+    e.builder().ins().return_(&[panic_ret]);
+    
+    e.builder().switch_to_block(cont_block);
+    e.builder().seal_block(cont_block);
 }
 
 fn map_delete<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
@@ -1294,13 +1308,28 @@ fn iface_eq<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     
     // Call runtime helper for correct comparison (handles string content, struct/array deep eq, etc.)
     // Returns: 0=false, 1=true, 2=panic (uncomparable type)
-    // Note: panic case (return 2) is treated as false here; full panic handling would require
-    // control flow changes that break JIT compilation. Uncomparable types are rare in practice.
     let iface_eq_func = e.helpers().iface_eq.expect("iface_eq helper must be available");
     let ctx = e.ctx_param();
     let call = e.builder().ins().call(iface_eq_func, &[ctx, b0, b1, c0, c1]);
     let result = e.builder().inst_results(call)[0];
-    // Treat result > 1 (panic) as 0 (false) - mask to 0 or 1
+    
+    // Check if result == 2 (panic for uncomparable type)
+    let two = e.builder().ins().iconst(types::I64, 2);
+    let is_panic = e.builder().ins().icmp(IntCC::Equal, result, two);
+    let panic_block = e.builder().create_block();
+    let ok_block = e.builder().create_block();
+    e.builder().ins().brif(is_panic, panic_block, &[], ok_block, &[]);
+    
+    e.builder().switch_to_block(panic_block);
+    e.builder().seal_block(panic_block);
+    let panic_ret_val = e.panic_return_value();
+    let panic_ret = e.builder().ins().iconst(types::I32, panic_ret_val as i64);
+    e.builder().ins().return_(&[panic_ret]);
+    
+    e.builder().switch_to_block(ok_block);
+    e.builder().seal_block(ok_block);
+    
+    // Mask result to 0 or 1 (already know it's not 2)
     let one = e.builder().ins().iconst(types::I64, 1);
     let masked = e.builder().ins().band(result, one);
     e.write_var(inst.a, masked);

@@ -1,0 +1,17 @@
+package main
+
+type Point struct {
+    x int
+}
+
+func (p *Point) Set(x int) {
+    p.x = x
+}
+
+func getPoint() Point {
+    return Point{}
+}
+
+func main() {
+    getPoint().Set(1)
+}

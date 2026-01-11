@@ -106,6 +106,18 @@ pub enum FiberStatus {
     Dead,
 }
 
+/// Unified panic state for both recoverable and fatal panics.
+#[derive(Debug, Clone)]
+pub enum PanicState {
+    /// Recoverable panic (user code panic, runtime errors like bounds check).
+    /// Can be caught by recover() in a defer.
+    /// The GcRef points to the panic value (usually a string).
+    Recoverable(GcRef),
+    /// Fatal panic (internal VM/JIT errors that cannot be recovered).
+    /// Examples: blocking operation in JIT, unsupported operation.
+    Fatal(String),
+}
+
 #[derive(Debug)]
 pub struct Fiber {
     pub id: u32,
@@ -115,8 +127,7 @@ pub struct Fiber {
     pub defer_stack: Vec<DeferEntry>,
     pub unwinding: Option<UnwindingState>,
     pub select_state: Option<SelectState>,
-    pub panic_value: Option<GcRef>,
-    pub panic_msg: Option<String>,
+    pub panic_state: Option<PanicState>,
 }
 
 impl Fiber {
@@ -129,8 +140,7 @@ impl Fiber {
             defer_stack: Vec::new(),
             unwinding: None,
             select_state: None,
-            panic_value: None,
-            panic_msg: None,
+            panic_state: None,
         }
     }
     
@@ -142,8 +152,37 @@ impl Fiber {
         self.defer_stack.clear();
         self.unwinding = None;
         self.select_state = None;
-        self.panic_value = None;
-        self.panic_msg = None;
+        self.panic_state = None;
+    }
+    
+    /// Check if current panic is recoverable and return the value if so.
+    /// Used by recover() to consume the panic value.
+    pub fn take_recoverable_panic(&mut self) -> Option<GcRef> {
+        match self.panic_state.take() {
+            Some(PanicState::Recoverable(val)) => Some(val),
+            other => {
+                self.panic_state = other; // Put it back if not recoverable
+                None
+            }
+        }
+    }
+    
+    /// Set a fatal (non-recoverable) panic.
+    pub fn set_fatal_panic(&mut self, msg: String) {
+        self.panic_state = Some(PanicState::Fatal(msg));
+    }
+    
+    /// Set a recoverable panic with a GcRef value.
+    pub fn set_recoverable_panic(&mut self, val: GcRef) {
+        self.panic_state = Some(PanicState::Recoverable(val));
+    }
+    
+    /// Get panic message for error reporting.
+    pub fn panic_message(&self) -> Option<String> {
+        match &self.panic_state {
+            Some(PanicState::Fatal(msg)) => Some(msg.clone()),
+            _ => None,
+        }
     }
 
     pub fn push_frame(&mut self, func_id: u32, local_slots: u16, ret_reg: u16, ret_count: u16) {

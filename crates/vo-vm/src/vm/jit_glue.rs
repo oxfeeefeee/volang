@@ -66,16 +66,17 @@ pub extern "C" fn call_extern_trampoline(
             JitResult::Ok
         }
         ExternResult::Yield => {
-            // JIT doesn't support yield (async operations). This is a design limitation.
-            // Set panic msg to help debugging.
+            // JIT doesn't support yield (async operations). This is a fatal error.
             let fiber = unsafe { &mut *(ctx.fiber as *mut crate::fiber::Fiber) };
-            fiber.panic_msg = Some("extern function returned Yield, not supported in JIT".to_string());
+            fiber.set_fatal_panic("extern function returned Yield, not supported in JIT".to_string());
             JitResult::Panic
         }
         ExternResult::Panic(msg) => {
-            // Preserve panic message in fiber for proper error reporting
+            // Extern panics are recoverable - convert to Recoverable panic
             let fiber = unsafe { &mut *(ctx.fiber as *mut crate::fiber::Fiber) };
-            fiber.panic_msg = Some(msg);
+            let gc = unsafe { &mut *ctx.gc };
+            let panic_str = vo_runtime::objects::string::new_from_string(gc, msg);
+            fiber.set_recoverable_panic(panic_str);
             JitResult::Panic
         }
     }
@@ -289,7 +290,7 @@ impl Vm {
                     // Channel/select operations require scheduler coordination.
                     // JIT calls are synchronous and cannot handle blocking operations.
                     let fiber = self.scheduler.trampoline_fiber_mut(trampoline_id);
-                    fiber.panic_msg = Some("blocking operation (channel/select) not supported in JIT call path".to_string());
+                    fiber.set_fatal_panic("blocking operation (channel/select) not supported in JIT call path".to_string());
                     break JitResult::Panic;
                 }
             }

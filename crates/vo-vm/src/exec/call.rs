@@ -7,7 +7,7 @@ use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::closure;
 
 use crate::bytecode::{FunctionDef, Module};
-use crate::fiber::{CallFrame, DeferEntry, PendingReturnKind, UnwindingKind, UnwindingState};
+use crate::fiber::{CallFrame, DeferEntry, PanicState, PendingReturnKind, UnwindingKind, UnwindingState};
 use crate::instruction::Instruction;
 use crate::vm::ExecResult;
 use vo_runtime::itab::ItabCache;
@@ -457,14 +457,22 @@ fn call_defer_entry(
 /// 2. If recover() was called during defer, stop unwinding
 /// 3. If no defers or all defers done, pop frame and continue to parent
 /// 4. If no more frames, return ExecResult::Panic
+///
+/// Note: Only Recoverable panics can be caught by recover(). Fatal panics
+/// always propagate out without executing defers.
 pub fn exec_panic_unwind(
     stack: &mut Vec<u64>,
     frames: &mut Vec<CallFrame>,
     defer_stack: &mut Vec<DeferEntry>,
     unwinding: &mut Option<UnwindingState>,
-    panic_value: &Option<GcRef>,
+    panic_state: &Option<PanicState>,
     module: &Module,
 ) -> ExecResult {
+    // Fatal panics skip defer execution entirely
+    if matches!(panic_state, Some(PanicState::Fatal(_))) {
+        return ExecResult::Panic;
+    }
+    
     let current_frame_depth = frames.len();
 
     // Check if we're continuing after a defer finished
@@ -474,8 +482,8 @@ pub fn exec_panic_unwind(
             if current_frame_depth == state.target_depth + 1 {
                 pop_frame(stack, frames);
                 
-                // Check if recover() was called (panic_value was consumed)
-                if panic_value.is_none() {
+                // Check if recover() was called (panic_state was consumed)
+                if panic_state.is_none() {
                     // Recovered! Clear unwinding state and resume normal execution
                     *unwinding = None;
                     return ExecResult::Return;

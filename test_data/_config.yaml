@@ -159,6 +159,15 @@ tests:
   - file: typechecker/addr_of_must_be_struct.vo
     should_fail: true
     reason: "address-of operator only valid for struct types (Vo spec)"
+  - file: typechecker/semicolon_insertion_return.vo
+    should_fail: true
+    reason: "lexer semicolon insertion: return must terminate statement"
+  - file: typechecker/pointer_receiver_non_addressable_return.vo
+    should_fail: true
+    reason: "pointer-receiver method call requires addressable value"
+  - file: typechecker/pointer_receiver_non_addressable_map_index.vo
+    should_fail: true
+    reason: "map index expressions are not addressable"
   - file: typechecker/dyn_protocol_error.vo
     should_fail: true
     reason: "concrete type without protocol method should fail"
@@ -247,6 +256,7 @@ tests:
   - file: short_var_redecl.vo
   - file: method_value.vo
   - file: switch_nested_break.vo
+  - file: iface_noncomparable_panics.vo
 
 # New coverage tests
   - file: range_string_index.vo

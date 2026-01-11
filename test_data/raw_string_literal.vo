@@ -1,0 +1,15 @@
+package main
+
+func main() {
+    s1 := `a\nb`
+    assert(s1 == "a\\nb", "raw string should not interpret \\\\n")
+
+    s2 := `a
+b`
+    assert(s2 == "a\nb", "raw string should keep newline")
+
+    s3 := `\\t`
+    assert(s3 == "\\\\t", "raw string should not interpret \\\\t")
+
+    println("raw_string_literal: ok")
+}

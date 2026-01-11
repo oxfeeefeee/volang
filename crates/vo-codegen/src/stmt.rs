@@ -2328,3 +2328,49 @@ pub fn compile_iface_assign(
     Ok(())
 }
 
+/// Emit IfaceAssign from concrete type value already in a register.
+/// Used for map index expressions where key is interface type.
+pub fn emit_iface_assign_from_concrete(
+    dst_slot: u16,
+    src_reg: u16,
+    src_type: vo_analysis::objects::TypeKey,
+    iface_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    let src_vk = info.type_value_kind(src_type);
+    let iface_meta_id = info.get_or_create_interface_meta_id(iface_type, ctx);
+    
+    let const_idx = if src_vk == vo_runtime::ValueKind::Void {
+        ctx.const_int(0)
+    } else {
+        let rt = info.type_to_runtime_type(src_type, ctx);
+        let rttid = ctx.intern_rttid(rt);
+        let base_type = if info.is_pointer(src_type) {
+            info.pointer_base(src_type)
+        } else {
+            src_type
+        };
+        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id, info.tc_objs())
+    };
+    
+    if src_vk.needs_boxing() {
+        // Struct/Array: allocate box and copy data
+        let src_slots = info.type_slot_count(src_type);
+        let src_slot_types = info.type_slot_types(src_type);
+        let meta_idx = ctx.get_or_create_value_meta(Some(src_type), src_slots, &src_slot_types);
+        
+        let gcref_slot = func.alloc_temp_typed(&[SlotType::GcRef]);
+        let meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
+        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+        func.emit_with_flags(Opcode::PtrNew, src_slots as u8, gcref_slot, meta_reg, 0);
+        func.emit_ptr_set(gcref_slot, 0, src_reg, src_slots);
+        
+        func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, gcref_slot, const_idx);
+    } else {
+        func.emit_with_flags(Opcode::IfaceAssign, src_vk as u8, dst_slot, src_reg, const_idx);
+    }
+    Ok(())
+}
+
