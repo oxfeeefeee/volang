@@ -54,23 +54,25 @@ fn scan_fibers(gc: &mut Gc, fibers: &[Fiber], functions: &[FunctionDef]) {
             scan_defer_entry(gc, entry);
         }
 
-        // Scan defer_exec (return-in-progress with pending defers)
-        if let Some(exec) = &fiber.defer_exec {
-            for entry in &exec.pending {
+        // Scan unwinding state (return/panic unwinding with pending defers)
+        if let Some(state) = &fiber.unwinding {
+            for entry in &state.pending {
                 scan_defer_entry(gc, entry);
             }
-            // Scan return values based on kind
-            match &exec.return_kind {
-                crate::fiber::PendingReturnKind::Stack { vals, slot_types } => {
-                    scan_slots_by_types(gc, vals, slot_types);
-                }
-                crate::fiber::PendingReturnKind::Heap { gcrefs, .. } => {
-                    // These are GcRefs to escaped named return variables.
-                    // The original frame was popped, so we must mark them here.
-                    for &gcref_raw in gcrefs {
-                        let gcref = gcref_raw as GcRef;
-                        if !gcref.is_null() {
-                            gc.mark_gray(gcref);
+            // Scan return values if this is a Return unwinding
+            if let crate::fiber::UnwindingKind::Return { return_kind, .. } = &state.kind {
+                match return_kind {
+                    crate::fiber::PendingReturnKind::Stack { vals, slot_types } => {
+                        scan_slots_by_types(gc, vals, slot_types);
+                    }
+                    crate::fiber::PendingReturnKind::Heap { gcrefs, .. } => {
+                        // These are GcRefs to escaped named return variables.
+                        // The original frame was popped, so we must mark them here.
+                        for &gcref_raw in gcrefs {
+                            let gcref = gcref_raw as GcRef;
+                            if !gcref.is_null() {
+                                gc.mark_gray(gcref);
+                            }
                         }
                     }
                 }

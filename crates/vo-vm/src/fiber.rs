@@ -43,28 +43,37 @@ pub enum PendingReturnKind {
     },
 }
 
-/// State for a return-in-progress with pending defers.
-/// 
-/// Lifecycle:
-/// 1. Function returns with defers → DeferExecution created
-/// 2. Each defer executes and returns → next defer called or completion
-/// 3. All defers done → return values written to caller, state cleared
+/// What kind of unwinding is in progress.
 #[derive(Debug, Clone)]
-pub struct DeferExecution {
+pub enum UnwindingKind {
+    /// Normal return with pending defers.
+    Return {
+        return_kind: PendingReturnKind,
+        caller_ret_reg: u16,
+        caller_ret_count: usize,
+    },
+    /// Panic unwinding - execute defers, check for recover().
+    Panic,
+}
+
+/// Unified state for defer execution during return or panic unwinding.
+///
+/// Lifecycle:
+/// 1. Return/panic triggers unwinding → UnwindingState created
+/// 2. Each defer executes and returns → next defer called
+/// 3. For Return: all defers done → write return values, clear state
+/// 4. For Panic: if recover() called → clear state, resume normal
+/// 5. For Panic: no recover, no more defers → unwind to parent frame
+/// 6. For Panic: no more frames → return ExecResult::Panic
+#[derive(Debug, Clone)]
+pub struct UnwindingState {
     /// Defers remaining to execute (LIFO order, first = next to run).
     pub pending: Vec<DeferEntry>,
-    /// How return values are stored.
-    pub return_kind: PendingReturnKind,
-    /// Caller's return register.
-    pub caller_ret_reg: u16,
-    /// How many slots caller expects.
-    pub caller_ret_count: usize,
-    /// Whether this is an error return (affects errdefer filtering).
-    pub is_error_return: bool,
-    /// Frame depth after the returning function was popped.
+    /// Frame depth after the unwinding function was popped.
     /// Defer functions run at depth = target_depth + 1.
-    /// Used to distinguish "defer returned" vs "function inside defer returned".
     pub target_depth: usize,
+    /// What kind of unwinding is in progress.
+    pub kind: UnwindingKind,
 }
 
 
@@ -104,7 +113,7 @@ pub struct Fiber {
     pub stack: Vec<u64>,
     pub frames: Vec<CallFrame>,
     pub defer_stack: Vec<DeferEntry>,
-    pub defer_exec: Option<DeferExecution>,
+    pub unwinding: Option<UnwindingState>,
     pub select_state: Option<SelectState>,
     pub panic_value: Option<GcRef>,
     pub panic_msg: Option<String>,
@@ -118,7 +127,7 @@ impl Fiber {
             stack: Vec::new(),
             frames: Vec::new(),
             defer_stack: Vec::new(),
-            defer_exec: None,
+            unwinding: None,
             select_state: None,
             panic_value: None,
             panic_msg: None,
@@ -131,7 +140,7 @@ impl Fiber {
         self.stack.clear();
         self.frames.clear();
         self.defer_stack.clear();
-        self.defer_exec = None;
+        self.unwinding = None;
         self.select_state = None;
         self.panic_value = None;
         self.panic_msg = None;

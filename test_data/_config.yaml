@@ -254,5 +254,3 @@ tests:
   - file: const_untyped_promotion.vo
   - file: hex_float_literal.vo
   - file: panic_recover.vo
-    skip: [vm, jit]
-    reason: "Vo implementation bug - recover() in deferred closure doesn't catch panic"

@@ -608,9 +608,25 @@ impl Vm {
                     exec::exec_call_iface(stack, &mut fiber.frames, &inst, module, &self.state.itab_cache)
                 }
                 Opcode::Return => {
-                    let func = &module.functions[func_id as usize];
-                    let is_error_return = (inst.flags & 1) != 0;
-                    exec::exec_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.defer_exec, &inst, func, module, is_error_return)
+                    // Check if we're in panic unwinding mode
+                    let is_panic_unwinding = matches!(
+                        &fiber.unwinding,
+                        Some(crate::fiber::UnwindingState { kind: crate::fiber::UnwindingKind::Panic, .. })
+                    );
+                    if is_panic_unwinding {
+                        exec::exec_panic_unwind(
+                            stack,
+                            &mut fiber.frames,
+                            &mut fiber.defer_stack,
+                            &mut fiber.unwinding,
+                            &fiber.panic_value,
+                            module,
+                        )
+                    } else {
+                        let func = &module.functions[func_id as usize];
+                        let is_error_return = (inst.flags & 1) != 0;
+                        exec::exec_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &inst, func, module, is_error_return)
+                    }
                 }
 
                 // String operations
@@ -1024,7 +1040,16 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::Panic => {
-                    exec::exec_panic(&stack, bp, &mut fiber.panic_value, &inst)
+                    exec::exec_panic(&stack, bp, &mut fiber.panic_value, &inst);
+                    // Start panic unwinding - execute defers before propagating
+                    exec::exec_panic_unwind(
+                        stack,
+                        &mut fiber.frames,
+                        &mut fiber.defer_stack,
+                        &mut fiber.unwinding,
+                        &fiber.panic_value,
+                        module,
+                    )
                 }
                 Opcode::Recover => {
                     exec::exec_recover(stack, bp, &mut fiber.panic_value, &inst);

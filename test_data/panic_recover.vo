@@ -1,5 +1,4 @@
 // Test: panic and recover semantics
-// SKIP: Vo implementation bug - recover() in deferred closure doesn't catch panic
 package main
 
 var recoverResult any

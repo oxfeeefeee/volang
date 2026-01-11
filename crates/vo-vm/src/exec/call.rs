@@ -7,7 +7,7 @@ use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::closure;
 
 use crate::bytecode::{FunctionDef, Module};
-use crate::fiber::{CallFrame, DeferEntry, DeferExecution, PendingReturnKind};
+use crate::fiber::{CallFrame, DeferEntry, PendingReturnKind, UnwindingKind, UnwindingState};
 use crate::instruction::Instruction;
 use crate::vm::ExecResult;
 use vo_runtime::itab::ItabCache;
@@ -177,12 +177,14 @@ pub fn exec_call_iface(
     ExecResult::Return
 }
 
-/// Collect defers for current frame in LIFO order, filtering out errdefers if not error return.
+/// Collect defers for current frame in LIFO order.
+/// If `include_errdefers` is false, errdefers are skipped (for normal returns).
+/// If `include_errdefers` is true, all defers are collected (for error returns and panics).
 #[inline]
-fn collect_pending_defers(
+fn collect_defers(
     defer_stack: &mut Vec<DeferEntry>,
     frame_depth: usize,
-    is_error_return: bool,
+    include_errdefers: bool,
 ) -> Vec<DeferEntry> {
     let mut pending = Vec::new();
     while let Some(entry) = defer_stack.last() {
@@ -190,7 +192,7 @@ fn collect_pending_defers(
             break;
         }
         let entry = defer_stack.pop().unwrap();
-        if entry.is_errdefer && !is_error_return {
+        if entry.is_errdefer && !include_errdefers {
             continue;
         }
         pending.push(entry);
@@ -216,7 +218,7 @@ pub fn exec_return(
     stack: &mut Vec<u64>,
     frames: &mut Vec<CallFrame>,
     defer_stack: &mut Vec<DeferEntry>,
-    defer_exec: &mut Option<DeferExecution>,
+    unwinding: &mut Option<UnwindingState>,
     inst: &Instruction,
     func: &FunctionDef,
     module: &Module,
@@ -227,29 +229,36 @@ pub fn exec_return(
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 1: Check if a defer just finished (defer execution in progress)
     // ─────────────────────────────────────────────────────────────────────────
-    if let Some(ref mut exec) = defer_exec {
-        // Only handle when the defer function itself returns (not nested calls)
-        if current_frame_depth == exec.target_depth + 1 {
-            pop_frame(stack, frames);
-            
-            if !exec.pending.is_empty() {
-                // More defers to run
-                let next_defer = exec.pending.remove(0);
-                return call_defer_entry(stack, frames, &next_defer, module);
-            }
-            
-            // All defers complete - finalize return
-            let ret_vals = match &mut exec.return_kind {
-                PendingReturnKind::Stack { vals, .. } => core::mem::take(vals),
-                PendingReturnKind::Heap { gcrefs, slots_per_ref } => {
-                    read_heap_gcrefs(gcrefs, *slots_per_ref)
+    if let Some(ref mut state) = unwinding {
+        // Only handle Return unwinding here (Panic is handled by exec_panic_unwind)
+        if let UnwindingKind::Return { .. } = &state.kind {
+            // Only handle when the defer function itself returns (not nested calls)
+            if current_frame_depth == state.target_depth + 1 {
+                pop_frame(stack, frames);
+                
+                if !state.pending.is_empty() {
+                    // More defers to run
+                    let next_defer = state.pending.remove(0);
+                    return call_defer_entry(stack, frames, &next_defer, module);
                 }
-            };
-            let caller_ret_reg = exec.caller_ret_reg;
-            let caller_ret_count = exec.caller_ret_count;
-            *defer_exec = None;
-            
-            return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
+                
+                // All defers complete - finalize return
+                let (ret_vals, caller_ret_reg, caller_ret_count) = match &mut state.kind {
+                    UnwindingKind::Return { return_kind, caller_ret_reg, caller_ret_count } => {
+                        let vals = match return_kind {
+                            PendingReturnKind::Stack { vals, .. } => core::mem::take(vals),
+                            PendingReturnKind::Heap { gcrefs, slots_per_ref } => {
+                                read_heap_gcrefs(gcrefs, *slots_per_ref)
+                            }
+                        };
+                        (vals, *caller_ret_reg, *caller_ret_count)
+                    }
+                    UnwindingKind::Panic => unreachable!(),
+                };
+                *unwinding = None;
+                
+                return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
+            }
         }
         // Not the defer function returning - fall through to normal return
     }
@@ -295,7 +304,7 @@ pub fn exec_return(
             .map(|i| stack[current_bp + gcref_start + i])
             .collect();
         
-        let pending = collect_pending_defers(defer_stack, current_frame_depth, is_error_return);
+        let pending = collect_defers(defer_stack, current_frame_depth, is_error_return);
         (PendingReturnKind::Heap { gcrefs, slots_per_ref }, pending)
     } else {
         // Normal stack returns
@@ -312,7 +321,7 @@ pub fn exec_return(
             .map(|s| s.to_vec())
             .unwrap_or_default();
         
-        let pending = collect_pending_defers(defer_stack, current_frame_depth, is_error_return);
+        let pending = collect_defers(defer_stack, current_frame_depth, is_error_return);
         (PendingReturnKind::Stack { vals, slot_types }, pending)
     };
 
@@ -329,13 +338,14 @@ pub fn exec_return(
         let mut pending = pending_defers;
         let first_defer = pending.remove(0);
         
-        *defer_exec = Some(DeferExecution {
+        *unwinding = Some(UnwindingState {
             pending,
-            return_kind,
-            caller_ret_reg: frame.ret_reg,
-            caller_ret_count: frame.ret_count as usize,
-            is_error_return,
             target_depth: frames.len(),
+            kind: UnwindingKind::Return {
+                return_kind,
+                caller_ret_reg: frame.ret_reg,
+                caller_ret_count: frame.ret_count as usize,
+            },
         });
         
         return call_defer_entry(stack, frames, &first_defer, module);
@@ -438,4 +448,82 @@ fn call_defer_entry(
 
     // Return because frames changed (need to refetch frame_ptr in vm loop)
     ExecResult::Return
+}
+
+/// Start or continue panic unwinding.
+/// 
+/// When panic occurs:
+/// 1. Collect defers for current frame and execute them
+/// 2. If recover() was called during defer, stop unwinding
+/// 3. If no defers or all defers done, pop frame and continue to parent
+/// 4. If no more frames, return ExecResult::Panic
+pub fn exec_panic_unwind(
+    stack: &mut Vec<u64>,
+    frames: &mut Vec<CallFrame>,
+    defer_stack: &mut Vec<DeferEntry>,
+    unwinding: &mut Option<UnwindingState>,
+    panic_value: &Option<GcRef>,
+    module: &Module,
+) -> ExecResult {
+    let current_frame_depth = frames.len();
+
+    // Check if we're continuing after a defer finished
+    if let Some(ref mut state) = unwinding {
+        if let UnwindingKind::Panic = &state.kind {
+            // Only handle when the defer function itself returns (not nested calls)
+            if current_frame_depth == state.target_depth + 1 {
+                pop_frame(stack, frames);
+                
+                // Check if recover() was called (panic_value was consumed)
+                if panic_value.is_none() {
+                    // Recovered! Clear unwinding state and resume normal execution
+                    *unwinding = None;
+                    return ExecResult::Return;
+                }
+                
+                // Still panicking - run next defer or continue to parent frame
+                if !state.pending.is_empty() {
+                    let next_defer = state.pending.remove(0);
+                    return call_defer_entry(stack, frames, &next_defer, module);
+                }
+                
+                // No more defers in this frame - continue to parent
+                // Fall through to start unwinding parent frame
+            }
+        }
+    }
+    
+    // Clear any previous unwinding state
+    *unwinding = None;
+    
+    // Unwind frames until we find one with defers or run out
+    loop {
+        if frames.is_empty() {
+            // No more frames - panic propagates out
+            return ExecResult::Panic;
+        }
+        
+        let frame_depth = frames.len();
+        // Panic includes all defers (including errdefers)
+        let pending = collect_defers(defer_stack, frame_depth, true);
+        
+        if !pending.is_empty() {
+            // Found defers - pop frame and start executing them
+            pop_frame(stack, frames);
+            
+            let mut pending = pending;
+            let first_defer = pending.remove(0);
+            
+            *unwinding = Some(UnwindingState {
+                pending,
+                target_depth: frames.len(),
+                kind: UnwindingKind::Panic,
+            });
+            
+            return call_defer_entry(stack, frames, &first_defer, module);
+        }
+        
+        // No defers in this frame - pop and continue to parent
+        pop_frame(stack, frames);
+    }
 }
