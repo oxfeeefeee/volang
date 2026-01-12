@@ -213,15 +213,13 @@ pub fn make_uint64(x: u64) -> Value {
 }
 
 /// Returns the Float value for x.
-/// If x is -0.0, the result is 0.0.
 /// If x is not finite, the result is Unknown.
 pub fn make_float64(x: f64) -> Value {
     if x.is_infinite() || x.is_nan() {
         return Value::Unknown;
     }
-    // Convert -0 to 0
-    let x = if x == 0.0 { 0.0 } else { x };
-    if small_float(x) {
+    // Note: preserve -0.0 sign bit (IEEE 754 semantics)
+    if x != 0.0 && small_float(x) {
         // Use rational for exact representation
         if let Some(r) = BigRational::from_float(x) {
             return Value::Rat(r);
@@ -253,13 +251,10 @@ fn make_rat(x: BigRational) -> Value {
 
 /// Internal: creates Float value from f64.
 fn make_float(x: f64) -> Value {
-    if x == 0.0 {
-        // Normalize -0 to 0
-        return Value::Float(0.0);
-    }
     if x.is_infinite() || x.is_nan() {
         return Value::Unknown;
     }
+    // Note: preserve -0.0 sign bit (IEEE 754 semantics)
     Value::Float(x)
 }
 

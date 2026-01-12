@@ -311,3 +311,10 @@ tests:
   - file: closure_defer_recover_combo.vo
   - file: multi_return_as_arg.vo
   - file: range_modify_container.vo
+
+# Coverage tests from analysis (2026-01-12 batch 2)
+  - file: shift_boundary.vo
+  - file: float_special_values.vo
+  - file: recursive_struct.vo
+  - file: iface_uncomparable_panic.vo
+  - file: closure_multilayer_capture.vo
