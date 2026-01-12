@@ -194,6 +194,23 @@ impl Fiber {
             _ => None,
         }
     }
+    
+    /// Switch unwinding mode from Panic to Return after successful recover().
+    /// This prevents nested calls within the defer function from triggering panic_unwind.
+    pub fn switch_panic_to_return_mode(&mut self) {
+        let Some(ref mut state) = self.unwinding else { return };
+        let UnwindingKind::Panic { heap_gcrefs, slots_per_ref, caller_ret_reg, caller_ret_count } = &mut state.kind else { return };
+        
+        let return_kind = match heap_gcrefs.take() {
+            Some(gcrefs) => PendingReturnKind::Heap { gcrefs, slots_per_ref: *slots_per_ref },
+            None => PendingReturnKind::None,
+        };
+        state.kind = UnwindingKind::Return {
+            return_kind,
+            caller_ret_reg: *caller_ret_reg,
+            caller_ret_count: *caller_ret_count,
+        };
+    }
 
     pub fn push_frame(&mut self, func_id: u32, local_slots: u16, ret_reg: u16, ret_count: u16) {
         let bp = self.stack.len();

@@ -85,9 +85,20 @@ fn push_defer_entry(
 /// recover() - only catches recoverable panics.
 /// Returns interface{} (2 slots): slot0 = packed metadata, slot1 = data.
 /// If no panic, returns nil interface (both slots = 0).
+///
+/// When recover succeeds, also switches unwinding mode from Panic to Return.
+/// This is critical: without this change, nested calls within the defer function
+/// would incorrectly trigger panic_unwind when they return.
 #[inline]
 pub fn exec_recover(stack: &mut [u64], bp: usize, fiber: &mut crate::fiber::Fiber, inst: &Instruction) {
-    let (slot0, slot1) = fiber.take_recoverable_panic().unwrap_or((0, 0));
+    let recovered = fiber.take_recoverable_panic();
+    let (slot0, slot1) = recovered.unwrap_or((0, 0));
     stack[bp + inst.a as usize] = slot0;
     stack[bp + inst.a as usize + 1] = slot1;
+    
+    // If recover succeeded, switch unwinding mode from Panic to Return
+    // so nested calls don't trigger panic_unwind.
+    if recovered.is_some() {
+        fiber.switch_panic_to_return_mode();
+    }
 }

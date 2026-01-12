@@ -333,8 +333,6 @@ tests:
 # Skipped due to Vo implementation bugs (2026-01-12)
   - file: nil_func_call_panic.vo
   - file: defer_panic_order.vo
-    skip: [vm, jit]
-    reason: "defer funcCall() during panic unwinding does not execute correctly"
   - file: array_value_semantics.vo
     skip: [vm, jit]
     reason: "array assignment does not copy (value semantics broken)"
