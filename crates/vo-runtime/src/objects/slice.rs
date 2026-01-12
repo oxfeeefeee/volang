@@ -51,7 +51,7 @@ pub fn array_slice(gc: &mut Gc, arr: GcRef, lo: usize, hi: usize) -> Option<GcRe
     if lo > hi || hi > arr_len {
         return None;
     }
-    Some(from_array_range(gc, arr, lo, hi - lo, hi - lo))
+    Some(from_array_range(gc, arr, lo, hi - lo, arr_len - lo))
 }
 
 /// Three-index array slice: arr[lo:hi:max].

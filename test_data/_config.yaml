@@ -336,8 +336,6 @@ tests:
   - file: array_value_semantics.vo
   - file: interface_embed_diamond.vo
   - file: slice_reslice_cap.vo
-    skip: [vm, jit]
-    reason: "slice reslice/capacity operations cause panic"
 
 # Passing tests (2026-01-12)
   - file: interface_method_nil_recv.vo
