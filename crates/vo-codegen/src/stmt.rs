@@ -976,6 +976,9 @@ fn compile_stmt_with_label(
 
         // === If statement ===
         StmtKind::If(if_stmt) => {
+            // Enter scope for init variable shadowing (Go semantics: if x := 1; x > 0 { } creates new scope)
+            func.enter_scope();
+            
             // Init statement
             if let Some(init) = &if_stmt.init {
                 compile_stmt(init, ctx, func, info)?;
@@ -1012,6 +1015,9 @@ fn compile_stmt_with_label(
             } else {
                 func.patch_jump(else_jump, func.current_pc());
             }
+            
+            // Exit scope (restore any shadowed variables from init)
+            func.exit_scope();
         }
 
         // === For statement ===
@@ -1059,6 +1065,9 @@ fn compile_stmt_with_label(
 
                 ForClause::Three { init, cond, post } => {
                     // C-style: for init; cond; post { }
+                    // Enter scope for init variable shadowing (Go semantics: for i := 0; ... creates new scope)
+                    func.enter_scope();
+                    
                     if let Some(init) = init {
                         compile_stmt(init, ctx, func, info)?;
                     }
@@ -1109,10 +1118,16 @@ fn compile_stmt_with_label(
                     for pc in exit_info.continue_patches {
                         func.patch_jump(pc, post_pc);
                     }
+                    
+                    // Exit scope (restore any shadowed variables from init)
+                    func.exit_scope();
                 }
 
                 ForClause::Range { key, value, define, expr } => {
                     // All for-range loops expanded at compile time. No runtime iterator state.
+                    // Enter scope for key/value variable shadowing (Go semantics: for k, v := range ... creates new scope)
+                    func.enter_scope();
+                    
                     let range_type = info.expr_type(expr.id);
                     let mut sc = StmtCompiler::new(ctx, func, info);
                     
@@ -1300,6 +1315,9 @@ fn compile_stmt_with_label(
                     } else {
                         return Err(CodegenError::UnsupportedStmt("for-range unsupported type".to_string()));
                     }
+                    
+                    // Exit scope (restore any shadowed key/value variables)
+                    func.exit_scope();
                 }
             }
         }
@@ -1874,6 +1892,9 @@ fn compile_type_switch(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Enter scope for init variable shadowing (Go semantics: type switch x := v.(type) creates new scope)
+    func.enter_scope();
+    
     // Init statement
     if let Some(init) = &type_switch.init {
         compile_stmt(init, ctx, func, info)?;
@@ -1966,6 +1987,9 @@ fn compile_type_switch(
     for (case_idx, case) in type_switch.cases.iter().enumerate() {
         case_body_starts.push(func.current_pc());
         
+        // Enter scope for case-local variables (Go semantics: each case has its own scope)
+        func.enter_scope();
+        
         // If assign variable is specified, bind it to the asserted value
         if let Some(assign_name) = &type_switch.assign {
             if !case.types.is_empty() {
@@ -1992,6 +2016,9 @@ fn compile_type_switch(
         for stmt in &case.body {
             compile_stmt(stmt, ctx, func, info)?;
         }
+        
+        // Exit case scope
+        func.exit_scope();
         
         // Jump to end
         end_jumps.push(func.emit_jump(Opcode::Jump, 0));
@@ -2022,6 +2049,9 @@ fn compile_type_switch(
         func.patch_jump(jump_pc, end_pc);
     }
     
+    // Exit outer scope (restore any shadowed variables from init)
+    func.exit_scope();
+    
     Ok(())
 }
 
@@ -2033,9 +2063,12 @@ fn compile_switch_with_label(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
+    // Enter scope for init variable shadowing (Go semantics: switch x := 1; x { } creates new scope)
+    func.enter_scope();
+    
     // Init statement
     if let Some(init) = &switch_stmt.init {
-        compile_stmt(init, ctx, func, info)?;
+        compile_stmt(init, ctx, func, info)?
     }
     
     // Compile tag expression (if present)
@@ -2096,6 +2129,9 @@ fn compile_switch_with_label(
     for case in &switch_stmt.cases {
         case_body_starts.push(func.current_pc());
         
+        // Enter scope for case-local variables (Go semantics: each case has its own scope)
+        func.enter_scope();
+        
         // Compile statements, track if ends with fallthrough
         let mut has_fallthrough = false;
         for stmt in &case.body {
@@ -2105,6 +2141,9 @@ fn compile_switch_with_label(
                 compile_stmt(stmt, ctx, func, info)?;
             }
         }
+        
+        // Exit case scope
+        func.exit_scope();
         
         // Jump to end unless case ends with fallthrough
         if !has_fallthrough {
@@ -2152,6 +2191,9 @@ fn compile_switch_with_label(
     for jump_pc in break_patches {
         func.patch_jump(jump_pc, end_pc);
     }
+    
+    // Exit scope (restore any shadowed variables from init)
+    func.exit_scope();
     
     Ok(())
 }
