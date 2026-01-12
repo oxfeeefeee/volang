@@ -1027,6 +1027,70 @@ pub(crate) fn get_addressable_gcref(
     }
 }
 
+/// Get pointer to an expression. Unified handler for:
+/// - Method receiver when expects_ptr_recv=true
+/// - Address-of operator (&x)
+/// 
+/// Handles all cases where we need a pointer to an expression's value.
+pub(crate) fn compile_expr_to_ptr(
+    expr: &Expr,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    let expr_type = info.expr_type(expr.id);
+    
+    // Case 1: Expression is already pointer type → just compile it
+    if info.is_pointer(expr_type) {
+        let reg = compile_expr(expr, ctx, func, info)?;
+        func.emit_copy(dst, reg, 1);
+        return Ok(());
+    }
+    
+    // Case 2: Index expression → get element address
+    if let ExprKind::Index(index_expr) = &expr.kind {
+        let container_type = info.expr_type(index_expr.expr.id);
+        if info.is_slice(container_type) || info.is_array(container_type) {
+            return crate::lvalue::compile_index_addr(&index_expr.expr, &index_expr.index, dst, ctx, func, info);
+        }
+    }
+    
+    // Case 3: Selector on pointer base (c2.pt where c2: *Container, pt: Point)
+    if let ExprKind::Selector(sel) = &expr.kind {
+        let base_type = info.expr_type(sel.expr.id);
+        if info.is_pointer(base_type) {
+            let field_name = info.project.interner.resolve(sel.sel.symbol)
+                .ok_or_else(|| CodegenError::Internal("cannot resolve field name".to_string()))?;
+            let ptr_base = info.pointer_base(base_type);
+            let (field_offset, _) = info.struct_field_offset(ptr_base, field_name);
+            if field_offset == 0 {
+                let ptr_reg = compile_expr(&sel.expr, ctx, func, info)?;
+                func.emit_copy(dst, ptr_reg, 1);
+                return Ok(());
+            }
+            return Err(CodegenError::Internal(
+                format!("cannot take address of field at non-zero offset {} in pointer-based access", field_offset)
+            ));
+        }
+    }
+    
+    // Case 4: Addressable on heap (variable, field at offset 0)
+    if let Some((gcref_slot, offset)) = get_addressable_gcref(expr, func, info) {
+        if offset == 0 {
+            func.emit_copy(dst, gcref_slot, 1);
+            return Ok(());
+        }
+        return Err(CodegenError::Internal(
+            format!("cannot take address of field at non-zero offset {}", offset)
+        ));
+    }
+    
+    Err(CodegenError::UnsupportedExpr(
+        format!("cannot get pointer to expression")
+    ))
+}
+
 /// Compile address-of operator (&x).
 /// Spec: only struct types can have their address taken.
 fn compile_addr_of(
@@ -1036,28 +1100,7 @@ fn compile_addr_of(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    // Case 1: Addressable expression on heap (variable, field access)
-    if let Some((gcref_slot, offset)) = get_addressable_gcref(operand, func, info) {
-        if offset == 0 {
-            func.emit_op(Opcode::Copy, dst, gcref_slot, 0);
-            return Ok(());
-        } else {
-            // Vo doesn't support interior pointers
-            return Err(CodegenError::UnsupportedExpr(
-                "cannot take address of field not at offset 0".to_string()
-            ));
-        }
-    }
-    
-    // Case 2: &slice[i] or &array[i] - get element address
-    if let ExprKind::Index(index_expr) = &operand.kind {
-        let container_type = info.expr_type(index_expr.expr.id);
-        if info.is_slice(container_type) || info.is_array(container_type) {
-            return crate::lvalue::compile_index_addr(&index_expr.expr, &index_expr.index, dst, ctx, func, info);
-        }
-    }
-    
-    // Case 3: &CompositeLit{} - allocate struct on heap
+    // Case 1: &CompositeLit{} - allocate struct on heap (special case, not in compile_expr_to_ptr)
     if let ExprKind::CompositeLit(lit) = &operand.kind {
         let type_key = info.expr_type(operand.id);
         let slots = info.type_slot_count(type_key);
@@ -1097,7 +1140,8 @@ fn compile_addr_of(
         return Ok(());
     }
     
-    Err(CodegenError::UnsupportedExpr("address-of unsupported operand".to_string()))
+    // All other cases: delegate to compile_expr_to_ptr
+    compile_expr_to_ptr(operand, dst, ctx, func, info)
 }
 
 fn compile_deref(

@@ -10,7 +10,7 @@ use crate::error::CodegenError;
 use crate::func::{FuncBuilder, StorageKind};
 use crate::type_info::TypeInfoWrapper;
 
-use super::{compile_expr, compile_expr_to, get_addressable_gcref, get_gcref_slot};
+use super::{compile_expr, compile_expr_to};
 
 /// Allocate a call buffer with proper slot types for return values.
 /// 
@@ -231,25 +231,14 @@ pub fn emit_receiver(
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
     if expects_ptr_recv {
-        // Method expects *T: pass GcRef directly
+        // Method expects *T: pass pointer
         if embed_is_pointer && embed_offset == 0 {
             // Pointer embedding: the embedded field IS the pointer we need
             let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
             func.emit_copy(args_start, recv_reg, 1);
-        } else if let Some((gcref_slot, offset)) = get_addressable_gcref(sel_expr, func, info) {
-            // Addressable expression on heap (variable, field access, etc.)
-            if offset == 0 {
-                func.emit_copy(args_start, gcref_slot, 1);
-            } else {
-                // Vo doesn't support interior pointers
-                return Err(CodegenError::Internal(
-                    format!("cannot take address of field at non-zero offset {}", offset)
-                ));
-            }
         } else {
-            // Expression evaluates to pointer directly (e.g., *T type or function returning pointer)
-            let recv_reg = compile_expr(sel_expr, ctx, func, info)?;
-            func.emit_copy(args_start, recv_reg, 1);
+            // Unified pointer acquisition
+            super::compile_expr_to_ptr(sel_expr, args_start, ctx, func, info)?;
         }
     } else {
         // Method expects T: pass value
