@@ -348,3 +348,14 @@ tests:
   - file: nested_closure_modify.vo
   - file: map_concurrent_safe.vo
 
+# Coverage tests from analysis (2026-01-12 batch 5) - New tests
+  - file: anonymous_struct_literal.vo
+  - file: range_var_modification.vo
+  - file: composite_literal_address.vo
+  - file: select_default_behavior.vo
+  - file: multi_level_embedding.vo
+
+# Bug reproduction (2026-01-12) - select case recv assignment - FIXED
+  - file: bug_select_recv_assign.vo
+    # FIXED: codegen now handles recv.define=false case by copying to existing variable
+

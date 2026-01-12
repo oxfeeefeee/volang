@@ -1,0 +1,19 @@
+// Bug reproduction: select case recv assignment doesn't work
+// The value received from channel is not assigned to variable
+
+func main() {
+	ch := make(chan int, 1)
+	ch <- 42
+	
+	val := 0
+	select {
+	case val = <-ch:
+		println("received, val=", val)
+	default:
+		println("default")
+	}
+	
+	// Bug: val should be 42, but it's 0
+	assert(val == 42, "val should be 42, got ", val)
+	println("PASSED")
+}
