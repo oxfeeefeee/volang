@@ -195,6 +195,20 @@ impl Fiber {
         }
     }
     
+    /// Check if we're in panic unwinding mode AND directly in the defer function
+    /// (not in a nested call from the defer function).
+    /// Per Go semantics, recover() only works when called directly from defer.
+    /// Defer functions run at depth = target_depth + 1.
+    #[inline]
+    pub fn is_direct_defer_context(&self) -> bool {
+        match &self.unwinding {
+            Some(UnwindingState { kind: UnwindingKind::Panic { .. }, target_depth, .. }) => {
+                self.frames.len() == *target_depth + 1
+            }
+            _ => false,
+        }
+    }
+    
     /// Switch unwinding mode from Panic to Return after successful recover().
     /// This prevents nested calls within the defer function from triggering panic_unwind.
     pub fn switch_panic_to_return_mode(&mut self) {

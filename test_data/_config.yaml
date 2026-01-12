@@ -428,8 +428,6 @@ tests:
   - file: slice_spread_variadic.vo
   - file: const_expr_overflow.vo
 
-# Bug reproduction - nested recover call breaks outer defer recover
+# Test: nested recover call should not affect outer defer recover (Go semantics)
   - file: bug_recover_nested_call.vo
-    skip: [vm, jit]
-    reason: "BUG: nested recover() call in defer prevents outer defer from catching panic"
 

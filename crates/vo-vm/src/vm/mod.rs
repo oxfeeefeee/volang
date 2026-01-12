@@ -677,12 +677,7 @@ impl Vm {
                     exec::exec_call_iface(stack, &mut fiber.frames, &inst, module, &self.state.itab_cache)
                 }
                 Opcode::Return => {
-                    // Check if we're in panic unwinding mode
-                    let is_panic_unwinding = matches!(
-                        &fiber.unwinding,
-                        Some(crate::fiber::UnwindingState { kind: crate::fiber::UnwindingKind::Panic { .. }, .. })
-                    );
-                    if is_panic_unwinding {
+                    if fiber.is_direct_defer_context() {
                         panic_unwind(fiber, stack, module)
                     } else {
                         let func = &module.functions[func_id as usize];
