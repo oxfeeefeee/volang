@@ -60,7 +60,7 @@ func main() {
     if v, ok := anyVal.(D); ok {
         assert(v.Foo() == 10 && v.Bar() == 20 && v.Baz() == 30, "type assertion to D")
     } else {
-        assert(false, "should be assertable to D")
+        panic("should be assertable to D")
     }
     
     println("interface_embed_diamond: ok")

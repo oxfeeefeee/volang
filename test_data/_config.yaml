@@ -335,8 +335,6 @@ tests:
   - file: defer_panic_order.vo
   - file: array_value_semantics.vo
   - file: interface_embed_diamond.vo
-    skip: [vm, jit]
-    reason: "type assertion to diamond-inherited interface fails"
   - file: slice_reslice_cap.vo
     skip: [vm, jit]
     reason: "slice reslice/capacity operations cause panic"
