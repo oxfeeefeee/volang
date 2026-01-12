@@ -334,8 +334,6 @@ tests:
   - file: nil_func_call_panic.vo
   - file: defer_panic_order.vo
   - file: array_value_semantics.vo
-    skip: [vm, jit]
-    reason: "array assignment does not copy (value semantics broken)"
   - file: interface_embed_diamond.vo
     skip: [vm, jit]
     reason: "type assertion to diamond-inherited interface fails"

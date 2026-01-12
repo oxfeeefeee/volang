@@ -400,6 +400,42 @@ impl<'a> TypeInfoWrapper<'a> {
         type_layout::type_slot_types(type_key, self.tc_objs())
     }
 
+    /// Get ValueKind for each slot in a composite type (struct/array).
+    /// Used for comparison to distinguish string GcRefs from others.
+    pub fn type_slot_value_kinds(&self, type_key: TypeKey) -> Vec<vo_runtime::ValueKind> {
+        use vo_analysis::typ::{Type, underlying_type};
+        
+        let underlying = underlying_type(type_key, self.tc_objs());
+        match &self.tc_objs().types[underlying] {
+            Type::Struct(st) => {
+                let mut result = Vec::new();
+                for field_obj in st.fields().iter() {
+                    if let Some(field_type) = self.tc_objs().lobjs[*field_obj].typ() {
+                        let field_vk = self.type_value_kind(field_type);
+                        let field_slots = self.type_slot_count(field_type);
+                        for _ in 0..field_slots {
+                            result.push(field_vk);
+                        }
+                    }
+                }
+                result
+            }
+            Type::Array(arr) => {
+                let elem_vk = self.type_value_kind(arr.elem());
+                let elem_slots = self.type_slot_count(arr.elem());
+                let len = arr.len().unwrap_or(0) as usize;
+                let mut result = Vec::with_capacity(len * elem_slots as usize);
+                for _ in 0..len {
+                    for _ in 0..elem_slots {
+                        result.push(elem_vk);
+                    }
+                }
+                result
+            }
+            _ => vec![self.type_value_kind(type_key)],
+        }
+    }
+
     /// Get slots and slot_types for a type expression (used for params/results).
     pub fn type_expr_layout(&self, type_expr_id: vo_syntax::ast::TypeExprId) -> (u16, Vec<SlotType>) {
         let type_key = self.type_expr_type(type_expr_id);
