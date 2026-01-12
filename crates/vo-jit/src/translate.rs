@@ -1,6 +1,6 @@
 //! Shared instruction translation logic.
 
-use cranelift_codegen::ir::{types, InstBuilder, MemFlags};
+use cranelift_codegen::ir::{types, InstBuilder, MemFlags, Value};
 use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
 
 use vo_runtime::bytecode::Constant;
@@ -43,8 +43,7 @@ pub fn translate_inst<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) -> Res
         LeF => { cmp_f(e, inst, FloatCC::LessThanOrEqual); Ok(Completed) }
         GtF => { cmp_f(e, inst, FloatCC::GreaterThan); Ok(Completed) }
         GeF => { cmp_f(e, inst, FloatCC::GreaterThanOrEqual); Ok(Completed) }
-        Not => { not(e, inst); Ok(Completed) }
-        BoolNot => { bool_not(e, inst); Ok(Completed) }
+        Not | BoolNot => { not(e, inst); Ok(Completed) }
         And => { and(e, inst); Ok(Completed) }
         Or => { or(e, inst); Ok(Completed) }
         Xor => { xor(e, inst); Ok(Completed) }
@@ -70,6 +69,7 @@ pub fn translate_inst<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) -> Res
         ConvF64F32 => { conv_f64_f32(e, inst); Ok(Completed) }
         ConvF32F64 => { conv_f32_f64(e, inst); Ok(Completed) }
         Trunc => { trunc(e, inst); Ok(Completed) }
+        IndexCheck => { index_check(e, inst); Ok(Completed) }
         // Slice operations
         SliceNew => { slice_new(e, inst); Ok(Completed) }
         SliceGet => { slice_get(e, inst); Ok(Completed) }
@@ -179,12 +179,31 @@ fn mul_i<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 
 fn div_i<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
-    let r = e.builder().ins().sdiv(a, b);
+    // Check for division by zero
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_zero = e.builder().ins().icmp(IntCC::Equal, b, zero);
+    emit_panic_if(e, is_zero, true);
+    // Handle MIN_INT64 / -1 overflow: result would be MAX_INT64+1, which overflows.
+    // x86 idiv traps on this. Go semantics: result wraps to MIN_INT64.
+    // Replace b with 1 when overflow would occur to avoid the trap.
+    let min_i64 = e.builder().ins().iconst(types::I64, i64::MIN);
+    let neg_one = e.builder().ins().iconst(types::I64, -1i64);
+    let one = e.builder().ins().iconst(types::I64, 1);
+    let is_min = e.builder().ins().icmp(IntCC::Equal, a, min_i64);
+    let is_neg_one = e.builder().ins().icmp(IntCC::Equal, b, neg_one);
+    let is_overflow = e.builder().ins().band(is_min, is_neg_one);
+    // If overflow, use 1 as divisor (MIN / 1 = MIN), otherwise use original b
+    let safe_b = e.builder().ins().select(is_overflow, one, b);
+    let r = e.builder().ins().sdiv(a, safe_b);
     e.write_var(inst.a, r);
 }
 
 fn mod_i<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
+    // Check for division by zero
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_zero = e.builder().ins().icmp(IntCC::Equal, b, zero);
+    emit_panic_if(e, is_zero, true);
     let r = e.builder().ins().srem(a, b);
     e.write_var(inst.a, r);
 }
@@ -263,15 +282,6 @@ fn not<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     e.write_var(inst.a, r);
 }
 
-fn bool_not<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
-    // BoolNot: if input == 0, output 1; else output 0
-    let a = e.read_var(inst.b);
-    let zero = e.builder().ins().iconst(types::I64, 0);
-    let cmp = e.builder().ins().icmp(IntCC::Equal, a, zero);
-    let r = e.builder().ins().uextend(types::I64, cmp);
-    e.write_var(inst.a, r);
-}
-
 fn and<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
     let r = e.builder().ins().band(a, b);
@@ -296,33 +306,39 @@ fn and_not<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     e.write_var(inst.a, r);
 }
 
+fn shift_precheck<'a>(e: &mut impl IrEmitter<'a>, shift_amt: Value) -> (Value, Value) {
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, shift_amt, zero);
+    emit_panic_if(e, is_negative, true);
+    let sixty_four = e.builder().ins().iconst(types::I64, 64);
+    let is_large = e.builder().ins().icmp(IntCC::SignedGreaterThanOrEqual, shift_amt, sixty_four);
+    (zero, is_large)
+}
+
 fn shl<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
-    // Runtime panic if shift count is negative
-    let zero = e.builder().ins().iconst(types::I64, 0);
-    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, b, zero);
-    emit_panic_if(e, is_negative, true);
-    let r = e.builder().ins().ishl(a, b);
+    let (zero, is_large) = shift_precheck(e, b);
+    let shifted = e.builder().ins().ishl(a, b);
+    let r = e.builder().ins().select(is_large, zero, shifted);
     e.write_var(inst.a, r);
 }
 
 fn shr_s<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
-    // Runtime panic if shift count is negative
-    let zero = e.builder().ins().iconst(types::I64, 0);
-    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, b, zero);
-    emit_panic_if(e, is_negative, true);
-    let r = e.builder().ins().sshr(a, b);
+    let (zero, is_large) = shift_precheck(e, b);
+    let shifted = e.builder().ins().sshr(a, b);
+    let is_a_negative = e.builder().ins().icmp(IntCC::SignedLessThan, a, zero);
+    let minus_one = e.builder().ins().iconst(types::I64, -1i64);
+    let large_result = e.builder().ins().select(is_a_negative, minus_one, zero);
+    let r = e.builder().ins().select(is_large, large_result, shifted);
     e.write_var(inst.a, r);
 }
 
 fn shr_u<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let a = e.read_var(inst.b); let b = e.read_var(inst.c);
-    // Runtime panic if shift count is negative
-    let zero = e.builder().ins().iconst(types::I64, 0);
-    let is_negative = e.builder().ins().icmp(IntCC::SignedLessThan, b, zero);
-    emit_panic_if(e, is_negative, true);
-    let r = e.builder().ins().ushr(a, b);
+    let (zero, is_large) = shift_precheck(e, b);
+    let shifted = e.builder().ins().ushr(a, b);
+    let r = e.builder().ins().select(is_large, zero, shifted);
     e.write_var(inst.a, r);
 }
 
@@ -551,6 +567,13 @@ fn trunc<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     e.write_var(inst.a, result);
 }
 
+fn index_check<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
+    let idx = e.read_var(inst.a);
+    let len = e.read_var(inst.b);
+    let out_of_bounds = e.builder().ins().icmp(IntCC::UnsignedGreaterThanOrEqual, idx, len);
+    emit_panic_if(e, out_of_bounds, true);
+}
+
 // =============================================================================
 // Slice/Array element size helpers
 // =============================================================================
@@ -619,7 +642,6 @@ fn emit_elem_bytes_i32<'a>(e: &mut impl IrEmitter<'a>, flags: u8, eb_reg: u16) -
 // =============================================================================
 
 use vo_runtime::objects::slice::{FIELD_DATA_PTR as SLICE_FIELD_DATA_PTR_SLOT, FIELD_LEN as SLICE_FIELD_LEN_SLOT};
-use cranelift_codegen::ir::Value;
 const SLICE_FIELD_DATA_PTR: i32 = (SLICE_FIELD_DATA_PTR_SLOT * 8) as i32;
 const SLICE_FIELD_LEN: i32 = (SLICE_FIELD_LEN_SLOT * 8) as i32;
 
@@ -783,22 +805,22 @@ fn slice_slice<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let is_array = (inst.flags & 0b01) != 0;
     let has_max = (inst.flags & 0b10) != 0;
     
-    let result = if is_array {
-        if has_max {
-            let max = e.read_var(inst.c + 2);
+    // Helper functions do bounds checking and return u64::MAX on error
+    let result = if has_max {
+        let max = e.read_var(inst.c + 2);
+        if is_array {
             let func = e.helpers().slice_from_array3.unwrap();
             let call = e.builder().ins().call(func, &[gc_ptr, src, lo, hi, max]);
             e.builder().inst_results(call)[0]
         } else {
-            let func = e.helpers().slice_from_array.unwrap();
-            let call = e.builder().ins().call(func, &[gc_ptr, src, lo, hi]);
+            let func = e.helpers().slice_slice3.unwrap();
+            let call = e.builder().ins().call(func, &[gc_ptr, src, lo, hi, max]);
             e.builder().inst_results(call)[0]
         }
     } else {
-        if has_max {
-            let max = e.read_var(inst.c + 2);
-            let func = e.helpers().slice_slice3.unwrap();
-            let call = e.builder().ins().call(func, &[gc_ptr, src, lo, hi, max]);
+        if is_array {
+            let func = e.helpers().slice_from_array.unwrap();
+            let call = e.builder().ins().call(func, &[gc_ptr, src, lo, hi]);
             e.builder().inst_results(call)[0]
         } else {
             let func = e.helpers().slice_slice.unwrap();
@@ -806,6 +828,12 @@ fn slice_slice<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
             e.builder().inst_results(call)[0]
         }
     };
+    
+    // Check for bounds error (helper returns u64::MAX on error)
+    let error_val = e.builder().ins().iconst(types::I64, -1i64);
+    let is_error = e.builder().ins().icmp(IntCC::Equal, result, error_val);
+    emit_panic_if(e, is_error, true);
+    
     e.write_var(inst.a, result);
 }
 
@@ -862,6 +890,10 @@ fn array_new<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 fn array_get<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let arr = e.read_var(inst.b);
     let idx = e.read_var(inst.c);
+    // Bounds check: load len from ArrayHeader (offset 0)
+    let len = e.builder().ins().load(types::I64, MemFlags::trusted(), arr, 0);
+    let out_of_bounds = e.builder().ins().icmp(IntCC::UnsignedGreaterThanOrEqual, idx, len);
+    emit_panic_if(e, out_of_bounds, true);
     let (elem_bytes, needs_sext) = resolve_elem_bytes(e, inst.flags, inst.c + 1);
     if elem_bytes <= 8 {
         let eb = e.builder().ins().iconst(types::I64, elem_bytes as i64);
@@ -904,6 +936,10 @@ fn array_get<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 fn array_set<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let arr = e.read_var(inst.a);
     let idx = e.read_var(inst.b);
+    // Bounds check: load len from ArrayHeader (offset 0)
+    let len = e.builder().ins().load(types::I64, MemFlags::trusted(), arr, 0);
+    let out_of_bounds = e.builder().ins().icmp(IntCC::UnsignedGreaterThanOrEqual, idx, len);
+    emit_panic_if(e, out_of_bounds, true);
     let val = e.read_var(inst.c);
     let (elem_bytes, _) = resolve_elem_bytes(e, inst.flags, inst.b + 1);
     if elem_bytes <= 8 {
@@ -964,10 +1000,16 @@ fn str_len<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 }
 
 fn str_index<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
-    let func = match e.helpers().str_index { Some(f) => f, None => return };
+    let str_index_func = match e.helpers().str_index { Some(f) => f, None => return };
+    let str_len_func = match e.helpers().str_len { Some(f) => f, None => return };
     let s = e.read_var(inst.b);
     let idx = e.read_var(inst.c);
-    let call = e.builder().ins().call(func, &[s, idx]);
+    // Bounds check: get string length and compare
+    let len_call = e.builder().ins().call(str_len_func, &[s]);
+    let len = e.builder().inst_results(len_call)[0];
+    let out_of_bounds = e.builder().ins().icmp(IntCC::UnsignedGreaterThanOrEqual, idx, len);
+    emit_panic_if(e, out_of_bounds, true);
+    let call = e.builder().ins().call(str_index_func, &[s, idx]);
     let result = e.builder().inst_results(call)[0];
     e.write_var(inst.a, result);
 }

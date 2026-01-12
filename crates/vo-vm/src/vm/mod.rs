@@ -380,14 +380,22 @@ impl Vm {
                 Opcode::DivI => {
                     let a = stack_get(stack, bp + inst.b as usize) as i64;
                     let b = stack_get(stack, bp + inst.c as usize) as i64;
-                    stack_set(stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
-                    ExecResult::Continue
+                    if b == 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, "runtime error: integer divide by zero".to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_div(b) as u64);
+                        ExecResult::Continue
+                    }
                 }
                 Opcode::ModI => {
                     let a = stack_get(stack, bp + inst.b as usize) as i64;
                     let b = stack_get(stack, bp + inst.c as usize) as i64;
-                    stack_set(stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
-                    ExecResult::Continue
+                    if b == 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, "runtime error: integer divide by zero".to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_rem(b) as u64);
+                        ExecResult::Continue
+                    }
                 }
                 Opcode::NegI => {
                     let a = stack_get(stack, bp + inst.b as usize) as i64;
@@ -538,7 +546,9 @@ impl Vm {
                     if b < 0 {
                         runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_NEGATIVE_SHIFT.to_string())
                     } else {
-                        stack_set(stack, bp + inst.a as usize, a.wrapping_shl(b as u32));
+                        // Go semantics: shift >= 64 returns 0
+                        let result = if b >= 64 { 0 } else { a.wrapping_shl(b as u32) };
+                        stack_set(stack, bp + inst.a as usize, result);
                         ExecResult::Continue
                     }
                 }
@@ -548,7 +558,9 @@ impl Vm {
                     if b < 0 {
                         runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_NEGATIVE_SHIFT.to_string())
                     } else {
-                        stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b as u32) as u64);
+                        // Go semantics: signed right shift >= 64 returns 0 (positive) or -1 (negative)
+                        let result = if b >= 64 { if a < 0 { -1i64 } else { 0i64 } } else { a.wrapping_shr(b as u32) };
+                        stack_set(stack, bp + inst.a as usize, result as u64);
                         ExecResult::Continue
                     }
                 }
@@ -558,7 +570,9 @@ impl Vm {
                     if b < 0 {
                         runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_NEGATIVE_SHIFT.to_string())
                     } else {
-                        stack_set(stack, bp + inst.a as usize, a.wrapping_shr(b as u32));
+                        // Go semantics: unsigned right shift >= 64 returns 0
+                        let result = if b >= 64 { 0 } else { a.wrapping_shr(b as u32) };
+                        stack_set(stack, bp + inst.a as usize, result);
                         ExecResult::Continue
                     }
                 }
@@ -686,9 +700,18 @@ impl Vm {
                 Opcode::StrIndex => {
                     let s = stack_get(stack, bp + inst.b as usize) as GcRef;
                     let idx = stack_get(stack, bp + inst.c as usize) as usize;
-                    let byte = string_index(s, idx);
-                    stack_set(stack, bp + inst.a as usize, byte as u64);
-                    ExecResult::Continue
+                    // Bounds check
+                    let len = if s.is_null() { 0 } else { string_len(s) };
+                    if idx >= len {
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: index out of range [{}] with length {}", idx, len)
+                        )
+                    } else {
+                        let byte = string_index(s, idx);
+                        stack_set(stack, bp + inst.a as usize, byte as u64);
+                        ExecResult::Continue
+                    }
                 }
                 Opcode::StrConcat => {
                     exec::exec_str_concat(stack, bp, &inst, &mut self.state.gc);
@@ -752,6 +775,14 @@ impl Vm {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
                     let arr = stack_get(stack, bp + inst.b as usize) as GcRef;
                     let idx = stack_get(stack, bp + inst.c as usize) as usize;
+                    // Bounds check
+                    let len = array::len(arr);
+                    if idx >= len {
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: index out of range [{}] with length {}", idx, len)
+                        )
+                    } else {
                     let dst = bp + inst.a as usize;
                     let off = idx as isize;
                     let base = array::data_ptr_bytes(arr);
@@ -784,11 +815,20 @@ impl Vm {
                     };
                     stack_set(stack, dst, val);
                     ExecResult::Continue
+                    }
                 }
                 Opcode::ArraySet => {
                     // flags: 0=dynamic, 1-8=direct, 0x81=int8, 0x82=int16, 0x84=int32, 0x44=float32
                     let arr = stack_get(stack, bp + inst.a as usize) as GcRef;
                     let idx = stack_get(stack, bp + inst.b as usize) as usize;
+                    // Bounds check
+                    let len = array::len(arr);
+                    if idx >= len {
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: index out of range [{}] with length {}", idx, len)
+                        )
+                    } else {
                     let src = bp + inst.c as usize;
                     let off = idx as isize;
                     let base = array::data_ptr_bytes(arr);
@@ -816,6 +856,7 @@ impl Vm {
                         }
                     }
                     ExecResult::Continue
+                    }
                 }
                 Opcode::ArrayAddr => {
                     // Get element address: a=dst, b=array_gcref, c=index, flags=elem_bytes
@@ -931,8 +972,16 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::SliceSlice => {
-                    exec::exec_slice_slice(stack, bp, &inst, &mut self.state.gc);
-                    ExecResult::Continue
+                    if exec::exec_slice_slice(stack, bp, &inst, &mut self.state.gc) {
+                        ExecResult::Continue
+                    } else {
+                        let lo = stack_get(stack, bp + inst.c as usize);
+                        let hi = stack_get(stack, bp + inst.c as usize + 1);
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: slice bounds out of range [{}:{}]", lo, hi)
+                        )
+                    }
                 }
                 Opcode::SliceAppend => {
                     exec::exec_slice_append(stack, bp, &inst, &mut self.state.gc);
@@ -1168,6 +1217,19 @@ impl Vm {
                     };
                     stack_set(stack, bp + inst.a as usize, result);
                     ExecResult::Continue
+                }
+
+                Opcode::IndexCheck => {
+                    let idx = stack_get(stack, bp + inst.a as usize) as usize;
+                    let len = stack_get(stack, bp + inst.b as usize) as usize;
+                    if idx >= len {
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module,
+                            format!("runtime error: index out of range [{}] with length {}", idx, len)
+                        )
+                    } else {
+                        ExecResult::Continue
+                    }
                 }
 
                 Opcode::Invalid => ExecResult::Panic,

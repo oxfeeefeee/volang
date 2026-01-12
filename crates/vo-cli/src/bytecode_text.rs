@@ -403,6 +403,8 @@ fn format_instruction(instr: &Instruction) -> String {
             format!("Trunc         r{}, r{}, {}", a, b, ty)
         }
 
+        Opcode::IndexCheck => format!("IndexCheck    r{}, r{}", a, b),
+
         Opcode::Invalid => format!("Invalid       op={}, flags={}, a={}, b={}, c={}", instr.op, flags, a, b, c),
     }
 }

@@ -188,6 +188,8 @@ pub fn compile_expr(
     let slot_types = info.type_slot_types(expr_type);
     let dst = func.alloc_temp_typed(&slot_types);
     compile_expr_to(expr, dst, ctx, func, info)?;
+    // Truncate narrow integer types to ensure Go semantics (operations in 64-bit, result in type width)
+    emit_int_trunc(dst, expr_type, func, info);
     Ok(dst)
 }
 
@@ -1067,3 +1069,30 @@ fn compile_deref(
     Ok(())
 }
 
+/// Emit truncation for narrow integer types (int8/16/32, uint8/16/32).
+/// This ensures Go semantics where operations are done in 64-bit but
+/// results are truncated to the target type width.
+/// 
+/// Safe to call on any type - non-narrow-integer types are no-ops.
+pub fn emit_int_trunc(
+    reg: u16,
+    type_key: vo_analysis::objects::TypeKey,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) {
+    if !info.is_int(type_key) {
+        return;
+    }
+    use vo_runtime::ValueKind;
+    let vk = info.type_value_kind(type_key);
+    // flags: high bit (0x80) = signed, low bits = byte width
+    match vk {
+        ValueKind::Int8 => func.emit_with_flags(Opcode::Trunc, 0x81, reg, reg, 0),
+        ValueKind::Int16 => func.emit_with_flags(Opcode::Trunc, 0x82, reg, reg, 0),
+        ValueKind::Int32 => func.emit_with_flags(Opcode::Trunc, 0x84, reg, reg, 0),
+        ValueKind::Uint8 => func.emit_with_flags(Opcode::Trunc, 0x01, reg, reg, 0),
+        ValueKind::Uint16 => func.emit_with_flags(Opcode::Trunc, 0x02, reg, reg, 0),
+        ValueKind::Uint32 => func.emit_with_flags(Opcode::Trunc, 0x04, reg, reg, 0),
+        _ => {} // No truncation needed for Int, Int64, Uint, Uint64, etc.
+    }
+}

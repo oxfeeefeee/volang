@@ -44,6 +44,26 @@ pub fn from_array_range(gc: &mut Gc, arr: GcRef, start_off: usize, length: usize
     s
 }
 
+/// Two-index array slice: arr[lo:hi].
+/// Returns None on bounds error (lo > hi or hi > arr_len).
+pub fn array_slice(gc: &mut Gc, arr: GcRef, lo: usize, hi: usize) -> Option<GcRef> {
+    let arr_len = array::len(arr);
+    if lo > hi || hi > arr_len {
+        return None;
+    }
+    Some(from_array_range(gc, arr, lo, hi - lo, hi - lo))
+}
+
+/// Three-index array slice: arr[lo:hi:max].
+/// Returns None on bounds error (lo > hi or hi > max or max > arr_len).
+pub fn array_slice_with_cap(gc: &mut Gc, arr: GcRef, lo: usize, hi: usize, max: usize) -> Option<GcRef> {
+    let arr_len = array::len(arr);
+    if lo > hi || hi > max || max > arr_len {
+        return None;
+    }
+    Some(from_array_range(gc, arr, lo, hi - lo, max - lo))
+}
+
 pub fn from_array(gc: &mut Gc, arr: GcRef) -> GcRef {
     let length = array::len(arr);
     from_array_range(gc, arr, 0, length, length)
@@ -159,32 +179,40 @@ pub fn set_n(s: GcRef, idx: usize, src: &[u64], elem_bytes: usize) {
     }
 }
 
-/// Two-index slice: s[new_start:new_end] - capacity extends to original cap
-pub fn slice_of(gc: &mut Gc, s: GcRef, new_start: usize, new_end: usize) -> GcRef {
+/// Two-index slice: s[lo:hi] - capacity extends to original cap.
+/// Returns None on bounds error (lo > hi or hi > cap).
+pub fn slice_of(gc: &mut Gc, s: GcRef, lo: usize, hi: usize) -> Option<GcRef> {
     let data = SliceData::as_ref(s);
+    if lo > hi || hi > data.cap {
+        return None;
+    }
     let elem_bytes = array::elem_bytes(data.array);
-    let new_data_ptr = unsafe { data.data_ptr.add(new_start * elem_bytes) };
+    let new_data_ptr = unsafe { data.data_ptr.add(lo * elem_bytes) };
     let new_s = gc.alloc(ValueMeta::new(0, ValueKind::Slice), DATA_SLOTS);
     let new_data = SliceData::as_mut(new_s);
     new_data.array = data.array;
     new_data.data_ptr = new_data_ptr;
-    new_data.len = new_end - new_start;
-    new_data.cap = data.cap - new_start;
-    new_s
+    new_data.len = hi - lo;
+    new_data.cap = data.cap - lo;
+    Some(new_s)
 }
 
-/// Three-index slice: s[new_start:new_end:max] - capacity = max - new_start
-pub fn slice_of_with_cap(gc: &mut Gc, s: GcRef, new_start: usize, new_end: usize, max: usize) -> GcRef {
+/// Three-index slice: s[lo:hi:max] - capacity = max - lo.
+/// Returns None on bounds error (lo > hi or hi > max or max > cap).
+pub fn slice_of_with_cap(gc: &mut Gc, s: GcRef, lo: usize, hi: usize, max: usize) -> Option<GcRef> {
     let data = SliceData::as_ref(s);
+    if lo > hi || hi > max || max > data.cap {
+        return None;
+    }
     let elem_bytes = array::elem_bytes(data.array);
-    let new_data_ptr = unsafe { data.data_ptr.add(new_start * elem_bytes) };
+    let new_data_ptr = unsafe { data.data_ptr.add(lo * elem_bytes) };
     let new_s = gc.alloc(ValueMeta::new(0, ValueKind::Slice), DATA_SLOTS);
     let new_data = SliceData::as_mut(new_s);
     new_data.array = data.array;
     new_data.data_ptr = new_data_ptr;
-    new_data.len = new_end - new_start;
-    new_data.cap = max - new_start;
-    new_s
+    new_data.len = hi - lo;
+    new_data.cap = max - lo;
+    Some(new_s)
 }
 
 /// Create new slice header with updated length (same backing array, same start).

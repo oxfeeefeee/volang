@@ -1,4 +1,4 @@
-// Test: shift amounts >= type bit width
+// Test: shift amounts >= type bit width (Go semantics)
 // Go spec: shifts by amount >= type width are well-defined (result is 0 or sign-extended)
 package main
 

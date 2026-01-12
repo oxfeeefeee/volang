@@ -258,12 +258,16 @@ pub enum Opcode {
     /// High bit (0x80) = signed (sign-extend), low bits = byte width
     Trunc,
 
+    /// Index bounds check: panic if a >= b (unsigned comparison)
+    /// a = index_reg, b = len_reg
+    IndexCheck,
+
     // Sentinel for invalid/unknown opcodes
     Invalid = 255,
 }
 
 impl Opcode {
-    const MAX_VALID: u8 = Self::Trunc as u8;
+    const MAX_VALID: u8 = Self::IndexCheck as u8;
 
     #[inline]
     pub fn from_u8(v: u8) -> Self {

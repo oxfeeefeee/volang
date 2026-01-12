@@ -61,8 +61,19 @@ func main() {
     assert(i64 % 7 == -2, "int64: -100 % 7 = -2")
     
     println("Test 8: Min int division edge case")
+    // In Go: MIN_INT / -1 overflows and wraps back to MIN_INT
     var minInt8 int8 = -128
-    assert(minInt8 / -1 == -128, "int8: -128 / -1 overflows to -128")
+    result8 := minInt8 / -1
+    assert(result8 == -128, "int8: -128 / -1 should overflow to -128")
+    
+    var minInt64 int64 = -9223372036854775808
+    result64 := minInt64 / -1
+    assert(result64 == -9223372036854775808, "int64: MIN / -1 should overflow to MIN")
+    
+    println("Test 9: Division with large values")
+    var large int64 = 9223372036854775807  // max int64
+    assert(large / 2 == 4611686018427387903, "int64 max / 2")
+    assert(large / large == 1, "x / x == 1")
     
     println("integer_div_mod_edge: ALL PASSED")
 }

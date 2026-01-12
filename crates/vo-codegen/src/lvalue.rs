@@ -20,7 +20,7 @@ use crate::type_info::TypeInfoWrapper;
 #[derive(Debug, Clone, Copy)]
 pub enum ContainerKind {
     /// Stack-allocated array: base_slot + index * elem_slots
-    StackArray { base_slot: u16, elem_slots: u16 },
+    StackArray { base_slot: u16, elem_slots: u16, len: u16 },
     /// Heap-allocated array: ArrayGet/ArraySet with elem_bytes and elem_vk
     HeapArray { elem_bytes: u16, elem_vk: vo_common_core::ValueKind },
     /// Slice: SliceGet/SliceSet with elem_bytes and elem_vk
@@ -263,10 +263,10 @@ pub fn resolve_lvalue(
                 // Check if stack or heap array using StorageKind
                 let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
                 match container_source {
-                    crate::func::ExprSource::Location(StorageKind::StackArray { base_slot, elem_slots: es, .. }) => {
+                    crate::func::ExprSource::Location(StorageKind::StackArray { base_slot, elem_slots: es, len }) => {
                         // Stack array: memory semantics via SlotGet/SlotSet
                         Ok(LValue::Index {
-                            kind: ContainerKind::StackArray { base_slot, elem_slots: es },
+                            kind: ContainerKind::StackArray { base_slot, elem_slots: es, len },
                             container_reg: base_slot,
                             index_reg,
                         })
@@ -292,8 +292,9 @@ pub fn resolve_lvalue(
                     crate::func::ExprSource::Location(StorageKind::StackValue { slot: base_slot, .. }) => {
                         // Array stored as StackValue (e.g., struct field)
                         let elem_slots = info.type_slot_count(elem_type);
+                        let len = info.array_len(container_type) as u16;
                         Ok(LValue::Index {
-                            kind: ContainerKind::StackArray { base_slot, elem_slots },
+                            kind: ContainerKind::StackArray { base_slot, elem_slots, len },
                             container_reg: base_slot,
                             index_reg,
                         })
@@ -473,7 +474,11 @@ pub fn emit_lvalue_load(
         
         LValue::Index { kind, container_reg, index_reg } => {
             match kind {
-                ContainerKind::StackArray { base_slot, elem_slots } => {
+                ContainerKind::StackArray { base_slot, elem_slots, len } => {
+                    // Bounds check: emit IndexCheck before SlotGet
+                    let len_reg = func.alloc_temp_typed(&[SlotType::Value]);
+                    func.emit_op(Opcode::LoadInt, len_reg, *len, 0);
+                    func.emit_op(Opcode::IndexCheck, *index_reg, len_reg, 0);
                     func.emit_slot_get(dst, *base_slot, *index_reg, *elem_slots);
                 }
                 ContainerKind::HeapArray { elem_bytes, elem_vk } => {
@@ -557,7 +562,11 @@ pub fn emit_lvalue_store(
         
         LValue::Index { kind, container_reg, index_reg } => {
             match kind {
-                ContainerKind::StackArray { base_slot, elem_slots } => {
+                ContainerKind::StackArray { base_slot, elem_slots, len } => {
+                    // Bounds check: emit IndexCheck before SlotSet
+                    let len_reg = func.alloc_temp_typed(&[SlotType::Value]);
+                    func.emit_op(Opcode::LoadInt, len_reg, *len, 0);
+                    func.emit_op(Opcode::IndexCheck, *index_reg, len_reg, 0);
                     func.emit_slot_set(*base_slot, *index_reg, src, *elem_slots);
                 }
                 ContainerKind::HeapArray { elem_bytes, elem_vk } => {

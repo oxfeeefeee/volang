@@ -8,7 +8,7 @@ use vo_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
-use crate::expr::{compile_expr_to, get_expr_source};
+use crate::expr::{compile_expr_to, emit_int_trunc, get_expr_source};
 use crate::func::{ExprSource, FuncBuilder, StorageKind};
 use crate::type_info::{encode_i32, TypeInfoWrapper};
 
@@ -332,7 +332,10 @@ pub fn compile_value_to(
     if info.is_interface(target_type) {
         compile_iface_assign(dst, expr, target_type, ctx, func, info)
     } else {
-        compile_expr_to(expr, dst, ctx, func, info)
+        compile_expr_to(expr, dst, ctx, func, info)?;
+        // Apply truncation for narrow integer types (Go semantics)
+        emit_int_trunc(dst, target_type, func, info);
+        Ok(())
     }
 }
 // Helper functions
@@ -504,6 +507,9 @@ fn compile_stmt_with_label(
                         continue;
                     }
 
+                    // Apply truncation for narrow integer types (Go semantics)
+                    emit_int_trunc(tmp_base + offset, elem_type, sc.func, info);
+
                     if info.is_def(name) {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
@@ -531,6 +537,8 @@ fn compile_stmt_with_label(
                         let slot_types = info.type_slot_types(type_key);
                         let tmp = func.alloc_temp_typed(&slot_types);
                         compile_expr_to(expr, tmp, ctx, func, info)?;
+                        // Apply truncation for narrow integer types (Go semantics)
+                        emit_int_trunc(tmp, type_key, func, info);
                         rhs_temps.push(Some((tmp, type_key)));
                     }
                 }
@@ -755,6 +763,9 @@ fn compile_stmt_with_label(
                         }
                     }
                     
+                    // Apply truncation for narrow integer types (Go semantics)
+                    emit_int_trunc(tmp_base + offset, elem_type, func, info);
+                    
                     // Get lhs location and copy from temp
                     let lhs_source = crate::expr::get_expr_source(lhs_expr, ctx, func, info);
                     if let ExprSource::Location(storage) = lhs_source {
@@ -789,6 +800,8 @@ fn compile_stmt_with_label(
                     }
                     
                     let lhs_type = info.expr_type(lhs.id);
+                    // Apply truncation for narrow integer types (Go semantics)
+                    emit_int_trunc(*tmp, lhs_type, func, info);
                     let lv = resolve_lvalue(lhs, ctx, func, info)?;
                     let slot_types = info.type_slot_types(lhs_type);
                     emit_lvalue_store(&lv, *tmp, ctx, func, &slot_types);
@@ -2167,6 +2180,10 @@ fn compile_assign(
     let slot_types = info.type_slot_types(lhs_type);
     let tmp = func.alloc_temp_typed(&slot_types);
     compile_expr_to(rhs, tmp, ctx, func, info)?;
+    
+    // Apply truncation for narrow integer types (Go semantics)
+    emit_int_trunc(tmp, lhs_type, func, info);
+    
     emit_lvalue_store(&lv, tmp, ctx, func, &slot_types);
     
     Ok(())
@@ -2241,6 +2258,8 @@ fn compile_compound_assign(
     // Fast path: single-slot stack variable - operate directly, no load/store needed
     if let LValue::Variable(StorageKind::StackValue { slot, slots: 1 }) = &lv {
         func.emit_op(opcode, *slot, *slot, rhs_reg);
+        // Apply truncation for narrow integer types (Go semantics)
+        emit_int_trunc(*slot, lhs_type, func, info);
         return Ok(());
     }
     
@@ -2250,6 +2269,8 @@ fn compile_compound_assign(
     let tmp = func.alloc_temp_typed(&[slot_type]);
     emit_lvalue_load(&lv, tmp, ctx, func);
     func.emit_op(opcode, tmp, tmp, rhs_reg);
+    // Apply truncation for narrow integer types (Go semantics)
+    emit_int_trunc(tmp, lhs_type, func, info);
     emit_lvalue_store(&lv, tmp, ctx, func, &[slot_type]);
     
     Ok(())

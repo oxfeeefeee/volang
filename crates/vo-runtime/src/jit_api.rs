@@ -785,22 +785,30 @@ pub extern "C" fn vo_slice_set(s: u64, idx: u64, val: u64, elem_bytes: u64) {
 }
 
 /// Create a sub-slice (two-index: s[lo:hi]).
+/// Returns u64::MAX on bounds error.
 #[no_mangle]
 pub extern "C" fn vo_slice_slice(gc: *mut Gc, s: u64, lo: u64, hi: u64) -> u64 {
     use crate::objects::slice;
     unsafe {
         let gc = &mut *gc;
-        slice::slice_of(gc, s as crate::gc::GcRef, lo as usize, hi as usize) as u64
+        match slice::slice_of(gc, s as crate::gc::GcRef, lo as usize, hi as usize) {
+            Some(r) => r as u64,
+            None => u64::MAX,
+        }
     }
 }
 
 /// Create a sub-slice with cap (three-index: s[lo:hi:max]).
+/// Returns u64::MAX on bounds error.
 #[no_mangle]
 pub extern "C" fn vo_slice_slice3(gc: *mut Gc, s: u64, lo: u64, hi: u64, max: u64) -> u64 {
     use crate::objects::slice;
     unsafe {
         let gc = &mut *gc;
-        slice::slice_of_with_cap(gc, s as crate::gc::GcRef, lo as usize, hi as usize, max as usize) as u64
+        match slice::slice_of_with_cap(gc, s as crate::gc::GcRef, lo as usize, hi as usize, max as usize) {
+            Some(r) => r as u64,
+            None => u64::MAX,
+        }
     }
 }
 
@@ -820,25 +828,30 @@ pub extern "C" fn vo_slice_append(gc: *mut Gc, elem_meta: u32, elem_bytes: u32, 
 }
 
 /// Create slice from array range (arr[lo:hi]).
+/// Returns u64::MAX on bounds error.
 #[no_mangle]
 pub extern "C" fn vo_slice_from_array(gc: *mut Gc, arr: u64, lo: u64, hi: u64) -> u64 {
     use crate::objects::slice;
     unsafe {
         let gc = &mut *gc;
-        let len = (hi - lo) as usize;
-        slice::from_array_range(gc, arr as crate::gc::GcRef, lo as usize, len, len) as u64
+        match slice::array_slice(gc, arr as crate::gc::GcRef, lo as usize, hi as usize) {
+            Some(r) => r as u64,
+            None => u64::MAX,
+        }
     }
 }
 
 /// Create slice from array range with cap (arr[lo:hi:max]).
+/// Returns u64::MAX on bounds error.
 #[no_mangle]
 pub extern "C" fn vo_slice_from_array3(gc: *mut Gc, arr: u64, lo: u64, hi: u64, max: u64) -> u64 {
     use crate::objects::slice;
     unsafe {
         let gc = &mut *gc;
-        let len = (hi - lo) as usize;
-        let cap = (max - lo) as usize;
-        slice::from_array_range(gc, arr as crate::gc::GcRef, lo as usize, len, cap) as u64
+        match slice::array_slice_with_cap(gc, arr as crate::gc::GcRef, lo as usize, hi as usize, max as usize) {
+            Some(r) => r as u64,
+            None => u64::MAX,
+        }
     }
 }
 

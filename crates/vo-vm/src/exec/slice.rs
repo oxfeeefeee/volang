@@ -26,8 +26,9 @@ pub fn exec_slice_new(stack: &mut [u64], bp: usize, inst: &Instruction, gc: &mut
 
 /// SliceSlice: a[lo:hi] or a[lo:hi:max]
 /// flags: bit0 = input is array, bit1 = has max (three-index slice)
+/// Returns false on bounds error.
 #[inline]
-pub fn exec_slice_slice(stack: &mut [u64], bp: usize, inst: &Instruction, gc: &mut Gc) {
+pub fn exec_slice_slice(stack: &mut [u64], bp: usize, inst: &Instruction, gc: &mut Gc) -> bool {
     let s = stack[bp + inst.b as usize] as GcRef;
     let lo = stack[bp + inst.c as usize] as usize;
     let hi = stack[bp + inst.c as usize + 1] as usize;
@@ -38,19 +39,17 @@ pub fn exec_slice_slice(stack: &mut [u64], bp: usize, inst: &Instruction, gc: &m
     // nil slice slicing returns nil (Go semantics: nil[0:0] == nil)
     if s.is_null() && !is_array {
         stack[bp + inst.a as usize] = 0;
-        return;
+        return true;
     }
     
     let result = if is_array {
-        // Input is array: create slice from array range
-        let cap = if has_max {
-            stack[bp + inst.c as usize + 2] as usize - lo
+        if has_max {
+            let max = stack[bp + inst.c as usize + 2] as usize;
+            slice::array_slice_with_cap(gc, s, lo, hi, max)
         } else {
-            hi - lo
-        };
-        slice::from_array_range(gc, s, lo, hi - lo, cap)
+            slice::array_slice(gc, s, lo, hi)
+        }
     } else {
-        // Input is slice
         if has_max {
             let max = stack[bp + inst.c as usize + 2] as usize;
             slice::slice_of_with_cap(gc, s, lo, hi, max)
@@ -58,7 +57,14 @@ pub fn exec_slice_slice(stack: &mut [u64], bp: usize, inst: &Instruction, gc: &m
             slice::slice_of(gc, s, lo, hi)
         }
     };
-    stack[bp + inst.a as usize] = result as u64;
+    
+    match result {
+        Some(r) => {
+            stack[bp + inst.a as usize] = r as u64;
+            true
+        }
+        None => false,
+    }
 }
 
 #[inline]
