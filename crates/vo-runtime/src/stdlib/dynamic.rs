@@ -167,6 +167,7 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     
     // For Pointer types, dereference to access struct fields (Go auto-dereference)
     // slot1 is the pointer value (GcRef to struct data)
+    // For non-struct types (named basic types like `type MyInt int`), try method lookup directly
     let (effective_rttid, data_ref) = if vk == ValueKind::Pointer {
         // Get pointed-to type's rttid
         let elem_value_rttid = call.get_elem_value_rttid_from_base(rttid);
@@ -174,7 +175,17 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     } else if vk == ValueKind::Struct {
         (rttid, slot1 as GcRef)
     } else {
-        return dyn_error(call, call.dyn_err().type_mismatch, &format!("cannot access field on type {:?}", vk));
+        // Non-struct, non-pointer type - check if it's a Named type (has methods)
+        // Named types like `type MyInt int` should try method lookup
+        // Plain types like `int` should return type mismatch error
+        if call.get_named_type_id_from_rttid(rttid, false).is_some() {
+            // Named basic type - try method lookup
+            // slot1 contains the value itself (not a GcRef)
+            return try_get_method(call, rttid, slot1, field_name);
+        } else {
+            // Plain type without methods
+            return dyn_error(call, call.dyn_err().type_mismatch, &format!("cannot access field on type {:?}", vk));
+        }
     };
     
     // For Named struct types, rttid points to runtime_types which contains Named(id)

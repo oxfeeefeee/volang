@@ -2318,6 +2318,30 @@ fn compile_compound_assign(
     Ok(())
 }
 
+/// Compute const_idx for IfaceAssign instruction.
+/// Handles concrete types (including Named types) correctly.
+fn compute_iface_assign_const(
+    src_type: vo_analysis::objects::TypeKey,
+    src_vk: vo_runtime::ValueKind,
+    iface_meta_id: u32,
+    ctx: &mut CodegenContext,
+    info: &TypeInfoWrapper,
+) -> u16 {
+    if src_vk == vo_runtime::ValueKind::Interface {
+        ctx.register_iface_assign_const_interface(iface_meta_id)
+    } else if src_vk == vo_runtime::ValueKind::Void {
+        ctx.const_int(0)
+    } else {
+        let rttid = ctx.intern_type_key(src_type, info);
+        let base_type = if info.is_pointer(src_type) {
+            info.pointer_base(src_type)
+        } else {
+            src_type
+        };
+        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id, info.tc_objs())
+    }
+}
+
 /// Compile interface assignment: dst = src where dst is interface type
 /// Handles both concrete->interface and interface->interface
 /// Used for both assignment statements and function call arguments
@@ -2341,25 +2365,7 @@ pub fn compile_iface_assign(
     }
     
     let iface_meta_id = info.get_or_create_interface_meta_id(iface_type, ctx);
-    
-    let const_idx = if src_vk == vo_runtime::ValueKind::Interface {
-        ctx.register_iface_assign_const_interface(iface_meta_id)
-    } else if src_vk == vo_runtime::ValueKind::Void {
-        // nil interface: rttid=0, itab_id=0, so packed=0
-        ctx.const_int(0)
-    } else {
-        // Use RuntimeType for structural equality in rttid lookup
-        let rt = info.type_to_runtime_type(src_type, ctx);
-        let rttid = ctx.intern_rttid(rt);
-        // For pointer types, get the base type (methods are on the base type)
-        let base_type = if info.is_pointer(src_type) {
-            info.pointer_base(src_type)
-        } else {
-            src_type
-        };
-        // Pass type_key for lookup_field_or_method during itab building
-        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id, info.tc_objs())
-    };
+    let const_idx = compute_iface_assign_const(src_type, src_vk, iface_meta_id, ctx, info);
     
     if src_vk.needs_boxing() {
         // IfaceAssign does ptr_clone internally for Struct/Array, so we just need to
@@ -2458,19 +2464,7 @@ pub fn emit_iface_assign_from_concrete(
 ) -> Result<(), CodegenError> {
     let src_vk = info.type_value_kind(src_type);
     let iface_meta_id = info.get_or_create_interface_meta_id(iface_type, ctx);
-    
-    let const_idx = if src_vk == vo_runtime::ValueKind::Void {
-        ctx.const_int(0)
-    } else {
-        let rt = info.type_to_runtime_type(src_type, ctx);
-        let rttid = ctx.intern_rttid(rt);
-        let base_type = if info.is_pointer(src_type) {
-            info.pointer_base(src_type)
-        } else {
-            src_type
-        };
-        ctx.register_iface_assign_const_concrete(rttid, Some(base_type), iface_meta_id, info.tc_objs())
-    };
+    let const_idx = compute_iface_assign_const(src_type, src_vk, iface_meta_id, ctx, info);
     
     if src_vk.needs_boxing() {
         // Struct/Array: allocate box and copy data

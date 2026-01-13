@@ -441,12 +441,8 @@ tests:
 # Bug #2: Array dynamic index - FIXED
   - file: dyn/dyn_array_index.vo
 
-# Bug #3: Named type dynamic method call fails
-# Error: "cannot access field on type Int"
-# Named types lose their type identity when boxed to any
+# Bug #3: Named type dynamic method call - FIXED
   - file: dyn/dyn_named_type_method.vo
-    skip: [vm, jit]
-    reason: "BUG: Named type methods not accessible via dynamic dispatch"
 
 # Bug #4: Variadic dynamic call fails
 # Error: "parameter count mismatch: expected 3, got 1"
