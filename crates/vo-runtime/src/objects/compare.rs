@@ -289,9 +289,11 @@ pub fn iface_hash(slot0: u64, slot1: u64, module: &Module) -> u64 {
                 let arr = slot1 as GcRef;
                 let len = array::len(arr);
                 let elem_bytes = array::elem_bytes(arr);
-                let elem_slots = (elem_bytes / 8).max(1);
-                let data = unsafe { arr.add(array::HEADER_SLOTS) };
-                for i in 0..(len * elem_slots) {
+                // Hash by raw data slots (handles both packed and slot-aligned arrays)
+                let total_bytes = len * elem_bytes;
+                let total_slots = (total_bytes + 7) / 8;
+                let data = array::data_ptr_bytes(arr) as *const u64;
+                for i in 0..total_slots {
                     let val = unsafe { *data.add(i) };
                     h = h.wrapping_add(val).wrapping_mul(HASH_K);
                 }
@@ -317,8 +319,27 @@ pub fn deep_eq_array(a: GcRef, b: GcRef, rttid: u32, module: &Module) -> bool {
     let len = a_len;
     let elem_vk = array::elem_kind(a);
     let elem_bytes = array::elem_bytes(a);
-    let elem_slots = (elem_bytes / 8).max(1);
     
+    // For reference types (string, struct, array, etc.), elements are slot-aligned
+    // For primitives, compare raw bytes
+    let needs_deep_compare = matches!(
+        elem_vk,
+        ValueKind::String | ValueKind::Struct | ValueKind::Array
+    );
+    
+    if !needs_deep_compare {
+        // Primitives: compare raw data bytes
+        let total_bytes = len * elem_bytes;
+        let a_ptr = array::data_ptr_bytes(a);
+        let b_ptr = array::data_ptr_bytes(b);
+        return unsafe {
+            core::slice::from_raw_parts(a_ptr, total_bytes)
+                == core::slice::from_raw_parts(b_ptr, total_bytes)
+        };
+    }
+    
+    // Reference types: need element-by-element deep comparison
+    let elem_slots = elem_bytes / 8;
     let elem_rttid = match module.runtime_types.get(rttid as usize) {
         Some(RuntimeType::Array { elem, .. }) => elem.rttid(),
         Some(RuntimeType::Named { id, .. }) => {
@@ -335,8 +356,8 @@ pub fn deep_eq_array(a: GcRef, b: GcRef, rttid: u32, module: &Module) -> bool {
         _ => 0,
     };
     
-    let a_data = unsafe { a.add(array::HEADER_SLOTS) };
-    let b_data = unsafe { b.add(array::HEADER_SLOTS) };
+    let a_data = array::data_ptr_bytes(a) as *const u64;
+    let b_data = array::data_ptr_bytes(b) as *const u64;
     
     for i in 0..len {
         let offset = i * elem_slots;
@@ -353,12 +374,7 @@ pub fn deep_eq_array(a: GcRef, b: GcRef, rttid: u32, module: &Module) -> bool {
             ValueKind::Array => try_shallow_eq(a_val, b_val).unwrap_or_else(|| {
                 deep_eq_array(a_val as GcRef, b_val as GcRef, elem_rttid, module)
             }),
-            _ => {
-                // Multi-slot primitive comparison
-                (0..elem_slots).all(|j| unsafe {
-                    *a_data.add(offset + j) == *b_data.add(offset + j)
-                })
-            }
+            _ => unreachable!(),
         };
         if !eq {
             return false;
