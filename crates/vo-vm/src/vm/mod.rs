@@ -694,6 +694,7 @@ impl Vm {
                         &module.well_known,
                         &mut self.state.itab_cache,
                         &module.functions,
+                        module,
                         vm_ptr,
                         fiber_ptr,
                         Some(jit_glue::closure_call_trampoline),

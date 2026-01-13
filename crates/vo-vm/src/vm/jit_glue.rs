@@ -71,6 +71,7 @@ pub extern "C" fn call_extern_trampoline(
         &module.well_known,
         itab_cache,
         &module.functions,
+        module,
         ctx.vm,
         ctx.fiber,
         Some(closure_call_trampoline),

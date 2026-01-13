@@ -12,6 +12,7 @@ use crate::vm::ExecResult;
 pub use vo_runtime::ffi::ExternRegistry;
 use vo_runtime::ffi::ExternResult;
 use vo_runtime::gc::Gc;
+use vo_common_core::bytecode::Module;
 
 pub fn exec_call_extern(
     stack: &mut Vec<u64>,
@@ -27,6 +28,7 @@ pub fn exec_call_extern(
     well_known: &vo_common_core::bytecode::WellKnownTypes,
     itab_cache: &mut vo_runtime::itab::ItabCache,
     func_defs: &[vo_common_core::bytecode::FunctionDef],
+    module: &Module,
     vm: *mut std::ffi::c_void,
     fiber: *mut std::ffi::c_void,
     call_closure_fn: Option<vo_runtime::ffi::ClosureCallFn>,
@@ -60,6 +62,7 @@ pub fn exec_call_extern(
         well_known,
         itab_cache,
         func_defs,
+        module,
         vm,
         fiber,
         call_closure_fn,

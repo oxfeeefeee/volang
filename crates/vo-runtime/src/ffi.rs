@@ -25,7 +25,7 @@ use linkme::distributed_slice;
 
 use crate::gc::{Gc, GcRef};
 use crate::objects::{string, slice};
-use vo_common_core::bytecode::{DynErrorCodes, InterfaceMeta, NamedTypeMeta, StructMeta, WellKnownTypes};
+use vo_common_core::bytecode::{DynErrorCodes, InterfaceMeta, Module, NamedTypeMeta, StructMeta, WellKnownTypes};
 use vo_common_core::runtime_type::RuntimeType;
 use vo_common_core::types::{ValueKind, ValueMeta, ValueRttid};
 use crate::itab::ItabCache;
@@ -253,6 +253,8 @@ pub struct ExternCallContext<'a> {
     itab_cache: &'a mut ItabCache,
     /// Function definitions for closure calls.
     func_defs: &'a [vo_common_core::bytecode::FunctionDef],
+    /// Module reference for deep comparison operations.
+    module: &'a Module,
     /// Opaque pointer to VM instance (for closure calls).
     vm: *mut std::ffi::c_void,
     /// Opaque pointer to current Fiber (for closure calls).
@@ -278,6 +280,7 @@ impl<'a> ExternCallContext<'a> {
         well_known: &'a WellKnownTypes,
         itab_cache: &'a mut ItabCache,
         func_defs: &'a [vo_common_core::bytecode::FunctionDef],
+        module: &'a Module,
         vm: *mut std::ffi::c_void,
         fiber: *mut std::ffi::c_void,
         call_closure_fn: Option<ClosureCallFn>,
@@ -292,6 +295,7 @@ impl<'a> ExternCallContext<'a> {
             well_known,
             itab_cache,
             func_defs,
+            module,
             vm,
             fiber,
             call_closure_fn,
@@ -433,6 +437,12 @@ impl<'a> ExternCallContext<'a> {
     #[inline]
     pub fn gc(&mut self) -> &mut Gc {
         self.gc
+    }
+
+    /// Get module reference.
+    #[inline]
+    pub fn module(&self) -> &'a Module {
+        self.module
     }
 
     // ==================== Slot info (delegated) ====================
@@ -1003,6 +1013,7 @@ impl ExternRegistry {
         well_known: &WellKnownTypes,
         itab_cache: &mut ItabCache,
         func_defs: &[vo_common_core::bytecode::FunctionDef],
+        module: &Module,
         vm: *mut std::ffi::c_void,
         fiber: *mut std::ffi::c_void,
         call_closure_fn: Option<ClosureCallFn>,
@@ -1027,6 +1038,7 @@ impl ExternRegistry {
                     well_known,
                     itab_cache,
                     func_defs,
+                    module,
                     vm,
                     fiber,
                     call_closure_fn,

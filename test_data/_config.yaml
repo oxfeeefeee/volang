@@ -494,8 +494,3 @@ tests:
 # Test: Anonymous struct dynamic access
   - file: dyn/dyn_anon_struct.vo
 
-# Bug #2: map[any]any dynamic index key type check too strict
-  - file: dyn/dyn_map_any_key.vo
-    skip: [vm, jit]
-    reason: "Bug: map[any]any index with string key fails - expects Interface, got String"
-

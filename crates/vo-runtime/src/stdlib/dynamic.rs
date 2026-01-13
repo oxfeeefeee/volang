@@ -116,20 +116,29 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         
         let map_key_vk = map::key_kind(base_ref);
         
-        if map_key_vk != ValueKind::String {
+        // Only allow field access on string-keyed or any-keyed maps
+        if map_key_vk != ValueKind::String && map_key_vk != ValueKind::Interface {
             return dyn_error(call, call.dyn_err().type_mismatch, 
                 &format!("cannot use field access on map with non-string key type {:?}", map_key_vk));
         }
         
         // Allocate string for field_name as key
         let key_ref = call.alloc_str(field_name);
-        let key_data = [key_ref as u64];
         
         let val_meta = map::val_meta(base_ref);
         let val_vk = val_meta.value_kind();
         let val_value_rttid = call.get_elem_value_rttid_from_base(rttid);
         
-        let found = map::get(base_ref, &key_data, None);
+        // For map[any]T, keys are stored as 2-slot interface values
+        let found = if map_key_vk == ValueKind::Interface {
+            // Box string key to interface format
+            let key_slot0 = interface::pack_slot0(0, ValueKind::String as u32, ValueKind::String);
+            let key_data = [key_slot0, key_ref as u64];
+            map::get(base_ref, &key_data, Some(call.module()))
+        } else {
+            let key_data = [key_ref as u64];
+            map::get(base_ref, &key_data, Some(call.module()))
+        };
         
         // For map[string]any (val_vk == Interface), the value is already boxed
         // Just return it directly without re-boxing
@@ -453,6 +462,8 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             
             let key_compatible = match (map_key_vk, key_vk) {
                 (a, b) if a == b => true,
+                // map[any]T accepts any key type
+                (ValueKind::Interface, _) => true,
                 (ValueKind::Int, k) | (k, ValueKind::Int) => is_integer_value_kind(k),
                 _ => false,
             };
@@ -464,10 +475,16 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
             let val_vk = val_meta.value_kind();
             let val_value_rttid = call.get_elem_value_rttid_from_base(base_rttid);
             
-            let key_data = [key_slot1];
-            let found = crate::objects::map::get(base_ref, &key_data, None);
+            // For map[any]T, keys are stored as 2-slot interface values
+            let found = if map_key_vk == ValueKind::Interface {
+                let key_data = [key_slot0, key_slot1];
+                crate::objects::map::get(base_ref, &key_data, Some(call.module()))
+            } else {
+                let key_data = [key_slot1];
+                crate::objects::map::get(base_ref, &key_data, Some(call.module()))
+            };
             
-            // Get raw slots from map value (or zeros if not found)
+            // Get raw slots from map value (or zeros if not found - Go semantics)
             let raw_slots: Vec<u64> = if let Some(val_slice) = found {
                 val_slice.to_vec()
             } else {
@@ -789,6 +806,8 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
             // can have the same ValueKind but different layouts.
             let key_compatible = match (map_key_vk, key_vk) {
                 (a, b) if a == b => true,
+                // map[any]T accepts any key type
+                (ValueKind::Interface, _) => true,
                 (ValueKind::Int, k) | (k, ValueKind::Int) => is_integer_value_kind(k),
                 _ => false,
             };
@@ -803,6 +822,11 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
 
             let mut key_buf: Vec<u64> = Vec::new();
             match map_key_vk {
+                // For map[any]T, keys are stored as 2-slot interface values
+                ValueKind::Interface => {
+                    key_buf.push(key_slot0);
+                    key_buf.push(key_slot1);
+                }
                 // For Struct/Array keys, we need full rttid validation (see design note above)
                 ValueKind::Struct | ValueKind::Array => {
                     let expected_key_vr = match call.runtime_types().get(base_rttid as usize) {
@@ -872,7 +896,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                 }
             }
 
-            map::set(base_ref, &key_buf, &val_buf, None);
+            map::set(base_ref, &key_buf, &val_buf, Some(call.module()));
             call.ret_nil(0);
             call.ret_nil(1);
             ExternResult::Ok
