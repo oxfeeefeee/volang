@@ -431,3 +431,46 @@ tests:
 # Test: nested recover call should not affect outer defer recover (Go semantics)
   - file: bug_recover_nested_call.vo
 
+# ============================================================
+# Dyn coverage tests (2026-01-13) - BUG discoveries
+# ============================================================
+
+# Bug #1: DynCall protocol method not implemented
+# Error: "cannot call non-function type Pointer"
+# Direct call syntax obj~>(args) doesn't check for DynCall protocol method
+  - file: dyn/dyn_call_direct.vo
+    skip: [vm, jit]
+    reason: "BUG: DynCall protocol method not dispatched for direct call obj~>(args)"
+
+# Bug #2: Array dynamic index not supported
+# Error: "cannot index type Array"
+# Fixed-size arrays boxed to any cannot be indexed dynamically
+  - file: dyn/dyn_array_index.vo
+    skip: [vm, jit]
+    reason: "BUG: Fixed-size array dynamic indexing not implemented"
+
+# Bug #3: Named type dynamic method call fails
+# Error: "cannot access field on type Int"
+# Named types lose their type identity when boxed to any
+  - file: dyn/dyn_named_type_method.vo
+    skip: [vm, jit]
+    reason: "BUG: Named type methods not accessible via dynamic dispatch"
+
+# Bug #4: Variadic dynamic call fails
+# Error: "parameter count mismatch: expected 3, got 1"
+# Variadic parameters not correctly handled in dyn_call signature check
+  - file: dyn/dyn_variadic_call.vo
+    skip: [vm, jit]
+    reason: "BUG: Variadic function parameters not handled in dynamic call"
+
+# Bug #5: Deep chained assignment panic
+# Silent panic on deep map write: obj~>[a]~>[b]~>[c] = x
+  - file: dyn/dyn_deep_chained_assign.vo
+    skip: [vm, jit]
+    reason: "BUG: Deep chained assignment panics on map write"
+
+# Error types test - partially works but fails on signature mismatch test
+  - file: dyn/dyn_error_types.vo
+    skip: [vm, jit]
+    reason: "BUG: Test fails at signature mismatch checks (depends on bug #4)"
+
