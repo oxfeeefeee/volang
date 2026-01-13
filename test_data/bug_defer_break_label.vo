@@ -1,0 +1,25 @@
+// Bug: defer registered inside loop does not execute after break label
+// Expected: defer should execute when function returns
+// Actual: defer is not executed
+package main
+
+func main() {
+    result := testBreakLabel()
+    assert(result == "defer:outer", "defer should execute after break label")
+    println("bug_defer_break_label: PASSED")
+}
+
+func testBreakLabel() string {
+    result := ""
+outer:
+    for i := 0; i < 3; i += 1 {
+        defer func() { result = "defer:" + result }()
+        for j := 0; j < 3; j += 1 {
+            if j == 1 {
+                result = "outer"
+                break outer
+            }
+        }
+    }
+    return result
+}

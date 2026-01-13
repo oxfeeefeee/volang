@@ -1,0 +1,17 @@
+// Bug: closure capturing type switch variable causes GC crash
+// Error: misaligned pointer dereference in gc.rs
+package main
+
+func main() {
+    result := captureInTypeSwitch(42)
+    println("result:", result())
+}
+
+func captureInTypeSwitch(v any) func() int {
+    switch x := v.(type) {
+    case int:
+        return func() int { return x }
+    default:
+        return func() int { return -1 }
+    }
+}
