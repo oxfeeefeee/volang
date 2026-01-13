@@ -435,12 +435,8 @@ tests:
 # Dyn coverage tests (2026-01-13) - BUG discoveries
 # ============================================================
 
-# Bug #1: DynCall protocol method not implemented
-# Error: "cannot call non-function type Pointer"
-# Direct call syntax obj~>(args) doesn't check for DynCall protocol method
+# Bug #1: DynCall protocol method - FIXED
   - file: dyn/dyn_call_direct.vo
-    skip: [vm, jit]
-    reason: "BUG: DynCall protocol method not dispatched for direct call obj~>(args)"
 
 # Bug #2: Array dynamic index not supported
 # Error: "cannot index type Array"

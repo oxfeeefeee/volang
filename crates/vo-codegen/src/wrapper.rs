@@ -65,12 +65,14 @@ pub fn generate_iface_wrapper(
     let data_slot = builder.define_param(None, 1, &[slot_type]);
     
     // Define other parameters (forwarded from original function)
+    // Note: for variadic param, TypeExpr is element type T, but actual param is []T
     let mut wrapper_param_slots = Vec::new();
-    for param in &func_decl.sig.params {
-        let (slots, slot_types) = info.type_expr_layout(param.ty.id);
+    let params = &func_decl.sig.params;
+    for (i, param) in params.iter().enumerate() {
+        let variadic_last = func_decl.sig.variadic && i == params.len() - 1;
+        let (slots, slot_types) = if variadic_last { (1, vec![SlotType::GcRef]) } else { info.type_expr_layout(param.ty.id) };
         for name in &param.names {
-            let slot = builder.define_param(Some(name.symbol), slots, &slot_types);
-            wrapper_param_slots.push((slot, slots));
+            wrapper_param_slots.push((builder.define_param(Some(name.symbol), slots, &slot_types), slots));
         }
     }
     

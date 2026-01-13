@@ -380,7 +380,10 @@ fn register_builtin_protocols(
     ctx.register_builtin_protocol("SetIndexObject", set_index_meta);
     
     // 5. CallObject: DynCall(args ...any) (any, error)
-    let call_sig_rttid = make_sig_rttid(ctx, vec![any_rttid], vec![any_rttid, error_rttid], true);
+    // Variadic signature: the param is []any (slice of any), not any itself
+    let slice_any_rttid_value = ctx.intern_rttid(RuntimeType::Slice(any_rttid));
+    let slice_any_rttid = ValueRttid::new(slice_any_rttid_value, ValueKind::Slice);
+    let call_sig_rttid = make_sig_rttid(ctx, vec![slice_any_rttid], vec![any_rttid, error_rttid], true);
     let call_meta = InterfaceMeta {
         name: "CallObject".to_string(),
         method_names: vec!["DynCall".to_string()],
@@ -607,7 +610,7 @@ fn compile_file_functions(
                         .unwrap_or("?").to_string();
                     
                     // Generate method signature rttid
-                    let signature = generate_method_signature(func_decl, info, &project.interner, ctx);
+                    let signature = generate_method_signature(func_decl, info, ctx);
                     let signature_rttid = ctx.intern_rttid(signature);
                     
                     // For value receiver methods, generate a wrapper that accepts GcRef
@@ -824,42 +827,37 @@ fn collect_embedded_method_names(
     }
 }
 
-/// Generate RuntimeType::Func signature for a method (excluding receiver)
+/// Generate RuntimeType::Func signature for a method (excluding receiver).
+/// Uses Var types directly - type checker already converts variadic T to []T.
 fn generate_method_signature(
     func_decl: &vo_syntax::ast::FuncDecl,
     info: &TypeInfoWrapper,
-    _interner: &vo_common::SymbolInterner,
     ctx: &mut CodegenContext,
 ) -> vo_runtime::RuntimeType {
-    use vo_runtime::RuntimeType;
-    use vo_runtime::ValueRttid;
+    use vo_runtime::{RuntimeType, ValueRttid};
     
-    // Collect param ValueRttids
+    // Collect param ValueRttids from Var objects (not TypeExpr)
+    // Type checker already changed variadic param type from T to []T
     let mut params = Vec::new();
     for param in &func_decl.sig.params {
-        let param_type_key = info.type_expr_type(param.ty.id);
-        let param_rttid = ctx.intern_type_key(param_type_key, info);
-        let param_vk = info.type_value_kind(param_type_key);
-        // Each name in param.names represents one parameter of this type
-        for _ in &param.names {
-            params.push(ValueRttid::new(param_rttid, param_vk));
+        for name in &param.names {
+            let obj_key = info.get_def(name);
+            let type_key = info.obj_type(obj_key, "param must have type");
+            let rttid = ctx.intern_type_key(type_key, info);
+            let vk = info.type_value_kind(type_key);
+            params.push(ValueRttid::new(rttid, vk));
         }
     }
     
-    // Collect result ValueRttids
     let mut results = Vec::new();
-    for result in &func_decl.sig.results {
-        let result_type_key = info.type_expr_type(result.ty.id);
-        let result_rttid = ctx.intern_type_key(result_type_key, info);
-        let result_vk = info.type_value_kind(result_type_key);
-        results.push(ValueRttid::new(result_rttid, result_vk));
+    for r in &func_decl.sig.results {
+        let type_key = info.type_expr_type(r.ty.id);
+        let rttid = ctx.intern_type_key(type_key, info);
+        let vk = info.type_value_kind(type_key);
+        results.push(ValueRttid::new(rttid, vk));
     }
     
-    RuntimeType::Func {
-        params,
-        results,
-        variadic: func_decl.sig.variadic,
-    }
+    RuntimeType::Func { params, results, variadic: func_decl.sig.variadic }
 }
 
 /// Extract ValueRttids from a tuple type (params or results).
@@ -953,22 +951,14 @@ fn compile_func_decl(
     
     // Define parameters and collect escaped ones for boxing
     let mut escaped_params = Vec::new();
-    let num_params = func_decl.sig.params.len();
-    for (param_idx, param) in func_decl.sig.params.iter().enumerate() {
-        // For variadic parameter (last param when func is variadic), use slice layout (1 slot)
-        // instead of element type layout
-        let is_variadic_param = func_decl.sig.variadic && param_idx == num_params - 1;
-        let (slots, slot_types, type_key) = if is_variadic_param {
-            // Variadic param becomes []T, which is a slice (1 slot, GcRef)
-            (1, vec![vo_runtime::SlotType::GcRef], info.type_expr_type(param.ty.id))
-        } else {
-            let (slots, slot_types) = info.type_expr_layout(param.ty.id);
-            let type_key = info.type_expr_type(param.ty.id);
-            (slots, slot_types, type_key)
-        };
+    let params = &func_decl.sig.params;
+    for (i, param) in params.iter().enumerate() {
+        let variadic_last = func_decl.sig.variadic && i == params.len() - 1;
+        let (slots, slot_types) = if variadic_last { (1, vec![vo_runtime::SlotType::GcRef]) } else { info.type_expr_layout(param.ty.id) };
         for name in &param.names {
-            builder.define_param(Some(name.symbol), slots, &slot_types);
             let obj_key = info.get_def(name);
+            let type_key = info.obj_type(obj_key, "param must have type");
+            builder.define_param(Some(name.symbol), slots, &slot_types);
             if info.needs_boxing(obj_key, type_key) {
                 escaped_params.push((name.symbol, type_key, slots, slot_types.clone()));
             }

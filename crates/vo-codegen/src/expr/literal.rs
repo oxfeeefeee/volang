@@ -354,12 +354,14 @@ pub fn compile_func_lit(
     
     // Define parameters and collect escaped ones for boxing
     let mut escaped_params = Vec::new();
-    for param in &func_lit.sig.params {
-        let (slots, slot_types) = info.type_expr_layout(param.ty.id);
-        let type_key = info.type_expr_type(param.ty.id);
+    let params = &func_lit.sig.params;
+    for (i, param) in params.iter().enumerate() {
+        let variadic_last = func_lit.sig.variadic && i == params.len() - 1;
+        let (slots, slot_types) = if variadic_last { (1, vec![SlotType::GcRef]) } else { info.type_expr_layout(param.ty.id) };
         for name in &param.names {
-            closure_builder.define_param(Some(name.symbol), slots, &slot_types);
             let obj_key = info.get_def(name);
+            let type_key = info.obj_type(obj_key, "param must have type");
+            closure_builder.define_param(Some(name.symbol), slots, &slot_types);
             if info.needs_boxing(obj_key, type_key) {
                 escaped_params.push((name.symbol, type_key, slots, slot_types.clone()));
             }

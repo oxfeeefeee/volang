@@ -275,7 +275,90 @@ fn compile_dyn_op(
             }
         }
         DynAccessOp::Call { args, spread: _ } => {
+            // Protocol-first: check if base implements CallObject via IfaceAssert
+            let end_jump = if let Some(call_iface_meta_id) = ctx.builtin_protocols().call_object_meta_id {
+                let ret_type = ret_types.first().copied().unwrap_or_else(|| info.any_type());
+                let ret_slots = info.type_slot_count(ret_type);
+                let error_slot = dst + ret_slots;
+                
+                // IfaceAssert result: (interface[2], ok[1])
+                let iface_reg = func.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1, SlotType::Value]);
+                func.emit_with_flags(Opcode::IfaceAssert, IFACE_ASSERT_WITH_OK, iface_reg, base_reg, call_iface_meta_id as u16);
+                let fallback_jump = func.emit_jump(Opcode::JumpIfNot, iface_reg + 2);
+                
+                // Protocol method call: DynCall(args ...any) (any, error)
+                // Build variadic slice of any from args
+                let arg_count = args.len();
+                let any_type = info.any_type();
+                
+                // any is interface: 16 bytes (2 slots)
+                let elem_bytes = 16usize;
+                let elem_slot_types = vec![SlotType::Interface0, SlotType::Interface1];
+                let elem_vk = ValueKind::Interface;
+                
+                // Get element meta for any
+                let elem_rttid = ctx.intern_type_key(any_type, info);
+                let elem_meta_idx = ctx.get_or_create_value_meta_with_rttid(elem_rttid, &elem_slot_types, Some(elem_vk));
+                let meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
+                func.emit_op(Opcode::LoadConst, meta_reg, elem_meta_idx, 0);
+                
+                // Create slice: SliceNew with flags, dst, meta_reg, len_cap_reg
+                let slice_reg = func.alloc_temp_typed(&[SlotType::GcRef]);
+                let flags = vo_common_core::elem_flags(elem_bytes, elem_vk);
+                let num_regs = if flags == 0 { 3 } else { 2 };
+                let len_cap_reg = func.alloc_temp_typed(&vec![SlotType::Value; num_regs]);
+                let (b, c) = crate::type_info::encode_i32(arg_count as i32);
+                func.emit_op(Opcode::LoadInt, len_cap_reg, b, c);      // len
+                func.emit_op(Opcode::LoadInt, len_cap_reg + 1, b, c);  // cap = len
+                if flags == 0 {
+                    let eb_idx = ctx.const_int(elem_bytes as i64);
+                    func.emit_op(Opcode::LoadConst, len_cap_reg + 2, eb_idx, 0);
+                }
+                func.emit_with_flags(Opcode::SliceNew, flags, slice_reg, meta_reg, len_cap_reg);
+                
+                // Set each element via SliceSet
+                for (i, arg) in args.iter().enumerate() {
+                    let val_reg = func.alloc_temp_typed(&elem_slot_types);
+                    let arg_type = info.expr_type(arg.id);
+                    if info.is_interface(arg_type) {
+                        compile_expr_to(arg, val_reg, ctx, func, info)?;
+                    } else {
+                        crate::stmt::compile_iface_assign(val_reg, arg, any_type, ctx, func, info)?;
+                    }
+                    let idx_reg = func.alloc_temp_typed(&[SlotType::Value]);
+                    func.emit_op(Opcode::LoadInt, idx_reg, i as u16, 0);
+                    func.emit_slice_set(slice_reg, idx_reg, val_reg, elem_bytes, elem_vk, ctx);
+                }
+                
+                // Allocate args for CallIface: slice[1], but returns overwrite starting at args_start
+                // Need max(arg_slots, ret_slots) = max(1, 4) = 4 slots
+                let protocol_args = func.alloc_temp_typed(&[
+                    SlotType::Interface0, SlotType::Interface1,  // result any (overwrites slice arg)
+                    SlotType::Interface0, SlotType::Interface1,  // result error
+                ]);
+                func.emit_op(Opcode::Copy, protocol_args, slice_reg, 0);
+                
+                // CallIface: DynCall([]any) returns (any[2], error[2]) = 4 slots
+                // Returns overwrite args starting at protocol_args
+                let c = crate::type_info::encode_call_args(1, 4);
+                func.emit_with_flags(Opcode::CallIface, PROTOCOL_METHOD_IDX, iface_reg, protocol_args, c);
+                
+                // Unbox result with type check (result starts at protocol_args)
+                emit_unbox_with_type_check(ret_type, dst, protocol_args, error_slot, ctx, func, info);
+                let end_jump = func.emit_jump(Opcode::Jump, 0);
+                
+                func.patch_jump(fallback_jump, func.current_pc());
+                Some(end_jump)
+            } else {
+                None
+            };
+            
+            // Closure call path (when not implementing CallObject)
             compile_dyn_closure_call(base_reg, args, dst, ret_types, ctx, func, info)?;
+            
+            if let Some(end_jump) = end_jump {
+                func.patch_jump(end_jump, func.current_pc());
+            }
         }
         DynAccessOp::MethodCall { method, args, spread: _ } => {
             // a~>method(args) = dyn_get_attr(a, "method") then call closure
