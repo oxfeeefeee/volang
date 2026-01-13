@@ -631,3 +631,44 @@ tests:
 # Test: go statement with method value
   - file: go_method_value.vo
 
+# ============================================================
+# Coverage tests (2026-01-14) - New tests from coverage analysis
+# ============================================================
+
+# Test: sparse array literal (keyed elements skipped due to bug)
+  - file: sparse_array_literal.vo
+
+# Test: fallthrough to default case
+  - file: fallthrough_to_default.vo
+
+# Test: for loop post statement with side effects
+  - file: for_post_side_effect.vo
+
+# Test: multi-return values spread to variadic
+  - file: multi_return_variadic_spread.vo
+
+# Test: interface nil as map key
+  - file: interface_nil_map_key.vo
+
+# Test: defer modifying named returns in complex scenarios
+  - file: defer_return_modify_complex.vo
+
+# ============================================================
+# Bug reproductions (2026-01-14) - Vo implementation bugs
+# ============================================================
+
+# Bug #1: Sparse array literals ignore index keys
+  - file: bug_sparse_array_keyed.vo
+    skip: [vm, jit]
+    reason: "Vo ignores index keys in array literals, places elements sequentially"
+
+# Bug #2: switch with default as first case matches all to default
+  - file: bug_switch_default_first.vo
+    skip: [vm, jit]
+    reason: "Vo incorrectly handles switch when default is first case"
+
+# Bug #3: defer inside defer function doesn't execute
+  - file: bug_nested_defer_not_run.vo
+    skip: [vm, jit]
+    reason: "Inner defer in nested defer function never executes"
+
