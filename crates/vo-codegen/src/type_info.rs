@@ -368,6 +368,13 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
 
+    // === Implicit object queries ===
+
+    /// Get the implicit object for a span (e.g., type switch case variable).
+    pub fn get_implicit(&self, span: vo_common::span::Span) -> Option<ObjKey> {
+        self.type_info().implicits.get(&span).copied()
+    }
+
     // === Escape queries ===
 
     pub fn is_escaped(&self, obj: ObjKey) -> bool {

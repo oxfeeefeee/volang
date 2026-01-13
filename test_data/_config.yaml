@@ -682,15 +682,11 @@ tests:
 # Test: defer semantics with break label (not a bug - Vo matches Go behavior)
   - file: bug_defer_break_label.vo
 
-# Bug #5: closure capturing type switch variable causes GC crash
+# Bug #5: closure capturing type switch variable causes GC crash (FIXED)
   - file: bug_type_switch_closure_capture.vo
-    skip: [vm, jit]
-    reason: "GC misaligned pointer dereference - Vo implementation bug"
 
 # Test: nested loops with labels and defer
   - file: nested_loop_label_defer.vo
 
   - file: type_switch_closure_capture.vo
-    skip: [vm, jit]
-    reason: "depends on bug_type_switch_closure_capture fix"
 

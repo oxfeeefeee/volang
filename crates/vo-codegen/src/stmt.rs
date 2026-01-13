@@ -1886,8 +1886,7 @@ fn compile_type_switch(
     
     // Store interface for case comparisons
     let iface_slot = func.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1]);
-    func.emit_op(Opcode::Copy, iface_slot, expr_reg, 0);
-    func.emit_op(Opcode::Copy, iface_slot + 1, expr_reg + 1, 0);
+    func.emit_copy(iface_slot, expr_reg, 2);
     
     // Collect case jumps and info for variable binding
     let mut case_jumps: Vec<(usize, usize)> = Vec::new(); // (case_idx, jump_pc)
@@ -1973,16 +1972,32 @@ fn compile_type_switch(
                     let slots = info.type_slot_count(type_key);
                     let slot_types = info.type_slot_types(type_key);
                     
-                    // Define local variable for the asserted value
-                    let var_slot = func.define_local_stack(assign_name.symbol, slots, &slot_types);
+                    // Check if case variable is escaped (captured by closure)
+                    let case_var_obj = info.get_implicit(case.span);
+                    let needs_boxing = case_var_obj
+                        .map(|obj| info.needs_boxing(obj, type_key))
+                        .unwrap_or(false);
                     
-                    // Re-do IfaceAssert to extract value (we know it will succeed)
+                    // Common: compute IfaceAssert params and emit to extract value
                     let (assert_kind, target_id) = compute_iface_assert_params(type_key, ctx, info);
+                    let flags = assert_kind | ((slots as u8) << 3);
                     
-                    let target_slots = slots as u8;
-                    // IfaceAssert without ok (has_ok=0), result goes directly to var_slot
-                    let flags = assert_kind | ((target_slots) << 3);
-                    func.emit_with_flags(Opcode::IfaceAssert, flags, var_slot, iface_slot, target_id as u16);
+                    if needs_boxing {
+                        // Variable captured by closure - extract to temp, then box
+                        let temp_slot = func.alloc_temp_typed(&slot_types);
+                        func.emit_with_flags(Opcode::IfaceAssert, flags, temp_slot, iface_slot, target_id as u16);
+                        
+                        let gcref_slot = func.define_local_heap_boxed(assign_name.symbol, slots);
+                        let meta_idx = ctx.get_or_create_value_meta(type_key, info);
+                        let meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
+                        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+                        func.emit_with_flags(Opcode::PtrNew, slots as u8, gcref_slot, meta_reg, 0);
+                        func.emit_ptr_set(gcref_slot, 0, temp_slot, slots);
+                    } else {
+                        // Variable stays on stack - extract directly
+                        let var_slot = func.define_local_stack(assign_name.symbol, slots, &slot_types);
+                        func.emit_with_flags(Opcode::IfaceAssert, flags, var_slot, iface_slot, target_id as u16);
+                    }
                 }
             }
         }
@@ -1997,8 +2012,6 @@ fn compile_type_switch(
         
         // Jump to end
         end_jumps.push(func.emit_jump(Opcode::Jump, 0));
-        
-        let _ = case_idx;
     }
     
     let end_pc = func.current_pc();
