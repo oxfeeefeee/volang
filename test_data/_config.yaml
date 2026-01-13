@@ -444,12 +444,11 @@ tests:
 # Bug #3: Named type dynamic method call - FIXED
   - file: dyn/dyn_named_type_method.vo
 
-# Bug #4: Variadic dynamic call fails
-# Error: "parameter count mismatch: expected 3, got 1"
-# Variadic parameters not correctly handled in dyn_call signature check
+# Bug #4: Variadic dynamic call - FIXED
+# Root cause: codegen used max_converted_arg_slots = arg_count * 2, which is 0 when
+# arg_count = 0, but variadic functions need at least 1 slot for the slice ref.
+# Fix: max_converted_arg_slots = (arg_count * 2).max(1)
   - file: dyn/dyn_variadic_call.vo
-    skip: [vm, jit]
-    reason: "BUG: Variadic function parameters not handled in dynamic call"
 
 # Bug #5: Deep chained assignment panic
 # Silent panic on deep map write: obj~>[a]~>[b]~>[c] = x

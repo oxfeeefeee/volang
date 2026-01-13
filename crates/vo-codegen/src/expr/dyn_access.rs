@@ -544,8 +544,9 @@ fn compile_dyn_closure_call(
     let arg_count = args.len() as u16;
     let any_type = info.tc_objs().universe().any_type();
     
-    // Max converted arg slots: each param could be up to 2 slots
-    let max_converted_arg_slots = arg_count * 2;
+    // Max converted arg slots: each param could be up to 2 slots.
+    // Minimum 1 slot to handle variadic functions with 0 args (still need slice ref).
+    let max_converted_arg_slots = (arg_count * 2).max(1);
     
     // Build repack_args: (closure_sig_rttid, variadic_info, arg_count, interface_args[N*2])
     let repack_ret_slots = 1 + max_converted_arg_slots;  // arg_slots + converted_args
