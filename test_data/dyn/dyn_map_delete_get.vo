@@ -1,5 +1,4 @@
 // Test dynamic access interaction with map delete
-// BUG: map[any]any dynamic index access returns error even when key exists
 // Access deleted keys, delete via dynamic, etc.
 // Note: Dynamic map access returns zero value for missing keys (Go semantics)
 package main
@@ -41,7 +40,6 @@ func main() {
     d := obj~>["d"]?
     assert(d.(int) == 4, "d should be 4")
     
-    // BUG: map[any]any dynamic index access returns error even when key exists
     // Test 6: map[any]any with string keys
     m2 := map[any]any{
         "x": 10,

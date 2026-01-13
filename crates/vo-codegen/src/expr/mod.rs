@@ -145,7 +145,7 @@ pub fn get_gcref_slot(storage: &StorageKind) -> Option<u16> {
 }
 
 /// Compile a map key expression, boxing to interface if needed.
-/// Used when the map's key type is interface but the index expression is concrete.
+/// Used for static map index/set/delete and map literal Expr keys.
 pub fn compile_map_key_expr(
     index_expr: &Expr,
     key_type: vo_analysis::objects::TypeKey,
@@ -154,8 +154,9 @@ pub fn compile_map_key_expr(
     info: &TypeInfoWrapper,
 ) -> Result<u16, CodegenError> {
     let index_type = info.expr_type(index_expr.id);
+    let needs_boxing = info.is_interface(key_type) && !info.is_interface(index_type);
     
-    if info.is_interface(key_type) && !info.is_interface(index_type) {
+    if needs_boxing {
         let src_reg = compile_expr(index_expr, ctx, func, info)?;
         let key_slot_types = info.type_slot_types(key_type);
         let iface_reg = func.alloc_temp_typed(&key_slot_types);

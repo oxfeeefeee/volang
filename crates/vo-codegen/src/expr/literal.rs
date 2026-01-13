@@ -11,6 +11,81 @@ use crate::type_info::{encode_i32, TypeInfoWrapper};
 
 use super::compile_expr;
 
+/// Compile a map literal key, handling interface key boxing.
+/// Delegates to compile_map_key_expr for Expr, handles Ident specially.
+fn compile_map_lit_key(
+    key: &vo_syntax::ast::CompositeLitKey,
+    key_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<u16, CodegenError> {
+    match key {
+        vo_syntax::ast::CompositeLitKey::Expr(key_expr) => {
+            super::compile_map_key_expr(key_expr, key_type, ctx, func, info)
+        }
+        vo_syntax::ast::CompositeLitKey::Ident(ident) => {
+            compile_ident_as_map_key(ident, key_type, ctx, func, info)
+        }
+    }
+}
+
+/// Compile an Ident as map key, handling true/false literals and variable references.
+/// Boxes to interface if key_type is interface.
+fn compile_ident_as_map_key(
+    ident: &vo_syntax::ast::Ident,
+    key_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<u16, CodegenError> {
+    let name = info.project.interner.resolve(ident.symbol).unwrap_or("");
+    let needs_boxing = info.is_interface(key_type);
+    
+    // Handle true/false literals
+    if name == "true" || name == "false" {
+        let bool_val = if name == "true" { 1u16 } else { 0u16 };
+        if needs_boxing {
+            return emit_boxed_bool(bool_val, ctx, func);
+        } else {
+            let dst = func.alloc_temp_typed(&[SlotType::Value]);
+            func.emit_op(Opcode::LoadInt, dst, bool_val, 0);
+            return Ok(dst);
+        }
+    }
+    
+    // Variable reference - load value first
+    let storage = func.lookup_local(ident.symbol)
+        .map(|l| l.storage)
+        .ok_or_else(|| CodegenError::Internal(format!("map key ident not found: {:?}", ident.symbol)))?;
+    let value_slots = storage.value_slots();
+    let src_reg = func.alloc_temp_typed(&vec![SlotType::Value; value_slots as usize]);
+    func.emit_storage_load(storage, src_reg);
+    
+    if needs_boxing {
+        let src_type = info.ident_type(ident)
+            .ok_or_else(|| CodegenError::Internal(format!("cannot get type for ident: {:?}", ident.symbol)))?;
+        let key_slot_types = info.type_slot_types(key_type);
+        let iface_reg = func.alloc_temp_typed(&key_slot_types);
+        crate::stmt::emit_iface_assign_from_concrete(iface_reg, src_reg, src_type, key_type, ctx, func, info)?;
+        Ok(iface_reg)
+    } else {
+        Ok(src_reg)
+    }
+}
+
+/// Emit a bool value boxed as interface.
+fn emit_boxed_bool(val: u16, ctx: &mut CodegenContext, func: &mut FuncBuilder) -> Result<u16, CodegenError> {
+    let iface_reg = func.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1]);
+    let slot0 = vo_runtime::objects::interface::pack_slot0(
+        0, vo_runtime::ValueKind::Bool as u32, vo_runtime::ValueKind::Bool
+    );
+    let slot0_idx = ctx.const_int(slot0 as i64);
+    func.emit_op(Opcode::LoadConst, iface_reg, slot0_idx, 0);
+    func.emit_op(Opcode::LoadInt, iface_reg + 1, val, 0);
+    Ok(iface_reg)
+}
+
 // =============================================================================
 // Constant Values
 // =============================================================================
@@ -269,6 +344,9 @@ fn compile_map_lit(
     let slots_arg = crate::type_info::encode_map_new_slots(key_slots, val_slots);
     func.emit_op(Opcode::MapNew, dst, packed_reg, slots_arg);
     
+    // Get key type for interface boxing
+    let (key_type, _) = info.map_key_val_types(type_key);
+    
     // Set each key-value pair
     for elem in &lit.elems {
         if let Some(key) = &elem.key {
@@ -281,32 +359,9 @@ fn compile_map_lit(
             let meta_idx = ctx.const_int(meta as i64);
             func.emit_op(Opcode::LoadConst, meta_and_key_reg, meta_idx, 0);
             
-            // Compile key into meta_and_key_reg+1
-            // Handle both Expr and Ident (for bool literals like true/false)
-            match key {
-                vo_syntax::ast::CompositeLitKey::Expr(key_expr) => {
-                    super::compile_expr_to(key_expr, meta_and_key_reg + 1, ctx, func, info)?;
-                }
-                vo_syntax::ast::CompositeLitKey::Ident(ident) => {
-                    // Ident as key: could be true/false or a variable
-                    let name = info.project.interner.resolve(ident.symbol).unwrap_or("");
-                    if name == "true" {
-                        func.emit_op(Opcode::LoadInt, meta_and_key_reg + 1, 1, 0);
-                    } else if name == "false" {
-                        func.emit_op(Opcode::LoadInt, meta_and_key_reg + 1, 0, 0);
-                    } else {
-                        // Variable reference - compile as identifier expression
-                        let storage = func.lookup_local(ident.symbol)
-                            .map(|l| l.storage)
-                            .ok_or_else(|| CodegenError::Internal(format!("map key ident not found: {:?}", ident.symbol)))?;
-                        // Use emit_storage_load to handle all storage kinds properly
-                        let value_slots = storage.value_slots();
-                        let tmp = func.alloc_temp_typed(&vec![SlotType::Value; value_slots as usize]);
-                        func.emit_storage_load(storage, tmp);
-                        func.emit_copy(meta_and_key_reg + 1, tmp, value_slots);
-                    }
-                }
-            };
+            // Compile key - use compile_map_lit_key for unified interface key boxing
+            let key_reg = compile_map_lit_key(key, key_type, ctx, func, info)?;
+            func.emit_copy(meta_and_key_reg + 1, key_reg, key_slots);
             
             // Compile value - if map value type is interface, need to box
             let (_, val_type) = info.map_key_val_types(type_key);

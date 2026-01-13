@@ -645,6 +645,20 @@ impl<'a> TypeInfoWrapper<'a> {
     pub fn try_obj_type(&self, obj: ObjKey) -> Option<TypeKey> {
         self.tc_objs().lobjs[obj].typ()
     }
+    
+    /// Get type for an identifier by looking up uses/defs.
+    /// Used when we have an Ident but not an Expr with valid ExprId.
+    pub fn ident_type(&self, ident: &vo_syntax::ast::Ident) -> Option<TypeKey> {
+        // Try uses first (variable references)
+        if let Some(&obj) = self.type_info().uses.get(&ident.id) {
+            return self.try_obj_type(obj);
+        }
+        // Try defs (variable definitions)
+        if let Some(Some(obj)) = self.type_info().defs.get(&ident.id) {
+            return self.try_obj_type(*obj);
+        }
+        None
+    }
 
     /// Get method receiver's base type from function declaration.
     /// For `func (r T) Method()` returns type of T.

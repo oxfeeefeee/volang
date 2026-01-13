@@ -8,7 +8,7 @@ use crate::error::CodegenError;
 use crate::func::FuncBuilder;
 use crate::type_info::{encode_i32, TypeInfoWrapper};
 
-use super::{compile_expr, compile_expr_to, compile_expr_to_type};
+use super::{compile_expr, compile_expr_to, compile_expr_to_type, compile_map_key_expr};
 
 /// Emit a single value as (value, value_kind) pair at the given slot.
 /// Returns the number of interface slots used (always 2).
@@ -298,19 +298,21 @@ pub fn compile_builtin_call(
                 return Err(CodegenError::Internal("delete requires 2 args".to_string()));
             }
             let map_reg = compile_expr(&call.args[0], ctx, func, info)?;
-            let key_reg = compile_expr(&call.args[1], ctx, func, info)?;
             
             // MapDelete expects: a=map, b=meta_and_key
             // meta = key_slots, key at b+1
             let map_type = info.expr_type(call.args[0].id);
             let (key_slots, _) = info.map_key_val_slots(map_type);
+            let (key_type, _) = info.map_key_val_types(map_type);
             
             let mut delete_slot_types = vec![SlotType::Value]; // meta
-            let (key_type, _) = info.map_key_val_types(map_type);
             delete_slot_types.extend(info.type_slot_types(key_type)); // key
             let meta_and_key_reg = func.alloc_temp_typed(&delete_slot_types);
             let meta_idx = ctx.const_int(key_slots as i64);
             func.emit_op(Opcode::LoadConst, meta_and_key_reg, meta_idx, 0);
+            
+            // Compile key - use compile_map_key_expr for unified interface key boxing
+            let key_reg = compile_map_key_expr(&call.args[1], key_type, ctx, func, info)?;
             func.emit_copy(meta_and_key_reg + 1, key_reg, key_slots);
             
             func.emit_op(Opcode::MapDelete, map_reg, meta_and_key_reg, 0);

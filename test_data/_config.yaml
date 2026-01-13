@@ -582,10 +582,8 @@ tests:
 # Test: named type embedding protocol type
   - file: dyn/dyn_named_embed_protocol.vo
 
-# BUG: map[any]any dynamic index access returns error even when key exists
+# Test: map[any]any dynamic index access with delete
   - file: dyn/dyn_map_delete_get.vo
-    skip: [vm, jit]
-    reason: "BUG: map[any]any dynamic index returns error for existing key"
 
 # Test: dynamic access on array of interfaces
   - file: dyn/dyn_interface_array_elem.vo
