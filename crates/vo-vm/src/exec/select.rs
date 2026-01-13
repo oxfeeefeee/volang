@@ -59,8 +59,12 @@ enum SelectCheckResult {
     Recv { idx: usize, ch: GcRef, elem_slots: usize, val_reg: u16, has_ok: bool },
 }
 
-/// Phase 1: Check which case (if any) can proceed (read-only)
+/// Phase 1: Check which case can proceed (read-only)
+/// When multiple cases are ready, randomly select one (Go semantics)
 fn check_ready_case(stack: &[u64], bp: usize, state: &SelectState) -> SelectCheckResult {
+    // Collect all ready cases first
+    let mut ready_cases: Vec<SelectCheckResult> = Vec::new();
+    
     for (idx, case) in state.cases.iter().enumerate() {
         let ch = stack[bp + case.chan_reg as usize] as GcRef;
         if ch.is_null() {
@@ -72,25 +76,35 @@ fn check_ready_case(stack: &[u64], bp: usize, state: &SelectState) -> SelectChec
         match case.kind {
             SelectCaseKind::Send => {
                 if !chan_state.waiting_receivers.is_empty() || chan_state.buffer.len() < cap {
-                    return SelectCheckResult::Send {
+                    ready_cases.push(SelectCheckResult::Send {
                         idx, ch, elem_slots: case.elem_slots as usize, val_reg: case.val_reg,
-                    };
+                    });
                 }
             }
             SelectCaseKind::Recv => {
                 if !chan_state.buffer.is_empty() || !chan_state.waiting_senders.is_empty() {
-                    return SelectCheckResult::Recv {
+                    ready_cases.push(SelectCheckResult::Recv {
                         idx, ch, elem_slots: case.elem_slots as usize, val_reg: case.val_reg, has_ok: case.has_ok,
-                    };
+                    });
                 }
             }
         }
     }
     
-    if state.has_default {
-        SelectCheckResult::Default
-    } else {
-        SelectCheckResult::None
+    // If multiple cases are ready, randomly select one (Go semantics)
+    match ready_cases.len() {
+        0 => {
+            if state.has_default {
+                SelectCheckResult::Default
+            } else {
+                SelectCheckResult::None
+            }
+        }
+        1 => ready_cases.pop().unwrap(),
+        n => {
+            let chosen = fastrand::usize(..n);
+            ready_cases.swap_remove(chosen)
+        }
     }
 }
 

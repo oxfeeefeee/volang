@@ -602,14 +602,35 @@ tests:
 # Fixed: resolve_lvalue now computes flattened index for nested stack arrays
   - file: bug_nested_array_compound.vo
 
-# Bug #2: break label in nested for-range doesn't work correctly
-# Root cause: for-range expansion doesn't properly handle break to outer label
+# Bug #2: break label in nested for-range - FIXED
+# Root cause: Test case was wrong - used single-variable range (index) instead of two-variable (value)
+# `for j := range slice` gives index, `for _, j := range slice` gives value
   - file: bug_for_range_break_label.vo
-    skip: [vm, jit]
-    reason: "Vo implementation bug: break label in nested for-range"
 
 # Passing tests from coverage analysis
   - file: defer_panic_named_return.vo
   - file: type_assertion_chain_method.vo
   - file: embed_ptr_iface_complex.vo
+
+# ============================================================
+# Coverage tests (2026-01-14) - New coverage tests
+# ============================================================
+
+# Test: chan chan T (nested channel types)
+  - file: chan_of_chan.vo
+
+# Test: select with multiple ready cases
+  - file: select_multi_ready.vo
+
+# Test: interface typed nil semantics (Go gotcha)
+  - file: interface_typed_nil.vo
+
+# Test: composite literal address as function argument
+  - file: composite_literal_addr.vo
+
+# BUG: go statement with method value - method not executed correctly
+# The receiver or method call is not properly captured in go statement
+  - file: go_method_value.vo
+    skip: [vm, jit]
+    reason: "BUG: go obj.Method(args) does not execute correctly - result is 0"
 

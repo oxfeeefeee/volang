@@ -1446,6 +1446,7 @@ dependencies = [
 name = "vo-vm"
 version = "0.1.0"
 dependencies = [
+ "fastrand",
  "hashbrown 0.15.5",
  "vo-common-core",
  "vo-jit",

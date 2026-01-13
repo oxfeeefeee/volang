@@ -15,6 +15,7 @@ jit = ["vo-jit"]
 vo-runtime = { path = "../vo-runtime" }
 vo-common-core = { path = "../vo-common-core" }
 hashbrown = "0.15"
+fastrand = "2.0"
 
 # Optional JIT compiler
 vo-jit = { path = "../vo-jit", optional = true }
