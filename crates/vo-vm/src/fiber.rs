@@ -127,6 +127,25 @@ pub enum PanicState {
     Fatal(String),
 }
 
+impl PanicState {
+    /// Extract human-readable message from panic value.
+    pub fn message(&self) -> String {
+        match self {
+            PanicState::Fatal(msg) => msg.clone(),
+            PanicState::Recoverable(slot0, slot1) => {
+                let vk = vo_runtime::objects::interface::unpack_value_kind(*slot0);
+                if vk == vo_runtime::ValueKind::String {
+                    let str_ref = *slot1 as vo_runtime::gc::GcRef;
+                    if !str_ref.is_null() {
+                        return vo_runtime::objects::string::as_str(str_ref).to_string();
+                    }
+                }
+                "panic".to_string()
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Fiber {
     pub id: u32,
@@ -189,10 +208,7 @@ impl Fiber {
     
     /// Get panic message for error reporting.
     pub fn panic_message(&self) -> Option<String> {
-        match &self.panic_state {
-            Some(PanicState::Fatal(msg)) => Some(msg.clone()),
-            _ => None,
-        }
+        self.panic_state.as_ref().map(|s| s.message())
     }
     
     /// Check if we're in panic unwinding mode AND directly in the defer function

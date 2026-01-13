@@ -455,8 +455,6 @@ tests:
 # Solution: Use get_interface_meta_id_from_rttid() to get correct iface_meta_id
   - file: dyn/dyn_deep_chained_assign.vo
 
-# Error types test - partially works but fails on signature mismatch test
+# Error types test - tests dynamic error categorization
   - file: dyn/dyn_error_types.vo
-    skip: [vm, jit]
-    reason: "BUG: Test fails at signature mismatch checks (depends on bug #4)"
 

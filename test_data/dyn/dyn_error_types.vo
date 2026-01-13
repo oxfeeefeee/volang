@@ -48,11 +48,9 @@ func main() {
     println("Test 5: missing method -> AttributeError")
     
     // ==== SignatureError tests ====
+    // Calc with methods is defined at file scope (see bottom of file)
     
     // Test 6: Wrong parameter count
-    type Calc struct {
-        val int
-    }
     var c any = &Calc{val: 10}
     _, err = c~>Add()  // Add needs 1 arg
     assert(err != nil, "wrong param count should error")
