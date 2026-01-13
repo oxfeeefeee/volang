@@ -1,11 +1,12 @@
-// Bug: defer registered inside loop does not execute after break label
-// Expected: defer should execute when function returns
-// Actual: defer is not executed
+// Test: defer semantics with break label
+// Go semantics: `return result` evaluates result first, then runs defer
+// So the return value is "outer", not "defer:outer"
+// (defer does execute, but doesn't affect the already-evaluated return value)
 package main
 
 func main() {
     result := testBreakLabel()
-    assert(result == "defer:outer", "defer should execute after break label")
+    assert(result == "outer", "return value should be evaluated before defer runs")
     println("bug_defer_break_label: PASSED")
 }
 

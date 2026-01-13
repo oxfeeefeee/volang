@@ -679,20 +679,16 @@ tests:
 # Bug reproductions (2026-01-14 new batch) - Vo implementation bugs
 # ============================================================
 
-# Bug #4: defer registered inside loop does not execute after break label
+# Test: defer semantics with break label (not a bug - Vo matches Go behavior)
   - file: bug_defer_break_label.vo
-    skip: [vm, jit]
-    reason: "defer not executed after break label - Vo implementation bug"
 
 # Bug #5: closure capturing type switch variable causes GC crash
   - file: bug_type_switch_closure_capture.vo
     skip: [vm, jit]
     reason: "GC misaligned pointer dereference - Vo implementation bug"
 
-# Tests with logic issues (need fixing before run)
+# Test: nested loops with labels and defer
   - file: nested_loop_label_defer.vo
-    skip: [vm, jit]
-    reason: "depends on bug_defer_break_label fix"
 
   - file: type_switch_closure_capture.vo
     skip: [vm, jit]
