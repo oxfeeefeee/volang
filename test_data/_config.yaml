@@ -507,10 +507,8 @@ tests:
 # Test: Embedded field dynamic write (fixed)
   - file: dyn/dyn_embed_field_write.vo
 
-# BUG #2: Named type method call fails
+# Test: Named type dynamic access (method call on named map/slice types)
   - file: dyn/dyn_named_type_access.vo
-    skip: [vm, jit]
-    reason: "BUG: named type (type StringMap map[string]int) method call (mapObj~>Get) fails"
 
 # BUG #3: Nested empty struct field access fails  
   - file: dyn/dyn_empty_struct.vo

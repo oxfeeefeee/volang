@@ -157,7 +157,15 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     let rttid = interface::unpack_rttid(slot0);
     
     // For Map types with string keys, treat field_name as map key
+    // But first check if it's a named type with methods (e.g., type StringMap map[string]int)
     if vk == ValueKind::Map {
+        // For named map types, check for method first
+        if call.get_named_type_id_from_rttid(rttid, false).is_some() {
+            if let Some(_) = call.lookup_method(rttid, field_name) {
+                return try_get_method(call, rttid, slot1, field_name);
+            }
+        }
+        
         let base_ref = slot1 as GcRef;
         
         // Check for nil map
