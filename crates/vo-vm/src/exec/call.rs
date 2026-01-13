@@ -261,7 +261,7 @@ pub fn exec_return(
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 2: Initial return - collect return values and check for defers
     // ─────────────────────────────────────────────────────────────────────────
-    let heap_returns = (inst.flags & 0x02) != 0;
+    let heap_returns = (inst.flags & vo_common_core::bytecode::RETURN_FLAG_HEAP_RETURNS) != 0;
     let has_defers = defer_stack.last()
         .map_or(false, |e| e.frame_depth == current_frame_depth);
 

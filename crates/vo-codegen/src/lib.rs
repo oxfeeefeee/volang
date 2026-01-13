@@ -129,24 +129,38 @@ fn register_types(
                     let mut offset = 0u16;
 
                     for field in &struct_type.fields {
-                        for name in &field.names {
-                            let field_name = project.interner.resolve(name.symbol).unwrap_or("?").to_string();
-
-                            let field_type = info.type_expr_type(field.ty.id);
-                            let slot_count = info.type_slot_count(field_type);
-                            let slot_type_list = info.type_slot_types(field_type);
+                        let field_type = info.type_expr_type(field.ty.id);
+                        let slot_count = info.type_slot_count(field_type);
+                        let slot_type_list = info.type_slot_types(field_type);
+                        let field_vk = info.type_value_kind(field_type);
+                        let field_rttid = ctx.intern_type_key(field_type, info);
+                        
+                        if field.names.is_empty() {
+                            // Embedded field: name comes from the type
+                            let field_name = info.get_type_name(field_type);
                             slot_types.extend(slot_type_list);
-
-                            let field_vk = info.type_value_kind(field_type);
-                            let field_rttid = ctx.intern_type_key(field_type, info);
-
                             fields.push(vo_vm::bytecode::FieldMeta {
                                 name: field_name,
                                 offset,
                                 slot_count,
                                 type_info: vo_runtime::ValueRttid::new(field_rttid, field_vk),
+                                embedded: true,
                             });
                             offset += slot_count;
+                        } else {
+                            // Named field(s)
+                            for name in &field.names {
+                                let field_name = project.interner.resolve(name.symbol).unwrap_or("?").to_string();
+                                slot_types.extend(slot_type_list.clone());
+                                fields.push(vo_vm::bytecode::FieldMeta {
+                                    name: field_name,
+                                    offset,
+                                    slot_count,
+                                    type_info: vo_runtime::ValueRttid::new(field_rttid, field_vk),
+                                    embedded: false,
+                                });
+                                offset += slot_count;
+                            }
                         }
                     }
 

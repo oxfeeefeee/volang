@@ -272,6 +272,7 @@ fn type_key_to_runtime_type(
                         offset,
                         slot_count: field_slot_count,
                         type_info: typ_value_rttid,
+                        embedded,
                     });
                     offset += field_slot_count;
                 }

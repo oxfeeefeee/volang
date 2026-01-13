@@ -44,12 +44,13 @@ fn emit_dyn_assign_error_short_circuit(
 /// Emit Return with heap_returns flag for escaped named returns.
 /// VM will read values from heap GcRefs after defer execution.
 fn emit_heap_returns(func: &mut FuncBuilder, named_return_slots: &[(u16, u16, bool)]) {
+    use vo_common_core::bytecode::RETURN_FLAG_HEAP_RETURNS;
     let gcref_count = named_return_slots.len() as u16;
     let gcref_start = named_return_slots[0].0;
     // value_slots_per_ref: assumes all named returns have same slot count
     // TODO: support mixed slot counts if needed
     let value_slots = named_return_slots[0].1;
-    func.emit_with_flags(Opcode::Return, 0x02, gcref_start, gcref_count, value_slots);
+    func.emit_with_flags(Opcode::Return, RETURN_FLAG_HEAP_RETURNS, gcref_start, gcref_count, value_slots);
 }
 
 /// Compute IfaceAssert parameters for a target type.

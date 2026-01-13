@@ -494,3 +494,26 @@ tests:
 # Test: Anonymous struct dynamic access
   - file: dyn/dyn_anon_struct.vo
 
+# ============================================================
+# Dyn coverage tests (2026-01-13 batch 4) - New coverage tests
+# ============================================================
+
+# Test: Method chain calls on dynamic result
+  - file: dyn/dyn_method_chain_call.vo
+
+# Test: Panic/recover combined with dynamic access
+  - file: dyn/dyn_panic_recover.vo
+
+# Test: Embedded field dynamic write (fixed)
+  - file: dyn/dyn_embed_field_write.vo
+
+# BUG #2: Named type method call fails
+  - file: dyn/dyn_named_type_access.vo
+    skip: [vm, jit]
+    reason: "BUG: named type (type StringMap map[string]int) method call (mapObj~>Get) fails"
+
+# BUG #3: Nested empty struct field access fails  
+  - file: dyn/dyn_empty_struct.vo
+    skip: [vm, jit]
+    reason: "BUG: nested empty struct field access (neObj~>count where NestedEmpty embeds Empty) fails"
+

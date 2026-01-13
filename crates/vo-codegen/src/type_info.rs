@@ -295,6 +295,28 @@ impl<'a> TypeInfoWrapper<'a> {
             _ => None,
         }
     }
+    
+    /// Get the simple name of a type (for embedded field names).
+    /// For Named types, returns the type name. For pointer to Named, returns the base type name.
+    pub fn get_type_name(&self, type_key: TypeKey) -> String {
+        let tc_objs = self.tc_objs();
+        let mut tk = type_key;
+        
+        // Strip pointer if present
+        if let Type::Pointer(p) = &tc_objs.types[tk] {
+            tk = p.base();
+        }
+        
+        // Get name from Named type
+        if let Type::Named(named) = &tc_objs.types[tk] {
+            if let Some(obj_key) = named.obj() {
+                return tc_objs.lobjs[*obj_key].name().to_string();
+            }
+        }
+        
+        // Fallback for anonymous types
+        "?".to_string()
+    }
 
     // === Definition/Use queries ===
 

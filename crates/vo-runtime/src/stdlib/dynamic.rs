@@ -25,6 +25,57 @@ fn is_integer_value_kind(vk: ValueKind) -> bool {
     matches!(vk, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8)
 }
 
+/// Result of looking up a field, possibly through embedded structs.
+struct FieldLookupResult {
+    /// Total offset from base struct to the field
+    total_offset: usize,
+    /// Number of slots the field occupies
+    slot_count: usize,
+    /// Field's rttid
+    rttid: u32,
+    /// Field's ValueKind
+    value_kind: ValueKind,
+}
+
+/// Recursively lookup a field by name, searching through embedded structs.
+/// Returns the field info with cumulative offset if found.
+fn lookup_field_recursive(
+    call: &ExternCallContext,
+    struct_meta_id: usize,
+    field_name: &str,
+    base_offset: usize,
+) -> Option<FieldLookupResult> {
+    let struct_meta = call.struct_meta(struct_meta_id)?;
+    
+    // First, try direct field lookup
+    if let Some(field) = struct_meta.get_field(field_name) {
+        return Some(FieldLookupResult {
+            total_offset: base_offset + field.offset as usize,
+            slot_count: field.slot_count as usize,
+            rttid: field.type_info.rttid(),
+            value_kind: field.type_info.value_kind(),
+        });
+    }
+    
+    // Not found directly - search in embedded fields
+    for field in &struct_meta.fields {
+        if !field.embedded {
+            continue;
+        }
+        
+        // Get the struct_meta_id of the embedded field's type
+        let embedded_struct_meta_id = call.get_struct_meta_id_from_rttid(field.type_info.rttid());
+        if let Some(embedded_meta_id) = embedded_struct_meta_id {
+            let embedded_offset = base_offset + field.offset as usize;
+            if let Some(result) = lookup_field_recursive(call, embedded_meta_id as usize, field_name, embedded_offset) {
+                return Some(result);
+            }
+        }
+    }
+    
+    None
+}
+
 /// Prepare a value for assignment to an interface-typed field/element.
 /// Validates that the value implements the interface and computes the itab.
 /// Returns (stored_slot0, val_slot1) on success.
@@ -209,15 +260,9 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         }
     };
     
-    // Lookup struct metadata
-    let struct_meta = match call.struct_meta(struct_meta_id) {
-        Some(m) => m,
-        None => return dyn_error(call, call.dyn_err().unknown, &format!("struct meta {} not found", struct_meta_id)),
-    };
-    
-    // Find field by name using O(1) lookup
-    let field = match struct_meta.get_field(field_name) {
-        Some(f) => f,
+    // Find field by name, searching through embedded structs recursively
+    let field_result = match lookup_field_recursive(&call, struct_meta_id, field_name, 0) {
+        Some(r) => r,
         None => {
             // Field not found - check if it's a method
             return try_get_method(call, rttid, slot1, field_name);
@@ -229,18 +274,13 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         return dyn_error(call, call.dyn_err().nil_base, "struct data is nil");
     }
     
-    let field_offset = field.offset as usize;
-    let field_slots = field.slot_count as usize;
-    let field_rttid = field.type_info.rttid();
-    let field_vk = field.type_info.value_kind();
-    
     // Read raw slots from struct field
-    let raw_slots: Vec<u64> = (0..field_slots)
-        .map(|i| unsafe { Gc::read_slot(data_ref, field_offset + i) })
+    let raw_slots: Vec<u64> = (0..field_result.slot_count)
+        .map(|i| unsafe { Gc::read_slot(data_ref, field_result.total_offset + i) })
         .collect();
     
     // Box to interface format using unified boxing logic
-    let (data0, data1) = call.box_to_interface(field_rttid, field_vk, &raw_slots);
+    let (data0, data1) = call.box_to_interface(field_result.rttid, field_result.value_kind, &raw_slots);
     
     // Return (data, nil)
     call.ret_u64(0, data0);
@@ -628,24 +668,16 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
         None => return dyn_error_only(call, call.dyn_err().type_mismatch, "cannot set field on non-struct type"),
     };
 
-    let (field_offset, field_slots, expected_vk, expected_rttid) = {
-        let struct_meta = match call.struct_meta(struct_meta_id) {
-            Some(m) => m,
-            None => return dyn_error_only(call, call.dyn_err().unknown, &format!("struct meta {} not found", struct_meta_id)),
-        };
-
-        let field = match struct_meta.get_field(field_name) {
-            Some(f) => f,
-            None => return dyn_error_only(call, call.dyn_err().bad_field, &format!("field '{}' not found", field_name)),
-        };
-
-        (
-            field.offset as usize,
-            field.slot_count as usize,
-            field.type_info.value_kind(),
-            field.type_info.rttid(),
-        )
+    // Find field by name, searching through embedded structs recursively
+    let field_result = match lookup_field_recursive(&call, struct_meta_id, field_name, 0) {
+        Some(r) => r,
+        None => return dyn_error_only(call, call.dyn_err().bad_field, &format!("field '{}' not found", field_name)),
     };
+    
+    let field_offset = field_result.total_offset;
+    let field_slots = field_result.slot_count;
+    let expected_vk = field_result.value_kind;
+    let expected_rttid = field_result.rttid;
     let val_vk = interface::unpack_value_kind(val_slot0);
     let val_rttid = interface::unpack_rttid(val_slot0);
 

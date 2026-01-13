@@ -1,5 +1,8 @@
 //! Bytecode module definition.
 
+/// Return instruction flag: heap-allocated named returns (need GcRef dereference)
+pub const RETURN_FLAG_HEAP_RETURNS: u8 = 0x02;
+
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
@@ -65,6 +68,8 @@ pub struct FieldMeta {
     pub offset: u16,
     pub slot_count: u16,
     pub type_info: ValueRttid,
+    /// Whether this field is embedded (anonymous struct).
+    pub embedded: bool,
 }
 
 #[derive(Debug, Clone)]

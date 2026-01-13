@@ -410,6 +410,7 @@ impl Module {
                 w.write_u16(f.offset);
                 w.write_u16(f.slot_count);
                 w.write_u32(f.type_info.to_raw());
+                w.write_u8(if f.embedded { 1 } else { 0 });
             });
         });
 
@@ -562,7 +563,8 @@ impl Module {
                 let offset = r.read_u16()?;
                 let slot_count = r.read_u16()?;
                 let type_info = ValueRttid::from_raw(r.read_u32()?);
-                Ok(FieldMeta { name, offset, slot_count, type_info })
+                let embedded = r.read_u8()? != 0;
+                Ok(FieldMeta { name, offset, slot_count, type_info, embedded })
             })?;
             // Build field_index from fields
             let field_index: HashMap<String, usize> = fields.iter()

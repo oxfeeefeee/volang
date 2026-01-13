@@ -225,15 +225,44 @@ impl<'a> FunctionCompiler<'a> {
         self.builder.seal_block(fall_through);
     }
 
-    fn ret(&mut self, _inst: &Instruction) {
-        let ret_slots = self.func_def.ret_slots as usize;
-        let ret_reg = _inst.a as usize;
+    fn ret(&mut self, inst: &Instruction) {
+        use vo_common_core::bytecode::RETURN_FLAG_HEAP_RETURNS;
         let ret_ptr = self.builder.block_params(self.entry_block)[2];
+        let heap_returns = (inst.flags & RETURN_FLAG_HEAP_RETURNS) != 0;
         
-        for i in 0..ret_slots {
-            let val = self.builder.use_var(self.vars[ret_reg + i]);
-            let offset = (i * 8) as i32;
-            self.builder.ins().store(MemFlags::trusted(), val, ret_ptr, offset);
+        if heap_returns {
+            // Escaped named returns: GcRefs store the actual values
+            // Need to dereference each GcRef to get the value
+            let gcref_start = inst.a as usize;
+            let gcref_count = inst.b as usize;
+            let slots_per_ref = inst.c as usize;
+            
+            let mut ret_offset = 0i32;
+            for i in 0..gcref_count {
+                // Read GcRef from locals_slot (must use stack because SSA may be corrupted after calls)
+                let gcref = if let Some(locals_slot) = self.locals_slot {
+                    self.builder.ins().stack_load(types::I64, locals_slot, ((gcref_start + i) * 8) as i32)
+                } else {
+                    self.builder.use_var(self.vars[gcref_start + i])
+                };
+                
+                // Dereference GcRef to get actual value(s)
+                for j in 0..slots_per_ref {
+                    let val = self.builder.ins().load(types::I64, MemFlags::trusted(), gcref, (j * 8) as i32);
+                    self.builder.ins().store(MemFlags::trusted(), val, ret_ptr, ret_offset);
+                    ret_offset += 8;
+                }
+            }
+        } else {
+            // Normal return: read values directly from SSA variables
+            let ret_slots = self.func_def.ret_slots as usize;
+            let ret_reg = inst.a as usize;
+            
+            for i in 0..ret_slots {
+                let val = self.builder.use_var(self.vars[ret_reg + i]);
+                let offset = (i * 8) as i32;
+                self.builder.ins().store(MemFlags::trusted(), val, ret_ptr, offset);
+            }
         }
         
         let ok = self.builder.ins().iconst(types::I32, 0);
