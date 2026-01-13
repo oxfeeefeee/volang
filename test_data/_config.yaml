@@ -458,3 +458,38 @@ tests:
 # Error types test - tests dynamic error categorization
   - file: dyn/dyn_error_types.vo
 
+# ============================================================
+# Dyn coverage tests (2026-01-13 batch 2) - New tests
+# ============================================================
+
+# Test 1: Recursive JSON-like traversal
+  - file: dyn/dyn_recursive_json_traverse.vo
+
+# Test 2: Closure capturing dynamic access results
+  - file: dyn/dyn_closure_capture_result.vo
+
+# Test 3: Method returns error interaction with dyn error
+  - file: dyn/dyn_method_returns_error.vo
+
+# Bug #7: Dynamic write should NOT require error return value (only ? should)
+# These tests use ~> write in main(), which should be allowed but currently
+# fails with E2521: "dynamic write requires function with error return value"
+
+# Test 4: Interface field dynamic write
+  - file: dyn/dyn_interface_field_write.vo
+    skip: [vm, jit]
+    reason: "BUG #7: dynamic write incorrectly requires error return value"
+
+# Test 5: Type coercion in dynamic write
+  - file: dyn/dyn_type_coercion_write.vo
+    skip: [vm, jit]
+    reason: "BUG #7: dynamic write incorrectly requires error return value"
+
+# Bug #6: nil receiver method call - dyn_call_closure does not catch panic
+# Issue: Calling method on nil pointer (e.g. nil~>GetValue()) where method
+# dereferences nil causes panic that is not caught by dyn_call_closure.
+# Expected: Should return error instead of crashing the program.
+  - file: dyn/dyn_nil_receiver_method.vo
+    skip: [vm, jit]
+    reason: "BUG: dyn_call_closure does not catch nil receiver method panic"
+
