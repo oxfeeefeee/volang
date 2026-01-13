@@ -1,0 +1,45 @@
+// Test dynamic method call on nil field value
+// Accessing a nil pointer field and calling method on it
+package main
+
+import "errors"
+import "dyn"
+
+type Inner struct {
+    value int
+}
+
+func (i *Inner) GetValue() int {
+    return i.value
+}
+
+type Outer struct {
+    inner *Inner
+    name  string
+}
+
+func main() {
+    // Test 1: nil pointer field access
+    outer := &Outer{inner: nil, name: "test"}
+    var obj any = outer
+    
+    // Get the nil field
+    innerField, err := obj~>inner
+    assert(err == nil, "accessing nil field should succeed")
+    
+    // innerField should be a nil *Inner in an interface
+    // Calling method on it should either error or panic
+    // (depending on whether dyn catches nil receiver)
+    _, err = innerField~>GetValue()
+    assert(err != nil, "calling method on nil should error")
+    
+    // Test 2: Non-nil case for comparison
+    outer2 := &Outer{inner: &Inner{value: 42}, name: "test2"}
+    var obj2 any = outer2
+    
+    innerField2 := obj2~>inner?
+    val := innerField2~>GetValue()?
+    assert(val.(int) == 42, "GetValue should return 42")
+    
+    println("dyn_method_on_nil_field: ok")
+}

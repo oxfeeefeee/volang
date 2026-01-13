@@ -551,3 +551,54 @@ tests:
 # Fixed: variadic spread in dynamic call - obj~>Method(args...)
   - file: dyn/dyn_variadic_spread.vo
 
+# ============================================================
+# Dyn coverage tests (2026-01-13 batch 7) - New coverage tests
+# ============================================================
+
+# Test: string dynamic index access
+  - file: dyn/dyn_string_index.vo
+
+# Test: chained dynamic calls where result becomes receiver
+  - file: dyn/dyn_result_chain_call.vo
+
+# Test: dynamic call returning closure then calling it
+  - file: dyn/dyn_closure_return_call.vo
+
+# Test: multi-dimensional array/slice dynamic access
+  - file: dyn/dyn_multidim_access.vo
+
+# Test: dynamic set using dynamic get result as value
+  - file: dyn/dyn_set_from_get.vo
+
+# Test: recursive dynamic method call
+  - file: dyn/dyn_recursive_self_call.vo
+
+# Test: fixed-size array as dynamic access base
+  - file: dyn/dyn_array_as_base.vo
+
+# Test: dynamic method call on nil field value
+  - file: dyn/dyn_method_on_nil_field.vo
+
+# BUG: named type embedding protocol type - struct field index 0 not found
+  - file: dyn/dyn_named_embed_protocol.vo
+    skip: [vm, jit]
+    reason: "BUG: struct field index 0 not found in type_info.rs:529"
+
+# BUG: map[any]any dynamic index access returns error even when key exists
+  - file: dyn/dyn_map_delete_get.vo
+    skip: [vm, jit]
+    reason: "BUG: map[any]any dynamic index returns error for existing key"
+
+# Test: dynamic access on array of interfaces
+  - file: dyn/dyn_interface_array_elem.vo
+
+# BUG: nil func field dynamic access returns error and non-nil interface
+  - file: dyn/dyn_func_field_call.vo
+    skip: [vm, jit]
+    reason: "BUG: nil func field returns error and non-nil interface"
+
+# BUG: nil channel field dynamic access returns non-nil interface (same root cause as nil func)
+  - file: dyn/dyn_chan_field_access.vo
+    skip: [vm, jit]
+    reason: "BUG: nil reference type field returns non-nil interface"
+

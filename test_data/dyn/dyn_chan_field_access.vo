@@ -1,0 +1,47 @@
+// Test dynamic access on struct with channel field
+// Get channel field dynamically
+// BUG: nil channel field dynamic access returns non-nil interface (same as nil func bug)
+package main
+
+type Worker struct {
+    name   string
+    taskCh chan int
+    doneCh chan bool
+}
+
+func main() {
+    w := &Worker{
+        name:   "worker1",
+        taskCh: make(chan int, 1),
+        doneCh: make(chan bool),
+    }
+    
+    var obj any = w
+    
+    // Test 1: Access string field
+    name := obj~>name?
+    assert(name.(string) == "worker1", "name should be 'worker1'")
+    
+    // Test 2: Access buffered channel field
+    taskChAny := obj~>taskCh?
+    taskCh := taskChAny.(chan int)
+    
+    // Send and receive on the channel
+    taskCh <- 42
+    val := <-taskCh
+    assert(val == 42, "should receive 42 from channel")
+    
+    // Test 3: nil channel field
+    w2 := &Worker{
+        name:   "worker2",
+        taskCh: nil,
+        doneCh: nil,
+    }
+    var obj2 any = w2
+    
+    nilCh, err := obj2~>taskCh
+    assert(err == nil, "nil channel access should not error")
+    assert(nilCh == nil, "nil channel should be nil")
+    
+    println("dyn_chan_field_access: ok")
+}

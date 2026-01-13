@@ -1,0 +1,63 @@
+// Test dynamic access interaction with map delete
+// BUG: map[any]any dynamic index access returns error even when key exists
+// Access deleted keys, delete via dynamic, etc.
+// Note: Dynamic map access returns zero value for missing keys (Go semantics)
+package main
+
+func main() {
+    m := map[string]int{
+        "a": 1,
+        "b": 2,
+        "c": 3,
+    }
+    var obj any = m
+    
+    // Test 1: Access existing key
+    a := obj~>["a"]?
+    assert(a.(int) == 1, "a should be 1")
+    
+    // Test 2: Delete key statically, then access dynamically
+    // Dynamic map access returns zero value for missing keys (no error)
+    delete(m, "a")
+    aDeleted, err := obj~>["a"]
+    assert(err == nil, "map access should not error for missing key")
+    assert(aDeleted.(int) == 0, "deleted key should return zero value")
+    
+    // Test 3: Access remaining keys
+    b := obj~>["b"]?
+    assert(b.(int) == 2, "b should still be 2")
+    
+    // Test 4: Delete another key and verify
+    delete(m, "b")
+    bDeleted, err2 := obj~>["b"]
+    assert(err2 == nil, "map access should not error")
+    assert(bDeleted.(int) == 0, "deleted b should return zero value")
+    
+    c := obj~>["c"]?
+    assert(c.(int) == 3, "c should still be 3")
+    
+    // Test 5: Add new key statically, access dynamically
+    m["d"] = 4
+    d := obj~>["d"]?
+    assert(d.(int) == 4, "d should be 4")
+    
+    // BUG: map[any]any dynamic index access returns error even when key exists
+    // Test 6: map[any]any with string keys
+    m2 := map[any]any{
+        "x": 10,
+        "y": 20,
+    }
+    var obj2 any = m2
+    
+    x, err3 := obj2~>["x"]
+    assert(err3 == nil, "x access should not error")
+    assert(x.(int) == 10, "x should be 10")
+    
+    delete(m2, "x")
+    xDeleted, err4 := obj2~>["x"]
+    assert(err4 == nil, "map access should not error")
+    // For map[any]any, deleted key returns nil (zero value for any)
+    assert(xDeleted == nil, "deleted x should return nil")
+    
+    println("dyn_map_delete_get: ok")
+}
