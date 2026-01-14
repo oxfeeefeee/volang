@@ -22,7 +22,6 @@ vo-analysis = { path = "../vo-analysis" }
 vo-codegen = { path = "../vo-codegen" }
 vo-module = { path = "../vo-module" }
 vo-vm = { path = "../vo-vm", features = ["jit"] }
-vo-runtime-native = { path = "../vo-runtime-native" }
 vo-jit = { path = "../vo-jit" }
 clap = { version = "4.4", features = ["derive"] }
 

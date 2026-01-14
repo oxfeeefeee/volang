@@ -962,6 +962,24 @@ impl<'a> ExternCallContext<'a> {
         }
     }
 
+    /// Get the VM pointer for direct closure calls.
+    #[inline]
+    pub fn vm_ptr(&self) -> *mut std::ffi::c_void {
+        self.vm
+    }
+
+    /// Get the fiber pointer for direct closure calls.
+    #[inline]
+    pub fn fiber_ptr(&self) -> *mut std::ffi::c_void {
+        self.fiber
+    }
+
+    /// Get the closure call function for direct closure calls.
+    #[inline]
+    pub fn closure_call_fn(&self) -> Option<ClosureCallFn> {
+        self.call_closure_fn
+    }
+
 }
 
 // ==================== Extern Registry ====================
@@ -981,6 +999,30 @@ impl ExternRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self { funcs: Vec::new() }
+    }
+
+    /// Register all functions from an extension loader.
+    ///
+    /// This resolves extern function names from the module's extern defs
+    /// and registers them by ID.
+    pub fn register_from_extension_loader(
+        &mut self,
+        loader: &crate::ext_loader::ExtensionLoader,
+        extern_defs: &[crate::bytecode::ExternDef],
+    ) {
+        for (id, def) in extern_defs.iter().enumerate() {
+            // Already registered (e.g., from linkme)?
+            if self.has(id as u32) {
+                continue;
+            }
+            
+            // Try to find in extension loader
+            if let Some(func) = loader.lookup(&def.name) {
+                self.register(id as u32, func);
+            } else if let Some(func) = loader.lookup_with_context(&def.name) {
+                self.register_with_context(id as u32, func);
+            }
+        }
     }
 
     /// Register a simple extern function (no GC access).

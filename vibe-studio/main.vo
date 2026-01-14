@@ -1,0 +1,20 @@
+package main
+
+import "../libs/vogui-egui"
+
+func main() {
+	egui.Run("Vibe Studio", func() {
+		egui.CentralPanel(func() {
+			egui.Heading("Welcome to Vibe Studio!")
+			egui.Separator()
+			egui.Label("A Vo IDE built with egui")
+			if egui.Button("Click me") {
+				println("Button clicked!")
+			}
+			egui.Horizontal(func() {
+				egui.Label("Left")
+				egui.Label("Right")
+			})
+		})
+	})
+}

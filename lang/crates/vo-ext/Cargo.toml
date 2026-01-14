@@ -1,0 +1,14 @@
+[package]
+name = "vo-ext"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SDK for creating Vo native extensions"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+vo-runtime = { path = "../vo-runtime" }
+vo-ffi-macro = { path = "../vo-ffi-macro" }
+linkme = "0.3"

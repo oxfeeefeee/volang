@@ -22,6 +22,8 @@ pub mod jit_api;
 pub mod itab;
 #[cfg(feature = "gc-debug")]
 pub mod gc_debug;
+#[cfg(feature = "std")]
+pub mod ext_loader;
 
 // Re-exports from vo-common-core (no_std compatible)
 pub use vo_common_core::types::{MetaId, SlotType, ValueKind, ValueMeta, ValueRttid, META_ID_MASK, INVALID_META_ID};

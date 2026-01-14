@@ -99,6 +99,8 @@ BENCHMARK_DIR = PROJECT_ROOT / 'lang' / 'benchmark'
 RESULTS_DIR = BENCHMARK_DIR / 'results'
 VO_BIN_DEBUG = PROJECT_ROOT / 'target' / 'debug' / 'vo'
 VO_BIN_RELEASE = PROJECT_ROOT / 'target' / 'release' / 'vo'
+VIBE_STUDIO_MAIN = PROJECT_ROOT / 'vibe-studio' / 'main.vo'
+STDLIB_DIR = PROJECT_ROOT / 'lang' / 'stdlib'
 
 
 def run_cmd(cmd: list[str], cwd: Path = None, env: dict = None, capture: bool = True) -> tuple[int, str, str]:
@@ -118,6 +120,25 @@ def run_cmd(cmd: list[str], cwd: Path = None, env: dict = None, capture: bool = 
 def command_exists(cmd: str) -> bool:
     return subprocess.run(['command', '-v', cmd], shell=True, capture_output=True).returncode == 0 or \
            subprocess.run(f'command -v {cmd}', shell=True, capture_output=True).returncode == 0
+
+
+def run_vibe_studio():
+    """Run Vibe Studio."""
+    # Build vo-cli and vogui-egui first
+    print(f"{Colors.CYAN}Building vo-cli and vogui-egui...{Colors.NC}")
+    ret, _, stderr = run_cmd(['cargo', 'build', '-p', 'vo-cli', '-p', 'vogui-egui'])
+    if ret != 0:
+        print(f"{Colors.RED}Build failed:{Colors.NC}\n{stderr}")
+        sys.exit(1)
+    
+    # Run vibe-studio
+    print(f"{Colors.CYAN}Running Vibe Studio...{Colors.NC}")
+    env = {'VO_STD': str(STDLIB_DIR)}
+    subprocess.run(
+        [str(VO_BIN_DEBUG), 'run', str(VIBE_STUDIO_MAIN)],
+        cwd=PROJECT_ROOT,
+        env={**os.environ, **env}
+    )
 
 
 # =============================================================================
@@ -825,6 +846,9 @@ def main():
     loc_parser.add_argument('--with-tests', action='store_true',
                             help='Include test files')
 
+    # vibe
+    subparsers.add_parser('vibe', help='Run Vibe Studio')
+
     args = parser.parse_args()
 
     if args.command == 'test':
@@ -848,6 +872,9 @@ def main():
     elif args.command == 'loc':
         stats = LocStats(with_tests=args.with_tests)
         stats.run()
+
+    elif args.command == 'vibe':
+        run_vibe_studio()
 
     else:
         parser.print_help()

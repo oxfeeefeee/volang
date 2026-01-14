@@ -118,13 +118,27 @@ impl Vm {
     }
 
     pub fn load(&mut self, module: Module) {
-        // Register extern functions from module
+        self.load_with_extensions(module, None);
+    }
+
+    /// Load a module with optional extension loader for native extensions.
+    pub fn load_with_extensions(
+        &mut self,
+        module: Module,
+        ext_loader: Option<&vo_runtime::ext_loader::ExtensionLoader>,
+    ) {
+        // Register extern functions from built-in linkme tables
         for (id, def) in module.externs.iter().enumerate() {
             if let Some(func) = vo_runtime::lookup_extern(&def.name) {
                 self.state.extern_registry.register(id as u32, func);
             } else if let Some(func) = vo_runtime::lookup_extern_with_context(&def.name) {
                 self.state.extern_registry.register_with_context(id as u32, func);
             }
+        }
+        
+        // Register extern functions from extension loader (if provided)
+        if let Some(loader) = ext_loader {
+            self.state.extern_registry.register_from_extension_loader(loader, &module.externs);
         }
         
         let total_global_slots: usize = module.globals.iter().map(|g| g.slots as usize).sum();

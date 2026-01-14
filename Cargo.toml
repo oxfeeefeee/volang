@@ -2,8 +2,7 @@
 resolver = "2"
 members = [
   "lang/crates/*",
-  "libs/*/rust/*",
-  "vibe-studio",
+  "libs/*/rust",
 ]
 
 [workspace.package]

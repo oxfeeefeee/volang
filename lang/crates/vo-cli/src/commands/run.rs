@@ -356,8 +356,11 @@ fn report_vm_error(vm: &Vm, e: &VmError, source_root: &Path) -> bool {
 
 /// Run a module using the VM interpreter.
 fn run_vm(module: Module, source_root: &Path) -> bool {
+    // Discover and load native extensions from source root
+    let ext_loader = load_extensions(source_root);
+    
     let mut vm = Vm::new();
-    vm.load(module);
+    vm.load_with_extensions(module, ext_loader.as_ref());
     
     match vm.run() {
         Ok(()) => {
@@ -368,6 +371,45 @@ fn run_vm(module: Module, source_root: &Path) -> bool {
     }
 }
 
+/// Discover and load native extensions from imported library directories.
+/// 
+/// For each library with vo.ext.toml, loads the native library specified.
+/// Native library path is either:
+/// 1. Specified in vo.ext.toml `path` field (relative to library root)
+/// 2. Auto-detected in library root (lib*.so / lib*.dylib / *.dll)
+fn load_extensions(source_root: &Path) -> Option<vo_runtime::ext_loader::ExtensionLoader> {
+    use vo_runtime::ext_loader::{ExtensionLoader, discover_extensions};
+    
+    let mut loader = ExtensionLoader::new();
+    let mut found_any = false;
+    
+    // Find libs/ directory relative to source_root
+    let libs_dir = source_root.join("../libs").canonicalize().ok()?;
+    if !libs_dir.is_dir() {
+        return None;
+    }
+    
+    // Load extensions from each library in libs/
+    if let Ok(entries) = std::fs::read_dir(&libs_dir) {
+        for entry in entries.flatten() {
+            let lib_path = entry.path();
+            if lib_path.is_dir() {
+                if let Ok(manifests) = discover_extensions(&lib_path) {
+                    for manifest in manifests {
+                        if let Err(e) = loader.load(&manifest.native_path, &manifest.name) {
+                            eprintln!("Warning: failed to load extension '{}': {}", manifest.name, e);
+                        } else {
+                            found_any = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if found_any { Some(loader) } else { None }
+}
+
 /// Run a module using the JIT compiler.
 ///
 /// Environment variables:
@@ -376,6 +418,9 @@ fn run_vm(module: Module, source_root: &Path) -> bool {
 /// - `VO_JIT_DEBUG`: Print Cranelift IR for compiled functions
 fn run_jit(module: Module, source_root: &Path) -> bool {
     use vo_vm::JitConfig;
+    
+    // Discover and load native extensions from source root
+    let ext_loader = load_extensions(source_root);
     
     let call_threshold = std::env::var("VO_JIT_CALL_THRESHOLD")
         .ok()
@@ -394,7 +439,7 @@ fn run_jit(module: Module, source_root: &Path) -> bool {
     };
     let mut vm = Vm::with_jit_config(config);
     vm.init_jit();
-    vm.load(module);
+    vm.load_with_extensions(module, ext_loader.as_ref());
     
     match vm.run() {
         Ok(()) => {
