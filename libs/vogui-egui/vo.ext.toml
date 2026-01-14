@@ -1,3 +1,0 @@
-[extension]
-name = "vogui-egui"
-path = "../../target/debug/libvogui_egui.so"

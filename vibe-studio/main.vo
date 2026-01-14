@@ -1,6 +1,6 @@
 package main
 
-import "../libs/vogui-egui"
+import "../libs/vegui"
 
 func main() {
 	egui.Run("Vibe Studio", func() {

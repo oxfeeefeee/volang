@@ -1,12 +1,10 @@
 # Vibe UI System Design
 
-A comprehensive UI framework for Vo, built on top of vo-egui.
+A comprehensive UI framework for Vo, built on top of vegui.
 
 ---
 
 ## Architecture Overview
-
-The UI system is split into two independent layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -28,19 +26,11 @@ The UI system is split into two independent layers:
 │          │                  │                  │                    │
 │          ▼                  ▼                  ▼                    │
 │   ┌─────────────────────────────────────────────────────────────┐  │
-│   │                      vo-egui                                 │  │
-│   │                                                              │  │  Base Library
-│   │   Low-level egui wrapper for Vo                              │  │
-│   │   Independent library, anyone can use                        │  │
+│   │                     vegui                               │  │
 │   │                                                              │  │
-│   └──────────────────────────┬──────────────────────────────────┘  │
-│                              │                                      │
-├──────────────────────────────┼──────────────────────────────────────┤
-│                              ▼                                      │
-│   ┌─────────────────────────────────────────────────────────────┐  │
-│   │                  vo-egui-runtime (Rust)                      │  │
-│   │                                                              │  │  Runtime Layer
-│   │   egui + winit + wgpu + Vo FFI                               │  │
+│   │   Unified egui library for Vo                                │  │  GUI Library
+│   │   - Vo API (vegui/vo/)                                  │  │
+│   │   - Rust runtime (vegui/rust/) - internal               │  │
 │   │                                                              │  │
 │   └─────────────────────────────────────────────────────────────┘  │
 │                                                                     │
@@ -51,23 +41,23 @@ The UI system is split into two independent layers:
 
 | Layer | Package | Purpose | Constraint |
 |-------|---------|---------|------------|
-| **Base Library** | `vo-egui` | Provide egui capabilities to Vo | No architecture constraints, low-level API |
+| **GUI Library** | `vegui` | Unified egui wrapper for Vo (includes Rust runtime internally) | No architecture constraints, low-level API |
 | **Framework** | `vibe-ui` | Provide development patterns | Elm architecture, high-level API |
-| **Application** | User code | Business logic | Uses framework or directly uses base library |
+| **Application** | User code (e.g. vibe-studio) | Business logic | Uses framework or directly uses GUI library |
 
 ---
 
-## Part 1: vo-egui (Base Library)
+## Part 1: vegui (GUI Library)
 
-Independent library for building GUI apps in Vo. No architecture constraints.
+Unified egui library for building GUI apps in Vo. This is a single library from the Vo user's perspective, with the Rust runtime bundled internally.
 
 ### Package Structure
 
 ```
-libs/vo-egui/
-├── rust/
-│   └── vo-egui-runtime/     # Rust runtime (egui + winit + wgpu)
-├── vo/
+libs/vegui/
+├── rust/                     # Internal Rust runtime (egui + winit + wgpu + Vo FFI)
+│   └── Cargo.toml
+├── vo/                       # Vo API - what users import
 │   ├── vo.mod
 │   ├── app.vo               # Run, AppConfig
 │   ├── widgets.vo           # Button, Label, etc.
@@ -77,12 +67,14 @@ libs/vo-egui/
 └── README.md
 ```
 
+**Note:** Users import `vegui` directly. The Rust runtime is an internal implementation detail.
+
 ### API Style: Immediate Mode
 
 ```vo
 package main
 
-import "vo-egui"
+import "vegui"
 
 func main() {
     checked := false
@@ -181,7 +173,7 @@ func IsKeyDown(key Key) bool
 
 ## Part 2: vibe-ui (Framework)
 
-High-level framework with Elm-style architecture. Built on vo-egui.
+High-level framework with Elm-style architecture. Built on vegui.
 
 ### Design Principles
 
@@ -381,7 +373,7 @@ cmd.Cancel("fetch-data")
 
 #### 5. View (UI Description)
 
-View is a pure function that returns a UI tree. Uses vo-egui under the hood.
+View is a pure function that returns a UI tree. Uses vegui under the hood.
 
 ```vo
 func view(model Model) {
@@ -717,7 +709,7 @@ func TestUpdate(t *testing.T) {
 
 ## Implementation Phases
 
-### Phase 1: vo-egui (Base Library)
+### Phase 1: vegui (GUI Library)
 - [ ] Rust runtime with egui + winit + wgpu
 - [ ] Basic widget externs (Button, Label, Checkbox, etc.)
 - [ ] Layout containers (Horizontal, Vertical, Panel)

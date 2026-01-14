@@ -1,5 +1,5 @@
 [package]
-name = "vogui-egui"
+name = "vegui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
