@@ -19,6 +19,8 @@ pub struct EscapeResult {
     pub escaped: HashSet<ObjKey>,
     /// Closure captures: FuncLit ExprId -> captured variables.
     pub closure_captures: HashMap<ExprId, Vec<ObjKey>>,
+    /// Variables defined inside loops (for Go 1.22 per-iteration semantics).
+    pub loop_defined_vars: HashSet<ObjKey>,
 }
 
 /// Analyze escape for all files and return escaped variables and closure captures.
@@ -34,6 +36,7 @@ pub fn analyze(
     EscapeResult {
         escaped: analyzer.escaped,
         closure_captures: analyzer.closure_captures,
+        loop_defined_vars: analyzer.loop_defined_vars,
     }
 }
 
@@ -50,10 +53,14 @@ struct EscapeAnalyzer<'a> {
     escaped: HashSet<ObjKey>,
     /// Closure captures: FuncLit ExprId -> captured variables.
     closure_captures: HashMap<ExprId, Vec<ObjKey>>,
+    /// Variables defined inside loops (Go 1.22 per-iteration semantics).
+    loop_defined_vars: HashSet<ObjKey>,
     /// Current function scope (None for package-level code)
     func_scope: Option<ScopeKey>,
     /// Stack of closures being analyzed (for nested closure captures)
     closure_stack: Vec<ClosureEntry>,
+    /// Loop nesting depth (>0 means inside a loop)
+    loop_depth: u32,
 }
 
 impl<'a> EscapeAnalyzer<'a> {
@@ -63,8 +70,26 @@ impl<'a> EscapeAnalyzer<'a> {
             tc_objs,
             escaped: HashSet::new(),
             closure_captures: HashMap::new(),
+            loop_defined_vars: HashSet::new(),
             func_scope: None,
             closure_stack: Vec::new(),
+            loop_depth: 0,
+        }
+    }
+
+    /// Mark a variable as loop-defined if we're inside a loop.
+    fn mark_loop_var(&mut self, obj: ObjKey) {
+        if self.loop_depth > 0 {
+            self.loop_defined_vars.insert(obj);
+        }
+    }
+    
+    /// Mark loop variable from an identifier expression (if define=true).
+    fn mark_loop_var_from_ident(&mut self, expr: &Expr) {
+        if let ExprKind::Ident(ident) = &expr.kind {
+            if let Some(Some(obj)) = self.type_info.defs.get(&ident.id) {
+                self.mark_loop_var(*obj);
+            }
         }
     }
 
@@ -203,10 +228,22 @@ impl<'a> EscapeAnalyzer<'a> {
             }
             StmtKind::For(fs) => {
                 use vo_syntax::ast::ForClause;
+                
+                // Enter loop - variables defined here are loop variables
+                self.loop_depth += 1;
+                
                 match &fs.clause {
                     ForClause::Cond(Some(e)) => self.visit_expr(e),
                     ForClause::Three { init, cond, post } => {
+                        // Mark variables defined in init as loop variables
                         if let Some(init) = init {
+                            if let StmtKind::ShortVar(svd) = &init.kind {
+                                for name in &svd.names {
+                                    if let Some(Some(obj)) = self.type_info.defs.get(&name.id) {
+                                        self.mark_loop_var(*obj);
+                                    }
+                                }
+                            }
                             self.visit_stmt(init);
                         }
                         if let Some(cond) = cond {
@@ -216,10 +253,18 @@ impl<'a> EscapeAnalyzer<'a> {
                             self.visit_stmt(post);
                         }
                     }
-                    ForClause::Range { expr, .. } => self.visit_expr(expr),
+                    ForClause::Range { key, value, define, expr } => {
+                        if *define {
+                            if let Some(k) = key { self.mark_loop_var_from_ident(k); }
+                            if let Some(v) = value { self.mark_loop_var_from_ident(v); }
+                        }
+                        self.visit_expr(expr);
+                    }
                     _ => {}
                 }
                 self.visit_block(&fs.body);
+                
+                self.loop_depth -= 1;
             }
             StmtKind::Switch(ss) => {
                 if let Some(init) = &ss.init {

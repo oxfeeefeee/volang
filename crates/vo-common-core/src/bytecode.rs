@@ -41,6 +41,9 @@ pub struct FunctionDef {
     /// Starting slot for heap-allocated named return GcRefs.
     /// GcRefs are in slots heap_ret_gcref_start..heap_ret_gcref_start+heap_ret_gcref_count.
     pub heap_ret_gcref_start: u16,
+    /// Slot count for each heap-allocated named return (parallel to GcRefs).
+    /// Length equals heap_ret_gcref_count. Empty if no heap returns.
+    pub heap_ret_slots: Vec<u16>,
     pub code: Vec<Instruction>,
     pub slot_types: Vec<SlotType>,
 }

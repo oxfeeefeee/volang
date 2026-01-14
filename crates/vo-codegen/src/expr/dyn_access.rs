@@ -11,13 +11,7 @@ use crate::type_info::encode_i32;
 use crate::type_info::TypeInfoWrapper;
 
 use super::compile_expr_to;
-
-/// IfaceAssert flags for protocol dispatch: has_ok=1, dst_slots=2, src_slots=2
-/// Format: has_ok | (dst_slots << 2) | (src_slots << 3)
-const IFACE_ASSERT_WITH_OK: u8 = 1 | (1 << 2) | (2 << 3);
-
-/// All protocol interfaces have exactly one method at index 0
-const PROTOCOL_METHOD_IDX: u8 = 0;
+use crate::stmt::{IFACE_ASSERT_WITH_OK, PROTOCOL_METHOD_IDX};
 
 /// Emit dyn_get_attr extern call: (base, name) -> (any, error)
 /// Returns the result register (4 slots: any[2], error[2])

@@ -983,13 +983,14 @@ impl FuncBuilder {
         
         // Count heap-allocated named returns (escaped = true)
         // Used by panic recovery to return named return values after recover()
-        let (heap_ret_gcref_count, heap_ret_gcref_start) = if !self.named_return_slots.is_empty() 
+        let (heap_ret_gcref_count, heap_ret_gcref_start, heap_ret_slots) = if !self.named_return_slots.is_empty() 
             && self.named_return_slots.iter().all(|(_, _, escaped)| *escaped) {
             // All escaped: first element's slot is the start
             let start = self.named_return_slots.first().map(|(slot, _, _)| *slot).unwrap_or(0);
-            (self.named_return_slots.len() as u16, start)
+            let slots: Vec<u16> = self.named_return_slots.iter().map(|(_, s, _)| *s).collect();
+            (self.named_return_slots.len() as u16, start, slots)
         } else {
-            (0, 0) // Mixed or non-escaped: not supported for panic recovery
+            (0, 0, vec![]) // Mixed or non-escaped: not supported for panic recovery
         };
         
         FunctionDef {
@@ -1001,6 +1002,7 @@ impl FuncBuilder {
             recv_slots: self.recv_slots,
             heap_ret_gcref_count,
             heap_ret_gcref_start,
+            heap_ret_slots,
             code: self.code,
             slot_types: self.slot_types,
         }

@@ -12,11 +12,42 @@ use crate::expr::{compile_expr_to, emit_int_trunc, get_expr_source};
 use crate::func::{ExprSource, FuncBuilder, StorageKind};
 use crate::type_info::{encode_i32, TypeInfoWrapper};
 
+/// Deferred heap allocation info for loop variables (Go 1.22 per-iteration semantics).
+/// When a loop variable escapes, heap allocation must happen each iteration, not just once.
+#[derive(Clone, Copy)]
+pub struct DeferredHeapAlloc {
+    /// The GcRef slot that holds the pointer to the heap object.
+    pub gcref_slot: u16,
+    /// Number of value slots in the heap object.
+    pub value_slots: u16,
+    /// Constant index for the value metadata.
+    pub meta_idx: u16,
+}
+
+impl DeferredHeapAlloc {
+    /// Emit the PtrNew instruction for this deferred allocation.
+    pub fn emit(&self, func: &mut FuncBuilder) {
+        let meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
+        func.emit_op(Opcode::LoadConst, meta_reg, self.meta_idx, 0);
+        func.emit_with_flags(Opcode::PtrNew, self.value_slots as u8, self.gcref_slot, meta_reg, 0);
+    }
+    
+    /// Emit PtrNew and copy value from stack slots to the new heap object.
+    /// Used for Go 1.22 loop variable per-iteration semantics.
+    pub fn emit_with_copy(&self, func: &mut FuncBuilder, src_slot: u16) {
+        self.emit(func);
+        for i in 0..self.value_slots {
+            func.emit_op(Opcode::PtrSet, self.gcref_slot, i, src_slot + i);
+        }
+    }
+}
+
 /// IfaceAssert flags for protocol dispatch: has_ok=1, dst_slots=2, src_slots=2
-const IFACE_ASSERT_WITH_OK: u8 = 1 | (1 << 2) | (2 << 3);
+/// Format: has_ok | (dst_slots << 2) | (src_slots << 3)
+pub(crate) const IFACE_ASSERT_WITH_OK: u8 = 1 | (1 << 2) | (2 << 3);
 
 /// All protocol interfaces have exactly one method at index 0
-const PROTOCOL_METHOD_IDX: u8 = 0;
+pub(crate) const PROTOCOL_METHOD_IDX: u8 = 0;
 
 /// Emit panic with error: call panic_with_error extern.
 /// Dynamic write always panics on error (does not propagate).
@@ -42,15 +73,12 @@ fn emit_dyn_assign_error_short_circuit(
 }
 
 /// Emit Return with heap_returns flag for escaped named returns.
-/// VM will read values from heap GcRefs after defer execution.
+/// VM reads per-ref slot counts from FunctionDef.heap_ret_slots.
 fn emit_heap_returns(func: &mut FuncBuilder, named_return_slots: &[(u16, u16, bool)]) {
     use vo_common_core::bytecode::RETURN_FLAG_HEAP_RETURNS;
     let gcref_count = named_return_slots.len() as u16;
     let gcref_start = named_return_slots[0].0;
-    // value_slots_per_ref: assumes all named returns have same slot count
-    // TODO: support mixed slot counts if needed
-    let value_slots = named_return_slots[0].1;
-    func.emit_with_flags(Opcode::Return, RETURN_FLAG_HEAP_RETURNS, gcref_start, gcref_count, value_slots);
+    func.emit_with_flags(Opcode::Return, RETURN_FLAG_HEAP_RETURNS, gcref_start, gcref_count, 0);
 }
 
 /// Compute IfaceAssert parameters for a target type.
@@ -97,6 +125,10 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
     /// This is the single entry point for all variable definitions.
     /// All type/escape decisions are centralized here.
     /// 
+    /// Returns (StorageKind, Option<DeferredHeapAlloc>).
+    /// For loop variables that escape, DeferredHeapAlloc contains info needed to
+    /// emit PtrNew at each loop iteration (Go 1.22 per-iteration semantics).
+    /// 
     /// IMPORTANT: For shadowing cases like `i := i`, we must compile the init
     /// expression BEFORE registering the new variable, so the RHS references
     /// the outer variable, not the new (uninitialized) one.
@@ -107,29 +139,45 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         escapes: bool,
         init: Option<&Expr>,
         obj_key: Option<ObjKey>,
-    ) -> Result<StorageKind, CodegenError> {
-        if let Some(expr) = init {
-            // Compile init expression FIRST, before registering variable.
-            // This ensures shadowing like `i := i` references the outer `i`.
-            let slot_types = self.info.type_slot_types(type_key);
+    ) -> Result<(StorageKind, Option<DeferredHeapAlloc>), CodegenError> {
+        let is_loop_var = obj_key.map_or(false, |k| self.info.is_loop_var(k));
+        let slot_types = self.info.type_slot_types(type_key);
+        
+        // Compile init FIRST (for shadowing: `i := i` references outer `i`)
+        let init_slot = if let Some(expr) = init {
             let tmp = self.func.alloc_temp_typed(&slot_types);
             self.compile_value(expr, tmp, type_key)?;
-            
-            // Now allocate storage and register the variable name
-            let storage = self.alloc_storage(sym, type_key, escapes, obj_key)?;
-            
-            // Copy from temp to the new storage
-            self.store_from_slot(storage, tmp, &self.info.type_slot_types(type_key));
-            Ok(storage)
+            Some(tmp)
         } else {
-            let storage = self.alloc_storage(sym, type_key, escapes, obj_key)?;
-            self.emit_zero_init(storage, type_key);
-            Ok(storage)
+            None
+        };
+        
+        // Allocate storage and register variable
+        let (storage, deferred) = self.alloc_storage(sym, type_key, escapes, obj_key)?;
+        
+        // Emit PtrNew if needed
+        if let Some(ref d) = deferred {
+            d.emit(self.func);
         }
+        
+        // Initialize storage
+        if let Some(tmp) = init_slot {
+            self.store_from_slot(storage, tmp, &slot_types);
+        } else {
+            self.emit_zero_init(storage, type_key);
+        }
+        
+        // Return deferred only for loop vars (for per-iteration alloc)
+        let ret_deferred = if is_loop_var { deferred } else { None };
+        Ok((storage, ret_deferred))
     }
 
     /// Allocate storage for a variable based on type and escape analysis.
     /// This is the single decision point for storage strategy.
+    /// 
+    /// Returns (StorageKind, Option<DeferredHeapAlloc>).
+    /// DeferredHeapAlloc is set when the variable needs heap allocation that should
+    /// be deferred (for loop variables with Go 1.22 per-iteration semantics).
     /// 
     /// `obj_key`: Used to check if variable is captured by closure (for reference type boxing decision)
     fn alloc_storage(
@@ -138,7 +186,7 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         type_key: TypeKey,
         escapes: bool,
         obj_key: Option<ObjKey>,
-    ) -> Result<StorageKind, CodegenError> {
+    ) -> Result<(StorageKind, Option<DeferredHeapAlloc>), CodegenError> {
         let slots = self.info.type_slot_count(type_key);
         let slot_types = self.info.type_slot_types(type_key);
 
@@ -148,29 +196,29 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         if self.info.is_reference_type(type_key) {
             if needs_box {
                 // Reference type captured by closure: box to share storage
-                self.alloc_escaped_boxed(sym, type_key, slots, &slot_types)
+                self.alloc_escaped_boxed_deferred(sym, type_key, slots)
             } else {
                 // Reference type not captured: 1 slot GcRef IS the value
                 let slot = self.func.define_local_reference(sym);
-                Ok(StorageKind::Reference { slot })
+                Ok((StorageKind::Reference { slot }, None))
             }
         } else if needs_box {
             // Non-reference types that escape need boxing
             if self.info.is_array(type_key) {
-                self.alloc_escaped_array(sym, type_key)
+                self.alloc_escaped_array(sym, type_key).map(|s| (s, None))
             } else {
-                self.alloc_escaped_boxed(sym, type_key, slots, &slot_types)
+                self.alloc_escaped_boxed_deferred(sym, type_key, slots)
             }
         } else if self.info.is_array(type_key) {
             // Stack array: memory semantics, accessed via SlotGet/SlotSet
             let elem_slots = self.info.array_elem_slots(type_key);
             let len = self.info.array_len(type_key) as u16;
             let base_slot = self.func.define_local_stack_array(sym, slots, elem_slots, len, &slot_types);
-            Ok(StorageKind::StackArray { base_slot, elem_slots, len })
+            Ok((StorageKind::StackArray { base_slot, elem_slots, len }, None))
         } else {
             // Stack value (struct/primitive): register semantics
             let slot = self.func.define_local_stack(sym, slots, &slot_types);
-            Ok(StorageKind::StackValue { slot, slots })
+            Ok((StorageKind::StackValue { slot, slots }, None))
         }
     }
 
@@ -208,22 +256,21 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         Ok(StorageKind::HeapArray { gcref_slot, elem_slots, elem_bytes: elem_bytes as u16, elem_vk })
     }
 
-    /// Allocate escaped boxed value (struct/primitive/interface): [GcHeader][data]
-    fn alloc_escaped_boxed(
+    /// Allocate escaped boxed value with deferred PtrNew emission.
+    /// Returns (StorageKind, DeferredHeapAlloc) - caller decides when to emit PtrNew.
+    fn alloc_escaped_boxed_deferred(
         &mut self,
         sym: Symbol,
         type_key: TypeKey,
         slots: u16,
-        _slot_types: &[vo_runtime::SlotType],
-    ) -> Result<StorageKind, CodegenError> {
+    ) -> Result<(StorageKind, Option<DeferredHeapAlloc>), CodegenError> {
         let gcref_slot = self.func.define_local_heap_boxed(sym, slots);
-
         let meta_idx = self.ctx.get_or_create_value_meta(type_key, self.info);
-        let meta_reg = self.func.alloc_temp_typed(&[SlotType::Value]);
-        self.func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-        self.func.emit_with_flags(Opcode::PtrNew, slots as u8, gcref_slot, meta_reg, 0);
-
-        Ok(StorageKind::HeapBoxed { gcref_slot, value_slots: slots })
+        
+        let storage = StorageKind::HeapBoxed { gcref_slot, value_slots: slots };
+        let deferred = DeferredHeapAlloc { gcref_slot, value_slots: slots, meta_idx };
+        
+        Ok((storage, Some(deferred)))
     }
 
     /// Compile expression value with automatic interface conversion.
@@ -263,8 +310,6 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
 
     /// Define a local variable and initialize from an already-compiled slot.
     /// Used for comma-ok cases where the value is already in a temp slot.
-    /// 
-    /// This is unified: alloc_storage + store_from_slot
     pub fn define_local_from_slot(
         &mut self,
         sym: Symbol,
@@ -274,7 +319,12 @@ impl<'a, 'b> StmtCompiler<'a, 'b> {
         obj_key: Option<ObjKey>,
     ) -> Result<StorageKind, CodegenError> {
         let slot_types = self.info.type_slot_types(type_key);
-        let storage = self.alloc_storage(sym, type_key, escapes, obj_key)?;
+        let (storage, deferred) = self.alloc_storage(sym, type_key, escapes, obj_key)?;
+        
+        if let Some(d) = deferred {
+            d.emit(self.func);
+        }
+        
         self.store_from_slot(storage, src_slot, &slot_types);
         Ok(storage)
     }
@@ -378,17 +428,29 @@ impl IndexLoop {
     }
 }
 
+/// Result of range variable allocation - includes storage kind for proper value assignment
+struct RangeVarInfo {
+    /// The slot to receive the value (temp slot for escaped vars, storage slot otherwise)
+    slot: u16,
+    /// Storage kind - None for blank identifier or temp, Some for actual variable
+    storage: Option<StorageKind>,
+    /// Type of the variable (for emit_storage_store)
+    type_key: TypeKey,
+    /// Deferred heap allocation for loop variables (Go 1.22 per-iteration semantics)
+    deferred_alloc: Option<DeferredHeapAlloc>,
+}
+
 /// Define or lookup a range variable (key or value) using StmtCompiler.
 /// - If `define` is true: declare new variable with proper escape handling
 /// - If `define` is false: lookup existing variable
 /// - Blank identifier `_` always gets a temp slot (never defined or looked up)
-/// Gets type from identifier definition when available.
-fn range_var_slot(
+/// Returns RangeVarInfo with storage info for proper escaped variable handling.
+fn range_var_info(
     sc: &mut StmtCompiler,
     var: Option<&Expr>,
     fallback_type: TypeKey,
     define: bool,
-) -> Result<u16, CodegenError> {
+) -> Result<RangeVarInfo, CodegenError> {
     match var {
         Some(expr) => {
             if let vo_syntax::ast::ExprKind::Ident(ident) = &expr.kind {
@@ -396,30 +458,72 @@ fn range_var_slot(
                 let is_blank = sc.info.project.interner.resolve(ident.symbol) == Some("_");
                 if is_blank {
                     let slot_types = sc.info.type_slot_types(fallback_type);
-                    return Ok(sc.func.alloc_temp_typed(&slot_types));
+                    let slot = sc.func.alloc_temp_typed(&slot_types);
+                    return Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None });
                 }
                 
                 if define {
                     let obj_key = sc.info.get_def(ident);
                     let type_key = sc.info.obj_type(obj_key, "range var must have type");
                     let escapes = sc.info.is_escaped(obj_key);
-                    let storage = sc.define_local(ident.symbol, type_key, escapes, None, Some(obj_key))?;
-                    Ok(storage.slot())
+                    
+                    // Use centralized define_local - it handles deferred alloc for loop vars
+                    let (storage, deferred_alloc) = sc.define_local(ident.symbol, type_key, escapes, None, Some(obj_key))?;
+                    
+                    // For HeapBoxed with deferred alloc, we need a temp slot to receive the value
+                    let slot = if deferred_alloc.is_some() {
+                        let slot_types = sc.info.type_slot_types(type_key);
+                        sc.func.alloc_temp_typed(&slot_types)
+                    } else {
+                        storage.slot()
+                    };
+                    
+                    Ok(RangeVarInfo { slot, storage: Some(storage), type_key, deferred_alloc })
                 } else {
-                    Ok(sc.func.lookup_local(ident.symbol)
-                        .expect("range variable not found")
-                        .storage.slot())
+                    // Non-define case: lookup existing variable
+                    let local = sc.func.lookup_local(ident.symbol)
+                        .expect("range variable not found");
+                    let storage = local.storage;
+                    let type_key = fallback_type;
+                    let slot = match storage {
+                        StorageKind::HeapBoxed { .. } | StorageKind::HeapArray { .. } => {
+                            let slot_types = sc.info.type_slot_types(type_key);
+                            sc.func.alloc_temp_typed(&slot_types)
+                        }
+                        _ => storage.slot(),
+                    };
+                    Ok(RangeVarInfo { slot, storage: Some(storage), type_key, deferred_alloc: None })
                 }
             } else if define {
                 let slot_types = sc.info.type_slot_types(fallback_type);
-                Ok(sc.func.alloc_temp_typed(&slot_types))
+                let slot = sc.func.alloc_temp_typed(&slot_types);
+                Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None })
             } else {
-                crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)
+                let slot = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
+                Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None })
             }
         }
         None => {
             let slot_types = sc.info.type_slot_types(fallback_type);
-            Ok(sc.func.alloc_temp_typed(&slot_types))
+            let slot = sc.func.alloc_temp_typed(&slot_types);
+            Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None })
+        }
+    }
+}
+
+/// Emit per-iteration heap allocation for loop variable (Go 1.22 semantics).
+fn emit_range_var_alloc(func: &mut FuncBuilder, info: &RangeVarInfo) {
+    if let Some(deferred) = &info.deferred_alloc {
+        deferred.emit(func);
+    }
+}
+
+/// Emit storage store for range variable if needed (for escaped variables)
+fn emit_range_var_store(func: &mut FuncBuilder, info: &RangeVarInfo, slot_types: &[vo_runtime::SlotType]) {
+    if let Some(storage) = info.storage {
+        // Store if: deferred alloc (new heap object), or slot differs (escaped variable)
+        if info.deferred_alloc.is_some() || info.slot != storage.slot() {
+            func.emit_storage_store(storage, info.slot, slot_types);
         }
     }
 }
@@ -457,7 +561,8 @@ fn compile_stmt_with_label(
                     let escapes = info.is_escaped(obj_key);
                     let init = spec.values.get(i);
 
-                    sc.define_local(name.symbol, type_key, escapes, init, Some(obj_key))?;
+                    // define_local returns deferred alloc for loop vars, but VarDecl is not in a loop
+                    sc.define_local(name.symbol, type_key, escapes, init, Some(obj_key))?.0;
                 }
             }
         }
@@ -1054,38 +1159,113 @@ fn compile_stmt_with_label(
 
                 ForClause::Three { init, cond, post } => {
                     // C-style: for init; cond; post { }
-                    // Enter scope for init variable shadowing (Go semantics: for i := 0; ... creates new scope)
+                    // Go 1.22 semantics: each iteration gets a fresh copy of loop variables.
+                    //
+                    // Implementation: For escaped loop variables, use scope-based isolation:
+                    // - Control variable (stack): bound to variable name in outer scope, used by cond/post
+                    // - Iteration variable (heap): bound to variable name in body scope, captured by closures
+                    //
+                    // Flow:
+                    // 1. init: allocate stack var, bind name to stack
+                    // 2. loop_start: cond uses stack var
+                    // 3. enter body scope: create heap object, rebind name to heap, copy stack->heap
+                    // 4. body executes (closures capture heap var)
+                    // 5. exit body scope: name reverts to stack, copy heap->stack (sync changes)
+                    // 6. post: uses stack var
+                    // 7. jump to loop_start
+                    
                     func.enter_scope();
                     
+                    // Track loop vars that need per-iteration heap allocation
+                    // (symbol, ctrl_slot, value_slots, meta_idx, type_key)
+                    let mut loop_var_info: Vec<(Symbol, u16, u16, u16, TypeKey)> = Vec::new();
+                    
                     if let Some(init) = init {
-                        compile_stmt(init, ctx, func, info)?;
+                        if let StmtKind::ShortVar(short_var) = &init.kind {
+                            // Single pass: handle all vars, special-case Go 1.22 loop vars
+                            let mut sc = StmtCompiler::new(ctx, func, info);
+                            for (i, name) in short_var.names.iter().enumerate() {
+                                let is_blank = info.project.interner.resolve(name.symbol) == Some("_");
+                                if is_blank { continue; }
+                                
+                                let obj_key = info.get_def(name);
+                                let type_key = info.obj_type(obj_key, "short var must have type");
+                                let escapes = info.is_escaped(obj_key);
+                                let is_loop_var = info.is_loop_var(obj_key);
+                                let needs_box = info.needs_boxing(obj_key, type_key);
+                                let init_expr = short_var.values.get(i);
+                                
+                                // Go 1.22: escaped loop var needs stack control var + heap iteration var
+                                let needs_go122 = is_loop_var && escapes && needs_box 
+                                    && !info.is_reference_type(type_key) && !info.is_array(type_key);
+                                
+                                if needs_go122 {
+                                    let slot_types = sc.info.type_slot_types(type_key);
+                                    let value_slots = slot_types.len() as u16;
+                                    let ctrl_slot = sc.func.alloc_temp_typed(&slot_types);
+                                    
+                                    if let Some(expr) = init_expr {
+                                        sc.compile_value(expr, ctrl_slot, type_key)?;
+                                    } else {
+                                        for j in 0..value_slots {
+                                            sc.func.emit_op(Opcode::LoadInt, ctrl_slot + j, 0, 0);
+                                        }
+                                    }
+                                    
+                                    let storage = StorageKind::StackValue { slot: ctrl_slot, slots: value_slots };
+                                    sc.func.define_local(name.symbol, storage);
+                                    
+                                    let meta_idx = sc.ctx.get_or_create_value_meta(type_key, sc.info);
+                                    loop_var_info.push((name.symbol, ctrl_slot, value_slots, meta_idx, type_key));
+                                } else {
+                                    sc.define_local(name.symbol, type_key, escapes, init_expr, Some(obj_key))?;
+                                }
+                            }
+                        } else {
+                            compile_stmt(init, ctx, func, info)?;
+                        }
                     }
 
                     let loop_start = func.current_pc();
-
-                    // continue_pc=0 means "patch later" - continue should go to post
                     let begin_pc = func.enter_loop(0, label);
 
                     let end_jump = if let Some(cond) = cond {
+                        // Cond uses stack variable (control var)
                         let cond_reg = crate::expr::compile_expr(cond, ctx, func, info)?;
                         Some(func.emit_jump(Opcode::JumpIfNot, cond_reg))
                     } else {
                         None
                     };
 
-                    // Body runs in its own scope - use compile_block_no_scope + manual scope
-                    // because post statement must run in outer scope (same as init/cond)
+                    // Enter body scope and rebind loop vars to heap objects
                     func.enter_scope();
+                    
+                    // Create heap objects and rebind loop vars; collect gcref_slots for sync
+                    let gcref_slots: Vec<u16> = loop_var_info.iter().map(|&(sym, ctrl_slot, value_slots, meta_idx, _)| {
+                        let gcref_slot = func.alloc_gcref();
+                        let deferred = DeferredHeapAlloc { gcref_slot, value_slots, meta_idx };
+                        deferred.emit_with_copy(func, ctrl_slot);
+                        func.define_local(sym, StorageKind::HeapBoxed { gcref_slot, value_slots });
+                        gcref_slot
+                    }).collect();
+                    
                     compile_block_no_scope(&for_stmt.body, ctx, func, info)?;
+                    
+                    // Sync heap→stack before exiting scope
+                    for (i, &(_, ctrl_slot, value_slots, _, _)) in loop_var_info.iter().enumerate() {
+                        for j in 0..value_slots {
+                            func.emit_op(Opcode::PtrGet, ctrl_slot + j, gcref_slots[i], j);
+                        }
+                    }
+                    
                     func.exit_scope();
 
-                    // Post statement runs in outer scope (same as init/cond)
+                    // Post uses stack variable (control var)
                     let post_pc = func.current_pc();
                     if let Some(post) = post {
                         compile_stmt(post, ctx, func, info)?;
                     }
 
-                    // exit_loop emits HINT_LOOP_END and patches flags
                     let exit_info = func.exit_loop();
                     
                     func.emit_jump_to(Opcode::Jump, 0, loop_start);
@@ -1131,19 +1311,24 @@ fn compile_stmt_with_label(
                             _ => (crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?, false, 0),
                         };
                         let evk = info.type_value_kind(et);
-                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
-                                        range_var_slot(&mut sc, value.as_ref(), et, *define)?);
+                        let key_info = range_var_info(&mut sc, key.as_ref(), et, *define)?;
+                        let val_info = range_var_info(&mut sc, value.as_ref(), et, *define)?;
                         let ls = sc.func.alloc_temp_typed(&[SlotType::Value]);
                         sc.func.emit_op(Opcode::LoadInt, ls, len as u16, (len >> 16) as u16);
                         let lp = IndexLoop::begin(sc.func, ls, label);
-                        lp.emit_key(sc.func, key.as_ref().map(|_| ks));
+                        // Emit per-iteration heap allocation for escaped vars (must be inside loop)
+                        emit_range_var_alloc(sc.func, &val_info);
+                        lp.emit_key(sc.func, key.as_ref().map(|_| key_info.slot));
                         if value.is_some() {
                             // Stack array uses elem_slots, heap array uses elem_bytes
                             if stk {
-                                sc.func.emit_with_flags(Opcode::SlotGetN, es as u8, vs, base, lp.idx_slot);
+                                sc.func.emit_with_flags(Opcode::SlotGetN, es as u8, val_info.slot, base, lp.idx_slot);
                             } else {
-                                sc.func.emit_array_get(vs, reg, lp.idx_slot, eb, evk, sc.ctx);
+                                sc.func.emit_array_get(val_info.slot, reg, lp.idx_slot, eb, evk, sc.ctx);
                             }
+                            // Store to escaped variable if needed
+                            let slot_types = info.type_slot_types(val_info.type_key);
+                            emit_range_var_store(sc.func, &val_info, &slot_types);
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
@@ -1153,23 +1338,30 @@ fn compile_stmt_with_label(
                         let et = info.slice_elem_type(range_type);
                         let evk = info.type_value_kind(et);
                         let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
-                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), et, *define)?,
-                                        range_var_slot(&mut sc, value.as_ref(), et, *define)?);
+                        let key_info = range_var_info(&mut sc, key.as_ref(), et, *define)?;
+                        let val_info = range_var_info(&mut sc, value.as_ref(), et, *define)?;
                         let ls = sc.func.alloc_temp_typed(&[SlotType::Value]);
                         sc.func.emit_op(Opcode::SliceLen, ls, reg, 0);
                         let lp = IndexLoop::begin(sc.func, ls, label);
-                        lp.emit_key(sc.func, key.as_ref().map(|_| ks));
+                        // Emit per-iteration heap allocation for escaped vars (must be inside loop)
+                        emit_range_var_alloc(sc.func, &val_info);
+                        lp.emit_key(sc.func, key.as_ref().map(|_| key_info.slot));
                         if value.is_some() {
-                            sc.func.emit_slice_get(vs, reg, lp.idx_slot, eb, evk, sc.ctx);
+                            sc.func.emit_slice_get(val_info.slot, reg, lp.idx_slot, eb, evk, sc.ctx);
+                            // Store to escaped variable if needed
+                            let slot_types = info.type_slot_types(val_info.type_key);
+                            emit_range_var_store(sc.func, &val_info, &slot_types);
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
                         
                     } else if info.is_string(range_type) {
                         // String: iterate by rune (variable width)
+                        // For string range, key is int (byte index), value is rune (int32)
+                        // Use range_type as fallback - actual types are determined from variable definitions
                         let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
-                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), range_type, *define)?,
-                                        range_var_slot(&mut sc, value.as_ref(), range_type, *define)?);
+                        let key_info = range_var_info(&mut sc, key.as_ref(), range_type, *define)?;
+                        let val_info = range_var_info(&mut sc, value.as_ref(), range_type, *define)?;
                         let (pos, len, cmp) = (sc.func.alloc_temp_typed(&[SlotType::Value]), sc.func.alloc_temp_typed(&[SlotType::Value]), sc.func.alloc_temp_typed(&[SlotType::Value]));
                         // StrDecodeRune writes (rune, width) to consecutive slots
                         let rune_width = sc.func.alloc_temp_typed(&[SlotType::Value, SlotType::Value]);
@@ -1182,9 +1374,21 @@ fn compile_stmt_with_label(
                         sc.func.emit_op(Opcode::GeI, cmp, pos, len);
                         let end_jump = sc.func.emit_jump(Opcode::JumpIf, cmp);
                         
+                        // Emit per-iteration heap allocation for escaped vars
+                        emit_range_var_alloc(sc.func, &key_info);
+                        emit_range_var_alloc(sc.func, &val_info);
+                        
                         sc.func.emit_op(Opcode::StrDecodeRune, rune_width, reg, pos);
-                        if key.is_some() { sc.func.emit_op(Opcode::Copy, ks, pos, 0); }
-                        if value.is_some() { sc.func.emit_op(Opcode::Copy, vs, rune_width, 0); }
+                        if key.is_some() {
+                            sc.func.emit_op(Opcode::Copy, key_info.slot, pos, 0);
+                            let slot_types = info.type_slot_types(key_info.type_key);
+                            emit_range_var_store(sc.func, &key_info, &slot_types);
+                        }
+                        if value.is_some() {
+                            sc.func.emit_op(Opcode::Copy, val_info.slot, rune_width, 0);
+                            let slot_types = info.type_slot_types(val_info.type_key);
+                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                        }
                         
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         
@@ -1212,8 +1416,8 @@ fn compile_stmt_with_label(
                         let map_reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
                         let (kn, vn) = info.map_key_val_slots(range_type);
                         let (kt, vt) = info.map_key_val_types(range_type);
-                        let (ks, vs) = (range_var_slot(&mut sc, key.as_ref(), kt, *define)?,
-                                        range_var_slot(&mut sc, value.as_ref(), vt, *define)?);
+                        let key_info = range_var_info(&mut sc, key.as_ref(), kt, *define)?;
+                        let val_info = range_var_info(&mut sc, value.as_ref(), vt, *define)?;
                         
                         let iter_slot = sc.func.alloc_temp_typed(&[SlotType::Value; MAP_ITER_SLOTS]);
                         let ok_slot = sc.func.alloc_temp_typed(&[SlotType::Value]);
@@ -1226,15 +1430,29 @@ fn compile_stmt_with_label(
                         let begin_pc = sc.func.enter_loop(loop_start, label);
                         
                         // MapIterNext: a=key_slot, b=iter_slot, c=ok_slot, flags=kn|(vn<<4)
-                        sc.func.emit_with_flags(Opcode::MapIterNext, (kn as u8) | ((vn as u8) << 4), ks, iter_slot, ok_slot);
+                        sc.func.emit_with_flags(Opcode::MapIterNext, (kn as u8) | ((vn as u8) << 4), key_info.slot, iter_slot, ok_slot);
                         
                         // if !ok { goto end }
                         let end_jump = sc.func.emit_jump(Opcode::JumpIfNot, ok_slot);
                         
-                        // Copy value to vs if needed (value is written at ks + kn)
-                        if value.is_some() && vs != ks + kn {
-                            if vn == 1 { sc.func.emit_op(Opcode::Copy, vs, ks + kn, 0); }
-                            else { sc.func.emit_with_flags(Opcode::CopyN, vn as u8, vs, ks + kn, 0); }
+                        // Emit per-iteration heap allocation for escaped vars (after ok check)
+                        emit_range_var_alloc(sc.func, &key_info);
+                        emit_range_var_alloc(sc.func, &val_info);
+                        
+                        // Store key to escaped variable if needed
+                        if key.is_some() {
+                            let slot_types = info.type_slot_types(key_info.type_key);
+                            emit_range_var_store(sc.func, &key_info, &slot_types);
+                        }
+                        
+                        // Copy value to val_info.slot if needed (value is written at key_info.slot + kn)
+                        if value.is_some() {
+                            if val_info.slot != key_info.slot + kn {
+                                if vn == 1 { sc.func.emit_op(Opcode::Copy, val_info.slot, key_info.slot + kn, 0); }
+                                else { sc.func.emit_with_flags(Opcode::CopyN, vn as u8, val_info.slot, key_info.slot + kn, 0); }
+                            }
+                            let slot_types = info.type_slot_types(val_info.type_key);
+                            emit_range_var_store(sc.func, &val_info, &slot_types);
                         }
                         
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
@@ -1260,7 +1478,7 @@ fn compile_stmt_with_label(
                         
                         // Channel: use value or key (Go semantics: single var is value)
                         let var_expr = value.as_ref().or(key.as_ref());
-                        let val_slot = range_var_slot(&mut sc, var_expr, elem_type, *define)?;
+                        let val_info = range_var_info(&mut sc, var_expr, elem_type, *define)?;
                         
                         // ok slot
                         let ok_slot = sc.func.alloc_temp_typed(&[SlotType::Value]);
@@ -1273,10 +1491,19 @@ fn compile_stmt_with_label(
                         // ChanRecv: a=val_slot, b=chan_reg, c=ok_slot
                         // flags format: (elem_slots << 1) | has_ok
                         let recv_flags = ((elem_slots as u8) << 1) | 1;
-                        sc.func.emit_with_flags(Opcode::ChanRecv, recv_flags, val_slot, chan_reg, ok_slot);
+                        sc.func.emit_with_flags(Opcode::ChanRecv, recv_flags, val_info.slot, chan_reg, ok_slot);
                         
                         // if !ok { goto end }
                         let end_jump = sc.func.emit_jump(Opcode::JumpIfNot, ok_slot);
+                        
+                        // Emit per-iteration heap allocation for escaped vars (after ok check)
+                        emit_range_var_alloc(sc.func, &val_info);
+                        
+                        // Store to escaped variable if needed
+                        if var_expr.is_some() {
+                            let slot_types = info.type_slot_types(val_info.type_key);
+                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                        }
                         
                         // body
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;

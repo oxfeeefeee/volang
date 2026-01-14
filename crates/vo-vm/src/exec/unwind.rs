@@ -127,12 +127,14 @@ fn handle_initial_return(
     let (return_kind, pending_defers) = if heap_returns {
         let gcref_start = inst.a as usize;
         let gcref_count = inst.b as usize;
-        let slots_per_ref = inst.c as usize;
         let current_bp = frames.last().unwrap().bp;
         
         let gcrefs: Vec<u64> = (0..gcref_count)
             .map(|i| stack[current_bp + gcref_start + i])
             .collect();
+        
+        // Read slot counts from FunctionDef (supports mixed sizes)
+        let slots_per_ref: Vec<usize> = func.heap_ret_slots.iter().map(|&s| s as usize).collect();
         
         let pending = collect_defers(defer_stack, current_frame_depth, is_error_return);
         (PendingReturnKind::Heap { gcrefs, slots_per_ref }, pending)
@@ -182,7 +184,7 @@ fn handle_initial_return(
     let ret_vals = match return_kind {
         PendingReturnKind::None => vec![],
         PendingReturnKind::Stack { vals, .. } => vals,
-        PendingReturnKind::Heap { gcrefs, slots_per_ref } => read_heap_gcrefs(&gcrefs, slots_per_ref),
+        PendingReturnKind::Heap { gcrefs, slots_per_ref } => read_heap_gcrefs(&gcrefs, &slots_per_ref),
     };
     write_return_values(stack, frames, &ret_vals, frame.ret_reg, frame.ret_count as usize)
 }
@@ -215,7 +217,7 @@ fn handle_return_defer_returned(
                 PendingReturnKind::None => vec![],
                 PendingReturnKind::Stack { vals, .. } => core::mem::take(vals),
                 PendingReturnKind::Heap { gcrefs, slots_per_ref } => {
-                    read_heap_gcrefs(gcrefs, *slots_per_ref)
+                    read_heap_gcrefs(gcrefs, slots_per_ref)
                 }
             };
             (vals, *caller_ret_reg, *caller_ret_count)
@@ -300,7 +302,7 @@ fn handle_panic_defer_returned(
         // No more defers - return to caller
         *unwinding = None;
         if let Some(gcrefs) = heap_gcrefs {
-            let ret_vals = read_heap_gcrefs(&gcrefs, slots_per_ref);
+            let ret_vals = read_heap_gcrefs(&gcrefs, &slots_per_ref);
             return write_return_values(stack, frames, &ret_vals, caller_ret_reg, caller_ret_count);
         }
         return ExecResult::Return;
@@ -400,7 +402,7 @@ fn start_panic_unwind(
 // ============================================================================
 
 /// Extract return info from UnwindingKind (mutable, takes ownership of heap_gcrefs).
-fn extract_return_info_mut(kind: &mut UnwindingKind) -> (Option<Vec<u64>>, usize, u16, usize) {
+fn extract_return_info_mut(kind: &mut UnwindingKind) -> (Option<Vec<u64>>, Vec<usize>, u16, usize) {
     match kind {
         UnwindingKind::Return { return_kind, caller_ret_reg, caller_ret_count } => {
             let heap_gcrefs = match return_kind {
@@ -408,13 +410,13 @@ fn extract_return_info_mut(kind: &mut UnwindingKind) -> (Option<Vec<u64>>, usize
                 _ => None,
             };
             let slots = match return_kind {
-                PendingReturnKind::Heap { slots_per_ref, .. } => *slots_per_ref,
-                _ => 0,
+                PendingReturnKind::Heap { slots_per_ref, .. } => core::mem::take(slots_per_ref),
+                _ => vec![],
             };
             (heap_gcrefs, slots, *caller_ret_reg, *caller_ret_count)
         }
         UnwindingKind::Panic { heap_gcrefs, slots_per_ref, caller_ret_reg, caller_ret_count } => {
-            (heap_gcrefs.take(), *slots_per_ref, *caller_ret_reg, *caller_ret_count)
+            (heap_gcrefs.take(), core::mem::take(slots_per_ref), *caller_ret_reg, *caller_ret_count)
         }
     }
 }
@@ -424,16 +426,16 @@ fn extract_frame_return_info(
     stack: &[u64],
     frames: &[CallFrame],
     module: &Module,
-) -> (Option<Vec<u64>>, usize, u16, usize) {
+) -> (Option<Vec<u64>>, Vec<usize>, u16, usize) {
     let Some(frame) = frames.last() else {
-        return (None, 0, 0, 0);
+        return (None, vec![], 0, 0);
     };
     let Some(func) = module.functions.get(frame.func_id as usize) else {
-        return (None, 0, frame.ret_reg, frame.ret_count as usize);
+        return (None, vec![], frame.ret_reg, frame.ret_count as usize);
     };
     
     if func.heap_ret_gcref_count == 0 {
-        return (None, 0, frame.ret_reg, frame.ret_count as usize);
+        return (None, vec![], frame.ret_reg, frame.ret_count as usize);
     }
     
     let gcref_count = func.heap_ret_gcref_count as usize;
@@ -442,7 +444,7 @@ fn extract_frame_return_info(
         .map(|i| stack[frame.bp + gcref_start + i])
         .collect();
     
-    let slots_per_ref = func.ret_slots as usize / gcref_count;
+    let slots_per_ref: Vec<usize> = func.heap_ret_slots.iter().map(|&s| s as usize).collect();
     
     (Some(gcrefs), slots_per_ref, frame.ret_reg, frame.ret_count as usize)
 }
@@ -487,13 +489,15 @@ fn write_return_values(
     }
 }
 
-/// Read values from heap GcRefs.
+/// Read values from heap GcRefs with per-ref slot counts.
 #[inline]
-fn read_heap_gcrefs(heap_gcrefs: &[u64], value_slots_per_ref: usize) -> Vec<u64> {
-    let mut vals = Vec::with_capacity(heap_gcrefs.len() * value_slots_per_ref);
-    for &gcref_raw in heap_gcrefs {
+fn read_heap_gcrefs(heap_gcrefs: &[u64], slots_per_ref: &[usize]) -> Vec<u64> {
+    let total_slots: usize = slots_per_ref.iter().sum();
+    let mut vals = Vec::with_capacity(total_slots);
+    for (i, &gcref_raw) in heap_gcrefs.iter().enumerate() {
         let gcref: GcRef = gcref_raw as GcRef;
-        for offset in 0..value_slots_per_ref {
+        let slot_count = slots_per_ref.get(i).copied().unwrap_or(1);
+        for offset in 0..slot_count {
             vals.push(unsafe { *gcref.add(offset) });
         }
     }

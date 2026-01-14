@@ -752,3 +752,17 @@ tests:
 
 # FIXED: make with negative size now correctly triggers recoverable Vo panic
   - file: make_negative_panic.vo
+
+# ============================================================
+# Coverage tests (2026-01-14 new batch 6) - New coverage tests
+# ============================================================
+
+# Passing tests
+# JIT trampoline bug: panic recovery with nested JIT->VM calls has incorrect frame bp
+  - file: return_expr_panic_defer.vo
+    skip: [jit]
+  - file: multi_assign_panic_order.vo
+  - file: defer_slice_map_modify.vo
+
+# FIXED: for-range direct closure capture now correctly allocates new heap object per iteration
+  - file: bug_for_range_closure_capture.vo

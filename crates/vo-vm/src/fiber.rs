@@ -40,7 +40,8 @@ pub enum PendingReturnKind {
     /// The actual values are read from heap at the end, so defers can modify them.
     Heap {
         gcrefs: Vec<u64>,
-        slots_per_ref: usize,
+        /// Slot count for each GcRef (parallel array).
+        slots_per_ref: Vec<usize>,
     },
 }
 
@@ -59,7 +60,8 @@ pub enum UnwindingKind {
         /// Heap return info for recovery (reuses PendingReturnKind::Heap format).
         /// None if no heap returns or ret_slots is 0.
         heap_gcrefs: Option<Vec<u64>>,
-        slots_per_ref: usize,
+        /// Slot count for each GcRef (parallel array).
+        slots_per_ref: Vec<usize>,
         caller_ret_reg: u16,
         caller_ret_count: usize,
     },
@@ -232,7 +234,7 @@ impl Fiber {
         let UnwindingKind::Panic { heap_gcrefs, slots_per_ref, caller_ret_reg, caller_ret_count } = &mut state.kind else { return };
         
         let return_kind = match heap_gcrefs.take() {
-            Some(gcrefs) => PendingReturnKind::Heap { gcrefs, slots_per_ref: *slots_per_ref },
+            Some(gcrefs) => PendingReturnKind::Heap { gcrefs, slots_per_ref: core::mem::take(slots_per_ref) },
             None => PendingReturnKind::None,
         };
         state.kind = UnwindingKind::Return {

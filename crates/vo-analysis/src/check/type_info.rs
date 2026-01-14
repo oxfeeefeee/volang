@@ -83,6 +83,9 @@ pub struct TypeInfo {
     /// Closure captures: FuncLit ExprId -> captured variables (set by escape analysis pass).
     pub closure_captures: HashMap<ExprId, Vec<ObjKey>>,
 
+    /// Variables defined inside loops (Go 1.22 per-iteration semantics, set by escape analysis pass).
+    pub loop_defined_vars: HashSet<ObjKey>,
+
     /// Dynamic access method resolution for static dispatch.
     /// Key: DynAccess expression ID
     /// Value: Some = static call info, None = dynamic dispatch (any/interface base)
@@ -221,6 +224,11 @@ impl TypeInfo {
     /// Returns true if the variable escapes to heap.
     pub fn is_escaped(&self, obj: ObjKey) -> bool {
         self.escaped_vars.contains(&obj)
+    }
+
+    /// Returns true if the variable is defined inside a loop (Go 1.22 per-iteration semantics).
+    pub fn is_loop_var(&self, obj: ObjKey) -> bool {
+        self.loop_defined_vars.contains(&obj)
     }
 }
 

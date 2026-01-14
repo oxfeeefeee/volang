@@ -381,6 +381,11 @@ impl<'a> TypeInfoWrapper<'a> {
         self.type_info().is_escaped(obj)
     }
 
+    /// Returns true if the variable is defined inside a loop (Go 1.22 per-iteration semantics).
+    pub fn is_loop_var(&self, obj: ObjKey) -> bool {
+        self.type_info().is_loop_var(obj)
+    }
+
     /// Get pointer element type
     pub fn pointer_elem(&self, type_key: TypeKey) -> TypeKey {
         let underlying = typ::underlying_type(type_key, self.tc_objs());

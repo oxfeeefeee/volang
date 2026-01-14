@@ -235,7 +235,6 @@ impl<'a> FunctionCompiler<'a> {
             // Need to dereference each GcRef to get the value
             let gcref_start = inst.a as usize;
             let gcref_count = inst.b as usize;
-            let slots_per_ref = inst.c as usize;
             
             let mut ret_offset = 0i32;
             for i in 0..gcref_count {
@@ -246,8 +245,11 @@ impl<'a> FunctionCompiler<'a> {
                     self.builder.use_var(self.vars[gcref_start + i])
                 };
                 
+                // Get per-ref slot count from FunctionDef (supports mixed sizes)
+                let slots_for_this_ref = self.func_def.heap_ret_slots.get(i).copied().unwrap_or(1) as usize;
+                
                 // Dereference GcRef to get actual value(s)
-                for j in 0..slots_per_ref {
+                for j in 0..slots_for_this_ref {
                     let val = self.builder.ins().load(types::I64, MemFlags::trusted(), gcref, (j * 8) as i32);
                     self.builder.ins().store(MemFlags::trusted(), val, ret_ptr, ret_offset);
                     ret_offset += 8;

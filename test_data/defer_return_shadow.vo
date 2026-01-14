@@ -58,14 +58,14 @@ func testDeferPanicReturn() (result int) {
     return result
 }
 
-// Test 7: defer closure captures named return by reference
+// Test 7: defer closure captures loop variable (Go 1.22 per-iteration semantics)
 func testDeferCaptureReturn() (result int) {
     for i := 0; i < 3; i++ {
         defer func() {
-            result += i  // captures i by ref, all see final i=3
+            result += i  // Go 1.22: each iteration captures its own i value
         }()
     }
-    return 0  // 0 + 3 + 3 + 3 = 9
+    return 0  // defer LIFO: 0 + 2 + 1 + 0 = 3
 }
 
 // Test 8: defer with captured variable vs named return
@@ -111,7 +111,7 @@ func main() {
     
     println("Test 7: defer capture return")
     r7 := testDeferCaptureReturn()
-    assert(r7 == 9, "expected 9, got", r7)
+    assert(r7 == 3, "expected 3, got", r7)  // Go 1.22: 0+2+1+0=3
     println("PASSED")
     
     println("Test 8: defer capture vs return")
