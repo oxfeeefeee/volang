@@ -723,12 +723,15 @@ impl Vm {
                     exec::exec_call_iface(stack, &mut fiber.frames, &inst, module, &self.state.itab_cache)
                 }
                 Opcode::Return => {
+                    // Unified unwinding: check if defer returned in Panic mode
                     if fiber.is_direct_defer_context() {
-                        panic_unwind(fiber, stack, module)
+                        // Defer returned in Panic mode - use panic unwind path
+                        exec::handle_panic_unwind(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &fiber.panic_state, module)
                     } else {
+                        // Normal return or defer returned in Return mode
                         let func = &module.functions[func_id as usize];
                         let is_error_return = (inst.flags & 1) != 0;
-                        exec::exec_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &inst, func, module, is_error_return)
+                        exec::handle_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &inst, func, module, is_error_return)
                     }
                 }
 

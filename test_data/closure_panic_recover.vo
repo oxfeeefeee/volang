@@ -59,9 +59,8 @@ func testNestedClosurePanic() string {
 }
 
 // Test 4: panic with closure value
-func testPanicClosureValue() string {
-    result := ""
-    
+// Note: Must use named return value for recover to return non-zero value
+func testPanicClosureValue() (result string) {
     defer func() {
         if r := recover(); r != nil {
             // r should be the closure
@@ -78,8 +77,9 @@ func testPanicClosureValue() string {
 }
 
 // Test 5: recover only works in direct defer call
-func testRecoverOnlyInDefer() string {
-    result := "none"
+// Note: Must use named return value for recover to return non-zero value
+func testRecoverOnlyInDefer() (result string) {
+    result = "none"
     
     helper := func() {
         if r := recover(); r != nil {
@@ -99,9 +99,8 @@ func testRecoverOnlyInDefer() string {
 }
 
 // Test 6: panic in defer
-func testPanicInDefer() string {
-    result := ""
-    
+// Note: Must use named return value for recover to return non-zero value
+func testPanicInDefer() (result string) {
     defer func() {
         if r := recover(); r != nil {
             result += r.(string)

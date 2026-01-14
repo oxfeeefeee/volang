@@ -96,7 +96,7 @@ pub fn runtime_panic(
 /// Use when panic_state is already set (e.g., from JIT or after defer returns).
 #[inline]
 pub fn panic_unwind(fiber: &mut Fiber, stack: &mut Vec<u64>, module: &Module) -> ExecResult {
-    exec::exec_panic_unwind(
+    exec::handle_panic_unwind(
         stack,
         &mut fiber.frames,
         &mut fiber.defer_stack,

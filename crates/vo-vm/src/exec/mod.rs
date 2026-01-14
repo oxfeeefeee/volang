@@ -16,6 +16,7 @@ mod defer;
 mod select;
 mod goroutine;
 mod extern_call;
+mod unwind;
 
 pub use load::*;
 pub use copy::*;
@@ -33,3 +34,4 @@ pub use defer::*;
 pub use select::*;
 pub use goroutine::*;
 pub use extern_call::*;
+pub use unwind::*;

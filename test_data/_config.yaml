@@ -731,10 +731,8 @@ tests:
 # Go spec: LHS evaluated left-to-right, then RHS left-to-right
   - file: multi_assign_eval_order.vo
 
-# Bug #2: panic with closure value - recover returns empty
+# FIXED: panic with closure value (required named return values + VM fix for panic-in-defer)
   - file: closure_panic_recover.vo
-    skip: [vm, jit]
-    reason: "panic(closure) then recover() returns empty, closure value lost"
 
 # Passing tests
   - file: defer_return_shadow.vo
