@@ -758,9 +758,7 @@ tests:
 # ============================================================
 
 # Passing tests
-# JIT trampoline bug: panic recovery with nested JIT->VM calls has incorrect frame bp
   - file: return_expr_panic_defer.vo
-    skip: [jit]
   - file: multi_assign_panic_order.vo
   - file: defer_slice_map_modify.vo
 
