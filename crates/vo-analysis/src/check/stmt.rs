@@ -1019,6 +1019,10 @@ impl Checker {
                             let xtype = x.typ.unwrap();
                             let under = typ::underlying_type(xtype, self.objs());
                             match self.otype(under) {
+                                typ::Type::Basic(_) if typ::is_integer(under, self.objs()) => {
+                                    // for i := range n { } - key is int, no value
+                                    (Some(self.basic_type(BasicType::Int)), None)
+                                }
                                 typ::Type::Basic(_) if typ::is_string(under, self.objs()) => {
                                     (Some(self.basic_type(BasicType::Int)), 
                                      Some(self.basic_type(BasicType::Rune)))
@@ -1081,6 +1085,11 @@ impl Checker {
                                     x.mode = OperandMode::Value;
                                     x.typ = Some(rhs_type);
                                     self.init_var(okey, &mut x, "range clause");
+                                } else if i == 1 && has_name {
+                                    // value variable but no value type (e.g. range over int/chan)
+                                    self.error_code_msg(TypeError::InvalidOp, lhs_e.span, "range over integer/channel has no second value");
+                                    let invalid_type = self.invalid_type();
+                                    self.lobj_mut(okey).set_type(Some(invalid_type));
                                 } else {
                                     let invalid_type = self.invalid_type();
                                     self.lobj_mut(okey).set_type(Some(invalid_type));

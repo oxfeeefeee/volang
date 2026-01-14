@@ -389,7 +389,8 @@ impl IndexLoop {
         func.emit_op(Opcode::LoadInt, idx_slot, 0, 0);
         
         let loop_start = func.current_pc();
-        func.enter_loop(loop_start, label);
+        // Pass 0 for continue_pc - it will be patched in end() to point to idx++
+        func.enter_loop(0, label);
         
         let cmp_slot = func.alloc_temp_typed(&[SlotType::Value]);
         func.emit_op(Opcode::GeI, cmp_slot, idx_slot, len_slot);
@@ -1527,6 +1528,23 @@ fn compile_stmt_with_label(
                         for pc in exit_info.continue_patches {
                             sc.func.patch_jump(pc, loop_start);
                         }
+                        
+                    } else if info.is_int(range_type) {
+                        // Integer range: for i := range n { } iterates i = 0..n-1
+                        let n_reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
+                        // Copy n to a dedicated slot to prevent it from being overwritten in loop body
+                        let len_slot = sc.func.alloc_temp_typed(&[SlotType::Value]);
+                        sc.func.emit_op(Opcode::Copy, len_slot, n_reg, 0);
+                        let key_info = range_var_info(&mut sc, key.as_ref(), range_type, *define)?;
+                        let lp = IndexLoop::begin(sc.func, len_slot, label);
+                        emit_range_var_alloc(sc.func, &key_info);
+                        lp.emit_key(sc.func, key.as_ref().map(|_| key_info.slot));
+                        if key.is_some() {
+                            let slot_types = info.type_slot_types(key_info.type_key);
+                            emit_range_var_store(sc.func, &key_info, &slot_types);
+                        }
+                        compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
+                        lp.end(sc.func);
                         
                     } else {
                         return Err(CodegenError::UnsupportedStmt("for-range unsupported type".to_string()));
