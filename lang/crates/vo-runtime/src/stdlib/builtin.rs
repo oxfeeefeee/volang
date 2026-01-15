@@ -167,7 +167,8 @@ static __VO_BUILTIN_COPY: ExternEntryWithContext = ExternEntryWithContext {
     func: builtin_copy,
 };
 
-/// append(slice, other...) - append all elements from other slice
+/// append(slice, other...) - append all elements from other slice/string
+/// Works for both slice and string sources since they have identical memory layout.
 fn builtin_slice_append_slice(call: &mut ExternCallContext) -> ExternResult {
     use crate::objects::{slice, array};
     use vo_common_core::types::ValueMeta;
@@ -182,6 +183,7 @@ fn builtin_slice_append_slice(call: &mut ExternCallContext) -> ExternResult {
         return ExternResult::Ok;
     }
     
+    // String and slice have identical layout, so we can use slice:: functions for both
     let src_len = slice::len(src);
     if src_len == 0 {
         call.ret_ref(0, dst);
@@ -201,7 +203,7 @@ fn builtin_slice_append_slice(call: &mut ExternCallContext) -> ExternResult {
         let src_ptr = slice::data_ptr(src);
         let dst_ptr = array::data_ptr_bytes(new_arr);
         unsafe { core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, src_len * elem_bytes) };
-        let result = slice::from_array_range(call.gc(), new_arr, 0, src_len, new_cap);
+        let result = slice::from_array_range(call.gc(), new_arr, 0, src_len);
         call.ret_ref(0, result);
         return ExternResult::Ok;
     }
@@ -232,7 +234,7 @@ fn builtin_slice_append_slice(call: &mut ExternCallContext) -> ExternResult {
             core::ptr::copy_nonoverlapping(dst_ptr, new_arr_ptr, dst_len * elem_bytes);
             core::ptr::copy_nonoverlapping(src_ptr, new_arr_ptr.add(dst_len * elem_bytes), src_len * elem_bytes);
         }
-        let result = slice::from_array_range(call.gc(), new_arr, 0, new_len, new_cap);
+        let result = slice::from_array_range(call.gc(), new_arr, 0, new_len);
         call.ret_ref(0, result);
     }
     

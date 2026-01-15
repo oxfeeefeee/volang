@@ -11,9 +11,9 @@ use vo_common_core::types::{ValueKind, ValueMeta};
 #[repr(C)]
 pub struct SliceData {
     pub array: GcRef,
-    pub data_ptr: *mut u8,  // Direct pointer to first element (optimization: avoids arr+header+start*eb on access)
+    pub data_ptr: *mut u8,  // Direct pointer to first element
     pub len: usize,
-    pub cap: usize,
+    pub cap: usize,         // Required for 3-index slice semantics
 }
 
 pub const DATA_SLOTS: u16 = 4;
@@ -30,10 +30,16 @@ impl_gc_object!(SliceData);
 /// elem_bytes: actual byte size per element (1/2/4/8 for packed, slots*8 for slot-based)
 pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_bytes: usize, length: usize, capacity: usize) -> GcRef {
     let arr = array::create(gc, elem_meta, elem_bytes, capacity);
-    from_array_range(gc, arr, 0, length, capacity)
+    from_array_range(gc, arr, 0, length)
 }
 
-pub fn from_array_range(gc: &mut Gc, arr: GcRef, start_off: usize, length: usize, capacity: usize) -> GcRef {
+pub fn from_array_range(gc: &mut Gc, arr: GcRef, start_off: usize, length: usize) -> GcRef {
+    let arr_len = array::len(arr);
+    let cap = arr_len - start_off;
+    from_array_range_with_cap(gc, arr, start_off, length, cap)
+}
+
+pub fn from_array_range_with_cap(gc: &mut Gc, arr: GcRef, start_off: usize, length: usize, capacity: usize) -> GcRef {
     let elem_bytes = array::elem_bytes(arr);
     let s = gc.alloc(ValueMeta::new(0, ValueKind::Slice), DATA_SLOTS);
     let data = SliceData::as_mut(s);
@@ -51,7 +57,7 @@ pub fn array_slice(gc: &mut Gc, arr: GcRef, lo: usize, hi: usize) -> Option<GcRe
     if lo > hi || hi > arr_len {
         return None;
     }
-    Some(from_array_range(gc, arr, lo, hi - lo, arr_len - lo))
+    Some(from_array_range(gc, arr, lo, hi - lo))
 }
 
 /// Three-index array slice: arr[lo:hi:max].
@@ -61,12 +67,12 @@ pub fn array_slice_with_cap(gc: &mut Gc, arr: GcRef, lo: usize, hi: usize, max: 
     if lo > hi || hi > max || max > arr_len {
         return None;
     }
-    Some(from_array_range(gc, arr, lo, hi - lo, max - lo))
+    Some(from_array_range_with_cap(gc, arr, lo, hi - lo, max - lo))
 }
 
 pub fn from_array(gc: &mut Gc, arr: GcRef) -> GcRef {
     let length = array::len(arr);
-    from_array_range(gc, arr, 0, length, length)
+    from_array_range(gc, arr, 0, length)
 }
 
 #[inline]
@@ -234,7 +240,7 @@ pub fn append(gc: &mut Gc, em: ValueMeta, elem_bytes: usize, s: GcRef, val: &[u6
     if s.is_null() {
         let new_arr = array::create(gc, em, elem_bytes, 4);
         array::set_n(new_arr, 0, val, elem_bytes);
-        return from_array_range(gc, new_arr, 0, 1, 4);
+        return from_array_range(gc, new_arr, 0, 1);
     }
     let data = SliceData::as_ref(s);
     let cur_len = data.len;
@@ -263,6 +269,6 @@ pub fn append(gc: &mut Gc, em: ValueMeta, elem_bytes: usize, s: GcRef, val: &[u6
         let dst_ptr = array::data_ptr_bytes(new_arr);
         unsafe { core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, cur_len * elem_bytes) };
         array::set_n(new_arr, cur_len, val, elem_bytes);
-        from_array_range(gc, new_arr, 0, cur_len + 1, new_cap)
+        from_array_range(gc, new_arr, 0, cur_len + 1)
     }
 }

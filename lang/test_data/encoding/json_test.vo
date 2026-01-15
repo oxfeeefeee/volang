@@ -1,0 +1,260 @@
+package main
+
+import (
+    "encoding/json"
+)
+
+func main() {
+    testParseSimple()
+    testParseObject()
+    testParseArray()
+    testParseNested()
+    testStringify()
+    testStringifyIndent()
+    testBuilder()
+    testNumber()
+    testHelpers()
+    println("All JSON tests passed!")
+}
+
+func testParseSimple() {
+    // String
+    v, err := json.ParseString(`"hello"`)
+    assert(err == nil, "parse string error")
+    assert(v.(string) == "hello", "parse string value")
+
+    // Number
+    v, err = json.ParseString(`123`)
+    assert(err == nil, "parse number error")
+    n := v.(json.Number)
+    assert(n.String() == "123", "parse number string")
+    i, err := n.Int()
+    assert(err == nil, "number int error")
+    assert(i == 123, "number int value")
+
+    // Bool
+    v, err = json.ParseString(`true`)
+    assert(err == nil, "parse true error")
+    assert(v.(bool) == true, "parse true value")
+
+    v, err = json.ParseString(`false`)
+    assert(err == nil, "parse false error")
+    assert(v.(bool) == false, "parse false value")
+
+    // Null
+    v, err = json.ParseString(`null`)
+    assert(err == nil, "parse null error")
+    assert(v == nil, "parse null value")
+
+    println("  testParseSimple passed")
+}
+
+func testParseObject() {
+    v, err := json.ParseString(`{"name": "Alice", "age": 30}`)
+    assert(err == nil, "parse object error")
+    
+    obj, ok := json.AsObject(v)
+    assert(ok, "AsObject failed")
+    
+    name, ok := obj["name"]
+    assert(ok, "name key missing")
+    assert(name.(string) == "Alice", "name value")
+    
+    age, ok := obj["age"]
+    assert(ok, "age key missing")
+    ageNum := age.(json.Number)
+    ageInt, err := ageNum.Int()
+    assert(err == nil, "age int error")
+    assert(ageInt == 30, "age value")
+
+    // Empty object
+    v, err = json.ParseString(`{}`)
+    assert(err == nil, "parse empty object error")
+    obj, ok = json.AsObject(v)
+    assert(ok, "AsObject empty failed")
+    assert(len(obj) == 0, "empty object len")
+
+    println("  testParseObject passed")
+}
+
+func testParseArray() {
+    v, err := json.ParseString(`[1, 2, 3]`)
+    assert(err == nil, "parse array error")
+    
+    arr, ok := json.AsArray(v)
+    assert(ok, "AsArray failed")
+    assert(len(arr) == 3, "array len")
+    
+    n0 := arr[0].(json.Number)
+    i0, _ := n0.Int()
+    assert(i0 == 1, "arr[0]")
+    
+    n1 := arr[1].(json.Number)
+    i1, _ := n1.Int()
+    assert(i1 == 2, "arr[1]")
+    
+    n2 := arr[2].(json.Number)
+    i2, _ := n2.Int()
+    assert(i2 == 3, "arr[2]")
+
+    // Empty array
+    v, err = json.ParseString(`[]`)
+    assert(err == nil, "parse empty array error")
+    arr, ok = json.AsArray(v)
+    assert(ok, "AsArray empty failed")
+    assert(len(arr) == 0, "empty array len")
+
+    println("  testParseArray passed")
+}
+
+func testParseNested() {
+    data := `{
+        "user": {
+            "name": "Bob",
+            "tags": ["admin", "active"]
+        },
+        "count": 42
+    }`
+    v, err := json.ParseString(data)
+    assert(err == nil, "parse nested error")
+    
+    obj, _ := json.AsObject(v)
+    user, _ := obj["user"]
+    userObj, _ := json.AsObject(user)
+    
+    name := userObj["name"].(string)
+    assert(name == "Bob", "nested name")
+    
+    tags, _ := json.AsArray(userObj["tags"])
+    assert(len(tags) == 2, "tags len")
+    assert(tags[0].(string) == "admin", "tags[0]")
+    assert(tags[1].(string) == "active", "tags[1]")
+    
+    count := obj["count"].(json.Number)
+    countInt, _ := count.Int()
+    assert(countInt == 42, "nested count")
+
+    println("  testParseNested passed")
+}
+
+func testStringify() {
+    obj := json.Object()
+    obj["name"] = "Alice"
+    obj["age"] = 30
+    obj["active"] = true
+    
+    data, err := json.Stringify(obj)
+    assert(err == nil, "stringify error")
+    
+    // Parse back to verify
+    v, err := json.Parse(data)
+    assert(err == nil, "reparse error")
+    parsed, _ := json.AsObject(v)
+    assert(parsed["name"].(string) == "Alice", "stringify name")
+    
+    // Stringify array
+    arr := json.Array(1, 2, 3)
+    data, err = json.Stringify(arr)
+    assert(err == nil, "stringify array error")
+    
+    v, _ = json.Parse(data)
+    parsedArr, _ := json.AsArray(v)
+    assert(len(parsedArr) == 3, "stringify array len")
+
+    // Stringify null
+    data, err = json.Stringify(nil)
+    assert(err == nil, "stringify null error")
+    assert(string(data) == "null", "stringify null value")
+
+    println("  testStringify passed")
+}
+
+func testStringifyIndent() {
+    obj := json.Object()
+    obj["name"] = "Test"
+    obj["value"] = 123
+    
+    data, err := json.StringifyIndent(obj, "", "  ")
+    assert(err == nil, "stringify indent error")
+    
+    s := string(data)
+    // Should contain newlines
+    hasNewline := false
+    for i := 0; i < len(s); i++ {
+        if s[i] == '\n' {
+            hasNewline = true
+            break
+        }
+    }
+    assert(hasNewline, "stringify indent should have newlines")
+
+    println("  testStringifyIndent passed")
+}
+
+func testBuilder() {
+    obj := json.Object()
+    obj["key"] = "value"
+    assert(obj["key"].(string) == "value", "builder object")
+    
+    arr := json.Array("a", "b", "c")
+    assert(len(arr) == 3, "builder array len")
+    assert(arr[0].(string) == "a", "builder array[0]")
+
+    println("  testBuilder passed")
+}
+
+func testNumber() {
+    n := json.Number("123")
+    assert(n.String() == "123", "number string")
+    assert(n.IsInt(), "number isint")
+    
+    i, err := n.Int()
+    assert(err == nil, "number int err")
+    assert(i == 123, "number int val")
+    
+    n2 := json.Number("3.14")
+    assert(!n2.IsInt(), "float isint")
+    
+    f, err := n2.Float64()
+    assert(err == nil, "number float64 err")
+    assert(f > 3.13 && f < 3.15, "number float64 val")
+    
+    // Int also works via Float64
+    f2, err := n.Float64()
+    assert(err == nil, "int to float64 err")
+    assert(f2 == 123.0, "int to float64 val")
+
+    println("  testNumber passed")
+}
+
+func testHelpers() {
+    obj := json.Object()
+    obj["foo"] = "bar"
+    obj["empty"] = nil
+    
+    assert(json.Has(obj, "foo"), "has foo")
+    assert(!json.Has(obj, "missing"), "has missing")
+    assert(json.IsNull(obj["empty"]), "isNull")
+    assert(!json.IsNull(obj["foo"]), "isNull foo")
+    
+    length, err := json.Len(obj)
+    assert(err == nil, "len err")
+    assert(length == 2, "len value")
+    
+    keys, err := json.Keys(obj)
+    assert(err == nil, "keys err")
+    assert(len(keys) == 2, "keys len")
+    
+    err = json.Delete(obj, "foo")
+    assert(err == nil, "delete err")
+    assert(!json.Has(obj, "foo"), "deleted foo")
+
+    println("  testHelpers passed")
+}
+
+func assert(cond bool, msg string) {
+    if !cond {
+        println("ASSERT FAILED:", msg)
+        panic("assertion failed")
+    }
+}

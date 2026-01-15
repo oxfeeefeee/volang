@@ -6,11 +6,11 @@ macro_rules! impl_gc_object {
     ($name:ident) => {
         impl $name {
             #[inline]
-            fn as_ref(p: GcRef) -> &'static Self {
+            pub fn as_ref(p: GcRef) -> &'static Self {
                 unsafe { &*(p as *const Self) }
             }
             #[inline]
-            fn as_mut(p: GcRef) -> &'static mut Self {
+            pub fn as_mut(p: GcRef) -> &'static mut Self {
                 unsafe { &mut *(p as *mut Self) }
             }
         }

@@ -13,7 +13,7 @@ pub fn scan_object(gc: &mut Gc, obj: GcRef, struct_metas: &[StructMeta]) {
     match gc_header.kind() {
         ValueKind::Array => scan_array(gc, obj, struct_metas),
         ValueKind::String => {
-            let arr = string::array_ref(obj);
+            let arr = slice::array_ref(obj);
             if !arr.is_null() { gc.mark_gray(arr); }
         }
 

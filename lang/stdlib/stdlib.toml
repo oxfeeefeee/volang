@@ -20,6 +20,7 @@ regexp = { path = "regexp" }
 dyn = { path = "dyn" }
 "encoding/hex" = { path = "encoding/hex" }
 "encoding/base64" = { path = "encoding/base64" }
+"encoding/json" = { path = "encoding/json" }
 
 # Standard packages (requires OS support)
 [packages.std]

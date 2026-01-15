@@ -244,12 +244,13 @@ pub fn compile_builtin_call(
             
             // Check for spread: append(a, b...)
             if call.spread && call.args.len() == 2 {
-                // Spread append: append all elements from second slice
-                let other_slice_reg = compile_expr(&call.args[1], ctx, func, info)?;
+                // Spread append: append all elements from second slice/string
+                // String and slice have identical memory layout, so vo_slice_append_slice works for both
+                let other_reg = compile_expr(&call.args[1], ctx, func, info)?;
                 let extern_id = ctx.get_or_register_extern("vo_slice_append_slice");
                 let args_reg = func.alloc_temp_typed(&[SlotType::GcRef, SlotType::GcRef, SlotType::Value]);
                 func.emit_op(Opcode::Copy, args_reg, slice_reg, 0);
-                func.emit_op(Opcode::Copy, args_reg + 1, other_slice_reg, 0);
+                func.emit_op(Opcode::Copy, args_reg + 1, other_reg, 0);
                 func.emit_op(Opcode::LoadConst, args_reg + 2, elem_meta_idx, 0);
                 func.emit_with_flags(Opcode::CallExtern, 3, dst, extern_id as u16, args_reg);
             } else {
