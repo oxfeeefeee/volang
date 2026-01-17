@@ -14,13 +14,11 @@ func Run(detraPath string, title string, width int, height int, handler CommandH
     program := detra.Compile(source)
     state := detra.InitState(program)
     
-    state, tree, errMsg, errKind := detra.Execute(program, state, nil, "", nil)
+    _, errMsg, errKind := detra.Execute(program, state, nil, "", nil)
     if errKind != "" {
         println("Execute error:", errKind, errMsg)
         return
     }
-    
-    detra_renderer.Render(detra_renderer.Tree(tree))
     
     detra_renderer.Run(
         detra_renderer.Config{
@@ -32,16 +30,16 @@ func Run(detraPath string, title string, width int, height int, handler CommandH
             actionName := detra_renderer.PendingAction()
             actionArgs := map[string]string{
                 "value": detra_renderer.PendingActionArg("value"),
+                "mode":  detra_renderer.PendingActionArg("mode"),
+                "step":  detra_renderer.PendingActionArg("step"),
             }
-            state, tree, errMsg, errKind = detra.Execute(program, state, nil, actionName, actionArgs)
+            _, errMsg, errKind := detra.Execute(program, state, nil, actionName, actionArgs)
             if errKind != "" {
                 println("Action error:", errKind, errMsg)
                 return
             }
             
             processCommands(handler)
-            
-            detra_renderer.Render(detra_renderer.Tree(tree))
         },
     )
 }

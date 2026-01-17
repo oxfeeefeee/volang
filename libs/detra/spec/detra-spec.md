@@ -114,7 +114,31 @@ view Main {
 
 Views are **pure**: no `set`, no `emit`, deterministic output.
 
-### 8.1 Node DSL
+### 8.1 Component Declaration
+
+Components are reusable view fragments with parameters:
+
+```
+component Counter(value int, label string = "Count") {
+    Row(spacing: 8) {
+        Text(text: label + ": " + string(value))
+        Button(text: "+", onClick: Inc)
+    }
+}
+```
+
+Usage in views:
+```
+Counter(value: state.count, label: "Items")
+```
+
+**Rules**:
+- Component names must start with uppercase (like widgets)
+- Parameters are accessed directly by name (not via `state`)
+- Parameters can have default values
+- Components can nest other components
+
+### 8.2 Node DSL
 
 ```
 NodeKind(prop: value, onClick: ActionName(arg: expr)) {
@@ -123,7 +147,7 @@ NodeKind(prop: value, onClick: ActionName(arg: expr)) {
 }
 ```
 
-### 8.2 Event Binding
+### 8.3 Event Binding
 
 ```
 Button(onClick: Inc)                    // no args
@@ -140,7 +164,7 @@ Input(onChange: SetText(value: $value))  // event variable
 - `$index` — innermost loop index
 - `$key` — node's `key` prop value
 
-### 8.3 Conditional Rendering
+### 8.4 Conditional Rendering
 
 ```
 if state.count > 0 {
@@ -151,6 +175,29 @@ if state.count > 0 {
 ```
 
 In views, `else` is optional. If omitted and condition is false, no node rendered.
+
+### 8.5 Switch Statement
+
+Switch provides multi-branch conditional rendering:
+
+```
+switch state.panelType {
+case "files":
+    FileExplorer()
+case "search":
+    SearchPanel()
+case "debug":
+    DebugPanel()
+default:
+    Text(text: "Unknown panel")
+}
+```
+
+**Rules**:
+- Each `case` requires a colon after the value
+- `default` is optional, renders when no case matches
+- Only one branch is rendered (no fall-through)
+- Case values are compared using deep equality
 
 ## 9. Comprehension
 

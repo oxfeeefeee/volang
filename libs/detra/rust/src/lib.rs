@@ -5,6 +5,7 @@ pub mod lexer;
 pub mod parser;
 pub mod value;
 pub mod executor;
+pub mod layout;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -19,7 +20,6 @@ use crate::executor::{Executor, State, ActionCall, RuntimeNode};
 
 static PROGRAMS: Mutex<Vec<Program>> = Mutex::new(Vec::new());
 static STATES: Mutex<Vec<State>> = Mutex::new(Vec::new());
-static TREES: Mutex<Vec<RuntimeNode>> = Mutex::new(Vec::new());
 static CURRENT_TREE: Mutex<Option<RuntimeNode>> = Mutex::new(None);
 static CURRENT_COMMANDS: Mutex<Vec<executor::CommandCall>> = Mutex::new(Vec::new());
 
@@ -144,22 +144,12 @@ fn detra_execute(ctx: &mut ExternCallContext) -> ExternResult {
         }
     }
 
-    let tree_id = {
-        let mut trees = TREES.lock().unwrap();
-        let id = trees.len();
-        trees.push(result.tree.clone());
-        id
-    };
-
-    // Only set current tree and commands if no error
+    // Set current tree and commands (renderer uses CURRENT_TREE directly)
     if result.error.is_none() {
-        // Set current tree for C ABI access
         {
             let mut current = CURRENT_TREE.lock().unwrap();
             *current = Some(result.tree);
         }
-
-        // Store commands for GetCommands
         {
             let mut cmds = CURRENT_COMMANDS.lock().unwrap();
             *cmds = result.commands;
@@ -167,14 +157,13 @@ fn detra_execute(ctx: &mut ExternCallContext) -> ExternResult {
     }
 
     ctx.ret_i64(0, state_id as i64);
-    ctx.ret_i64(1, tree_id as i64);
 
     if let Some(ref err) = result.error {
-        ctx.ret_str(2, &err.message);
-        ctx.ret_str(3, &err.kind);
+        ctx.ret_str(1, &err.message);
+        ctx.ret_str(2, &err.kind);
     } else {
+        ctx.ret_str(1, "");
         ctx.ret_str(2, "");
-        ctx.ret_str(3, "");
     }
 
     ExternResult::Ok
@@ -246,45 +235,150 @@ static __VO_DETRA_COMMAND_ARG: ExternEntryWithContext = ExternEntryWithContext {
     func: detra_command_arg,
 };
 
-pub fn get_tree(tree_id: usize) -> Option<RuntimeNode> {
-    TREES.lock().unwrap().get(tree_id).cloned()
-}
-
-// C ABI exports for renderer to call via dlsym
-// CURRENT_TREE_COPY holds a clone that's safe to access from renderer
-static CURRENT_TREE_COPY: Mutex<Option<Box<RuntimeNode>>> = Mutex::new(None);
+// C ABI for TUI renderer to get current tree (RuntimeNode)
+static CURRENT_TREE_FOR_TUI: Mutex<Option<Box<RuntimeNode>>> = Mutex::new(None);
 
 #[no_mangle]
-pub extern "C" fn detra_prepare_tree(_tree_id: usize) -> *const RuntimeNode {
-    // Clone current tree into CURRENT_TREE_COPY for safe access
+pub extern "C" fn detra_get_current_tree() -> *const RuntimeNode {
     let current = CURRENT_TREE.lock().unwrap();
-    let mut copy = CURRENT_TREE_COPY.lock().unwrap();
+    let mut tui_copy = CURRENT_TREE_FOR_TUI.lock().unwrap();
     
     if let Some(tree) = current.as_ref() {
         let boxed = Box::new(tree.clone());
         let ptr = &*boxed as *const RuntimeNode;
-        *copy = Some(boxed);
+        *tui_copy = Some(boxed);
         ptr
     } else {
-        *copy = None;
+        *tui_copy = None;
         std::ptr::null()
     }
 }
 
-#[no_mangle]
-pub extern "C" fn detra_get_tree_ptr(_tree_id: usize) -> *const RuntimeNode {
-    // Return pointer to the prepared copy
-    let copy = CURRENT_TREE_COPY.lock().unwrap();
-    match copy.as_ref() {
-        Some(boxed) => &**boxed as *const RuntimeNode,
-        None => std::ptr::null(),
+fn detra_debug_print_tree(_ctx: &mut ExternCallContext) -> ExternResult {
+    let current = CURRENT_TREE.lock().unwrap();
+    if let Some(tree) = current.as_ref() {
+        print_node(tree, 0);
+    } else {
+        println!("No current tree");
+    }
+    
+    ExternResult::Ok
+}
+
+fn print_node(node: &RuntimeNode, indent: usize) {
+    let prefix = "  ".repeat(indent);
+    
+    // Print node kind
+    print!("{}{}", prefix, node.kind);
+    
+    // Print key props inline
+    let mut inline_props = Vec::new();
+    for (key, val) in &node.props {
+        let val_str = match val {
+            value::Value::String(s) => {
+                if s.len() > 30 {
+                    format!("\"{}...\"", &s[..27])
+                } else {
+                    format!("\"{}\"", s)
+                }
+            }
+            value::Value::Int(n) => n.to_string(),
+            value::Value::Float(f) => format!("{:.1}", f),
+            value::Value::Bool(b) => b.to_string(),
+            _ => "...".to_string(),
+        };
+        inline_props.push(format!("{}={}", key, val_str));
+    }
+    
+    if !inline_props.is_empty() {
+        print!("({})", inline_props.join(", "));
+    }
+    
+    // Print events
+    if !node.events.is_empty() {
+        let events: Vec<_> = node.events.keys().collect();
+        print!(" [{}]", events.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+    }
+    
+    println!();
+    
+    // Print children
+    for child in &node.children {
+        print_node(child, indent + 1);
     }
 }
+
+#[distributed_slice(EXTERN_TABLE_WITH_CONTEXT)]
+static __VO_DETRA_DEBUG_PRINT_TREE: ExternEntryWithContext = ExternEntryWithContext {
+    name: ".._libs_detra_DebugPrintTree",
+    func: detra_debug_print_tree,
+};
 
 pub fn link_detra_externs() {
     let _ = &__VO_DETRA_COMPILE;
     let _ = &__VO_DETRA_INIT_STATE;
     let _ = &__VO_DETRA_EXECUTE;
+    let _ = &__VO_DETRA_DEBUG_PRINT_TREE;
+}
+
+// Layout API for renderers
+static RENDER_TREES: Mutex<Vec<detra_renderable::RenderTree>> = Mutex::new(Vec::new());
+
+/// Compute layout and return a RenderTree.
+/// Called by renderers with viewport dimensions.
+/// Uses CURRENT_TREE (set by last Execute) instead of tree_id parameter.
+#[no_mangle]
+pub extern "C" fn detra_layout(
+    _tree_id: usize,
+    viewport_width: f32,
+    viewport_height: f32,
+) -> *const detra_renderable::RenderTree {
+    // Use CURRENT_TREE instead of looking up by tree_id
+    // This ensures we always use the latest tree from Execute
+    let current = CURRENT_TREE.lock().unwrap();
+    let runtime_node = match current.as_ref() {
+        Some(node) => node,
+        None => return std::ptr::null(),
+    };
+    
+    // Convert RuntimeNode to detra_renderable::RuntimeNode
+    let renderable_node = convert_to_renderable(runtime_node);
+    drop(current); // Release lock before layout computation
+    
+    // Compute layout
+    let render_tree = layout::layout(&renderable_node, viewport_width, viewport_height);
+    
+    // Store and return pointer
+    let mut render_trees = RENDER_TREES.lock().unwrap();
+    let id = render_trees.len();
+    render_trees.push(render_tree);
+    &render_trees[id] as *const detra_renderable::RenderTree
+}
+
+fn convert_to_renderable(node: &RuntimeNode) -> detra_renderable::RuntimeNode {
+    detra_renderable::RuntimeNode {
+        kind: node.kind.clone(),
+        key: node.key.as_ref().map(|v| convert_value_to_renderable(v)),
+        props: node.props.iter().map(|(k, v)| (k.clone(), convert_value_to_renderable(v))).collect(),
+        events: node.events.iter().map(|(k, v)| (k.clone(), detra_renderable::ActionCall {
+            name: v.name.clone(),
+            args: v.args.iter().map(|(k, v)| (k.clone(), convert_value_to_renderable(v))).collect(),
+        })).collect(),
+        children: node.children.iter().map(convert_to_renderable).collect(),
+    }
+}
+
+fn convert_value_to_renderable(v: &value::Value) -> detra_renderable::Value {
+    match v {
+        value::Value::Null => detra_renderable::Value::Null,
+        value::Value::Bool(b) => detra_renderable::Value::Bool(*b),
+        value::Value::Int(n) => detra_renderable::Value::Int(*n),
+        value::Value::Float(f) => detra_renderable::Value::Float(*f),
+        value::Value::String(s) => detra_renderable::Value::String(s.clone()),
+        value::Value::Array(a) => detra_renderable::Value::Array(a.iter().map(convert_value_to_renderable).collect()),
+        value::Value::Map(m) => detra_renderable::Value::Map(m.iter().map(|(k, v)| (k.clone(), convert_value_to_renderable(v))).collect()),
+        value::Value::Struct(name, fields) => detra_renderable::Value::Struct(name.clone(), fields.iter().map(|(k, v)| (k.clone(), convert_value_to_renderable(v))).collect()),
+    }
 }
 
 vo_ext::export_extensions!();

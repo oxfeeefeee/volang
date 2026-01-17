@@ -1,15 +1,17 @@
 [package]
-name = "detra"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+name = "detra_renderer_tui"
+version = "0.1.0"
+edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 vo-runtime = { path = "../../../lang/crates/vo-runtime" }
 vo-ext = { path = "../../../lang/crates/vo-ext" }
 detra-renderable = { path = "../../detra-renderable" }
 linkme = "0.3"
-taffy = "0.5"
+lazy_static = "1.4"
+libc = "0.2"
+ratatui = "0.29"
+crossterm = "0.28"

@@ -6,8 +6,8 @@ func main() {
     system.Run(
         "vibe-studio/ui/app.detra",
         "Vibe Studio",
+        1200,
         800,
-        600,
         handleCommand,
     )
 }

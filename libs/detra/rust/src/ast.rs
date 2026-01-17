@@ -1,7 +1,5 @@
 //! Detra Abstract Syntax Tree definitions.
 
-use std::collections::HashMap;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub types: Vec<TypeDecl>,
@@ -9,6 +7,7 @@ pub struct Program {
     pub actions: Vec<ActionDecl>,
     pub rules: Vec<RuleDecl>,
     pub views: Vec<ViewDecl>,
+    pub components: Vec<ComponentDecl>,
     pub commands: Vec<CommandDecl>,
 }
 
@@ -137,6 +136,27 @@ pub enum ViewChild {
     Node(Node),
     If(ViewIf),
     For(Comprehension),
+    Switch(ViewSwitch),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewSwitch {
+    pub expr: Expr,
+    pub cases: Vec<SwitchCase>,
+    pub default: Option<Vec<ViewChild>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchCase {
+    pub value: Expr,
+    pub body: Vec<ViewChild>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComponentDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub body: Node,
 }
 
 #[derive(Debug, Clone, PartialEq)]

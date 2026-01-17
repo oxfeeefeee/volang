@@ -91,6 +91,15 @@ impl ExtensionLoader {
 
     /// Load an extension from a dynamic library path.
     pub fn load(&mut self, path: &Path, name: &str) -> Result<(), ExtError> {
+        // Use RTLD_GLOBAL so symbols are visible to other extensions
+        #[cfg(unix)]
+        let lib = unsafe {
+            let flags = libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_GLOBAL;
+            libloading::os::unix::Library::open(Some(path), flags)
+                .map(|l| Library::from(l))
+                .map_err(|e| ExtError::LoadFailed(e.to_string()))?
+        };
+        #[cfg(not(unix))]
         let lib = unsafe {
             Library::new(path).map_err(|e| ExtError::LoadFailed(e.to_string()))?
         };

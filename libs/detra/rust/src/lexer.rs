@@ -34,6 +34,10 @@ pub enum Token {
     Float,
     String,
     Map,
+    Component,
+    Switch,
+    Case,
+    Default,
 
     // Identifiers and literals
     Ident(String),
@@ -298,6 +302,10 @@ impl<'a> Lexer<'a> {
             "float" => Token::Float,
             "string" => Token::String,
             "map" => Token::Map,
+            "component" => Token::Component,
+            "switch" => Token::Switch,
+            "case" => Token::Case,
+            "default" => Token::Default,
             _ => Token::Ident(ident.to_string()),
         }
     }

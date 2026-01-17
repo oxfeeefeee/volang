@@ -1,6 +1,6 @@
 //! Detra Parser - parses tokens into AST.
 
-use crate::ast::*;
+use crate::ast::{*, SwitchCase, ComponentDecl, ViewSwitch};
 use crate::lexer::{Token, SpannedToken};
 
 pub struct Parser {
@@ -19,6 +19,7 @@ impl Parser {
         let mut actions = Vec::new();
         let mut rules = Vec::new();
         let mut views = Vec::new();
+        let mut components = Vec::new();
         let mut commands = Vec::new();
 
         while !self.is_eof() {
@@ -33,6 +34,7 @@ impl Parser {
                 Token::Action => actions.push(self.parse_action_decl()?),
                 Token::Rule => rules.push(self.parse_rule_decl()?),
                 Token::View => views.push(self.parse_view_decl()?),
+                Token::Component => components.push(self.parse_component_decl()?),
                 Token::Command => commands.push(self.parse_command_decl()?),
                 _ => return Err(format!("Unexpected token: {:?}", self.peek())),
             }
@@ -50,6 +52,7 @@ impl Parser {
             actions,
             rules,
             views,
+            components,
             commands,
         })
     }
@@ -391,8 +394,59 @@ impl Parser {
         match self.peek() {
             Token::If => Ok(ViewChild::If(self.parse_view_if()?)),
             Token::For => Ok(ViewChild::For(self.parse_comprehension()?)),
+            Token::Switch => Ok(ViewChild::Switch(self.parse_view_switch()?)),
             _ => Ok(ViewChild::Node(self.parse_node()?)),
         }
+    }
+
+    fn parse_view_switch(&mut self) -> Result<ViewSwitch, String> {
+        self.expect(Token::Switch)?;
+        let expr = self.parse_expr()?;
+        self.expect(Token::LBrace)?;
+
+        let mut cases = Vec::new();
+        let mut default = None;
+
+        while self.peek() != &Token::RBrace {
+            match self.peek() {
+                Token::Case => {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    self.expect(Token::Colon)?;
+                    let mut body = Vec::new();
+                    while !matches!(self.peek(), Token::Case | Token::Default | Token::RBrace) {
+                        body.push(self.parse_view_child()?);
+                    }
+                    cases.push(SwitchCase { value, body });
+                }
+                Token::Default => {
+                    self.advance();
+                    self.expect(Token::Colon)?;
+                    let mut body = Vec::new();
+                    while !matches!(self.peek(), Token::Case | Token::Default | Token::RBrace) {
+                        body.push(self.parse_view_child()?);
+                    }
+                    default = Some(body);
+                }
+                _ => return Err(format!("Expected 'case' or 'default', got {:?}", self.peek())),
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        Ok(ViewSwitch { expr, cases, default })
+    }
+
+    fn parse_component_decl(&mut self) -> Result<ComponentDecl, String> {
+        self.expect(Token::Component)?;
+        let name = self.expect_ident()?;
+        self.expect(Token::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LBrace)?;
+        let body = self.parse_node()?;
+        self.expect(Token::RBrace)?;
+
+        Ok(ComponentDecl { name, params, body })
     }
 
     fn parse_view_if(&mut self) -> Result<ViewIf, String> {
@@ -755,5 +809,59 @@ mod tests {
         let prog = parse(src).unwrap();
         assert_eq!(prog.state.name, "App");
         assert_eq!(prog.views.len(), 1);
+    }
+
+    #[test]
+    fn test_component() {
+        let src = r#"
+            state App {
+                value int = 0
+            }
+            component Counter(n int, label string = "Count") {
+                Row() {
+                    Text(text: label)
+                    Text(text: string(n))
+                }
+            }
+            view Main {
+                Counter(n: state.value)
+            }
+        "#;
+        let prog = parse(src).unwrap();
+        assert_eq!(prog.components.len(), 1);
+        assert_eq!(prog.components[0].name, "Counter");
+        assert_eq!(prog.components[0].params.len(), 2);
+    }
+
+    #[test]
+    fn test_switch() {
+        let src = r#"
+            state App {
+                mode string = "a"
+            }
+            view Main {
+                Column() {
+                    switch state.mode {
+                    case "a":
+                        Text(text: "Mode A")
+                    case "b":
+                        Text(text: "Mode B")
+                    default:
+                        Text(text: "Unknown")
+                    }
+                }
+            }
+        "#;
+        let prog = parse(src).unwrap();
+        assert_eq!(prog.views.len(), 1);
+        let view = &prog.views[0];
+        assert_eq!(view.body.children.len(), 1);
+        match &view.body.children[0] {
+            ViewChild::Switch(sw) => {
+                assert_eq!(sw.cases.len(), 2);
+                assert!(sw.default.is_some());
+            }
+            _ => panic!("Expected switch"),
+        }
     }
 }

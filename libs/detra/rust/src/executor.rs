@@ -1,7 +1,7 @@
 //! Detra Execution Engine - runs actions, rules, and evaluates views.
 
 use std::collections::HashMap;
-use crate::ast::*;
+use crate::ast::{*, ViewSwitch};
 use crate::value::{Value, zero_value};
 
 pub use detra_renderable::{ActionCall, RuntimeNode};
@@ -243,6 +243,10 @@ impl<'a> Executor<'a> {
     }
 
     fn eval_node(&mut self, node: &Node) -> Result<RuntimeNode, ExecError> {
+        if let Some(component) = self.program.components.iter().find(|c| c.name == node.kind) {
+            return self.eval_component_call(component, node);
+        }
+
         let mut props = HashMap::new();
         let mut events = HashMap::new();
 
@@ -302,6 +306,9 @@ impl<'a> Executor<'a> {
                 ViewChild::For(comp) => {
                     self.eval_comprehension(comp, &mut children)?;
                 }
+                ViewChild::Switch(switch) => {
+                    self.eval_switch(switch, &mut children)?;
+                }
             }
         }
 
@@ -337,7 +344,62 @@ impl<'a> Executor<'a> {
             ViewChild::For(comp) => {
                 self.eval_comprehension(comp, out)?;
             }
+            ViewChild::Switch(switch) => {
+                self.eval_switch(switch, out)?;
+            }
         }
+        Ok(())
+    }
+
+    fn eval_component_call(&mut self, component: &ComponentDecl, call_node: &Node) -> Result<RuntimeNode, ExecError> {
+        let mut param_values = HashMap::new();
+        
+        for param in &component.params {
+            let value = call_node.props.iter()
+                .find(|p| p.name == param.name)
+                .and_then(|p| match &p.value {
+                    PropValue::Expr(expr) => self.eval_expr(expr).ok(),
+                    _ => None,
+                })
+                .or_else(|| param.default.as_ref().map(literal_to_value))
+                .unwrap_or_else(|| zero_value(&param.ty));
+            param_values.insert(param.name.clone(), value);
+        }
+
+        let old_loop_vars = std::mem::take(&mut self.loop_vars);
+        self.loop_vars = param_values;
+        
+        let result = self.eval_node(&component.body);
+        
+        self.loop_vars = old_loop_vars;
+        result
+    }
+
+    fn eval_switch(&mut self, switch: &ViewSwitch, out: &mut Vec<RuntimeNode>) -> Result<(), ExecError> {
+        let value = self.eval_expr(&switch.expr).map_err(|msg| ExecError {
+            message: msg,
+            kind: "panic".to_string(),
+        })?;
+
+        for case in &switch.cases {
+            let case_val = self.eval_expr(&case.value).map_err(|msg| ExecError {
+                message: msg,
+                kind: "panic".to_string(),
+            })?;
+            if values_equal(&value, &case_val) {
+                for child in &case.body {
+                    self.eval_view_child(child, out)?;
+                }
+                return Ok(());
+            }
+        }
+
+        if let Some(default_body) = &switch.default {
+            for child in default_body {
+                self.eval_view_child(child, out)?;
+            }
+        }
+
         Ok(())
     }
 

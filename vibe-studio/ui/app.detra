@@ -1,62 +1,128 @@
-// Vibe Studio - Counter Demo
-// A simple counter application demonstrating Detra UI
+// Vibe Studio - IDE Interface
+// A VSCode-like development environment
 
 state App {
-    count int = 0
-    text string
-    valid bool
-    const maxCount int = 100
+    leftPanel string = "files"
+    bottomPanel string = "terminal"
+    showBottom bool = true
+    currentFile string = "main.vo"
+    editorContent string = "// Welcome to Vibe Studio\n\nfunc main() {\n    println(\"Hello, World!\")\n}"
 }
 
 command Log(message string)
+command OpenFile(path string)
+command SaveFile(path string, content string)
 
-action Inc(step int = 1) {
-    require state.count + step <= state.maxCount
-    set state.count = state.count + step
-    emit Log(message: "incremented to " + string(state.count))
+action SetLeftPanel(mode string) {
+    set state.leftPanel = mode
 }
 
-action Dec(step int = 1) {
-    require state.count - step >= 0
-    set state.count = state.count - step
+action SetBottomPanel(mode string) {
+    set state.bottomPanel = mode
 }
 
-action Reset() {
-    set state.count = 0
+action ToggleBottom() {
+    set state.showBottom = !state.showBottom
 }
 
-action SetText(value string) {
-    set state.text = value
+action SetContent(value string) {
+    set state.editorContent = value
 }
 
-rule Validate {
-    derive state.valid = state.text != ""
+component SidebarButton(icon string, label string, panel string, active bool) {
+    Button(text: icon, style: "icon", active: active, onClick: SetLeftPanel(mode: panel))
+}
+
+component PanelTab(label string, panel string, active bool) {
+    Button(text: label, style: "tab", active: active, onClick: SetBottomPanel(mode: panel))
 }
 
 view Main {
-    Column(padding: 16, spacing: 12) {
-        Text(text: "Vibe Studio Demo", size: 24, bold: true)
-        Divider()
+    Column(fill: true) {
+        Row(height: 28, style: "menubar") {
+            Text(text: "Vibe Studio", size: 14, bold: true)
+        }
         
-        Card(title: "Counter") {
-            Row(spacing: 8) {
-                Button(text: "-", onClick: Dec)
-                Text(text: string(state.count), size: 20)
-                Button(text: "+", onClick: Inc)
-                Spacer(size: 20)
-                Button(text: "Reset", onClick: Reset)
+        Row(fill: true, flex: 1) {
+            Column(width: 48, style: "sidebar") {
+                SidebarButton(icon: "📁", label: "Files", panel: "files", active: state.leftPanel == "files")
+                SidebarButton(icon: "🔍", label: "Search", panel: "search", active: state.leftPanel == "search")
+                SidebarButton(icon: "⚙", label: "Settings", panel: "settings", active: state.leftPanel == "settings")
+            }
+            
+            Column(width: 200, style: "panel") {
+                switch state.leftPanel {
+                case "files":
+                    Column(padding: 8, spacing: 4) {
+                        Text(text: "EXPLORER", size: 11, bold: true)
+                        Text(text: "📁 src", size: 12)
+                        Text(text: "  📄 main.vo", size: 12)
+                        Text(text: "  📄 utils.vo", size: 12)
+                        Text(text: "📁 test", size: 12)
+                        Text(text: "📄 README.md", size: 12)
+                    }
+                case "search":
+                    Column(padding: 8, spacing: 4) {
+                        Text(text: "SEARCH", size: 11, bold: true)
+                        Input(placeholder: "Search...", onChange: SetContent(value: $value))
+                    }
+                default:
+                    Column(padding: 8, spacing: 4) {
+                        Text(text: "SETTINGS", size: 11, bold: true)
+                        Text(text: "Theme: Dark", size: 12)
+                    }
+                }
+            }
+            
+            Divider(vertical: true)
+            
+            Column(flex: 1) {
+                Row(height: 35, style: "tabbar") {
+                    Button(text: state.currentFile, style: "tab", active: true)
+                }
+                
+                Column(flex: 1, padding: 8, style: "editor") {
+                    Input(value: state.editorContent, multiline: true, onChange: SetContent(value: $value))
+                }
+                
+                if state.showBottom {
+                    Divider()
+                    Column(height: 150, style: "panel") {
+                        Row(height: 28, style: "tabbar") {
+                            PanelTab(label: "TERMINAL", panel: "terminal", active: state.bottomPanel == "terminal")
+                            PanelTab(label: "OUTPUT", panel: "output", active: state.bottomPanel == "output")
+                            PanelTab(label: "PROBLEMS", panel: "problems", active: state.bottomPanel == "problems")
+                            Spacer()
+                            Button(text: "×", style: "icon", onClick: ToggleBottom)
+                        }
+                        
+                        switch state.bottomPanel {
+                        case "terminal":
+                            Column(padding: 8) {
+                                Text(text: "$ ./d.py vibe", size: 12, font: "monospace")
+                                Text(text: "Building vo-cli...", size: 12, font: "monospace")
+                                Text(text: "Running Vibe Studio...", size: 12, font: "monospace")
+                            }
+                        case "output":
+                            Column(padding: 8) {
+                                Text(text: "Build output will appear here", size: 12, color: "gray")
+                            }
+                        default:
+                            Column(padding: 8) {
+                                Text(text: "No problems detected", size: 12, color: "gray")
+                            }
+                        }
+                    }
+                }
             }
         }
         
-        Card(title: "Input") {
-            Column(spacing: 8) {
-                Input(value: state.text, placeholder: "Enter text...", onChange: SetText(value: $value))
-                if state.valid {
-                    Text(text: "Valid input", color: "green")
-                } else {
-                    Text(text: "Please enter some text", color: "gray")
-                }
-            }
+        Row(height: 22, style: "statusbar") {
+            Text(text: "Ln 1, Col 1", size: 11)
+            Spacer()
+            Text(text: "UTF-8", size: 11)
+            Spacer(size: 16)
+            Text(text: "Vo", size: 11)
         }
     }
 }
