@@ -96,11 +96,8 @@ pub struct CodegenContext {
     /// Extern function by string name (for builtins)
     extern_names: HashMap<String, u32>,
 
-    /// Global variable slot offset: symbol -> slot_offset
-    global_indices: HashMap<Symbol, u32>,
-
-    /// Global variable slot offset: ObjKey -> slot_offset (for init_order lookup)
-    global_indices_by_objkey: HashMap<vo_analysis::objects::ObjKey, u32>,
+    /// Global variable slot offset: ObjKey -> slot_offset
+    global_indices: HashMap<vo_analysis::objects::ObjKey, u32>,
 
     /// Next global slot offset (accumulated from all globals)
     global_slot_offset: u32,
@@ -134,6 +131,9 @@ pub struct CodegenContext {
 
     /// init functions (in declaration order)
     init_functions: Vec<u32>,
+    
+    /// main function id (if exists)
+    main_func_id: Option<u32>,
 
     /// Pending itab builds: (rttid, type_key, iface_meta_id, const_idx)
     /// These are processed after all methods are registered
@@ -185,7 +185,6 @@ impl CodegenContext {
             extern_indices: HashMap::new(),
             extern_names: HashMap::new(),
             global_indices: HashMap::new(),
-            global_indices_by_objkey: HashMap::new(),
             global_slot_offset: 0,
             const_int: HashMap::new(),
             const_float: HashMap::new(),
@@ -197,6 +196,7 @@ impl CodegenContext {
             objkey_to_func: HashMap::new(),
             objkey_to_iface_func: HashMap::new(),
             init_functions: Vec::new(),
+            main_func_id: None,
             pending_itabs: Vec::new(),
             itab_cache: HashMap::new(),
             current_func_id: None,
@@ -700,7 +700,8 @@ impl CodegenContext {
 
     /// Pre-register a function name for forward references.
     /// Allocates a placeholder FunctionDef so the ID is valid immediately.
-    pub fn declare_func(&mut self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) {
+    /// Also registers ObjKey for cross-package lookup.
+    pub fn declare_func(&mut self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol, obj_key: vo_analysis::objects::ObjKey, func_name: &str) {
         let id = self.module.functions.len() as u32;
         // Push a placeholder that will be replaced by define_func
         self.module.functions.push(FunctionDef {
@@ -718,21 +719,21 @@ impl CodegenContext {
             slot_types: Vec::new(),
         });
         self.func_indices.insert((recv, is_pointer_recv, name), id);
+        // Register ObjKey for cross-package lookup (avoids Symbol collision)
+        self.objkey_to_func.insert(obj_key, id);
+        // Track main function
+        if recv.is_none() && func_name == "main" {
+            self.main_func_id = Some(id);
+        }
+    }
+    
+    /// Get main function id (if exists)
+    pub fn main_func_id(&self) -> Option<u32> {
+        self.main_func_id
     }
 
     pub fn get_func_index(&self, recv: Option<TypeKey>, is_pointer_recv: bool, name: Symbol) -> Option<u32> {
         self.func_indices.get(&(recv, is_pointer_recv, name)).copied()
-    }
-
-    /// Get function index by name (for non-method functions).
-    pub fn get_function_index(&self, name: Symbol) -> Option<u32> {
-        self.func_indices.get(&(None, false, name)).copied()
-    }
-    
-    /// Check if a function is a compiled Vo function (not extern).
-    /// Extern functions have no body and are not registered in func_indices.
-    pub fn is_vo_function(&self, name: Symbol) -> bool {
-        self.func_indices.contains_key(&(None, false, name))
     }
 
     /// Define a function: replace placeholder with real definition.
@@ -792,21 +793,16 @@ impl CodegenContext {
 
     // === Global registration ===
 
-    pub fn register_global(&mut self, name: Symbol, obj_key: vo_analysis::objects::ObjKey, def: GlobalDef) -> u32 {
+    pub fn register_global(&mut self, obj_key: vo_analysis::objects::ObjKey, def: GlobalDef) -> u32 {
         let slot_offset = self.global_slot_offset;
         self.global_slot_offset += def.slots as u32;
         self.module.globals.push(def);
-        self.global_indices.insert(name, slot_offset);
-        self.global_indices_by_objkey.insert(obj_key, slot_offset);
+        self.global_indices.insert(obj_key, slot_offset);
         slot_offset
     }
 
-    pub fn get_global_index(&self, name: Symbol) -> Option<u32> {
-        self.global_indices.get(&name).copied()
-    }
-
-    pub fn get_global_index_by_objkey(&self, obj_key: vo_analysis::objects::ObjKey) -> Option<u32> {
-        self.global_indices_by_objkey.get(&obj_key).copied()
+    pub fn get_global_index(&self, obj_key: vo_analysis::objects::ObjKey) -> Option<u32> {
+        self.global_indices.get(&obj_key).copied()
     }
 
     // === Constant pool ===

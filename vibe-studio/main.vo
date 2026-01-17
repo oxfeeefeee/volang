@@ -1,64 +1,22 @@
 package main
 
-import (
-    "os"
-    "../libs/detra"
-    "../libs/detra-renderer"
-)
+import "./system"
 
 func main() {
-    data, err := os.ReadFile("vibe-studio/ui/app.detra")
-    if err != nil {
-        panic("failed to read file: " + err.Error())
-    }
-    source := string(data)
-    
-    program := detra.Compile(source)
-    state := detra.InitState(program)
-    
-    state, tree, errMsg, errKind := detra.Execute(program, state, nil, "", nil)
-    if errKind != "" {
-        println("Execute error:", errKind, errMsg)
-        return
-    }
-    
-    detra_renderer.Render(detra_renderer.Tree(tree))
-    
-    detra_renderer.Run(
-        detra_renderer.Config{
-            Title:  "Vibe Studio",
-            Width:  800,
-            Height: 600,
-        },
-        func() {
-            actionName := detra_renderer.PendingAction()
-            actionArgs := map[string]string{
-                "value": detra_renderer.PendingActionArg("value"),
-            }
-            state, tree, errMsg, errKind = detra.Execute(program, state, nil, actionName, actionArgs)
-            if errKind != "" {
-                println("Action error:", errKind, errMsg)
-                return
-            }
-            
-            handleCommands()
-            
-            detra_renderer.Render(detra_renderer.Tree(tree))
-        },
+    system.Run(
+        "vibe-studio/ui/app.detra",
+        "Vibe Studio",
+        800,
+        600,
+        handleCommand,
     )
 }
 
-// handleCommands processes commands emitted by Detra actions.
-func handleCommands() {
-    count := detra.CommandCount()
-    for i := 0; i < count; i++ {
-        name := detra.CommandName(i)
-        switch name {
-        case "Log":
-            message := detra.CommandArg(i, "message")
-            println("[Detra Log]", message)
-        default:
-            println("[Unknown command]", name)
-        }
+func handleCommand(name string, getArg func(string) string) {
+    switch name {
+    case "Log":
+        println("[Detra Log]", getArg("message"))
+    default:
+        println("[Unknown command]", name)
     }
 }

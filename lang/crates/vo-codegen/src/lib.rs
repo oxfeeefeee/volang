@@ -512,7 +512,8 @@ fn collect_file_declarations(
                     (None, false)
                 };
                 
-                ctx.declare_func(recv_type, is_pointer_recv, func_decl.name.symbol);
+                let obj_key = info.get_def(&func_decl.name);
+                ctx.declare_func(recv_type, is_pointer_recv, func_decl.name.symbol, obj_key, func_name);
             }
             Decl::Var(var_decl) => {
                 // Register global variables (so functions can reference them)
@@ -535,7 +536,6 @@ fn collect_file_declarations(
                         let value_kind = info.type_value_kind(type_key) as u8;
                         let obj_key = info.get_def(name);
                         ctx.register_global(
-                            name.symbol,
                             obj_key,
                             vo_vm::bytecode::GlobalDef {
                                 name: project.interner.resolve(name.symbol).unwrap_or("?").to_string(),
@@ -1159,7 +1159,7 @@ fn compile_package_globals(
             let obj_key = initializer.lhs[0];
             let obj = &info.project.tc_objs.lobjs[obj_key];
             
-            if let Some(global_idx) = ctx.get_global_index_by_objkey(obj_key) {
+            if let Some(global_idx) = ctx.get_global_index(obj_key) {
                 let type_key = obj.typ();
                 
                 // Special handling for arrays: allocate on heap
@@ -1196,7 +1196,7 @@ fn compile_package_globals(
             for (i, &obj_key) in initializer.lhs.iter().enumerate() {
                 let obj = &info.project.tc_objs.lobjs[obj_key];
                 
-                if let Some(global_idx) = ctx.get_global_index_by_objkey(obj_key) {
+                if let Some(global_idx) = ctx.get_global_index(obj_key) {
                     let type_key = obj.typ();
                     let slots = type_key.map(|t| info.type_slot_count(t)).unwrap_or(1);
                     let slot_types = type_key
@@ -1241,8 +1241,7 @@ fn compile_init_and_entry(
     // Note: __init__ is NOT registered as a user init function - it's handled separately
     
     // 2. Find main function
-    let main_func_id = project.interner.get("main")
-        .and_then(|sym| ctx.get_function_index(sym));
+    let main_func_id = ctx.main_func_id();
     
     // 3. Generate __entry__ function
     let mut entry_builder = FuncBuilder::new("__entry__");

@@ -694,6 +694,10 @@ impl Vm {
                     // Get pointers for closure calling capability
                     let vm_ptr = self as *mut Vm as *mut std::ffi::c_void;
                     let fiber_ptr = fiber as *mut crate::fiber::Fiber as *mut std::ffi::c_void;
+                    #[cfg(feature = "jit")]
+                    let closure_call_fn: Option<vo_runtime::ffi::ClosureCallFn> = Some(jit_glue::closure_call_trampoline);
+                    #[cfg(not(feature = "jit"))]
+                    let closure_call_fn: Option<vo_runtime::ffi::ClosureCallFn> = None;
                     let result = exec::exec_call_extern(
                         stack,
                         bp,
@@ -711,7 +715,7 @@ impl Vm {
                         module,
                         vm_ptr,
                         fiber_ptr,
-                        Some(jit_glue::closure_call_trampoline),
+                        closure_call_fn,
                         &mut extern_panic_msg,
                     );
                     // Convert extern panic to recoverable runtime panic

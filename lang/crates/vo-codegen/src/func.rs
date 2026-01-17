@@ -403,6 +403,14 @@ impl FuncBuilder {
         self.code.push(Instruction::with_flags(op, flags, a, b, c));
     }
 
+    /// Emit ClosureNew with proper func_id encoding (handles func_id > 65535)
+    /// VM decodes as: func_id = (inst.b as u32) | ((inst.flags as u32) << 16)
+    pub fn emit_closure_new(&mut self, dst: u16, func_id: u32, capture_count: u16) {
+        let func_id_low = (func_id & 0xFFFF) as u16;
+        let func_id_high = ((func_id >> 16) & 0xFF) as u8;
+        self.emit_with_flags(Opcode::ClosureNew, func_id_high, dst, func_id_low, capture_count);
+    }
+
     // === Copy helpers ===
 
     /// Emit Copy or CopyN based on slot count

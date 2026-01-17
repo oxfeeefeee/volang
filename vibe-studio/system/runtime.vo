@@ -1,0 +1,66 @@
+package system
+
+import (
+    "os"
+    "../libs/detra"
+    "../libs/detra-renderer"
+)
+
+type CommandHandler func(name string, getArg func(string) string)
+
+func Run(detraPath string, title string, width int, height int, handler CommandHandler) {
+    source := readDetraFile(detraPath)
+    
+    program := detra.Compile(source)
+    state := detra.InitState(program)
+    
+    state, tree, errMsg, errKind := detra.Execute(program, state, nil, "", nil)
+    if errKind != "" {
+        println("Execute error:", errKind, errMsg)
+        return
+    }
+    
+    detra_renderer.Render(detra_renderer.Tree(tree))
+    
+    detra_renderer.Run(
+        detra_renderer.Config{
+            Title:  title,
+            Width:  width,
+            Height: height,
+        },
+        func() {
+            actionName := detra_renderer.PendingAction()
+            actionArgs := map[string]string{
+                "value": detra_renderer.PendingActionArg("value"),
+            }
+            state, tree, errMsg, errKind = detra.Execute(program, state, nil, actionName, actionArgs)
+            if errKind != "" {
+                println("Action error:", errKind, errMsg)
+                return
+            }
+            
+            processCommands(handler)
+            
+            detra_renderer.Render(detra_renderer.Tree(tree))
+        },
+    )
+}
+
+func processCommands(handler CommandHandler) {
+    count := detra.CommandCount()
+    for i := 0; i < count; i++ {
+        name := detra.CommandName(i)
+        idx := i
+        handler(name, func(argName string) string {
+            return detra.CommandArg(idx, argName)
+        })
+    }
+}
+
+func readDetraFile(path string) string {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        panic("failed to read detra file: " + path + ": " + err.Error())
+    }
+    return string(data)
+}

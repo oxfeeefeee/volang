@@ -1783,7 +1783,9 @@ fn compile_defer_impl(
     
     // Regular function call
     if let ExprKind::Ident(ident) = &call_expr.func.kind {
-        if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
+        // Use ObjKey for consistency
+        let obj_key = info.get_use(ident);
+        if let Some(func_idx) = ctx.get_func_by_objkey(obj_key) {
             let (args_start, total_arg_slots) = compile_defer_args_with_types(call_expr, ctx, func, info)?;
             emit_defer_func(opcode, func_idx, args_start, total_arg_slots, func);
             return Ok(());
@@ -1913,7 +1915,9 @@ fn compile_go(
         
         // Check if it's a regular function call
         if let ExprKind::Ident(ident) = &call_expr.func.kind {
-            if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
+            // Use ObjKey for consistency
+            let obj_key = info.get_use(ident);
+            if let Some(func_idx) = ctx.get_func_by_objkey(obj_key) {
                 // Regular function - compile args
                 let args_start = if total_arg_slots > 0 {
                     func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots as usize])

@@ -87,38 +87,12 @@ pub fn compile_call(
     
     // Check if calling a closure (local variable with Signature type)
     if let ExprKind::Ident(ident) = &call.func.kind {
-        // First check if it's a known function
-        if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
-            // Optimization: use dst directly as args_start if it has enough space
-            // This avoids a Copy after the call
-            let need_slots = total_arg_slots.max(ret_slots);
-            let args_start = if ret_slots > 0 && ret_slots >= total_arg_slots {
-                // dst has enough space, use it directly
-                dst
-            } else {
-                // Need more space for args than ret, allocate separately
-                func.alloc_temp_typed(&vec![SlotType::Value; need_slots as usize])
-            };
-            
-            // Compile args with variadic packing support
-            compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
-            
-            // Call: a=func_id, b=args_start, c=(arg_slots<<8|ret_slots), flags=func_id_high
-            let c = crate::type_info::encode_call_args(total_arg_slots as u16, ret_slots as u16);
-            let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
-            func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
-            
-            // Copy result to dst if not already there
-            if ret_slots > 0 && dst != args_start {
-                func.emit_copy(dst, args_start, ret_slots);
-            }
-            return Ok(());
-        }
+        let obj_key = info.get_use(ident);
         
         // Check if it's a closure (local, capture, or global variable)
         let is_closure = func.lookup_local(ident.symbol).is_some() 
             || func.lookup_capture(ident.symbol).is_some()
-            || ctx.get_global_index(ident.symbol).is_some();
+            || ctx.get_global_index(obj_key).is_some();
         
         if is_closure {
             let closure_reg = compile_expr(&call.func, ctx, func, info)?;
@@ -134,22 +108,43 @@ pub fn compile_call(
             return Ok(());
         }
         
-        // Extern function (no body, e.g., bytes.Index called from bytes.Contains)
-        if !ctx.is_vo_function(ident.symbol) {
+        // Function call - check if it's a Vo function (has body) or extern (no body)
+        let obj = &info.project.tc_objs.lobjs[obj_key];
+        
+        if obj.entity_type().func_has_body() {
+            // Vo function - use Call instruction
+            // Use ObjKey for consistency (though same-package calls wouldn't collide)
+            let func_idx = ctx.get_func_by_objkey(obj_key)
+                .ok_or_else(|| CodegenError::Internal(format!("function not registered: {:?}", ident.symbol)))?;
+            
+            let need_slots = total_arg_slots.max(ret_slots);
+            let args_start = if ret_slots > 0 && ret_slots >= total_arg_slots {
+                dst
+            } else {
+                func.alloc_temp_typed(&vec![SlotType::Value; need_slots as usize])
+            };
+            
+            compile_method_args(call, &param_types, is_variadic, args_start, ctx, func, info)?;
+            
+            let c = crate::type_info::encode_call_args(total_arg_slots as u16, ret_slots as u16);
+            let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
+            func.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
+            
+            if ret_slots > 0 && dst != args_start {
+                func.emit_copy(dst, args_start, ret_slots);
+            }
+            return Ok(());
+        } else {
+            // Extern function (no body) - use CallExtern instruction
             let func_name = info.project.interner.resolve(ident.symbol)
                 .ok_or_else(|| CodegenError::Internal("cannot resolve function name".to_string()))?;
-            let obj_key = info.get_use(ident);
-            let pkg_key = info.project.tc_objs.lobjs[obj_key].pkg();
+            let pkg_key = obj.pkg();
             let pkg_path = pkg_key
                 .map(|pk| info.project.tc_objs.pkgs[pk].path().to_string())
                 .unwrap_or_else(|| "main".to_string());
             let extern_name = format!("{}_{}", pkg_path.replace("/", "_"), func_name);
             return compile_extern_call(call, &extern_name, dst, ctx, func, info);
         }
-        
-        // Unknown function - error
-        let func_name = info.project.interner.resolve(ident.symbol).unwrap_or("?");
-        return Err(CodegenError::Internal(format!("unknown function: {}", func_name)));
     }
     
     // Non-ident function call (e.g., expression returning a closure)
@@ -309,9 +304,11 @@ fn compile_method_call(
             }
             
             // Check if it's a Vo function (has body) or extern (no body)
-            if ctx.is_vo_function(sel.sel.symbol) {
+            if obj.entity_type().func_has_body() {
                 // Vo function - use normal Call with proper interface conversion
-                let func_idx = ctx.get_function_index(sel.sel.symbol).unwrap();
+                // Use ObjKey to avoid cross-package Symbol collision
+                let func_idx = ctx.get_func_by_objkey(obj_key)
+                    .ok_or_else(|| CodegenError::Internal(format!("pkg func not registered: {:?}", sel.sel.symbol)))?;
                 let ret_slots = info.type_slot_count(info.expr_type(expr.id));
                 let func_type = info.expr_type(call.func.id);
                 let param_types = info.func_param_types(func_type);

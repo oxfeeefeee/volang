@@ -211,8 +211,9 @@ pub fn resolve_lvalue(
             }
             
             // Check global variable
-            if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
-                let type_key = info.obj_type(info.get_use(ident), "global must have type");
+            let obj_key = info.get_use(ident);
+            if let Some(global_idx) = ctx.get_global_index(obj_key) {
+                let type_key = info.obj_type(obj_key, "global must have type");
                 // Global arrays are stored as GcRef (1 slot)
                 let slots = if info.is_array(type_key) { 1 } else { info.type_slot_count(type_key) };
                 return Ok(LValue::Variable(StorageKind::Global { 
@@ -223,7 +224,7 @@ pub fn resolve_lvalue(
             
             // Check closure capture
             if let Some(capture) = func.lookup_capture(ident.symbol) {
-                let type_key = info.obj_type(info.get_use(ident), "capture must have type");
+                let type_key = info.obj_type(obj_key, "capture must have type");
                 let value_slots = info.type_slot_count(type_key);
                 return Ok(LValue::Capture { 
                     capture_index: capture.index, 

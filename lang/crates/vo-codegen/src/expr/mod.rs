@@ -86,8 +86,9 @@ pub fn get_expr_source(
             if let Some(local) = func.lookup_local(ident.symbol) {
                 return ExprSource::Location(local.storage);
             }
-            if let Some(global_idx) = ctx.get_global_index(ident.symbol) {
-                if let Some(type_key) = info.try_obj_type(info.get_use(ident)) {
+            let obj_key = info.get_use(ident);
+            if let Some(global_idx) = ctx.get_global_index(obj_key) {
+                if let Some(type_key) = info.try_obj_type(obj_key) {
                     // Global arrays are stored as GcRef (1 slot)
                     let slots = if info.is_array(type_key) { 1 } else { info.type_slot_count(type_key) };
                     return ExprSource::Location(StorageKind::Global { index: global_idx as u16, slots });
@@ -291,22 +292,25 @@ pub fn compile_expr_to(
                     func.emit_storage_load(storage, dst);
                 }
                 ExprSource::NeedsCompile => {
+                    let obj_key = info.get_use(ident);
                     // Closure capture: ClosureGet returns GcRef to the captured storage
                     if let Some(capture) = func.lookup_capture(ident.symbol) {
                         func.emit_op(Opcode::ClosureGet, dst, capture.index, 0);
                         
                         // Arrays: capture stores GcRef to [ArrayHeader][elems], use directly
                         // Others: capture stores GcRef to box [value], need PtrGet to read value
-                        let type_key = info.obj_type(info.get_use(ident), "captured var must have type");
+                        let type_key = info.obj_type(obj_key, "captured var must have type");
                         if !info.is_array(type_key) {
                             let value_slots = info.type_slot_count(type_key);
                             func.emit_ptr_get(dst, dst, 0, value_slots);
                         }
-                    } else if let Some(func_idx) = ctx.get_function_index(ident.symbol) {
-                        // Function reference: create closure with no captures
-                        func.emit_op(Opcode::ClosureNew, dst, func_idx as u16, 0);
                     } else {
-                        return Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)));
+                        // Function reference: create closure with no captures
+                        if let Some(func_idx) = ctx.get_func_by_objkey(obj_key) {
+                            func.emit_closure_new(dst, func_idx, 0);
+                        } else {
+                            return Err(CodegenError::VariableNotFound(format!("{:?}", ident.symbol)));
+                        }
                     }
                 }
             }
@@ -779,7 +783,7 @@ fn compile_method_value(
         )?;
         
         // Create closure with 1 capture (the pointer)
-        func.emit_op(Opcode::ClosureNew, dst, wrapper_id as u16, 1);
+        func.emit_closure_new(dst, wrapper_id, 1);
         // Set capture at offset 1 (after ClosureHeader)
         func.emit_ptr_set_with_barrier(dst, 1, ptr_reg, 1, true);
     } else {
@@ -814,7 +818,7 @@ fn compile_method_value(
         )?;
         
         // Create closure with 1 capture (the boxed receiver)
-        func.emit_op(Opcode::ClosureNew, dst, wrapper_id as u16, 1);
+        func.emit_closure_new(dst, wrapper_id, 1);
         // Set capture at offset 1 (after ClosureHeader)
         func.emit_ptr_set_with_barrier(dst, 1, boxed_reg, 1, true);
     }
@@ -860,7 +864,7 @@ fn compile_interface_method_value(
     )?;
     
     // Create closure with 2 captures (interface slot0 + data)
-    func.emit_op(Opcode::ClosureNew, dst, wrapper_id as u16, 2);
+    func.emit_closure_new(dst, wrapper_id, 2);
     // Set captures at offset 1 (after ClosureHeader)
     func.emit_ptr_set_with_barrier(dst, 1, iface_reg, 2, true);
     
@@ -875,8 +879,8 @@ fn compile_pkg_qualified_name(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    let obj = info.get_use(&sel.sel);
-    let lobj = &info.project.tc_objs.lobjs[obj];
+    let obj_key = info.get_use(&sel.sel);
+    let lobj = &info.project.tc_objs.lobjs[obj_key];
     
     match lobj.entity_type() {
         vo_analysis::obj::EntityType::Const { val } => {
@@ -884,7 +888,8 @@ fn compile_pkg_qualified_name(
             compile_const_value(val, dst, type_key, ctx, func, info)
         }
         vo_analysis::obj::EntityType::Var(_) => {
-            if let Some(global_idx) = ctx.get_global_index(sel.sel.symbol) {
+            // Use ObjKey to avoid cross-package Symbol collision
+            if let Some(global_idx) = ctx.get_global_index(obj_key) {
                 let type_key = info.expr_type(expr.id);
                 let slots = info.type_slot_count(type_key);
                 if slots == 1 {
@@ -897,12 +902,20 @@ fn compile_pkg_qualified_name(
                 Err(CodegenError::Internal(format!("pkg var not registered: {:?}", sel.sel.symbol)))
             }
         }
-        vo_analysis::obj::EntityType::Func { .. } => {
-            if let Some(func_idx) = ctx.get_function_index(sel.sel.symbol) {
-                func.emit_op(Opcode::ClosureNew, dst, func_idx as u16, 0);
-                Ok(())
+        vo_analysis::obj::EntityType::Func { has_body, .. } => {
+            if *has_body {
+                // Vo function - create closure reference
+                // Use ObjKey to avoid cross-package Symbol collision
+                if let Some(func_idx) = ctx.get_func_by_objkey(obj_key) {
+                    func.emit_closure_new(dst, func_idx, 0);
+                    Ok(())
+                } else {
+                    Err(CodegenError::Internal(format!("pkg func not registered: {:?}", sel.sel.symbol)))
+                }
             } else {
-                Err(CodegenError::Internal(format!("pkg func not registered: {:?}", sel.sel.symbol)))
+                // Extern function - cannot be used as value
+                let func_name = info.project.interner.resolve(sel.sel.symbol).unwrap_or("?");
+                Err(CodegenError::UnsupportedExpr(format!("extern function {} cannot be used as value", func_name)))
             }
         }
         _ => Err(CodegenError::UnsupportedExpr("unsupported pkg member".to_string())),

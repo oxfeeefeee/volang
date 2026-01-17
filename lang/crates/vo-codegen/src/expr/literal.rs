@@ -492,9 +492,8 @@ pub fn compile_func_lit(
     let func_id = ctx.add_function(closure_func);
     
     // Emit ClosureNew instruction
-    // ClosureNew: a=dst, b=func_id, c=capture_count
     let capture_count = captures.len() as u16;
-    parent_func.emit_op(Opcode::ClosureNew, dst, func_id as u16, capture_count);
+    parent_func.emit_closure_new(dst, func_id, capture_count);
     
     // Set captures (copy GcRefs from escaped variables)
     // Closure layout: ClosureHeader (1 slot) + captures[]
