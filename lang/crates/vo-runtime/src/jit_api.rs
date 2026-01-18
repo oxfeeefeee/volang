@@ -96,6 +96,9 @@ pub struct JitContext {
     
     /// Number of functions (length of jit_func_table).
     pub jit_func_count: u32,
+    
+    /// Pointer to program arguments.
+    pub program_args: *const Vec<String>,
 }
 
 // =============================================================================

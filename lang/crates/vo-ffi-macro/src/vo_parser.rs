@@ -1,9 +1,10 @@
-//! Simple Vo function signature parser for extern function validation.
+//! Vo function signature parser for extern function validation.
 //!
-//! This is a minimal parser that only extracts function signatures from .vo files.
-//! It does not attempt to parse the full Vo syntax.
+//! Uses vo-syntax for proper parsing of .vo files.
 
 use std::path::Path;
+use vo_syntax::{self, ast, TypeExprKind};
+use vo_common::symbol::SymbolInterner;
 
 /// A parsed Vo function signature.
 #[derive(Debug, Clone)]
@@ -48,6 +49,12 @@ impl VoFuncSig {
             results,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct VoImport {
+    pub alias: Option<String>,
+    pub path: String,
 }
 
 fn rust_type_to_vo(ty: &syn::Type) -> VoType {
@@ -123,6 +130,8 @@ pub enum VoType {
     Func(Vec<VoType>, Vec<VoType>),
     /// Variadic parameter: ...T (e.g., ...interface{})
     Variadic(Box<VoType>),
+    /// Struct type with field types
+    Struct(Vec<VoType>),
 }
 
 /// Channel direction.
@@ -188,6 +197,7 @@ impl std::fmt::Display for VoType {
                 Ok(())
             }
             VoType::Variadic(inner) => write!(f, "...{}", inner),
+            VoType::Struct(fields) => write!(f, "struct{{{} fields}}", fields.len()),
         }
     }
 }
@@ -234,99 +244,12 @@ impl VoType {
             
             // Variadic: treated as slice (1 slot)
             VoType::Variadic(_) => 1,
-        }
-    }
-
-    /// Parse a type string.
-    pub fn parse(s: &str) -> Option<Self> {
-        let s = s.trim();
-        
-        // Primitive types
-        match s {
-            "int" => return Some(VoType::Int),
-            "int8" => return Some(VoType::Int8),
-            "int16" => return Some(VoType::Int16),
-            "int32" | "rune" => return Some(VoType::Int32),  // rune is alias for int32
-            "int64" => return Some(VoType::Int64),
-            "uint" => return Some(VoType::Uint),
-            "uint8" | "byte" => return Some(VoType::Uint8),
-            "uint16" => return Some(VoType::Uint16),
-            "uint32" => return Some(VoType::Uint32),
-            "uint64" => return Some(VoType::Uint64),
-            "float32" => return Some(VoType::Float32),
-            "float64" => return Some(VoType::Float64),
-            "bool" => return Some(VoType::Bool),
-            "string" => return Some(VoType::String),
-            "any" | "interface{}" => return Some(VoType::Any),
-            _ => {}
-        }
-        
-        // Variadic: ...T
-        if let Some(rest) = s.strip_prefix("...") {
-            return VoType::parse(rest).map(|t| VoType::Variadic(Box::new(t)));
-        }
-        
-        // Pointer: *T
-        if let Some(rest) = s.strip_prefix('*') {
-            return VoType::parse(rest).map(|t| VoType::Pointer(Box::new(t)));
-        }
-        
-        // Receive-only channel: <-chan T
-        if let Some(rest) = s.strip_prefix("<-chan") {
-            return VoType::parse(rest).map(|t| VoType::Chan(ChanDir::Recv, Box::new(t)));
-        }
-        
-        // Send-only channel: chan<- T
-        if let Some(rest) = s.strip_prefix("chan<-") {
-            return VoType::parse(rest).map(|t| VoType::Chan(ChanDir::Send, Box::new(t)));
-        }
-        
-        // Bidirectional channel: chan T
-        if let Some(rest) = s.strip_prefix("chan") {
-            let rest = rest.trim_start();
-            if !rest.is_empty() {
-                return VoType::parse(rest).map(|t| VoType::Chan(ChanDir::Both, Box::new(t)));
+            
+            // Struct: sum of all field slots
+            VoType::Struct(fields) => {
+                fields.iter().map(|f| f.slot_count(type_aliases)).sum()
             }
         }
-        
-        // Map: map[K]V
-        if let Some(rest) = s.strip_prefix("map[") {
-            if let Some(bracket_end) = find_matching_bracket(rest, '[', ']') {
-                let key_str = &rest[..bracket_end];
-                let val_str = &rest[bracket_end + 1..];
-                let key = VoType::parse(key_str)?;
-                let val = VoType::parse(val_str)?;
-                return Some(VoType::Map(Box::new(key), Box::new(val)));
-            }
-        }
-        
-        // Slice: []T
-        if let Some(rest) = s.strip_prefix("[]") {
-            return VoType::parse(rest).map(|t| VoType::Slice(Box::new(t)));
-        }
-        
-        // Array: [N]T
-        if s.starts_with('[') {
-            if let Some(bracket_end) = s.find(']') {
-                let size_str = &s[1..bracket_end];
-                if let Ok(size) = size_str.parse::<usize>() {
-                    let elem_str = &s[bracket_end + 1..];
-                    return VoType::parse(elem_str).map(|t| VoType::Array(size, Box::new(t)));
-                }
-            }
-        }
-        
-        // Func: func(...) ...
-        if let Some(rest) = s.strip_prefix("func") {
-            return parse_func_type(rest.trim_start());
-        }
-        
-        // Named type (identifier)
-        if !s.is_empty() && (s.chars().next().unwrap().is_alphabetic() || s.starts_with('_')) {
-            return Some(VoType::Named(s.to_string()));
-        }
-        
-        None
     }
 
     /// Get the expected Rust type for this Vo type.
@@ -356,62 +279,10 @@ impl VoType {
             VoType::Func(_, _) => "GcRef",
             VoType::Named(_) => "GcRef",
             VoType::Variadic(_) => "variadic",
+            VoType::Struct(_) => "struct",
         }
     }
 
-}
-
-/// Find matching bracket, handling nesting.
-fn find_matching_bracket(s: &str, open: char, close: char) -> Option<usize> {
-    let mut depth = 1;
-    for (i, c) in s.char_indices() {
-        if c == open {
-            depth += 1;
-        } else if c == close {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-/// Parse a function type: (params) result
-fn parse_func_type(s: &str) -> Option<VoType> {
-    // Expect (params) result
-    if !s.starts_with('(') {
-        return None;
-    }
-    
-    let paren_end = find_matching_bracket(&s[1..], '(', ')')? + 1;
-    let params_str = &s[1..paren_end];
-    let result_str = s[paren_end + 1..].trim();
-    
-    // Parse params
-    let params = if params_str.is_empty() {
-        Vec::new()
-    } else {
-        params_str.split(',')
-            .filter_map(|p| VoType::parse(p.trim()))
-            .collect()
-    };
-    
-    // Parse results
-    let results = if result_str.is_empty() {
-        Vec::new()
-    } else if result_str.starts_with('(') && result_str.ends_with(')') {
-        // Multiple results: (T1, T2)
-        let inner = &result_str[1..result_str.len() - 1];
-        inner.split(',')
-            .filter_map(|r| VoType::parse(r.trim()))
-            .collect()
-    } else {
-        // Single result
-        vec![VoType::parse(result_str)?]
-    };
-    
-    Some(VoType::Func(params, results))
 }
 
 /// Parsed struct field information.
@@ -447,7 +318,7 @@ impl VoStructDef {
     }
 }
 
-/// Find and parse a struct definition from a package directory.
+/// Find and parse a struct definition from a package directory using vo-syntax parser.
 pub fn find_struct_def(pkg_dir: &Path, struct_name: &str) -> Result<VoStructDef, String> {
     let entries = std::fs::read_dir(pkg_dir)
         .map_err(|e| format!("cannot read directory {:?}: {}", pkg_dir, e))?;
@@ -456,74 +327,44 @@ pub fn find_struct_def(pkg_dir: &Path, struct_name: &str) -> Result<VoStructDef,
         let path = entry.path();
         if path.extension().map(|e| e == "vo").unwrap_or(false) {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Some(def) = parse_struct_def(&content, struct_name) {
-                    return Ok(def);
+                let (file, _diagnostics, interner) = vo_syntax::parse(&content, 0);
+                
+                for decl in &file.decls {
+                    if let ast::Decl::Type(type_decl) = decl {
+                        let name = interner.resolve(type_decl.name.symbol).unwrap_or("");
+                        if name == struct_name {
+                            if let TypeExprKind::Struct(struct_type) = &type_decl.ty.kind {
+                                let fields = struct_type.fields.iter()
+                                    .flat_map(|field| {
+                                        let ty = type_expr_to_vo_type(&field.ty, &interner);
+                                        if field.names.is_empty() {
+                                            // Embedded field
+                                            vec![VoStructField {
+                                                name: String::new(),
+                                                ty,
+                                            }]
+                                        } else {
+                                            field.names.iter().map(|n| VoStructField {
+                                                name: interner.resolve(n.symbol).unwrap_or("").to_string(),
+                                                ty: ty.clone(),
+                                            }).collect()
+                                        }
+                                    })
+                                    .collect();
+                                
+                                return Ok(VoStructDef {
+                                    name: struct_name.to_string(),
+                                    fields,
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     
     Err(format!("struct '{}' not found in {:?}", struct_name, pkg_dir))
-}
-
-/// Parse a struct definition from source code.
-fn parse_struct_def(source: &str, struct_name: &str) -> Option<VoStructDef> {
-    let lines: Vec<&str> = source.lines().collect();
-    
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        
-        // Look for "type StructName struct {"
-        if let Some(rest) = trimmed.strip_prefix("type ") {
-            let rest = rest.trim();
-            if let Some(after_name) = rest.strip_prefix(struct_name) {
-                let after_name = after_name.trim();
-                if after_name.starts_with("struct") {
-                    // Found the struct, now parse fields
-                    let mut fields = Vec::new();
-                    let mut j = i + 1;
-                    
-                    while j < lines.len() {
-                        let field_line = lines[j].trim();
-                        
-                        // End of struct
-                        if field_line == "}" || field_line.starts_with("}") {
-                            break;
-                        }
-                        
-                        // Skip empty lines and comments
-                        if field_line.is_empty() || field_line.starts_with("//") {
-                            j += 1;
-                            continue;
-                        }
-                        
-                        // Parse field: "FieldName Type" or "FieldName Type // comment"
-                        let field_line = field_line.split("//").next().unwrap_or(field_line).trim();
-                        let parts: Vec<&str> = field_line.splitn(2, char::is_whitespace).collect();
-                        if parts.len() == 2 {
-                            let field_name = parts[0].trim();
-                            let field_type_str = parts[1].trim();
-                            if let Some(field_ty) = VoType::parse(field_type_str) {
-                                fields.push(VoStructField {
-                                    name: field_name.to_string(),
-                                    ty: field_ty,
-                                });
-                            }
-                        }
-                        
-                        j += 1;
-                    }
-                    
-                    return Some(VoStructDef {
-                        name: struct_name.to_string(),
-                        fields,
-                    });
-                }
-            }
-        }
-    }
-    
-    None
 }
 
 /// Parse all type aliases from a package directory.
@@ -540,7 +381,8 @@ pub fn parse_type_aliases(pkg_dir: &Path) -> std::collections::HashMap<String, V
         let path = entry.path();
         if path.extension().map(|e| e == "vo").unwrap_or(false) {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                parse_type_aliases_from_source(&content, &mut aliases);
+                let (file, _diagnostics, interner) = vo_syntax::parse(&content, 0);
+                parse_type_aliases_from_ast(&file, &mut aliases, &interner);
             }
         }
     }
@@ -548,37 +390,113 @@ pub fn parse_type_aliases(pkg_dir: &Path) -> std::collections::HashMap<String, V
     aliases
 }
 
-/// Parse type aliases from Vo source code.
-fn parse_type_aliases_from_source(source: &str, aliases: &mut std::collections::HashMap<String, VoType>) {
-    for line in source.lines() {
-        let trimmed = line.trim();
-        
-        // Look for "type Name underlying" pattern (simple type alias)
-        if let Some(rest) = trimmed.strip_prefix("type ") {
-            let rest = rest.trim();
-            
-            // Skip struct definitions: "type Name struct {"
-            if rest.contains("struct") || rest.contains("interface") {
-                continue;
-            }
-            
-            // Parse "Name Type"
-            let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
-            if parts.len() == 2 {
-                let name = parts[0].trim();
-                let type_str = parts[1].trim();
-                
-                if let Some(ty) = VoType::parse(type_str) {
-                    aliases.insert(name.to_string(), ty);
-                }
+/// Parse type aliases from AST using vo-syntax parser.
+fn parse_type_aliases_from_ast(file: &ast::File, aliases: &mut std::collections::HashMap<String, VoType>, interner: &SymbolInterner) {
+    for decl in &file.decls {
+        if let ast::Decl::Type(type_decl) = decl {
+            if let Some(name) = interner.resolve(type_decl.name.symbol) {
+                let ty = type_expr_to_vo_type(&type_decl.ty, interner);
+                aliases.insert(name.to_string(), ty);
             }
         }
     }
 }
 
-/// Find and parse extern functions from a package directory.
+/// Convert vo-syntax TypeExpr to VoType.
+fn type_expr_to_vo_type(type_expr: &ast::TypeExpr, interner: &SymbolInterner) -> VoType {
+    match &type_expr.kind {
+        TypeExprKind::Ident(ident) => {
+            let name = interner.resolve(ident.symbol).unwrap_or("");
+            match name {
+                "int" => VoType::Int,
+                "int8" => VoType::Int8,
+                "int16" => VoType::Int16,
+                "int32" | "rune" => VoType::Int32,
+                "int64" => VoType::Int64,
+                "uint" => VoType::Uint,
+                "uint8" | "byte" => VoType::Uint8,
+                "uint16" => VoType::Uint16,
+                "uint32" => VoType::Uint32,
+                "uint64" => VoType::Uint64,
+                "float32" => VoType::Float32,
+                "float64" => VoType::Float64,
+                "bool" => VoType::Bool,
+                "string" => VoType::String,
+                "any" => VoType::Any,
+                "error" => VoType::Any, // error is interface, 2 slots
+                _ => VoType::Named(name.to_string()),
+            }
+        }
+        TypeExprKind::Selector(sel) => {
+            let pkg = interner.resolve(sel.pkg.symbol).unwrap_or("");
+            let name = interner.resolve(sel.sel.symbol).unwrap_or("");
+            VoType::Named(format!("{}.{}", pkg, name))
+        }
+        TypeExprKind::Array(arr) => {
+            // Try to evaluate array length from literal
+            let len = match &arr.len.kind {
+                ast::ExprKind::IntLit(n) => {
+                    // Parse the raw int literal string to get the value
+                    interner.resolve(n.raw).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0)
+                }
+                _ => 0,
+            };
+            let elem = type_expr_to_vo_type(&arr.elem, interner);
+            VoType::Array(len, Box::new(elem))
+        }
+        TypeExprKind::Slice(elem) => {
+            let elem_type = type_expr_to_vo_type(elem, interner);
+            VoType::Slice(Box::new(elem_type))
+        }
+        TypeExprKind::Map(map) => {
+            let key = type_expr_to_vo_type(&map.key, interner);
+            let value = type_expr_to_vo_type(&map.value, interner);
+            VoType::Map(Box::new(key), Box::new(value))
+        }
+        TypeExprKind::Chan(chan) => {
+            let elem = type_expr_to_vo_type(&chan.elem, interner);
+            let dir = match chan.dir {
+                ast::ChanDir::Both => ChanDir::Both,
+                ast::ChanDir::Send => ChanDir::Send,
+                ast::ChanDir::Recv => ChanDir::Recv,
+            };
+            VoType::Chan(dir, Box::new(elem))
+        }
+        TypeExprKind::Func(func) => {
+            let params: Vec<VoType> = func.params.iter()
+                .flat_map(|p| {
+                    let ty = type_expr_to_vo_type(&p.ty, interner);
+                    // Each named param gets its own slot
+                    let count = p.names.len().max(1);
+                    std::iter::repeat(ty).take(count)
+                })
+                .collect();
+            let results: Vec<VoType> = func.results.iter()
+                .map(|r| type_expr_to_vo_type(&r.ty, interner))
+                .collect();
+            VoType::Func(params, results)
+        }
+        TypeExprKind::Struct(struct_type) => {
+            let field_types: Vec<VoType> = struct_type.fields.iter()
+                .flat_map(|field| {
+                    let ty = type_expr_to_vo_type(&field.ty, interner);
+                    // Each named field gets its own slot, embedded field is 1
+                    let count = field.names.len().max(1);
+                    std::iter::repeat(ty).take(count)
+                })
+                .collect();
+            VoType::Struct(field_types)
+        }
+        TypeExprKind::Pointer(inner) => {
+            let inner_type = type_expr_to_vo_type(inner, interner);
+            VoType::Pointer(Box::new(inner_type))
+        }
+        TypeExprKind::Interface(_) => VoType::Any, // interface is 2 slots like any
+    }
+}
+
+/// Find and parse extern functions from a package directory using vo-syntax parser.
 pub fn find_extern_func(pkg_dir: &Path, func_name: &str) -> Result<VoFuncSig, String> {
-    // Find all .vo files in the directory
     let entries = std::fs::read_dir(pkg_dir)
         .map_err(|e| format!("cannot read directory {:?}: {}", pkg_dir, e))?;
     
@@ -586,8 +504,15 @@ pub fn find_extern_func(pkg_dir: &Path, func_name: &str) -> Result<VoFuncSig, St
         let path = entry.path();
         if path.extension().map(|e| e == "vo").unwrap_or(false) {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Some(sig) = parse_extern_func(&content, func_name) {
-                    return Ok(sig);
+                let (file, _diagnostics, interner) = vo_syntax::parse(&content, 0);
+                
+                for decl in &file.decls {
+                    if let ast::Decl::Func(func_decl) = decl {
+                        let name = interner.resolve(func_decl.name.symbol).unwrap_or("");
+                        if name == func_name && func_decl.is_extern() {
+                            return Ok(func_decl_to_vo_sig(func_decl, &interner));
+                        }
+                    }
                 }
             }
         }
@@ -596,196 +521,85 @@ pub fn find_extern_func(pkg_dir: &Path, func_name: &str) -> Result<VoFuncSig, St
     Err(format!("extern function '{}' not found in {:?}", func_name, pkg_dir))
 }
 
-/// Parse a single extern function from Vo source code.
-fn parse_extern_func(source: &str, func_name: &str) -> Option<VoFuncSig> {
-    // Simple line-by-line search for function declarations
-    let lines: Vec<&str> = source.lines().collect();
+/// Convert vo-syntax FuncDecl to VoFuncSig.
+fn func_decl_to_vo_sig(func_decl: &ast::FuncDecl, interner: &SymbolInterner) -> VoFuncSig {
+    let name = interner.resolve(func_decl.name.symbol).unwrap_or("").to_string();
     
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        
-        // Look for "func Name(" pattern
-        if !trimmed.starts_with("func ") {
-            continue;
-        }
-        
-        // Extract function name
-        let rest = &trimmed[5..].trim_start();
-        let name_end = rest.find('(').unwrap_or(rest.len());
-        let name = rest[..name_end].trim();
-        
-        if name != func_name {
-            continue;
-        }
-        
-        // Check if this is an extern function (no body)
-        // Look for '{' on this line or following lines
-        let mut has_body = false;
-        let mut full_sig = trimmed.to_string();
-        
-        // Collect full signature (may span multiple lines)
-        let mut j = i;
-        while j < lines.len() {
-            let l = lines[j];
-            if l.contains('{') {
-                has_body = true;
-                break;
+    let params: Vec<VoParam> = func_decl.sig.params.iter()
+        .flat_map(|param| {
+            let ty = type_expr_to_vo_type(&param.ty, interner);
+            if param.names.is_empty() {
+                vec![VoParam { name: String::new(), ty }]
+            } else {
+                param.names.iter().map(|n| VoParam {
+                    name: interner.resolve(n.symbol).unwrap_or("").to_string(),
+                    ty: ty.clone(),
+                }).collect()
             }
-            if j > i {
-                full_sig.push_str(l.trim());
-            }
-            // Check if signature is complete (ends with ')' or has return type)
-            if l.trim().ends_with(')') || l.contains(')') {
-                // Check next non-empty line
-                let mut k = j + 1;
-                while k < lines.len() && lines[k].trim().is_empty() {
-                    k += 1;
+        })
+        .collect();
+    
+    // Handle variadic: wrap last param type in Variadic
+    let params = if func_decl.sig.variadic && !params.is_empty() {
+        let mut params = params;
+        if let Some(last) = params.last_mut() {
+            last.ty = VoType::Variadic(Box::new(last.ty.clone()));
+        }
+        params
+    } else {
+        params
+    };
+    
+    let results: Vec<VoType> = func_decl.sig.results.iter()
+        .map(|r| type_expr_to_vo_type(&r.ty, interner))
+        .collect();
+    
+    VoFuncSig { name, params, results }
+}
+
+/// Parse imports from a package directory using vo-syntax parser.
+pub fn parse_imports(pkg_dir: &Path) -> Vec<VoImport> {
+    let mut imports = Vec::new();
+    let entries = match std::fs::read_dir(pkg_dir) {
+        Ok(e) => e,
+        Err(_) => return imports,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "vo").unwrap_or(false) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let (file, _diagnostics, interner) = vo_syntax::parse(&content, 0);
+                for import in &file.imports {
+                    // StringLit has .value field with the parsed string value
+                    let path_str = import.path.value.clone();
+                    let alias = import.alias.as_ref().map(|a| interner.resolve(a.symbol).unwrap_or("").to_string());
+                    imports.push(VoImport { alias, path: path_str });
                 }
-                if k < lines.len() {
-                    let next = lines[k].trim();
-                    if next.starts_with('{') {
-                        has_body = true;
-                    } else if next.starts_with("func ") || next.starts_with("type ") || 
-                              next.starts_with("var ") || next.starts_with("const ") ||
-                              next.starts_with("//") || next.is_empty() {
-                        // Next declaration, no body
-                        break;
+            }
+        }
+    }
+
+    imports
+}
+
+/// Find package name from a package directory using vo-syntax parser.
+pub fn find_package_name(pkg_dir: &Path) -> Option<String> {
+    let entries = std::fs::read_dir(pkg_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "vo").unwrap_or(false) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let (file, _diagnostics, interner) = vo_syntax::parse(&content, 0);
+                if let Some(pkg) = &file.package {
+                    if let Some(name) = interner.resolve(pkg.symbol) {
+                        return Some(name.to_string());
                     }
                 }
-                break;
             }
-            j += 1;
         }
-        
-        if has_body {
-            continue; // Not an extern function
-        }
-        
-        // Parse the signature
-        return parse_func_signature(&full_sig, name);
     }
-    
     None
-}
-
-/// Parse a function signature string.
-fn parse_func_signature(sig: &str, name: &str) -> Option<VoFuncSig> {
-    // Format: "func Name(params) returns" or "func Name(params)"
-    let rest = sig.strip_prefix("func ")?.trim_start();
-    let rest = rest.strip_prefix(name)?.trim_start();
-    
-    // Find params between ( and )
-    let params_start = rest.find('(')?;
-    let params_end = rest.find(')')?;
-    let params_str = &rest[params_start + 1..params_end];
-    
-    let params = parse_params(params_str);
-    
-    // Parse return types (after ')')
-    let returns_str = rest[params_end + 1..].trim();
-    let results = parse_returns(returns_str);
-    
-    Some(VoFuncSig {
-        name: name.to_string(),
-        params,
-        results,
-    })
-}
-
-/// Parse parameter list.
-/// Handles Go-style shared types: "x, y float64" → two params both with float64
-fn parse_params(s: &str) -> Vec<VoParam> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Vec::new();
-    }
-    
-    // First pass: split by comma and collect (names, type_str) pairs
-    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
-    
-    // For Go-style "x, y float64", we need to find the type from the last part that has one
-    // and apply it backwards to parts without types
-    let mut parsed: Vec<(Vec<String>, Option<VoType>)> = Vec::new();
-    
-    for part in &parts {
-        let tokens: Vec<&str> = part.split_whitespace().collect();
-        if tokens.len() >= 2 {
-            // Has type: "name type" or "name1 name2 type" (shouldn't happen but handle it)
-            let ty_str = tokens.last().unwrap();
-            let ty = VoType::parse(ty_str);
-            let names: Vec<String> = tokens[..tokens.len() - 1]
-                .iter()
-                .map(|n| n.trim_end_matches(',').to_string())
-                .collect();
-            parsed.push((names, ty));
-        } else if tokens.len() == 1 {
-            // Just a name (type comes from next group) or just a type
-            let token = tokens[0];
-            // Check if it's a known type
-            if VoType::parse(token).is_some() && !token.chars().next().unwrap().is_lowercase() {
-                // Likely a type (capitalized or known keyword)
-                parsed.push((vec![], VoType::parse(token)));
-            } else {
-                // Just a name, type will be filled from next part
-                parsed.push((vec![token.to_string()], None));
-            }
-        }
-    }
-    
-    // Second pass: fill in missing types from the next part that has a type
-    let mut result = Vec::new();
-    let mut pending_names: Vec<String> = Vec::new();
-    
-    for (names, ty_opt) in parsed {
-        if let Some(ty) = ty_opt {
-            // First, flush pending names with this type
-            for name in pending_names.drain(..) {
-                result.push(VoParam { name, ty: ty.clone() });
-            }
-            // Then add current names with this type
-            for name in names {
-                result.push(VoParam { name, ty: ty.clone() });
-            }
-        } else {
-            // No type yet, accumulate names
-            pending_names.extend(names);
-        }
-    }
-    
-    // If there are still pending names without type, they become Any
-    for name in pending_names {
-        result.push(VoParam { name, ty: VoType::Any });
-    }
-    
-    result
-}
-
-/// Parse return type list.
-fn parse_returns(s: &str) -> Vec<VoType> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Vec::new();
-    }
-    
-    // Check for parenthesized returns: (int, bool)
-    if s.starts_with('(') && s.ends_with(')') {
-        let inner = &s[1..s.len() - 1];
-        return inner.split(',')
-            .filter_map(|t| {
-                let t = t.trim();
-                // Handle named returns: "err error" -> just get type
-                let ty_str = t.split_whitespace().last()?;
-                VoType::parse(ty_str)
-            })
-            .collect();
-    }
-    
-    // Single return type
-    if let Some(ty) = VoType::parse(s) {
-        vec![ty]
-    } else {
-        Vec::new()
-    }
 }
 
 // =============================================================================
@@ -1078,103 +892,6 @@ fn parse_char_literal(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_type() {
-        assert!(matches!(VoType::parse("int"), Some(VoType::Int)));
-        assert!(matches!(VoType::parse("string"), Some(VoType::String)));
-        assert!(matches!(VoType::parse("[]byte"), Some(VoType::Slice(_))));
-        assert!(matches!(VoType::parse("*int"), Some(VoType::Pointer(_))));
-    }
-
-    #[test]
-    fn test_parse_variadic() {
-        assert!(matches!(VoType::parse("...interface{}"), Some(VoType::Variadic(_))));
-        assert!(matches!(VoType::parse("...int"), Some(VoType::Variadic(_))));
-        assert!(matches!(VoType::parse("interface{}"), Some(VoType::Any)));
-        
-        if let Some(VoType::Variadic(inner)) = VoType::parse("...interface{}") {
-            assert!(matches!(*inner, VoType::Any));
-        } else {
-            panic!("expected Variadic");
-        }
-    }
-
-    #[test]
-    fn test_parse_map() {
-        assert!(matches!(VoType::parse("map[string]int"), Some(VoType::Map(_, _))));
-        assert!(matches!(VoType::parse("map[int][]byte"), Some(VoType::Map(_, _))));
-        
-        if let Some(VoType::Map(k, v)) = VoType::parse("map[string]int") {
-            assert!(matches!(*k, VoType::String));
-            assert!(matches!(*v, VoType::Int));
-        } else {
-            panic!("expected Map");
-        }
-    }
-
-    #[test]
-    fn test_parse_chan() {
-        assert!(matches!(VoType::parse("chan int"), Some(VoType::Chan(ChanDir::Both, _))));
-        assert!(matches!(VoType::parse("chan<- int"), Some(VoType::Chan(ChanDir::Send, _))));
-        assert!(matches!(VoType::parse("<-chan int"), Some(VoType::Chan(ChanDir::Recv, _))));
-    }
-
-    #[test]
-    fn test_parse_func() {
-        assert!(matches!(VoType::parse("func()"), Some(VoType::Func(_, _))));
-        assert!(matches!(VoType::parse("func(int) bool"), Some(VoType::Func(_, _))));
-        assert!(matches!(VoType::parse("func(int, string) (bool, error)"), Some(VoType::Func(_, _))));
-        
-        if let Some(VoType::Func(params, results)) = VoType::parse("func(int, string) bool") {
-            assert_eq!(params.len(), 2);
-            assert_eq!(results.len(), 1);
-        } else {
-            panic!("expected Func");
-        }
-    }
-
-    #[test]
-    fn test_parse_array() {
-        assert!(matches!(VoType::parse("[10]int"), Some(VoType::Array(10, _))));
-        assert!(matches!(VoType::parse("[256]byte"), Some(VoType::Array(256, _))));
-    }
-
-    #[test]
-    fn test_parse_extern_func() {
-        let source = r#"
-package fmt
-
-func Println(s string) int
-
-func helper() {
-    // has body
-}
-"#;
-        let sig = parse_extern_func(source, "Println").unwrap();
-        assert_eq!(sig.name, "Println");
-        assert_eq!(sig.params.len(), 1);
-        assert!(matches!(sig.params[0].ty, VoType::String));
-        assert_eq!(sig.results.len(), 1);
-        assert!(matches!(sig.results[0], VoType::Int));
-    }
-
-    #[test]
-    fn test_parse_variadic_func() {
-        let source = "func Print(a ...interface{}) int";
-        let sig = parse_func_signature(source, "Print").unwrap();
-        assert_eq!(sig.params.len(), 1);
-        assert!(sig.params[0].ty.is_variadic());
-        assert_eq!(sig.results.len(), 1);
-    }
-
-    #[test]
-    fn test_parse_multi_return() {
-        let source = "func Divmod(a, b int) (int, int)";
-        let sig = parse_func_signature(source, "Divmod").unwrap();
-        assert_eq!(sig.params.len(), 2);
-        assert_eq!(sig.results.len(), 2);
-    }
 
     #[test]
     fn test_eval_const_expr() {

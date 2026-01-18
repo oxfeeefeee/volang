@@ -56,6 +56,7 @@ pub extern "C" fn call_extern_trampoline(
         temp_stack[i] = unsafe { *args.add(i) };
     }
     
+    let program_args = unsafe { &*ctx.program_args };
     let result = registry.call(
         extern_id,
         &mut temp_stack,
@@ -75,6 +76,7 @@ pub extern "C" fn call_extern_trampoline(
         ctx.vm,
         ctx.fiber,
         Some(closure_call_trampoline),
+        program_args,
     );
     
     match result {
@@ -141,17 +143,23 @@ pub extern "C" fn closure_call_trampoline(
     use vo_runtime::gc::GcRef;
     use vo_runtime::objects::closure;
     
+    eprintln!("[DEBUG] closure_call_trampoline: closure_ref={:#x}, arg_count={}, ret_count={}", closure_ref, arg_count, ret_count);
+    
     // Catch any panics to prevent unwinding through extern "C" boundary
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eprintln!("[DEBUG] inside catch_unwind");
         let vm = unsafe { &mut *(vm as *mut Vm) };
         let closure_gcref = closure_ref as GcRef;
+        eprintln!("[DEBUG] getting func_id from closure_ref={:#x}", closure_ref);
         let func_id = closure::func_id(closure_gcref);
+        eprintln!("[DEBUG] func_id={}", func_id);
         
         // Get func_def to check recv_slots (for method closures)
         let module = vm.module().expect("closure_call_trampoline: module not set");
         let func_def = &module.functions[func_id as usize];
         let recv_slots = func_def.recv_slots as usize;
         let capture_count = closure::capture_count(closure_gcref);
+        eprintln!("[DEBUG] recv_slots={}, capture_count={}, is_closure={}", recv_slots, capture_count, func_def.is_closure);
         
         // Build full_args based on closure type (matches VM's exec_call_closure logic)
         let slot0 = if recv_slots > 0 && capture_count > 0 {
@@ -168,9 +176,11 @@ pub extern "C" fn closure_call_trampoline(
             full_args.push(unsafe { *args.add(i as usize) });
         }
         
+        eprintln!("[DEBUG] calling execute_jit_call_with_caller, full_args.len()={}", full_args.len());
         vm.execute_jit_call_with_caller(func_id, full_args.as_ptr(), full_args.len() as u32, ret, ret_count, caller_fiber)
     }));
     
+    eprintln!("[DEBUG] catch_unwind result: {:?}", result.is_ok());
     match result {
         Ok(JitResult::Ok) => vo_runtime::ffi::ClosureCallResult::Ok,
         _ => vo_runtime::ffi::ClosureCallResult::Panic,
@@ -205,6 +215,7 @@ pub fn build_jit_ctx(
         module: module_ptr,
         jit_func_table,
         jit_func_count,
+        program_args: &state.program_args as *const _,
     }
 }
 

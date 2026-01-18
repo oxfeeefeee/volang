@@ -16,6 +16,8 @@ pub struct VfsPackage {
     pub name: String,
     /// Package path (e.g., "fmt", "./mylib", "github.com/user/pkg")
     pub path: String,
+    /// Resolved path in the underlying file system.
+    pub fs_path: PathBuf,
     /// Source files in the package
     pub files: Vec<VfsFile>,
 }
@@ -184,9 +186,15 @@ fn resolve_package<F: FileSystem>(fs: &F, fs_path: &str, import_path: &str) -> O
     let files = load_vo_files(fs, pkg_path)?;
     let name = fs_path.rsplit('/').next().unwrap_or(fs_path).to_string();
     
+    let fs_path = match fs.root() {
+        Some(root) => root.join(pkg_path),
+        None => pkg_path.to_path_buf(),
+    };
+
     Some(VfsPackage {
         name,
         path: import_path.to_string(),
+        fs_path,
         files,
     })
 }

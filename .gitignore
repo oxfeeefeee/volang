@@ -61,3 +61,4 @@ lang/benchmark/sum-array/c_bench
 lang/benchmark/recursive-tree/go_bench
 lang/benchmark/recursive-tree/c_bench
 lang/benchmark/sieve/go_bench
+lang/cli/.vo-cache/

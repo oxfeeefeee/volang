@@ -4,11 +4,14 @@
 //! at runtime via dlopen.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use libloading::{Library, Symbol};
 
 use crate::ffi::{ExternEntry, ExternEntryWithContext, ExternFn, ExternFnWithContext};
+
+// Re-export from vo-module
+pub use vo_module::{ExtensionManifest, discover_extensions};
 
 /// ABI version - must match vo-ext's ABI_VERSION.
 pub const ABI_VERSION: u32 = 1;
@@ -178,87 +181,3 @@ impl Default for ExtensionLoader {
     }
 }
 
-/// Discover extensions from a project root directory.
-///
-/// Looks for `vo.ext.toml` files in the root and returns paths to native libraries.
-pub fn discover_extensions(project_root: &Path) -> Result<Vec<ExtensionManifest>, ExtError> {
-    let manifest_path = project_root.join("vo.ext.toml");
-    if !manifest_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let manifest = parse_manifest(&manifest_path)?;
-    Ok(vec![manifest])
-}
-
-/// Parsed extension manifest.
-#[derive(Debug)]
-pub struct ExtensionManifest {
-    /// Extension name.
-    pub name: String,
-    /// Path to native library.
-    pub native_path: PathBuf,
-}
-
-/// Parse a vo.ext.toml manifest file.
-fn parse_manifest(path: &Path) -> Result<ExtensionManifest, ExtError> {
-    let content = std::fs::read_to_string(path)?;
-    
-    // Simple TOML parsing (avoid adding toml dependency)
-    let mut name = String::new();
-    let mut native_path = String::new();
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with("name") {
-            if let Some(val) = extract_toml_string(line) {
-                name = val;
-            }
-        } else if line.starts_with("path") {
-            if let Some(val) = extract_toml_string(line) {
-                native_path = val;
-            }
-        }
-    }
-
-    if name.is_empty() {
-        return Err(ExtError::ManifestError("missing 'name' in [extension]".to_string()));
-    }
-    if native_path.is_empty() {
-        return Err(ExtError::ManifestError("missing 'path' in [native]".to_string()));
-    }
-
-    let parent = path.parent().unwrap_or(Path::new("."));
-    let full_path = parent.join(&native_path);
-
-    Ok(ExtensionManifest {
-        name,
-        native_path: full_path,
-    })
-}
-
-/// Extract a string value from a TOML line like `key = "value"`.
-fn extract_toml_string(line: &str) -> Option<String> {
-    let parts: Vec<&str> = line.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    let val = parts[1].trim();
-    if val.starts_with('"') && val.ends_with('"') && val.len() >= 2 {
-        Some(val[1..val.len()-1].to_string())
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_toml_string() {
-        assert_eq!(extract_toml_string(r#"name = "test""#), Some("test".to_string()));
-        assert_eq!(extract_toml_string(r#"path = "native/lib.so""#), Some("native/lib.so".to_string()));
-        assert_eq!(extract_toml_string("invalid"), None);
-    }
-}

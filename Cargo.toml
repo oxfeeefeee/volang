@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "lang/crates/*",
   "libs/*/rust",
+  "libs/vo/*/rust",
   "libs/detra-renderable",
 ]
 

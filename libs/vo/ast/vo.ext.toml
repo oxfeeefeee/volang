@@ -1,0 +1,3 @@
+[extension]
+name = "ast"
+path = "../../../target/debug/libvo_ast.so"

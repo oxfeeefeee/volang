@@ -28,6 +28,7 @@ use syn::{
     spanned::Spanned,
 };
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 mod vo_parser;
@@ -345,7 +346,7 @@ fn generate_inline_slot_mod(pkg_path: &str, func_name: &str) -> TokenStream2 {
     };
     
     // Parse type aliases first
-    let type_aliases = vo_parser::parse_type_aliases(&pkg_dir);
+    let type_aliases = build_type_aliases(&pkg_dir);
     
     // Find the function signature
     let vo_sig = match vo_parser::find_extern_func(&pkg_dir, func_name) {
@@ -449,6 +450,55 @@ fn find_pkg_dir_for_slots(pkg_path: &str) -> Option<PathBuf> {
     }
     
     None
+}
+
+fn build_type_aliases(pkg_dir: &Path) -> HashMap<String, vo_parser::VoType> {
+    let mut aliases = vo_parser::parse_type_aliases(pkg_dir);
+    let imports = vo_parser::parse_imports(pkg_dir);
+
+    for import in imports {
+        let import_dir = resolve_import_dir(pkg_dir, &import.path);
+        let Some(import_dir) = import_dir else { continue };
+
+        let pkg_name = vo_parser::find_package_name(&import_dir)
+            .unwrap_or_else(|| derive_pkg_name(&import.path));
+        let alias = import.alias.clone().unwrap_or(pkg_name);
+
+        if alias == "_" {
+            continue;
+        }
+
+        let imported_aliases = vo_parser::parse_type_aliases(&import_dir);
+        for (name, ty) in imported_aliases {
+            if alias == "." {
+                aliases.entry(name).or_insert(ty);
+            } else {
+                let qualified = format!("{}.{}", alias, name);
+                aliases.entry(qualified).or_insert(ty);
+            }
+        }
+    }
+
+    aliases
+}
+
+fn resolve_import_dir(pkg_dir: &Path, import_path: &str) -> Option<PathBuf> {
+    if import_path.starts_with('.') {
+        let candidate = pkg_dir.join(import_path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    find_pkg_dir_for_slots(import_path)
+}
+
+fn derive_pkg_name(import_path: &str) -> String {
+    import_path
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(import_path)
+        .to_string()
 }
 
 fn vo_extern_impl(
@@ -708,6 +758,12 @@ fn types_compatible(rust: &str, vo: &str) -> bool {
         return true;
     }
     
+    // Variadic functions use ExternCallContext for manual argument handling
+    // Skip type validation for variadic parameters
+    if vo == "variadic" {
+        return true;
+    }
+    
     // Handle reference types
     if vo == "&str" && rust == "&str" {
         return true;
@@ -768,6 +824,7 @@ fn format_vo_type(ty: &vo_parser::VoType) -> String {
         }
         vo_parser::VoType::Named(name) => name.clone(),
         vo_parser::VoType::Variadic(inner) => format!("...{}", format_vo_type(inner)),
+        vo_parser::VoType::Struct(fields) => format!("struct{{{} fields}}", fields.len()),
     }
 }
 
@@ -1258,7 +1315,7 @@ fn vo_struct_impl(args: Punctuated<Expr, Token![,]>) -> syn::Result<TokenStream2
         .ok_or_else(|| syn::Error::new(proc_macro2::Span::call_site(), format!("package '{}' not found", pkg_path)))?;
     
     // Parse type aliases
-    let type_aliases = vo_parser::parse_type_aliases(&pkg_dir);
+    let type_aliases = build_type_aliases(&pkg_dir);
     
     // Find the struct definition
     let struct_def = vo_parser::find_struct_def(&pkg_dir, &struct_name)

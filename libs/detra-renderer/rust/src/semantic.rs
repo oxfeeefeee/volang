@@ -720,23 +720,23 @@ fn render_file_tree(ui: &mut egui::Ui, node: &RuntimeNode) {
     let selected = node.get_string("selected").unwrap_or("");
     
     // Use egui's native CollapsingHeader for tree view
-    egui::CollapsingHeader::new("📁 vibe-studio")
+    egui::CollapsingHeader::new("📁 .")
         .default_open(true)
         .show(ui, |ui| {
             // Files
-            if ui.selectable_label(selected == "vibe-studio/main.vo", "   📄 main.vo").clicked() {
-                dispatch_file_select(node, "vibe-studio/main.vo");
+            if ui.selectable_label(selected == "./main.vo", "   📄 main.vo").clicked() {
+                dispatch_file_select(node, "./main.vo");
             }
-            if ui.selectable_label(selected == "vibe-studio/print_tree.vo", "   📄 print_tree.vo").clicked() {
-                dispatch_file_select(node, "vibe-studio/print_tree.vo");
+            if ui.selectable_label(selected == "./print_tree.vo", "   📄 print_tree.vo").clicked() {
+                dispatch_file_select(node, "./print_tree.vo");
             }
             
             // system folder
             egui::CollapsingHeader::new("📁 system")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if ui.selectable_label(selected == "vibe-studio/system/runtime.vo", "   📄 runtime.vo").clicked() {
-                        dispatch_file_select(node, "vibe-studio/system/runtime.vo");
+                    if ui.selectable_label(selected == "./system/runtime.vo", "   📄 runtime.vo").clicked() {
+                        dispatch_file_select(node, "./system/runtime.vo");
                     }
                 });
             
@@ -744,8 +744,8 @@ fn render_file_tree(ui: &mut egui::Ui, node: &RuntimeNode) {
             egui::CollapsingHeader::new("📁 ui")
                 .default_open(false)
                 .show(ui, |ui| {
-                    if ui.selectable_label(selected == "vibe-studio/ui/app.detra", "   📄 app.detra").clicked() {
-                        dispatch_file_select(node, "vibe-studio/ui/app.detra");
+                    if ui.selectable_label(selected == "./ui/app.detra", "   📄 app.detra").clicked() {
+                        dispatch_file_select(node, "./ui/app.detra");
                     }
                 });
         });

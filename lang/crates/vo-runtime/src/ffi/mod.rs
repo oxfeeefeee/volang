@@ -507,6 +507,8 @@ pub struct ExternCallContext<'a> {
     fiber: *mut std::ffi::c_void,
     /// Callback to execute closures.
     call_closure_fn: Option<ClosureCallFn>,
+    /// Program arguments (set by launcher).
+    program_args: &'a [String],
 }
 
 impl<'a> ExternCallContext<'a> {
@@ -530,6 +532,7 @@ impl<'a> ExternCallContext<'a> {
         vm: *mut std::ffi::c_void,
         fiber: *mut std::ffi::c_void,
         call_closure_fn: Option<ClosureCallFn>,
+        program_args: &'a [String],
     ) -> Self {
         Self {
             call: ExternCall::new(stack, bp, arg_start, arg_count, ret_start),
@@ -545,7 +548,14 @@ impl<'a> ExternCallContext<'a> {
             vm,
             fiber,
             call_closure_fn,
+            program_args,
         }
+    }
+    
+    /// Get program arguments.
+    #[inline]
+    pub fn program_args(&self) -> &[String] {
+        self.program_args
     }
 
     /// Get struct metadata by index.
@@ -1322,18 +1332,30 @@ impl ExternRegistry {
         loader: &crate::ext_loader::ExtensionLoader,
         extern_defs: &[crate::bytecode::ExternDef],
     ) {
+        let mut registered = 0;
+        let mut skipped = 0;
+        let mut not_found = Vec::new();
         for (id, def) in extern_defs.iter().enumerate() {
             // Already registered (e.g., from linkme)?
             if self.has(id as u32) {
+                skipped += 1;
                 continue;
             }
             
             // Try to find in extension loader
             if let Some(func) = loader.lookup(&def.name) {
                 self.register(id as u32, func);
+                registered += 1;
             } else if let Some(func) = loader.lookup_with_context(&def.name) {
                 self.register_with_context(id as u32, func);
+                registered += 1;
+            } else {
+                not_found.push(def.name.clone());
             }
+        }
+        eprintln!("[DEBUG] register_from_extension_loader: {} registered, {} skipped, {} not found", registered, skipped, not_found.len());
+        if !not_found.is_empty() {
+            eprintln!("[DEBUG]   Not found: {:?}", &not_found[..not_found.len().min(5)]);
         }
     }
 
@@ -1376,6 +1398,7 @@ impl ExternRegistry {
         vm: *mut std::ffi::c_void,
         fiber: *mut std::ffi::c_void,
         call_closure_fn: Option<ClosureCallFn>,
+        program_args: &[String],
     ) -> ExternResult {
         match self.funcs.get(id as usize) {
             Some(Some(ExternFnEntry::Simple(f))) => {
@@ -1401,6 +1424,7 @@ impl ExternRegistry {
                     vm,
                     fiber,
                     call_closure_fn,
+                    program_args,
                 );
                 f(&mut call)
             }

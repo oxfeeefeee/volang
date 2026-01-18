@@ -1,0 +1,26 @@
+// Package bytecode provides functions to work with Vo bytecode.
+package bytecode
+
+import "../runner"
+
+// ============ Text Format ============
+
+// Format converts a Module to text format (.vot).
+func Format(m runner.Module) string
+
+// Parse parses text format to Module.
+func Parse(text string) (runner.Module, error)
+
+// ============ File I/O ============
+
+// SaveText writes Module to a .vot file.
+func SaveText(m runner.Module, path string) error
+
+// LoadText reads Module from a .vot file.
+func LoadText(path string) (runner.Module, error)
+
+// SaveBinary writes Module to a .vob file.
+func SaveBinary(m runner.Module, path string) error
+
+// LoadBinary reads Module from a .vob file.
+func LoadBinary(path string) (runner.Module, error)

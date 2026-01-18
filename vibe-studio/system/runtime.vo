@@ -20,7 +20,7 @@ func Run(detraPath string, title string, width int, height int, handler CommandH
     state := detra.InitState(program)
     
     // Scan workspace directory for file tree
-    workDir := "vibe-studio"
+    workDir := "."
     fileTree := scanDirectoryToJSON(workDir)
     
     // Host-owned external state injected into Detra
@@ -52,6 +52,7 @@ func Run(detraPath string, title string, width int, height int, handler CommandH
             }
             
             actionName := detra_renderer.PendingAction()
+            println("[DEBUG] Vo callback: actionName =", actionName)
             actionArgs := map[string]string{
                 "value":   detra_renderer.PendingActionArg("value"),
                 "mode":    detra_renderer.PendingActionArg("mode"),
@@ -60,13 +61,18 @@ func Run(detraPath string, title string, width int, height int, handler CommandH
                 "id":      detra_renderer.PendingActionArg("id"),
                 "content": detra_renderer.PendingActionArg("content"),
             }
+            println("[DEBUG] Vo callback: path =", actionArgs["path"])
+            println("[DEBUG] Calling detra.Execute...")
             _, errMsg, errKind := detra.Execute(program, state, external, actionName, actionArgs)
+            println("[DEBUG] detra.Execute returned: errKind =", errKind, "errMsg =", errMsg)
             if errKind != "" {
                 println("Action error:", errKind, errMsg)
                 return
             }
             
+            println("[DEBUG] Processing commands...")
             processCommands(handler, program, state, external)
+            println("[DEBUG] Commands processed")
         },
     )
 }

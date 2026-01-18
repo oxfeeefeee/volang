@@ -116,6 +116,10 @@ impl Vm {
     pub fn module(&self) -> Option<&Module> {
         self.module.as_ref()
     }
+    
+    pub fn set_program_args(&mut self, args: Vec<String>) {
+        self.state.program_args = args;
+    }
 
     pub fn load(&mut self, module: Module) {
         self.load_with_extensions(module, None);
@@ -717,6 +721,7 @@ impl Vm {
                         fiber_ptr,
                         closure_call_fn,
                         &mut extern_panic_msg,
+                        &self.state.program_args,
                     );
                     // Convert extern panic to recoverable runtime panic
                     if matches!(result, ExecResult::Panic) {

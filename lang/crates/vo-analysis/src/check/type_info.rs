@@ -237,7 +237,7 @@ impl TypeInfo {
 // They only depend on TCObjects and can be used by both codegen and other consumers.
 
 use crate::typ::{self, Type, BasicType};
-use vo_runtime::{SlotType, ValueKind};
+use vo_common_core::types::{SlotType, ValueKind};
 
 /// Compute the number of slots a type occupies.
 pub fn type_slot_count(type_key: TypeKey, tc_objs: &TCObjects) -> u16 {

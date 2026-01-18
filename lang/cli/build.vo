@@ -1,0 +1,31 @@
+package main
+
+import "../../libs/vo/runner"
+
+func cmdBuild(args []string) int {
+	path := "."
+	if len(args) > 0 {
+		path = args[0]
+	}
+
+	println("Building project:", path)
+
+	module, err := runner.CompileDir(path)
+	if err != nil {
+		println("[VO:COMPILE]", err.Error())
+		return 1
+	}
+
+	println("Running module:", runner.Name(module))
+
+	err = runner.Run(module)
+	runner.Free(module)
+
+	if err != nil {
+		println("[VO:PANIC]", err.Error())
+		return 1
+	}
+
+	println("[VO:OK]")
+	return 0
+}

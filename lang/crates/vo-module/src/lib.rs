@@ -26,8 +26,10 @@ mod modfile;
 mod resolver;
 mod error;
 pub mod vfs;
+mod ext_manifest;
 
 pub use modfile::{ModFile, Require};
 pub use resolver::{ModuleResolver, ModuleClosure, ResolvedPackage};
 pub use error::{ModuleError, ModuleResult};
 pub use vfs::{PackageResolver, PackageResolverMixed, Resolver, VfsPackage, VfsFile, StdSource, LocalSource, ModSource};
+pub use ext_manifest::{ExtensionManifest, ExtManifestError, discover_extensions};

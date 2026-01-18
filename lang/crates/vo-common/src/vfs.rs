@@ -19,6 +19,11 @@ pub trait FileSystem: Send + Sync {
     
     /// Check if a path is a directory.
     fn is_dir(&self, path: &Path) -> bool;
+
+    /// Root path of the file system (if any).
+    fn root(&self) -> Option<&Path> {
+        None
+    }
 }
 
 /// Real file system implementation.
@@ -70,6 +75,10 @@ impl FileSystem for RealFs {
     
     fn is_dir(&self, path: &Path) -> bool {
         self.root.join(path).is_dir()
+    }
+
+    fn root(&self) -> Option<&Path> {
+        Some(&self.root)
     }
 }
 
@@ -175,6 +184,10 @@ impl FileSystem for MemoryFs {
     
     fn is_dir(&self, path: &Path) -> bool {
         !self.files.contains_key(path) && self.exists(path)
+    }
+
+    fn root(&self) -> Option<&Path> {
+        None
     }
 }
 
@@ -334,6 +347,10 @@ impl FileSystem for ZipFs {
         let full_path = self.resolve(path);
         !self.files.contains_key(&full_path) && self.exists(path)
     }
+
+    fn root(&self) -> Option<&Path> {
+        None
+    }
 }
 
 impl SourceProvider for ZipFs {
@@ -453,6 +470,10 @@ impl<P: FileSystem, S: FileSystem> FileSystem for OverlayFs<P, S> {
     
     fn is_dir(&self, path: &Path) -> bool {
         self.primary.is_dir(path) || self.secondary.is_dir(path)
+    }
+
+    fn root(&self) -> Option<&Path> {
+        self.primary.root().or_else(|| self.secondary.root())
     }
 }
 

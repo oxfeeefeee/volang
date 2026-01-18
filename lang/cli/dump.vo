@@ -1,0 +1,29 @@
+package main
+
+import (
+	"../../libs/vo/bytecode"
+	"strings"
+)
+
+func cmdDump(args []string) int {
+	if len(args) == 0 {
+		println("usage: vo dump <file.vob|file.vot>")
+		return 1
+	}
+
+	file := args[0]
+
+	module, err := bytecode.LoadBinary(file)
+	if err != nil {
+		// Try loading as text file
+		module, err = bytecode.LoadText(file)
+		if err != nil {
+			println("[VO:IO]", err.Error())
+			return 1
+		}
+	}
+
+	text := bytecode.Format(module)
+	print(text)
+	return 0
+}

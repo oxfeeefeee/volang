@@ -645,7 +645,11 @@ fn os_getegid(call: &mut ExternCallContext) -> ExternResult { #[cfg(unix)] { cal
 #[vo_extern_ctx("os", "nativeExit")]
 fn os_exit(call: &mut ExternCallContext) -> ExternResult { std::process::exit(call.arg_i64(slots::ARG_CODE) as i32); }
 #[vo_extern_ctx("os", "nativeGetArgs")]
-fn os_get_args(call: &mut ExternCallContext) -> ExternResult { call.ret_string_slice(slots::RET_0, &std::env::args().collect::<Vec<_>>()); ExternResult::Ok }
+fn os_get_args(call: &mut ExternCallContext) -> ExternResult {
+    let args: Vec<String> = call.program_args().to_vec();
+    call.ret_string_slice(slots::RET_0, &args);
+    ExternResult::Ok
+}
 
 #[vo_extern_ctx("os", "nativeHostname")]
 fn os_hostname(call: &mut ExternCallContext) -> ExternResult {

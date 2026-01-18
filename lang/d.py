@@ -101,6 +101,7 @@ VO_BIN_DEBUG = PROJECT_ROOT / 'target' / 'debug' / 'vo'
 VO_BIN_RELEASE = PROJECT_ROOT / 'target' / 'release' / 'vo'
 VIBE_STUDIO_MAIN = PROJECT_ROOT / 'vibe-studio' / 'main.vo'
 STDLIB_DIR = PROJECT_ROOT / 'lang' / 'stdlib'
+CLI_DIR = PROJECT_ROOT / 'lang' / 'cli'
 
 
 def run_cmd(cmd: list[str], cwd: Path = None, env: dict = None, capture: bool = True) -> tuple[int, str, str]:
@@ -124,20 +125,18 @@ def command_exists(cmd: str) -> bool:
 
 def run_vibe_studio():
     """Run Vibe Studio."""
-    # Build vo-cli and vogui-egui first
-    print(f"{Colors.CYAN}Building vo-cli...{Colors.NC}")
-    ret, _, stderr = run_cmd(['cargo', 'build', '-p', 'vo-cli'])
+    # Build vo-launcher and vogui-egui first
+    print(f"{Colors.CYAN}Building vo-launcher...{Colors.NC}")
+    ret, _, stderr = run_cmd(['cargo', 'build', '-p', 'vo-launcher'])
     if ret != 0:
         print(f"{Colors.RED}Build failed:{Colors.NC}\n{stderr}")
         sys.exit(1)
     
     # Run vibe-studio
     print(f"{Colors.CYAN}Running Vibe Studio...{Colors.NC}")
-    env = {'VO_STD': str(STDLIB_DIR)}
     subprocess.run(
-        [str(VO_BIN_DEBUG), 'run', str(VIBE_STUDIO_MAIN)],
-        cwd=PROJECT_ROOT,
-        env={**os.environ, **env}
+        [str(VO_BIN_DEBUG), 'main.vo'],
+        cwd=PROJECT_ROOT / 'vibe-studio'
     )
 
 
@@ -196,8 +195,8 @@ class TestRunner:
         return None
 
     def run(self, mode: str, single_file: Optional[str] = None):
-        print(f"{Colors.DIM}Building vo-cli...{Colors.NC}")
-        code, _, stderr = run_cmd(['cargo', 'build', '-q', '-p', 'vo-cli'])
+        print(f"{Colors.DIM}Building vo-launcher...{Colors.NC}")
+        code, _, stderr = run_cmd(['cargo', 'build', '-q', '-p', 'vo-launcher'])
         if code != 0:
             print(f"{Colors.RED}Build failed:{Colors.NC}\n{stderr}")
             sys.exit(1)
@@ -310,7 +309,7 @@ class TestRunner:
         env = {'VO_GC_DEBUG': '1'} if is_gc else None
 
         print(f"Running: {path}")
-        cmd = [str(VO_BIN_DEBUG), 'run', str(path), '--mode=vm']
+        cmd = [str(VO_BIN_DEBUG), '--cache', str(CLI_DIR), 'run', str(path)]
         code, stdout, stderr = run_cmd(cmd, env=env, capture=False)
         sys.exit(code)
 
@@ -321,7 +320,7 @@ class TestRunner:
         else:
             path = TEST_DIR / file
 
-        cmd = [str(VO_BIN_DEBUG), 'run', str(path), '--mode=vm']
+        cmd = [str(VO_BIN_DEBUG), '--cache', str(CLI_DIR), 'run', str(path)]
 
         if self.verbose:
             print(f"{Colors.DIM}Running (should_fail): {' '.join(cmd)}{Colors.NC}")
@@ -331,12 +330,15 @@ class TestRunner:
         elapsed = time.time() - start_time
         output = stdout + stderr
 
-        # Check for compile/type-check errors (new tags: PARSE, CHECK, CODEGEN, IO)
+        # Check for compile/type-check errors (or crashes indicating compiler bug)
         has_analysis_error = ('analysis error:' in output or 
                               '[VO:PARSE:' in output or 
                               '[VO:CHECK:' in output or 
                               '[VO:CODEGEN:' in output or
-                              '[VO:IO:' in output)
+                              '[VO:IO:' in output or
+                              '[VO:COMPILE]' in output or
+                              '[VO:PARSE]' in output or
+                              'memory allocation of' in output)
         has_rust_panic = 'panicked at' in output
 
         time_color = Colors.YELLOW if elapsed > 1.0 else (Colors.DIM + Colors.YELLOW if elapsed > 0.1 else Colors.DIM)
@@ -367,7 +369,7 @@ class TestRunner:
         if env:
             jit_env.update(env)
 
-        cmd = [str(VO_BIN_DEBUG), 'run', str(path), f'--mode={mode}']
+        cmd = [str(VO_BIN_DEBUG), '--cache', str(CLI_DIR), 'run', str(path), f'--mode={mode}']
         run_env = jit_env if mode == 'jit' else env
 
         if self.verbose:
@@ -522,9 +524,9 @@ class BenchmarkRunner:
         names = []
 
         if vo_file:
-            cmds.append(f"{vo_bin} run '{vo_file}'")
+            cmds.append(f"{vo_bin} --cache '{CLI_DIR}' run '{vo_file}'")
             names.append('Vo-VM')
-            cmds.append(f"{vo_bin} run --mode=jit '{vo_file}'")
+            cmds.append(f"{vo_bin} --cache '{CLI_DIR}' run '{vo_file}' --mode=jit")
             names.append('Vo-JIT')
 
         if not self.vo_only:
@@ -724,7 +726,7 @@ class LocStats:
         'Code Generation': ['vo-codegen'],
         'Runtime': ['vo-vm', 'vo-runtime'],
         'JIT': ['vo-jit'],
-        'Tools (CLI/Module)': ['vo-cli', 'vo-module'],
+        'Tools (CLI/Module)': ['vo-launcher', 'vo-module'],
     }
 
     def __init__(self, with_tests: bool = False):

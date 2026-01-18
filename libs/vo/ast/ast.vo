@@ -1,0 +1,17 @@
+// Package ast provides functions to parse and print Vo ASTs.
+package ast
+
+// Node is an opaque handle to a parsed AST.
+type Node any
+
+// ParseFile parses a Vo source file.
+func ParseFile(path string) (Node, error)
+
+// ParseString parses Vo source code from a string.
+func ParseString(code string) (Node, error)
+
+// Print formats an AST node as a readable string.
+func Print(node Node) string
+
+// Free releases resources associated with an AST node.
+func Free(node Node)

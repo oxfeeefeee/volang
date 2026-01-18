@@ -7,7 +7,6 @@ description = "Lexer, AST definitions, and parser for the Vo programming languag
 
 [dependencies]
 vo-common = { path = "../vo-common" }
-vo-runtime = { path = "../vo-runtime" }
 thiserror = "1.0"
 logos = "0.14"
 num-bigint = "0.4"

@@ -1,0 +1,23 @@
+package main
+
+import "../../libs/vo/runner"
+
+func cmdCheck(args []string) int {
+	path := "."
+	if len(args) > 0 {
+		path = args[0]
+	}
+
+	println("Checking project:", path)
+
+	// Compile without running (type-check)
+	module, err := runner.CompileDir(path)
+	if err != nil {
+		println("[VO:CHECK]", err.Error())
+		return 1
+	}
+	runner.Free(module)
+
+	println("Check passed")
+	return 0
+}

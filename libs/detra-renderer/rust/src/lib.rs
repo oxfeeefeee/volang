@@ -109,16 +109,20 @@ impl eframe::App for DetraApp {
 
 impl DetraApp {
     fn dispatch_action(&self, action: &ActionCall) {
+        eprintln!("[DEBUG] dispatch_action: name={}, args={:?}", action.name, action.args);
         CURRENT_ACTION_NAME.with(|cell| { *cell.borrow_mut() = action.name.clone(); });
         CURRENT_ACTION_ARGS.with(|cell| { *cell.borrow_mut() = action.args.clone(); });
         let args: [u64; 0] = [];
         let mut ret: [u64; 0] = [];
-        let _ = (self.call_closure_fn)(self.vm, self.fiber, self.on_action_closure as u64, args.as_ptr(), 0, ret.as_mut_ptr(), 0);
+        eprintln!("[DEBUG] calling closure...");
+        let result = (self.call_closure_fn)(self.vm, self.fiber, self.on_action_closure as u64, args.as_ptr(), 0, ret.as_mut_ptr(), 0);
+        eprintln!("[DEBUG] closure returned: {:?}", result);
     }
 }
 
 #[vo_extern_ctx("detra_renderer", "Run")]
 fn detra_renderer_run(ctx: &mut ExternCallContext) -> ExternResult {
+    eprintln!("[DEBUG] detra_renderer_run: ARG_CONFIG={}, ARG_ON_ACTION={}", slots::ARG_CONFIG, slots::ARG_ON_ACTION);
     // Config struct accessor for clean field access
     let config = Config::at(slots::ARG_CONFIG);
     let title = config.title(ctx).to_string();
@@ -127,6 +131,7 @@ fn detra_renderer_run(ctx: &mut ExternCallContext) -> ExternResult {
     let _resizable = config.resizable(ctx);
     let _vsync = config.v_sync(ctx);
     let on_action_closure = ctx.arg_ref(slots::ARG_ON_ACTION);
+    eprintln!("[DEBUG] on_action_closure = {:#x}", on_action_closure as u64);
     let vm = ctx.vm_ptr();
     let fiber = ctx.fiber_ptr();
     let call_closure_fn = ctx.closure_call_fn().unwrap();

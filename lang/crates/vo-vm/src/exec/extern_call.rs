@@ -33,6 +33,7 @@ pub fn exec_call_extern(
     fiber: *mut std::ffi::c_void,
     call_closure_fn: Option<vo_runtime::ffi::ClosureCallFn>,
     fiber_panic_msg: &mut Option<String>,
+    program_args: &[String],
 ) -> ExecResult {
     // CallExtern: a=dst, b=extern_id, c=args_start, flags=arg_count
     let extern_id = inst.b as u32;
@@ -66,6 +67,7 @@ pub fn exec_call_extern(
         vm,
         fiber,
         call_closure_fn,
+        program_args,
     );
 
     match result {

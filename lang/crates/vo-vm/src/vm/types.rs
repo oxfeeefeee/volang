@@ -48,6 +48,7 @@ pub struct VmState {
     pub globals: Vec<u64>,
     pub itab_cache: ItabCache,
     pub extern_registry: ExternRegistry,
+    pub program_args: Vec<String>,
 }
 
 impl VmState {
@@ -57,6 +58,7 @@ impl VmState {
             globals: Vec::new(),
             itab_cache: ItabCache::new(),
             extern_registry: ExternRegistry::new(),
+            program_args: Vec::new(),
         }
     }
 }

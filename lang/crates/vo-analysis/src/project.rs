@@ -12,7 +12,7 @@ use vo_common::diagnostics::DiagnosticSink;
 use vo_common::source::SourceMap;
 use vo_common::symbol::SymbolInterner;
 use vo_common::vfs::FileSet;
-use vo_module::Resolver;
+use vo_module::{Resolver, discover_extensions, ExtensionManifest};
 use vo_syntax::ast::File;
 use vo_syntax::parser;
 
@@ -140,6 +140,8 @@ pub struct Project {
     pub imported_type_infos: BTreeMap<String, crate::check::TypeInfo>,
     /// Source map for position lookup (used by codegen and runtime error reporting).
     pub source_map: SourceMap,
+    /// Native extension manifests discovered from imported packages.
+    pub extensions: Vec<ExtensionManifest>,
 }
 
 impl Project {
@@ -208,6 +210,7 @@ struct ProjectState {
     imported_files: BTreeMap<String, Vec<File>>,
     /// Type checking results from imported packages (package path -> type_info).
     imported_type_infos: BTreeMap<String, crate::check::TypeInfo>,
+    extensions: Vec<ExtensionManifest>,
 }
 
 /// Analyze a project starting from the given source files.
@@ -238,6 +241,7 @@ pub fn analyze_project_with_options<R: Resolver>(
         type_info: None,
         imported_files: BTreeMap::new(),
         imported_type_infos: BTreeMap::new(),
+        extensions: Vec::new(),
     }));
     
     // Create the main package
@@ -245,6 +249,22 @@ pub fn analyze_project_with_options<R: Resolver>(
     
     // Parse the source files
     let parsed_files = parse_files(&files, &state)?;
+
+    // Discover extension manifests in main package root
+    match discover_extensions(&files.root) {
+        Ok(manifests) => {
+            if !manifests.is_empty() {
+                state.borrow_mut().extensions.extend(manifests);
+            }
+        }
+        Err(e) => {
+            return Err(AnalysisError::Import(format!(
+                "failed to load extension manifest in {}: {}",
+                files.root.display(),
+                e
+            )));
+        }
+    }
     
     // Pre-load all imports BEFORE swap (importer needs state.tc_objs)
     {
@@ -305,6 +325,7 @@ pub fn analyze_project_with_options<R: Resolver>(
         imported_files: final_state.imported_files,
         imported_type_infos: final_state.imported_type_infos,
         source_map: final_state.source_map,
+        extensions: final_state.extensions,
     })
 }
 
@@ -353,6 +374,7 @@ pub fn analyze_single_file_with_options(
         imported_files: BTreeMap::new(),
         imported_type_infos: BTreeMap::new(),
         source_map: SourceMap::new(),
+        extensions: Vec::new(),
     })
 }
 
@@ -531,6 +553,23 @@ impl<R: Resolver> Importer for ProjectImporter<'_, R> {
                 return ImportResult::Err(format!("failed to parse {}: {}", import_path, e));
             }
         };
+
+        // Discover extension manifests in the package root
+        match discover_extensions(&vfs_pkg.fs_path) {
+            Ok(manifests) => {
+                if !manifests.is_empty() {
+                    self.state.borrow_mut().extensions.extend(manifests);
+                }
+            }
+            Err(e) => {
+                self.state.borrow_mut().in_progress.remove(import_path);
+                return ImportResult::Err(format!(
+                    "failed to load extension manifest in {}: {}",
+                    vfs_pkg.fs_path.display(),
+                    e
+                ));
+            }
+        }
         
         // Pre-load imports BEFORE swap (importer needs state.tc_objs)
         // Use the resolved package path as the importer directory for nested imports

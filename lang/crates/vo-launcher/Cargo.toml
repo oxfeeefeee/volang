@@ -1,13 +1,13 @@
 [package]
-name = "vo-cli"
+name = "vo-launcher"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Command-line interface for the Vo compiler"
+description = "Vo launcher - compile and run Vo programs"
 
-[features]
-default = []
-gc-debug = ["vo-runtime/gc-debug"]
+[lib]
+name = "vo_launcher"
+path = "src/lib.rs"
 
 [[bin]]
 name = "vo"
@@ -16,15 +16,10 @@ path = "src/main.rs"
 [dependencies]
 vo-common = { path = "../vo-common" }
 vo-common-core = { path = "../vo-common-core" }
-vo-runtime = { path = "../vo-runtime" }
-vo-syntax = { path = "../vo-syntax" }
 vo-analysis = { path = "../vo-analysis" }
 vo-codegen = { path = "../vo-codegen" }
 vo-module = { path = "../vo-module" }
+vo-runtime = { path = "../vo-runtime" }
 vo-vm = { path = "../vo-vm", features = ["jit"] }
-vo-jit = { path = "../vo-jit" }
-clap = { version = "4.4", features = ["derive"] }
 rust-embed = "8"
 dirs = "5"
-
-[dev-dependencies]

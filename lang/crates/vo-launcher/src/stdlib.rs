@@ -1,11 +1,10 @@
 //! Embedded standard library.
-//!
-//! The stdlib is compiled into the binary using rust-embed.
 
-use rust_embed::RustEmbed;
+use rust_embed::{Embed, RustEmbed};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use vo_common::vfs::FileSystem;
+use vo_common::vfs::{FileSystem, RealFs};
+use vo_module::{PackageResolverMixed, StdSource, LocalSource, ModSource};
 use std::io;
 
 #[derive(RustEmbed)]
@@ -13,9 +12,6 @@ use std::io;
 #[prefix = ""]
 struct StdlibAssets;
 
-/// Embedded standard library file system.
-/// 
-/// Implements FileSystem trait so it can be used with the existing VFS infrastructure.
 #[derive(Debug, Clone)]
 pub struct EmbeddedStdlib {
     files: HashMap<PathBuf, String>,
@@ -30,15 +26,13 @@ impl Default for EmbeddedStdlib {
 impl EmbeddedStdlib {
     pub fn new() -> Self {
         let mut files = HashMap::new();
-        
         for file_path in StdlibAssets::iter() {
             if let Some(content) = StdlibAssets::get(&file_path) {
                 if let Ok(s) = std::str::from_utf8(content.data.as_ref()) {
-                    files.insert(PathBuf::from(file_path.as_ref()), s.to_string());
+                    files.insert(PathBuf::from(file_path.to_string()), s.to_string());
                 }
             }
         }
-        
         Self { files }
     }
 }
@@ -80,7 +74,6 @@ impl FileSystem for EmbeddedStdlib {
                 }
             }
         }
-        
         Ok(entries)
     }
     
@@ -111,12 +104,6 @@ impl vo_common_core::SourceProvider for EmbeddedStdlib {
     }
 }
 
-use vo_common::vfs::RealFs;
-use vo_module::{PackageResolverMixed, StdSource, LocalSource, ModSource};
-
-/// Create a resolver with embedded stdlib.
-/// 
-/// `local_root` should be the directory containing the main source file.
 pub fn create_resolver(local_root: &Path) -> PackageResolverMixed<EmbeddedStdlib, RealFs, RealFs> {
     let mod_root = dirs::home_dir()
         .map(|h| h.join(".vo/mod"))

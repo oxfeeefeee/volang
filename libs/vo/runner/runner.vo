@@ -1,0 +1,40 @@
+// Package runner provides functions to compile and run Vo programs.
+package runner
+
+// Module is an opaque handle to a compiled Vo module.
+type Module any
+
+// ============ Compile ============
+
+// CompileFile compiles a .vo source file to a Module.
+func CompileFile(path string) (Module, error)
+
+// CompileDir compiles a directory of .vo files to a Module.
+func CompileDir(path string) (Module, error)
+
+// CompileString compiles Vo source code from a string.
+func CompileString(code string) (Module, error)
+
+// ============ Run ============
+
+// Run executes a compiled Module with VM interpreter.
+func Run(m Module) error
+
+// RunJit executes a compiled Module with JIT compiler.
+func RunJit(m Module) error
+
+// RunFile compiles and runs a .vo file (VM mode).
+func RunFile(path string) error
+
+// RunFileJit compiles and runs a .vo file (JIT mode).
+func RunFileJit(path string) error
+
+// ============ Resource ============
+
+// Free releases resources associated with a Module.
+func Free(m Module)
+
+// ============ Info ============
+
+// Name returns the module name.
+func Name(m Module) string
