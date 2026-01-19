@@ -3,6 +3,8 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+pub mod slot;
+
 // Runtime (std feature)
 #[cfg(feature = "std")]
 pub mod gc;

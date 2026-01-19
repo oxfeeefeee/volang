@@ -11,6 +11,7 @@ use vo_common_core::types::ValueKind;
 use crate::ffi::{ExternCallContext, ExternEntryWithContext, ExternResult, EXTERN_TABLE_WITH_CONTEXT};
 use crate::gc::{Gc, GcRef};
 use crate::objects::{array, interface, map, slice, string, struct_ops};
+use crate::slot::SLOT_BYTES;
 use vo_common_core::runtime_type::RuntimeType;
 use super::error_helper::write_error_to;
 
@@ -777,7 +778,7 @@ fn dyn_set_index(call: &mut ExternCallContext) -> ExternResult {
                     if src_ref.is_null() {
                         return dyn_error_only(call, call.dyn_err().nil_base, "struct/array value is nil");
                     }
-                    let elem_slots = elem_bytes / 8;
+                    let elem_slots = elem_bytes / SLOT_BYTES;
                     let mut buf: Vec<u64> = Vec::with_capacity(elem_slots);
                     for i in 0..elem_slots {
                         buf.push(unsafe { Gc::read_slot(src_ref, i) });
@@ -1146,7 +1147,7 @@ fn dyn_repack_args(call: &mut ExternCallContext) -> ExternResult {
             let elem_rttid = elem_meta_raw >> 8;
             let elem_vk = ValueKind::from_u8((elem_meta_raw & 0xFF) as u8);
             let elem_slots = call.get_type_slot_count(elem_rttid);
-            let elem_bytes = elem_slots as usize * 8;
+            let elem_bytes = elem_slots as usize * SLOT_BYTES;
             let variadic_arg_count = arg_count.saturating_sub(non_variadic_count);
             
             let elem_meta = ValueMeta::new(elem_rttid, elem_vk);

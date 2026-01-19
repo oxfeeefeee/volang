@@ -1,3 +1,0 @@
-[extension]
-name = "runner"
-path = "../../../target/debug/libvo_runner.so"

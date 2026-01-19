@@ -16,6 +16,7 @@ use std::boxed::Box;
 use super::vo_map::VoMap;
 
 use crate::gc::{Gc, GcRef};
+use crate::slot::{ptr_to_slot, slot_to_ptr, Slot, SLOT_BYTES};
 use crate::objects::string;
 use vo_common_core::bytecode::Module;
 use vo_common_core::types::{ValueKind, ValueMeta};
@@ -50,7 +51,7 @@ pub enum MapInner {
 
 #[repr(C)]
 pub struct MapData {
-    pub inner: *mut MapInner,
+    pub inner: Slot,
     pub key_meta: ValueMeta,
     pub val_meta: ValueMeta,
     pub key_slots: u16,
@@ -61,7 +62,7 @@ pub struct MapData {
 }
 
 pub const DATA_SLOTS: u16 = 3;
-const _: () = assert!(core::mem::size_of::<MapData>() == DATA_SLOTS as usize * 8);
+const _: () = assert!(core::mem::size_of::<MapData>() == DATA_SLOTS as usize * SLOT_BYTES);
 
 impl_gc_object!(MapData);
 
@@ -80,7 +81,7 @@ pub fn create(gc: &mut Gc, key_meta: ValueMeta, val_meta: ValueMeta, key_slots: 
         MapInner::MultiKey(MultiKeyMap::new())
     };
     let data = MapData::as_mut(m);
-    data.inner = Box::into_raw(Box::new(inner));
+    data.inner = ptr_to_slot(Box::into_raw(Box::new(inner)));
     data.key_meta = key_meta;
     data.val_meta = val_meta;
     data.key_slots = key_slots;
@@ -106,7 +107,7 @@ pub fn val_slots(m: GcRef) -> u16 { MapData::as_ref(m).val_slots }
 
 #[inline]
 fn get_inner(m: GcRef) -> &'static mut MapInner {
-    unsafe { &mut *MapData::as_ref(m).inner }
+    unsafe { &mut *slot_to_ptr(MapData::as_ref(m).inner) }
 }
 
 #[inline]
@@ -282,8 +283,8 @@ pub struct MapIterator {
     pub map_ref: u64,
 }
 
-pub const MAP_ITER_SLOTS: usize = core::mem::size_of::<MapIterator>() / 8;
-const _: () = assert!(core::mem::size_of::<MapIterator>() == MAP_ITER_SLOTS * 8);
+pub const MAP_ITER_SLOTS: usize = core::mem::size_of::<MapIterator>() / SLOT_BYTES;
+const _: () = assert!(core::mem::size_of::<MapIterator>() == MAP_ITER_SLOTS * SLOT_BYTES);
 const _: () = assert!(MAP_ITER_SLOTS == 7);
 
 const TAG_SINGLE_KEY: u8 = 0;
@@ -367,7 +368,9 @@ pub fn iter_next(iter: &mut MapIterator) -> Option<(&'static [u64], &'static [u6
         MapInner::StringKey(map) => {
             if let Some((new_idx, _, (str_ref, v))) = map.iter_from_index(idx) {
                 iter.current_index = (new_idx + 1) as u64;
-                let k_slice = unsafe { core::slice::from_raw_parts(str_ref as *const GcRef as *const u64, 1) };
+                // Store GcRef as Slot in reserved space (works on both 32-bit and 64-bit)
+                iter._reserved[0] = ptr_to_slot(*str_ref);
+                let k_slice = unsafe { core::slice::from_raw_parts(&iter._reserved[0], 1) };
                 Some((k_slice, v.as_ref()))
             } else {
                 iter.tag = TAG_EXHAUSTED;
@@ -397,8 +400,8 @@ pub fn iter_next(iter: &mut MapIterator) -> Option<(&'static [u64], &'static [u6
 
 pub unsafe fn drop_inner(m: GcRef) {
     let data = MapData::as_mut(m);
-    if !data.inner.is_null() {
-        drop(Box::from_raw(data.inner));
-        data.inner = core::ptr::null_mut();
+    if data.inner != 0 {
+        drop(Box::from_raw(slot_to_ptr::<MapInner>(data.inner)));
+        data.inner = 0;
     }
 }

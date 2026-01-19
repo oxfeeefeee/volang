@@ -1,0 +1,7 @@
+[alias]
+build32 = "build --target armv7-unknown-linux-gnueabihf"
+test32 = "test --target armv7-unknown-linux-gnueabihf"
+run32 = "run --target armv7-unknown-linux-gnueabihf"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"

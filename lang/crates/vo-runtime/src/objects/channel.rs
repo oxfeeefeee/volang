@@ -12,20 +12,21 @@ use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use std::{boxed::Box, collections::VecDeque, vec::Vec};
 
 use crate::gc::{Gc, GcRef};
+use crate::slot::{ptr_to_slot, slot_to_ptr, slot_to_usize, Slot, SLOT_BYTES};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
 
 #[repr(C)]
 pub struct ChannelData {
-    pub state: *mut ChannelState,
-    pub cap: usize,
+    pub state: Slot,
+    pub cap: Slot,
     pub elem_meta: ValueMeta,
     pub elem_slots: u16,
     _pad: u16,
 }
 
 pub const DATA_SLOTS: u16 = 3;
-const _: () = assert!(core::mem::size_of::<ChannelData>() == DATA_SLOTS as usize * 8);
+const _: () = assert!(core::mem::size_of::<ChannelData>() == DATA_SLOTS as usize * SLOT_BYTES);
 
 impl_gc_object!(ChannelData);
 
@@ -132,8 +133,8 @@ pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: u16, cap: usize) ->
     let chan = gc.alloc(ValueMeta::new(0, ValueKind::Channel), DATA_SLOTS);
     let state = Box::new(ChannelState::new(cap));
     let data = ChannelData::as_mut(chan);
-    data.state = Box::into_raw(state);
-    data.cap = cap;
+    data.state = ptr_to_slot(Box::into_raw(state));
+    data.cap = cap as Slot;
     data.elem_meta = elem_meta;
     data.elem_slots = elem_slots;
     chan
@@ -146,10 +147,10 @@ pub fn elem_kind(chan: GcRef) -> ValueKind { elem_meta(chan).value_kind() }
 #[inline]
 pub fn elem_slots(chan: GcRef) -> u16 { ChannelData::as_ref(chan).elem_slots }
 #[inline]
-pub fn capacity(chan: GcRef) -> usize { ChannelData::as_ref(chan).cap }
+pub fn capacity(chan: GcRef) -> usize { slot_to_usize(ChannelData::as_ref(chan).cap) }
 #[inline]
 pub fn get_state(chan: GcRef) -> &'static mut ChannelState {
-    unsafe { &mut *ChannelData::as_ref(chan).state }
+    unsafe { &mut *slot_to_ptr(ChannelData::as_ref(chan).state) }
 }
 
 pub fn len(chan: GcRef) -> usize { get_state(chan).len() }
@@ -160,8 +161,8 @@ pub fn close(chan: GcRef) { get_state(chan).close(); }
 /// chan must be a valid Channel GcRef.
 pub unsafe fn drop_inner(chan: GcRef) {
     let data = ChannelData::as_mut(chan);
-    if !data.state.is_null() {
-        drop(Box::from_raw(data.state));
-        data.state = core::ptr::null_mut();
+    if data.state != 0 {
+        drop(Box::from_raw(slot_to_ptr::<ChannelState>(data.state)));
+        data.state = 0;
     }
 }

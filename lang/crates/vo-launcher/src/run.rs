@@ -118,6 +118,7 @@ fn run_module_impl(
 ) -> Result<(), RunError> {
     let ext_loader = load_extensions(extensions)?;
     
+    #[cfg(feature = "jit")]
     let mut vm = match mode {
         RunMode::Vm => Vm::new(),
         RunMode::Jit => {
@@ -138,6 +139,14 @@ fn run_module_impl(
             vm.init_jit();
             vm
         }
+    };
+    
+    #[cfg(not(feature = "jit"))]
+    let mut vm = {
+        if mode == RunMode::Jit {
+            eprintln!("Warning: JIT mode requested but not available, falling back to VM");
+        }
+        Vm::new()
     };
     
     vm.set_program_args(args);

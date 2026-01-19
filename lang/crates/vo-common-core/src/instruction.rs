@@ -112,7 +112,9 @@ pub enum Opcode {
     SubI,
     MulI,
     DivI,
+    DivU,
     ModI,
+    ModU,
     NegI,
 
     // === ARITH: Float arithmetic ===
@@ -126,9 +128,13 @@ pub enum Opcode {
     EqI,
     NeI,
     LtI,
+    LtU,
     LeI,
+    LeU,
     GtI,
+    GtU,
     GeI,
+    GeU,
 
     // === CMP: Float comparison ===
     EqF,

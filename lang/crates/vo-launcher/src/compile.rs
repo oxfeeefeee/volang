@@ -132,7 +132,7 @@ fn compile_source_file(path: &Path) -> Result<CompileOutput, CompileError> {
     let resolver = create_resolver(&abs_root);
     
     let project = analyze_project(file_set, &resolver)
-        .map_err(|e| CompileError::Analysis(format!("{:?}", e)))?;
+        .map_err(|e| CompileError::Analysis(format!("{}", e)))?;
     
     let module = compile_project(&project)
         .map_err(|e| CompileError::Codegen(format!("{:?}", e)))?;
@@ -157,7 +157,7 @@ fn compile_directory(path: &Path) -> Result<CompileOutput, CompileError> {
     let resolver = create_resolver(&abs_root);
     
     let project = analyze_project(file_set, &resolver)
-        .map_err(|e| CompileError::Analysis(format!("{:?}", e)))?;
+        .map_err(|e| CompileError::Analysis(format!("{}", e)))?;
     
     let module = compile_project(&project)
         .map_err(|e| CompileError::Codegen(format!("{:?}", e)))?;
@@ -195,7 +195,7 @@ fn compile_zip(zip_path: &Path, internal_root: Option<&str>) -> Result<CompileOu
     };
     
     let project = analyze_project(file_set, &resolver)
-        .map_err(|e| CompileError::Analysis(format!("{:?}", e)))?;
+        .map_err(|e| CompileError::Analysis(format!("{}", e)))?;
     
     let module = compile_project(&project)
         .map_err(|e| CompileError::Codegen(format!("{:?}", e)))?;

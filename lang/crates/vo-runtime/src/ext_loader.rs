@@ -94,11 +94,15 @@ impl ExtensionLoader {
 
     /// Load an extension from a dynamic library path.
     pub fn load(&mut self, path: &Path, name: &str) -> Result<(), ExtError> {
+        // Canonicalize path to resolve .. and symlinks (needed for QEMU compatibility)
+        let canonical_path = path.canonicalize()
+            .map_err(|e| ExtError::LoadFailed(format!("{}: {}", path.display(), e)))?;
+        
         // Use RTLD_GLOBAL so symbols are visible to other extensions
         #[cfg(unix)]
         let lib = unsafe {
             let flags = libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_GLOBAL;
-            libloading::os::unix::Library::open(Some(path), flags)
+            libloading::os::unix::Library::open(Some(&canonical_path), flags)
                 .map(|l| Library::from(l))
                 .map_err(|e| ExtError::LoadFailed(e.to_string()))?
         };

@@ -1,3 +1,0 @@
-[extension]
-name = "bytecode"
-path = "../../../target/debug/libvo_bytecode.so"

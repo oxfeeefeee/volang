@@ -2,6 +2,7 @@
 
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::{array, slice, string};
+use vo_runtime::slot::{Slot, slot_to_ptr, slot_to_usize};
 
 use crate::bytecode::Module;
 use crate::fiber::Fiber;
@@ -20,44 +21,49 @@ const FIELD_CAP: usize = slice::FIELD_CAP;
 
 /// Unchecked stack read - SAFETY: caller ensures idx is within bounds
 #[inline(always)]
-pub fn stack_get(stack: &[u64], idx: usize) -> u64 {
+pub fn stack_get(stack: &[Slot], idx: usize) -> Slot {
     unsafe { *stack.get_unchecked(idx) }
 }
 
 /// Unchecked stack write - SAFETY: caller ensures idx is within bounds
 #[inline(always)]
-pub fn stack_set(stack: &mut [u64], idx: usize, val: u64) {
+pub fn stack_set(stack: &mut [Slot], idx: usize, val: Slot) {
     unsafe { *stack.get_unchecked_mut(idx) = val }
 }
 
 // =============================================================================
-// Slice/String field access
+// Slice/String field access (use Slot type for consistency)
 // =============================================================================
 
 #[inline(always)]
 pub fn slice_data_ptr(s: GcRef) -> *mut u8 {
-    unsafe { *((s as *const u64).add(FIELD_DATA_PTR)) as *mut u8 }
+    let slot = unsafe { *(s as *const Slot).add(FIELD_DATA_PTR) };
+    slot_to_ptr(slot)
 }
 
 #[inline(always)]
 pub fn slice_len(s: GcRef) -> usize {
-    unsafe { *((s as *const u64).add(FIELD_LEN)) as usize }
+    let slot = unsafe { *(s as *const Slot).add(FIELD_LEN) };
+    slot_to_usize(slot)
 }
 
 #[inline(always)]
 pub fn slice_cap(s: GcRef) -> usize {
-    unsafe { *((s as *const u64).add(FIELD_CAP)) as usize }
+    let slot = unsafe { *(s as *const Slot).add(FIELD_CAP) };
+    slot_to_usize(slot)
 }
 
 // String uses same layout as slice
 #[inline(always)]
 pub fn string_len(s: GcRef) -> usize {
-    unsafe { *((s as *const u64).add(FIELD_LEN)) as usize }
+    let slot = unsafe { *(s as *const Slot).add(FIELD_LEN) };
+    slot_to_usize(slot)
 }
 
 #[inline(always)]
 pub fn string_index(s: GcRef, idx: usize) -> u8 {
-    let data_ptr = unsafe { *((s as *const u64).add(FIELD_DATA_PTR)) as *const u8 };
+    let slot = unsafe { *(s as *const Slot).add(FIELD_DATA_PTR) };
+    let data_ptr: *const u8 = slot_to_ptr(slot);
     unsafe { *data_ptr.add(idx) }
 }
 
@@ -118,4 +124,42 @@ pub fn user_panic(
     let slot1 = stack[bp + val_reg as usize + 1];
     fiber.set_recoverable_panic(slot0, slot1);
     panic_unwind(fiber, stack, module)
+}
+
+// =============================================================================
+// Closure call helpers
+// =============================================================================
+
+/// Build full args for closure call (prepends receiver/closure_ref if needed).
+/// This matches the logic in VM's exec_call_closure.
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+pub fn build_closure_args(
+    closure_ref: u64,
+    closure_gcref: vo_runtime::gc::GcRef,
+    func_def: &crate::bytecode::FunctionDef,
+    args: *const u64,
+    arg_count: u32,
+) -> Vec<u64> {
+    use vo_runtime::objects::closure;
+    
+    let recv_slots = func_def.recv_slots as usize;
+    let capture_count = closure::capture_count(closure_gcref);
+    
+    // Determine slot0 based on closure type
+    let slot0 = if recv_slots > 0 && capture_count > 0 {
+        Some(closure::get_capture(closure_gcref, 0))
+    } else if capture_count > 0 || func_def.is_closure {
+        Some(closure_ref)
+    } else {
+        None
+    };
+    
+    let mut full_args = Vec::with_capacity(slot0.is_some() as usize + arg_count as usize);
+    full_args.extend(slot0);
+    for i in 0..arg_count {
+        full_args.push(unsafe { *args.add(i as usize) });
+    }
+    full_args
 }

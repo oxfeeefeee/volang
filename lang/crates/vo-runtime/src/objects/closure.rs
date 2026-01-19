@@ -5,6 +5,7 @@
 //! - Captures: capture_count slots (GcRef to escaped variables, stored directly)
 
 use crate::gc::{Gc, GcRef};
+use crate::slot::{Slot, SLOT_BYTES};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
 
@@ -15,7 +16,7 @@ pub struct ClosureHeader {
 }
 
 pub const HEADER_SLOTS: usize = 1;
-const _: () = assert!(core::mem::size_of::<ClosureHeader>() == HEADER_SLOTS * 8);
+const _: () = assert!(core::mem::size_of::<ClosureHeader>() == HEADER_SLOTS * SLOT_BYTES);
 
 impl_gc_object!(ClosureHeader);
 
@@ -34,18 +35,18 @@ pub fn func_id(c: GcRef) -> u32 { ClosureHeader::as_ref(c).func_id }
 pub fn capture_count(c: GcRef) -> usize { ClosureHeader::as_ref(c).capture_count as usize }
 
 #[inline]
-fn captures_ptr(c: GcRef) -> *mut u64 {
+fn captures_ptr(c: GcRef) -> *mut Slot {
     unsafe { c.add(HEADER_SLOTS) }
 }
 
 /// Get captured variable (GcRef to escaped variable on heap)
 #[inline]
-pub fn get_capture(c: GcRef, idx: usize) -> u64 {
+pub fn get_capture(c: GcRef, idx: usize) -> Slot {
     unsafe { *captures_ptr(c).add(idx) }
 }
 
 /// Set captured variable (GcRef to escaped variable on heap)
 #[inline]
-pub fn set_capture(c: GcRef, idx: usize, val: u64) {
+pub fn set_capture(c: GcRef, idx: usize, val: Slot) {
     unsafe { *captures_ptr(c).add(idx) = val }
 }

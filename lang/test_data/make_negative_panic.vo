@@ -88,20 +88,24 @@ func main() {
     // unbuffered channel is valid
     assert(ch != nil, "zero buffer channel is valid")
     
-    // Test 7: make slice with size that causes overflow (deterministic test)
-    result7 := ""
-    func() {
-        defer func() {
-            if r := recover(); r != nil {
-                result7 = "panicked"
-            }
+    // Test 7: make slice with huge size (64-bit only - skip on 32-bit)
+    // Detect platform by checking max uint value
+    is64bit := (^uint(0) >> 32) > 0
+    if is64bit {
+        result7 := ""
+        func() {
+            defer func() {
+                if r := recover(); r != nil {
+                    result7 = "panicked"
+                }
+            }()
+            // 1<<62 * 8 bytes would overflow on 64-bit
+            huge := 1 << 62
+            _ = make([]int, huge)
+            result7 = "no panic"
         }()
-        // 1<<62 * 8 bytes would overflow usize on 64-bit
-        huge := 1 << 62
-        _ = make([]int, huge)
-        result7 = "no panic"
-    }()
-    assert(result7 == "panicked", "make slice with overflow size should panic")
+        assert(result7 == "panicked", "make slice with overflow size should panic")
+    }
     
     println("make_negative_panic: PASSED")
 }

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"../../libs/vo/runner"
-	"../../libs/vo/ast"
-	"../../libs/vo/bytecode"
+	"../../libs/vox"
 	"os"
 	"strings"
 )
@@ -37,23 +35,23 @@ func cmdRun(args []string) int {
 
 	// --ast: parse and print AST only
 	if printAst {
-		node, err := ast.ParseFile(file)
+		node, err := vox.ParseFile(file)
 		if err != nil {
 			println("[VO:PARSE]", err.Error())
 			return 1
 		}
-		println(ast.Print(node))
-		ast.Free(node)
+		println(vox.PrintAst(node))
+		vox.FreeAst(node)
 		return 0
 	}
 
 	// Compile (use CompileDir for directories and zip files, CompileFile for .vo files)
-	var module runner.Module
+	var module vox.Module
 	var err error
 	if strings.HasSuffix(file, ".vo") {
-		module, err = runner.CompileFile(file)
+		module, err = vox.CompileFile(file)
 	} else {
-		module, err = runner.CompileDir(file)
+		module, err = vox.CompileDir(file)
 	}
 	if err != nil {
 		println("[VO:COMPILE]", err.Error())
@@ -62,19 +60,19 @@ func cmdRun(args []string) int {
 
 	// --codegen: print bytecode only
 	if printCodegen {
-		println(bytecode.Format(module))
-		runner.Free(module)
+		println(vox.FormatBytecode(module))
+		vox.Free(module)
 		return 0
 	}
 
 	// Run
 	if mode == "jit" {
-		err = runner.RunJit(module)
+		err = vox.RunJit(module)
 	} else {
-		err = runner.Run(module)
+		err = vox.Run(module)
 	}
 
-	runner.Free(module)
+	vox.Free(module)
 
 	if err != nil {
 		println("[VO:PANIC]", err.Error())

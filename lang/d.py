@@ -19,6 +19,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# 32-bit target (ARM 32-bit for ARM64 host)
+TARGET_32 = 'armv7-unknown-linux-gnueabihf'
+# QEMU for running ARM32 on ARM64
+QEMU_ARM = 'qemu-arm'
+QEMU_ARM_LD_PREFIX = '/usr/arm-linux-gnueabihf'
+
 # Check that we're running from the correct directory (repo root, not lang/)
 _script_dir = Path(__file__).resolve().parent
 _expected_cwd = _script_dir.parent  # repo root
@@ -106,6 +112,133 @@ TEST_DIR = PROJECT_ROOT / 'lang' / 'test_data'
 TEST_CONFIG = TEST_DIR / '_config.yaml'
 BENCHMARK_DIR = PROJECT_ROOT / 'lang' / 'benchmark'
 RESULTS_DIR = BENCHMARK_DIR / 'results'
+
+# Cache directories
+CLI_CACHE_DIR = PROJECT_ROOT / 'lang' / 'cli' / '.vo-cache'
+VOX_EXT_DIR = PROJECT_ROOT / 'libs' / 'vox'
+VOX_EXT_RUST_DIR = VOX_EXT_DIR / 'rust' / 'src'
+
+
+def get_newest_mtime(*paths: Path, pattern: str = '*') -> float:
+    """Get the newest modification time from files matching pattern in given paths."""
+    newest = 0.0
+    for path in paths:
+        if not path.exists():
+            continue
+        if path.is_file():
+            newest = max(newest, path.stat().st_mtime)
+        else:
+            for f in path.rglob(pattern):
+                if f.is_file():
+                    newest = max(newest, f.stat().st_mtime)
+    return newest
+
+
+def invalidate_cli_cache_if_needed():
+    """Clear CLI .vo-cache if source files are newer than cache."""
+    import shutil
+    
+    if not CLI_CACHE_DIR.exists():
+        return
+    
+    cache_mtime = CLI_CACHE_DIR.stat().st_mtime
+    
+    # Check CLI source files
+    cli_src_mtime = get_newest_mtime(CLI_DIR, pattern='*.vo')
+    
+    # Check vox library source files
+    vox_vo_mtime = get_newest_mtime(VOX_EXT_DIR, pattern='*.vo')
+    
+    # Check vox Rust extension source files
+    vox_rust_mtime = get_newest_mtime(VOX_EXT_RUST_DIR, pattern='*.rs')
+    
+    # Check if any source is newer than cache
+    newest_src = max(cli_src_mtime, vox_vo_mtime, vox_rust_mtime)
+    if newest_src > cache_mtime:
+        print(f"{Colors.DIM}CLI cache outdated, clearing...{Colors.NC}")
+        shutil.rmtree(CLI_CACHE_DIR)
+
+
+def clean_caches(target: str = 'all'):
+    """Clean Vo and/or Rust caches."""
+    import shutil
+    
+    cleaned = []
+    
+    if target in ('all', 'vo'):
+        # Clean 64-bit .vo-cache
+        if CLI_CACHE_DIR.exists():
+            shutil.rmtree(CLI_CACHE_DIR)
+            cleaned.append(str(CLI_CACHE_DIR))
+        
+        # Clean 32-bit .vo-cache
+        cache_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'lang' / 'cli' / '.vo-cache'
+        if cache_32.exists():
+            shutil.rmtree(cache_32)
+            cleaned.append(str(cache_32))
+        
+        # Clean 32-bit CLI marker
+        marker_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'lang' / 'cli' / '.32bit_cache_ready'
+        if marker_32.exists():
+            marker_32.unlink()
+            cleaned.append(str(marker_32))
+    
+    if target in ('all', 'rust'):
+        # Run cargo clean
+        print("Running cargo clean...")
+        result = subprocess.run(['cargo', 'clean'], cwd=PROJECT_ROOT, capture_output=True)
+        if result.returncode == 0:
+            cleaned.append('target/')
+        else:
+            print(f"{Colors.RED}cargo clean failed{Colors.NC}")
+    
+    if cleaned:
+        print(f"{Colors.GREEN}Cleaned:{Colors.NC}")
+        for path in cleaned:
+            print(f"  - {path}")
+    else:
+        print("Nothing to clean.")
+
+
+def ensure_vox_extension_built(arch: str = '64', release: bool = False):
+    """Build vo-vox extension if needed."""
+    profile = 'release' if release else 'debug'
+    
+    if arch == '32':
+        lib_path = PROJECT_ROOT / 'target' / TARGET_32 / profile / 'libvo_vox.so'
+    else:
+        lib_path = PROJECT_ROOT / 'target' / profile / 'libvo_vox.so'
+    
+    # Check if library exists and is up-to-date
+    if lib_path.exists():
+        lib_mtime = lib_path.stat().st_mtime
+        src_mtime = get_newest_mtime(VOX_EXT_RUST_DIR, pattern='*.rs')
+        cargo_mtime = (VOX_EXT_DIR / 'rust' / 'Cargo.toml').stat().st_mtime
+        if lib_mtime > max(src_mtime, cargo_mtime):
+            return  # Up-to-date
+    
+    print(f"{Colors.DIM}Building vo-vox extension ({profile})...{Colors.NC}")
+    build_cmd = ['cargo', 'build', '-q', '-p', 'vo-vox', '--features', 'ffi']
+    if release:
+        build_cmd.append('--release')
+    if arch == '32':
+        build_cmd.extend(['--target', TARGET_32])
+    
+    code, _, stderr = run_cmd(build_cmd)
+    if code != 0:
+        print(f"{Colors.RED}Extension build failed:{Colors.NC}\n{stderr}")
+        sys.exit(1)
+
+
+
+def get_vo_bin(release: bool = False, arch: str = '64') -> Path:
+    """Get the path to vo binary for the given architecture."""
+    profile = 'release' if release else 'debug'
+    if arch == '32':
+        return PROJECT_ROOT / 'target' / TARGET_32 / profile / 'vo'
+    return PROJECT_ROOT / 'target' / profile / 'vo'
+
+# Legacy paths for backward compatibility
 VO_BIN_DEBUG = PROJECT_ROOT / 'target' / 'debug' / 'vo'
 VO_BIN_RELEASE = PROJECT_ROOT / 'target' / 'release' / 'vo'
 STDLIB_DIR = PROJECT_ROOT / 'lang' / 'stdlib'
@@ -136,8 +269,10 @@ def command_exists(cmd: str) -> bool:
 # =============================================================================
 
 class TestRunner:
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, arch: str = '64'):
         self.verbose = verbose
+        self.arch = arch
+        self.vo_bin = get_vo_bin(release=False, arch=arch)
         self.config = self._load_config()
         self.vm_passed = 0
         self.vm_failed = 0
@@ -146,6 +281,18 @@ class TestRunner:
         self.jit_failed = 0
         self.jit_skipped = 0
         self.failed_list: list[str] = []
+        # CLI cache path (different structure for 32-bit due to extension paths)
+        if arch == '32':
+            self.cli_cache = PROJECT_ROOT / 'target' / TARGET_32 / 'lang' / 'cli'
+        else:
+            self.cli_cache = CLI_DIR
+
+    def _make_vo_cmd(self, *args) -> list[str]:
+        """Build vo command, prepending QEMU for 32-bit."""
+        base = [str(self.vo_bin), '--cache', str(self.cli_cache)] + list(args)
+        if self.arch == '32':
+            return [QEMU_ARM, '-L', QEMU_ARM_LD_PREFIX] + base
+        return base
 
     def _load_config(self) -> dict:
         """Load config, returns dict: file -> {skip: [], should_fail: bool}"""
@@ -185,12 +332,92 @@ class TestRunner:
             return self.config[file].get('zip_root')
         return None
 
+    def _setup_32bit_cli_cache(self):
+        """Create CLI cache directory with 32-bit extension paths (only if needed)."""
+        import shutil
+        
+        cli_32 = self.cli_cache
+        libs_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'libs'
+        
+        # Check if CLI .vo files need update
+        cli_marker = cli_32 / '.32bit_cache_ready'
+        cli_needs_update = not cli_marker.exists()
+        if not cli_needs_update:
+            marker_time = cli_marker.stat().st_mtime
+            cli_src_mtime = get_newest_mtime(CLI_DIR, pattern='*.vo')
+            cli_needs_update = cli_src_mtime > marker_time
+        
+        # Check if libs/vox needs update (separate from CLI)
+        libs_marker = libs_32 / 'vox' / '.libs_ready'
+        libs_needs_update = not libs_marker.exists()
+        if not libs_needs_update:
+            marker_time = libs_marker.stat().st_mtime
+            vox_src_mtime = max(
+                get_newest_mtime(VOX_EXT_DIR, pattern='*.vo'),
+                get_newest_mtime(VOX_EXT_DIR / 'vo.ext.toml'),
+            )
+            libs_needs_update = vox_src_mtime > marker_time
+        
+        if not cli_needs_update and not libs_needs_update:
+            return
+        
+        # Update CLI .vo files if needed
+        if cli_needs_update:
+            # Only remove .vo files, keep .vo-cache
+            cli_32.mkdir(parents=True, exist_ok=True)
+            for vo_file in cli_32.glob('*.vo'):
+                vo_file.unlink()
+            for vo_file in CLI_DIR.glob('*.vo'):
+                shutil.copy(vo_file, cli_32 / vo_file.name)
+            # Clear .vo-cache since CLI source changed
+            vo_cache = cli_32 / '.vo-cache'
+            if vo_cache.exists():
+                shutil.rmtree(vo_cache)
+            cli_marker.touch()
+        
+        # Update libs/vox if needed
+        if libs_needs_update:
+            dst_dir = libs_32 / 'vox'
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            
+            for vo_file in VOX_EXT_DIR.glob('*.vo'):
+                shutil.copy(vo_file, dst_dir / vo_file.name)
+            
+            toml_src = VOX_EXT_DIR / 'vo.ext.toml'
+            if toml_src.exists():
+                with open(toml_src) as f:
+                    content = f.read()
+                # Original path: ../../target/debug/libvo_vox.so (from libs/vox)
+                # 32-bit cache is at: target/<arch>/libs/vox
+                # Need path to: target/<arch>/debug/libvo_vox.so
+                # Relative: ../../../<arch>/debug/libvo_vox.so
+                content = content.replace('../../target/debug', f'../../../{TARGET_32}/debug')
+                with open(dst_dir / 'vo.ext.toml', 'w') as f:
+                    f.write(content)
+            
+            libs_marker.touch()
+
     def run(self, mode: str, single_file: Optional[str] = None):
-        print(f"{Colors.DIM}Building vo-launcher...{Colors.NC}")
-        code, _, stderr = run_cmd(['cargo', 'build', '-q', '-p', 'vo-launcher'])
+        # Invalidate CLI cache if source files changed
+        invalidate_cli_cache_if_needed()
+        
+        # Build vo-launcher
+        target_info = f" (target: {TARGET_32})" if self.arch == '32' else ""
+        print(f"{Colors.DIM}Building vo-launcher{target_info}...{Colors.NC}")
+        build_cmd = ['cargo', 'build', '-q', '-p', 'vo-launcher']
+        if self.arch == '32':
+            build_cmd.extend(['--target', TARGET_32, '--no-default-features'])
+        code, _, stderr = run_cmd(build_cmd)
         if code != 0:
             print(f"{Colors.RED}Build failed:{Colors.NC}\n{stderr}")
             sys.exit(1)
+        
+        # Build vo-vox extension (both 32-bit and 64-bit need it)
+        ensure_vox_extension_built(arch=self.arch, release=False)
+        
+        # Setup 32-bit CLI cache with adjusted extension paths
+        if self.arch == '32':
+            self._setup_32bit_cli_cache()
 
         if single_file:
             self._run_single_file(single_file)
@@ -200,7 +427,11 @@ class TestRunner:
 
         is_gc_mode = (mode == 'gc')
         run_vm = mode in ('vm', 'both', 'gc')
-        run_jit = mode in ('jit', 'both', 'gc')
+        # JIT not supported on 32-bit
+        run_jit = mode in ('jit', 'both', 'gc') and self.arch != '32'
+        
+        if self.arch == '32' and mode in ('jit', 'both'):
+            print(f"{Colors.YELLOW}Note: JIT not supported on 32-bit, running VM tests only{Colors.NC}\n")
 
         test_files = sorted(TEST_DIR.rglob('*.vo'))
         for path in test_files:
@@ -297,10 +528,13 @@ class TestRunner:
             sys.exit(1)
 
         is_gc = path.name.startswith('gc_')
-        env = {'VO_GC_DEBUG': '1'} if is_gc else None
+        env = {'VO_GC_DEBUG': '1'} if is_gc else {}
+        # Set QEMU library path for ARM32 on ARM64
+        if self.arch == '32':
+            env['QEMU_LD_PREFIX'] = QEMU_ARM_LD_PREFIX
 
         print(f"Running: {path}")
-        cmd = [str(VO_BIN_DEBUG), '--cache', str(CLI_DIR), 'run', str(path)]
+        cmd = self._make_vo_cmd('run', str(path))
         code, stdout, stderr = run_cmd(cmd, env=env, capture=False)
         sys.exit(code)
 
@@ -311,7 +545,7 @@ class TestRunner:
         else:
             path = TEST_DIR / file
 
-        cmd = [str(VO_BIN_DEBUG), '--cache', str(CLI_DIR), 'run', str(path)]
+        cmd = self._make_vo_cmd('run', str(path))
 
         if self.verbose:
             print(f"{Colors.DIM}Running (should_fail): {' '.join(cmd)}{Colors.NC}")
@@ -360,8 +594,8 @@ class TestRunner:
         if env:
             jit_env.update(env)
 
-        cmd = [str(VO_BIN_DEBUG), '--cache', str(CLI_DIR), 'run', str(path), f'--mode={mode}']
-        run_env = jit_env if mode == 'jit' else env
+        cmd = self._make_vo_cmd('run', str(path), f'--mode={mode}')
+        run_env = jit_env.copy() if mode == 'jit' else (env.copy() if env else {})
 
         if self.verbose:
             print(f"{Colors.DIM}Running: {' '.join(cmd)}{Colors.NC}")
@@ -445,9 +679,11 @@ class TestRunner:
 # =============================================================================
 
 class BenchmarkRunner:
-    def __init__(self, vo_only: bool = False, all_langs: bool = False):
+    def __init__(self, vo_only: bool = False, all_langs: bool = False, arch: str = '64'):
         self.vo_only = vo_only
         self.all_langs = all_langs
+        self.arch = arch
+        self.vo_bin = get_vo_bin(release=True, arch=arch)
 
     def run(self, target: str):
         if target == 'score':
@@ -480,8 +716,21 @@ class BenchmarkRunner:
             sys.exit(1)
 
     def _build_vo(self):
-        print("Building Vo (release)...")
-        run_cmd(['cargo', 'build', '--release', '--bin', 'vo'], capture=True)
+        # Invalidate CLI cache if source files changed
+        invalidate_cli_cache_if_needed()
+        
+        target_info = f" (target: {TARGET_32})" if self.arch == '32' else ""
+        print(f"Building Vo (release){target_info}...")
+        build_cmd = ['cargo', 'build', '--release', '-p', 'vo-launcher']
+        if self.arch == '32':
+            build_cmd.extend(['--target', TARGET_32, '--no-default-features'])
+        code, _, stderr = run_cmd(build_cmd, capture=True)
+        if code != 0:
+            print(f"{Colors.RED}Build failed:{Colors.NC}\n{stderr}")
+            sys.exit(1)
+        
+        # Build vo-vox extension (release mode for benchmarks)
+        ensure_vox_extension_built(arch=self.arch, release=True)
 
     def _list_benchmarks(self):
         print("Available benchmarks:")
@@ -499,7 +748,7 @@ class BenchmarkRunner:
 
     def _run_benchmark(self, name: str):
         bench_dir = BENCHMARK_DIR / name
-        vo_bin = str(VO_BIN_RELEASE)
+        vo_bin = str(self.vo_bin)
 
         print(f"\n=== {name} ===\n")
 
@@ -517,8 +766,10 @@ class BenchmarkRunner:
         if vo_file:
             cmds.append(f"{vo_bin} --cache '{CLI_DIR}' run '{vo_file}'")
             names.append('Vo-VM')
-            cmds.append(f"{vo_bin} --cache '{CLI_DIR}' run '{vo_file}' --mode=jit")
-            names.append('Vo-JIT')
+            # JIT not supported on 32-bit
+            if self.arch != '32':
+                cmds.append(f"{vo_bin} --cache '{CLI_DIR}' run '{vo_file}' --mode=jit")
+                names.append('Vo-JIT')
 
         if not self.vo_only:
             if go_file:
@@ -826,6 +1077,8 @@ def main():
     test_parser.add_argument('-v', '--verbose', action='store_true',
                              help='Verbose output')
     test_parser.add_argument('file', nargs='?', help='Single test file')
+    test_parser.add_argument('--arch', choices=['32', '64'], default='64',
+                             help='Target architecture (default: 64)')
 
     # bench
     bench_parser = subparsers.add_parser('bench', help='Run benchmarks')
@@ -833,11 +1086,19 @@ def main():
                               help='all, vo, score, or benchmark name')
     bench_parser.add_argument('--all-langs', action='store_true',
                               help='Include Python and Ruby')
+    bench_parser.add_argument('--arch', choices=['32', '64'], default='64',
+                              help='Target architecture (default: 64)')
 
     # loc
     loc_parser = subparsers.add_parser('loc', help='Code statistics')
     loc_parser.add_argument('--with-tests', action='store_true',
                             help='Include test files')
+
+    # clean
+    clean_parser = subparsers.add_parser('clean', help='Clean caches')
+    clean_parser.add_argument('target', nargs='?', default='all',
+                              choices=['all', 'vo', 'rust'],
+                              help='all (default), vo (.vo-cache), rust (cargo clean)')
 
     args = parser.parse_args()
 
@@ -851,17 +1112,20 @@ def main():
             file_arg = args.mode
             mode = 'both'
 
-        runner = TestRunner(verbose=args.verbose)
+        runner = TestRunner(verbose=args.verbose, arch=args.arch)
         runner.run(mode, single_file=file_arg)
 
     elif args.command == 'bench':
         vo_only = args.target == 'vo'
-        runner = BenchmarkRunner(vo_only=vo_only, all_langs=args.all_langs)
+        runner = BenchmarkRunner(vo_only=vo_only, all_langs=args.all_langs, arch=args.arch)
         runner.run(args.target)
 
     elif args.command == 'loc':
         stats = LocStats(with_tests=args.with_tests)
         stats.run()
+
+    elif args.command == 'clean':
+        clean_caches(args.target)
 
     else:
         parser.print_help()

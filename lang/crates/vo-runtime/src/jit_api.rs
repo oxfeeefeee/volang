@@ -21,6 +21,7 @@
 use std::ffi::c_void;
 
 use crate::gc::{Gc, GcRef};
+use crate::slot::slots_for_bytes;
 use crate::itab::ItabCache;
 use vo_common_core::bytecode::Module;
 
@@ -505,7 +506,7 @@ pub extern "C" fn vo_map_delete(m: u64, key_ptr: *const u64, key_slots: u32) {
     map::delete(m as crate::gc::GcRef, key, None);
 }
 
-/// Initialize a map iterator. Writes MAP_ITER_SLOTS * 8 bytes to iter_ptr.
+/// Initialize a map iterator. Writes MAP_ITER_SLOTS * SLOT_BYTES bytes to iter_ptr.
 #[no_mangle]
 pub extern "C" fn vo_map_iter_init(m: u64, iter_ptr: *mut u64) {
     use crate::objects::map;
@@ -809,14 +810,14 @@ pub extern "C" fn vo_slice_slice3(gc: *mut Gc, s: u64, lo: u64, hi: u64, max: u6
 
 /// Append single element to slice.
 /// elem_bytes: actual byte size per element
-/// val_ptr points to ceil(elem_bytes/8) u64 values.
+/// val_ptr points to ceil(elem_bytes / SLOT_BYTES) u64 values.
 #[no_mangle]
 pub extern "C" fn vo_slice_append(gc: *mut Gc, elem_meta: u32, elem_bytes: u32, s: u64, val_ptr: *const u64) -> u64 {
     use crate::objects::slice;
     use crate::ValueMeta;
     unsafe {
         let gc = &mut *gc;
-        let val_slots = ((elem_bytes as usize) + 7) / 8;
+        let val_slots = slots_for_bytes(elem_bytes as usize);
         let val = core::slice::from_raw_parts(val_ptr, val_slots);
         slice::append(gc, ValueMeta::from_raw(elem_meta), elem_bytes as usize, s as crate::gc::GcRef, val) as u64
     }

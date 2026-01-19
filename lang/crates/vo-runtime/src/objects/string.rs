@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use crate::gc::{Gc, GcRef};
 use crate::objects::{array, slice};
 use crate::objects::slice::SliceData;
+use crate::slot::{ptr_to_slot, slot_to_ptr, Slot};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
 pub fn create(gc: &mut Gc, bytes: &[u8]) -> GcRef {
@@ -24,10 +25,10 @@ pub fn create(gc: &mut Gc, bytes: &[u8]) -> GcRef {
 fn alloc_string(gc: &mut Gc, arr: GcRef, data_ptr: *mut u8, len: usize) -> GcRef {
     let s = gc.alloc(ValueMeta::new(0, ValueKind::String), slice::DATA_SLOTS);
     let data = SliceData::as_mut(s);
-    data.array = arr;
-    data.data_ptr = data_ptr;
-    data.len = len;
-    data.cap = len;
+    data.array = ptr_to_slot(arr);
+    data.data_ptr = ptr_to_slot(data_ptr);
+    data.len = len as Slot;
+    data.cap = len as Slot;
     s
 }
 
@@ -97,7 +98,9 @@ pub fn concat(gc: &mut Gc, a: GcRef, b: GcRef) -> GcRef {
 pub fn slice_of(gc: &mut Gc, s: GcRef, start: usize, end: usize) -> GcRef {
     if s.is_null() || start >= end { return core::ptr::null_mut(); }
     let src = SliceData::as_ref(s);
-    alloc_string(gc, src.array, unsafe { src.data_ptr.add(start) }, end - start)
+    let arr = slot_to_ptr(src.array);
+    let data_ptr = slot_to_ptr::<u8>(src.data_ptr);
+    alloc_string(gc, arr, unsafe { data_ptr.add(start) }, end - start)
 }
 
 pub fn eq(a: GcRef, b: GcRef) -> bool {

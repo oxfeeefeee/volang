@@ -184,7 +184,9 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::SubI => format!("SubI          r{}, r{}, r{}", a, b, c),
         Opcode::MulI => format!("MulI          r{}, r{}, r{}", a, b, c),
         Opcode::DivI => format!("DivI          r{}, r{}, r{}", a, b, c),
+        Opcode::DivU => format!("DivU          r{}, r{}, r{}", a, b, c),
         Opcode::ModI => format!("ModI          r{}, r{}, r{}", a, b, c),
+        Opcode::ModU => format!("ModU          r{}, r{}, r{}", a, b, c),
         Opcode::NegI => format!("NegI          r{}, r{}", a, b),
 
         // ARITH Float
@@ -194,13 +196,19 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::DivF => format!("DivF          r{}, r{}, r{}", a, b, c),
         Opcode::NegF => format!("NegF          r{}, r{}", a, b),
 
-        // CMP Integer
+        // CMP Integer (signed)
         Opcode::EqI => format!("EqI           r{}, r{}, r{}", a, b, c),
         Opcode::NeI => format!("NeI           r{}, r{}, r{}", a, b, c),
         Opcode::LtI => format!("LtI           r{}, r{}, r{}", a, b, c),
         Opcode::LeI => format!("LeI           r{}, r{}, r{}", a, b, c),
         Opcode::GtI => format!("GtI           r{}, r{}, r{}", a, b, c),
         Opcode::GeI => format!("GeI           r{}, r{}, r{}", a, b, c),
+        
+        // CMP Integer (unsigned)
+        Opcode::LtU => format!("LtU           r{}, r{}, r{}", a, b, c),
+        Opcode::LeU => format!("LeU           r{}, r{}, r{}", a, b, c),
+        Opcode::GtU => format!("GtU           r{}, r{}, r{}", a, b, c),
+        Opcode::GeU => format!("GeU           r{}, r{}, r{}", a, b, c),
 
         // CMP Float
         Opcode::EqF => format!("EqF           r{}, r{}, r{}", a, b, c),

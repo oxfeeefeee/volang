@@ -12,6 +12,7 @@ use vo_ffi_macro::{vo_extern_ctx, vo_consts};
 use crate::ffi::{ExternCallContext, ExternResult};
 use crate::gc::{Gc, GcRef};
 use crate::objects::slice;
+use crate::slot::SLOT_BYTES;
 use super::error_helper::{write_error_to, write_nil_error};
 
 // Import error codes from centralized errors/code.vo
@@ -431,13 +432,13 @@ fn os_read_dir(call: &mut ExternCallContext) -> ExternResult {
             let len = dir_entries.len();
             let elem_slots = 3;
             let elem_meta = crate::ValueMeta::new(0, ValueKind::Struct);
-            let result = slice::create(call.gc(), elem_meta, elem_slots * 8, len, len);
+            let result = slice::create(call.gc(), elem_meta, elem_slots * SLOT_BYTES, len, len);
             for (i, (entry_name, is_dir, mode)) in dir_entries.iter().enumerate() {
                 let name_ref = call.alloc_str(entry_name);
                 let base = i * elem_slots;
-                slice::set(result, base, name_ref as u64, 8);
-                slice::set(result, base + 1, if *is_dir { 1 } else { 0 }, 8);
-                slice::set(result, base + 2, *mode as u64, 8);
+                slice::set(result, base, name_ref as u64, SLOT_BYTES);
+                slice::set(result, base + 1, if *is_dir { 1 } else { 0 }, SLOT_BYTES);
+                slice::set(result, base + 2, *mode as u64, SLOT_BYTES);
             }
             call.ret_ref(slots::RET_0, result);
             write_nil_error(call, slots::RET_1);

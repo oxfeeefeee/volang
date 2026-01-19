@@ -3,10 +3,11 @@
 package main
 
 // Test 1: Large constant operations that fold to representable values
+// Use int64 for 32-bit compatibility
 const (
-    Huge = 1 << 62
-    Half = Huge >> 1
-    Back = Half << 1
+    Huge int64 = 1 << 62
+    Half int64 = Huge >> 1
+    Back int64 = Half << 1
 )
 
 // Test 2: Floating-point constant precision
@@ -76,9 +77,9 @@ const (
 
 func main() int {
     println("Test 1: Large shift constants")
-    assert(Huge == 1 << 62, "Huge should be 1<<62")
-    assert(Half == 1 << 61, "Half should be 1<<61")
-    assert(Back == 1 << 62, "Back should be 1<<62")
+    assert(Huge == int64(1) << 62, "Huge should be 1<<62")
+    assert(Half == int64(1) << 61, "Half should be 1<<61")
+    assert(Back == int64(1) << 62, "Back should be 1<<62")
     println("PASSED")
     
     println("Test 2: Floating-point precision")
@@ -137,8 +138,8 @@ func main() int {
     
     // Test 11: Runtime verification of constants
     println("Test 11: Runtime constant verification")
-    x := Huge
-    y := x >> 62
+    var x int64 = Huge
+    var y int64 = x >> 62
     assert(y == 1, "Huge >> 62 should be 1")
     println("PASSED")
     

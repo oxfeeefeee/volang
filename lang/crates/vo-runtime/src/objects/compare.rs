@@ -4,6 +4,7 @@
 
 use crate::gc::GcRef;
 use crate::objects::{array, string};
+use crate::slot::{slots_for_bytes, SLOT_BYTES};
 use crate::{RuntimeType, SlotType, ValueKind};
 use vo_common_core::bytecode::Module;
 
@@ -291,7 +292,7 @@ pub fn iface_hash(slot0: u64, slot1: u64, module: &Module) -> u64 {
                 let elem_bytes = array::elem_bytes(arr);
                 // Hash by raw data slots (handles both packed and slot-aligned arrays)
                 let total_bytes = len * elem_bytes;
-                let total_slots = (total_bytes + 7) / 8;
+                let total_slots = slots_for_bytes(total_bytes);
                 let data = array::data_ptr_bytes(arr) as *const u64;
                 for i in 0..total_slots {
                     let val = unsafe { *data.add(i) };
@@ -339,7 +340,7 @@ pub fn deep_eq_array(a: GcRef, b: GcRef, rttid: u32, module: &Module) -> bool {
     }
     
     // Reference types: need element-by-element deep comparison
-    let elem_slots = elem_bytes / 8;
+    let elem_slots = elem_bytes / SLOT_BYTES;
     let elem_rttid = match module.runtime_types.get(rttid as usize) {
         Some(RuntimeType::Array { elem, .. }) => elem.rttid(),
         Some(RuntimeType::Named { id, .. }) => {

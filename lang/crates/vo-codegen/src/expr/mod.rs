@@ -392,25 +392,31 @@ pub fn compile_expr_to(
                 (BinaryOp::Sub, true, _, _) => Opcode::SubF,
                 (BinaryOp::Mul, false, _, _) => Opcode::MulI,
                 (BinaryOp::Mul, true, _, _) => Opcode::MulF,
-                (BinaryOp::Div, false, _, _) => Opcode::DivI,
+                (BinaryOp::Div, false, _, false) => Opcode::DivI,
+                (BinaryOp::Div, false, _, true) => Opcode::DivU,
                 (BinaryOp::Div, true, _, _) => Opcode::DivF,
-                (BinaryOp::Rem, _, _, _) => Opcode::ModI,
+                (BinaryOp::Rem, false, _, false) => Opcode::ModI,
+                (BinaryOp::Rem, false, _, true) => Opcode::ModU,
                 (BinaryOp::Eq, false, false, _) => Opcode::EqI,
                 (BinaryOp::Eq, true, false, _) => Opcode::EqF,
                 (BinaryOp::Eq, _, true, _) => Opcode::StrEq,
                 (BinaryOp::NotEq, false, false, _) => Opcode::NeI,
                 (BinaryOp::NotEq, true, false, _) => Opcode::NeF,
                 (BinaryOp::NotEq, _, true, _) => Opcode::StrNe,
-                (BinaryOp::Lt, false, false, _) => Opcode::LtI,
+                (BinaryOp::Lt, false, false, false) => Opcode::LtI,
+                (BinaryOp::Lt, false, false, true) => Opcode::LtU,
                 (BinaryOp::Lt, true, false, _) => Opcode::LtF,
                 (BinaryOp::Lt, _, true, _) => Opcode::StrLt,
-                (BinaryOp::LtEq, false, false, _) => Opcode::LeI,
+                (BinaryOp::LtEq, false, false, false) => Opcode::LeI,
+                (BinaryOp::LtEq, false, false, true) => Opcode::LeU,
                 (BinaryOp::LtEq, true, false, _) => Opcode::LeF,
                 (BinaryOp::LtEq, _, true, _) => Opcode::StrLe,
-                (BinaryOp::Gt, false, false, _) => Opcode::GtI,
+                (BinaryOp::Gt, false, false, false) => Opcode::GtI,
+                (BinaryOp::Gt, false, false, true) => Opcode::GtU,
                 (BinaryOp::Gt, true, false, _) => Opcode::GtF,
                 (BinaryOp::Gt, _, true, _) => Opcode::StrGt,
-                (BinaryOp::GtEq, false, false, _) => Opcode::GeI,
+                (BinaryOp::GtEq, false, false, false) => Opcode::GeI,
+                (BinaryOp::GtEq, false, false, true) => Opcode::GeU,
                 (BinaryOp::GtEq, true, false, _) => Opcode::GeF,
                 (BinaryOp::GtEq, _, true, _) => Opcode::StrGe,
                 (BinaryOp::And, _, _, _) => Opcode::And,
@@ -1429,6 +1435,8 @@ fn compile_slot_comparison(
 /// This ensures Go semantics where operations are done in 64-bit but
 /// results are truncated to the target type width.
 /// 
+/// On 32-bit platforms, Int and Uint are also truncated to 32 bits.
+/// 
 /// Safe to call on any type - non-narrow-integer types are no-ops.
 pub fn emit_int_trunc(
     reg: u16,
@@ -1449,6 +1457,11 @@ pub fn emit_int_trunc(
         ValueKind::Uint8 => func.emit_with_flags(Opcode::Trunc, 0x01, reg, reg, 0),
         ValueKind::Uint16 => func.emit_with_flags(Opcode::Trunc, 0x02, reg, reg, 0),
         ValueKind::Uint32 => func.emit_with_flags(Opcode::Trunc, 0x04, reg, reg, 0),
-        _ => {} // No truncation needed for Int, Int64, Uint, Uint64, etc.
+        // On 32-bit platforms, Int and Uint are 32-bit and need truncation
+        #[cfg(target_pointer_width = "32")]
+        ValueKind::Int => func.emit_with_flags(Opcode::Trunc, 0x84, reg, reg, 0),
+        #[cfg(target_pointer_width = "32")]
+        ValueKind::Uint => func.emit_with_flags(Opcode::Trunc, 0x04, reg, reg, 0),
+        _ => {} // No truncation needed for Int64, Uint64, and Int/Uint on 64-bit
     }
 }

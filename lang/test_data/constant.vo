@@ -2,51 +2,52 @@ package main
 
 func main() {
     // ========== Large Integer Constants ==========
+    // Use int64 for 32-bit compatibility
     
     // Test i32 boundary values
-    max32 := 2147483647
-    min32 := -2147483648
+    var max32 int64 = 2147483647
+    var min32 int64 = -2147483648
     assert(max32 == 2147483647, "max32 should be 2147483647")
     assert(min32 == -2147483648, "min32 should be -2147483648")
     
     // Test values just outside i32 range
-    over32 := 2147483648
-    under32 := -2147483649
+    var over32 int64 = 2147483648
+    var under32 int64 = -2147483649
     assert(over32 == 2147483648, "over32 should be 2147483648")
     assert(under32 == -2147483649, "under32 should be -2147483649")
     
     // Test large positive integers
-    big1 := 9999999999
-    big2 := 100000000000
+    var big1 int64 = 9999999999
+    var big2 int64 = 100000000000
     assert(big1 == 9999999999, "big1 should be 9999999999")
     assert(big2 == 100000000000, "big2 should be 100000000000")
     
     // Test large negative integers
-    negbig1 := -9999999999
-    negbig2 := -100000000000
+    var negbig1 int64 = -9999999999
+    var negbig2 int64 = -100000000000
     assert(negbig1 == -9999999999, "negbig1 should be -9999999999")
     assert(negbig2 == -100000000000, "negbig2 should be -100000000000")
     
     // ========== Large Integer Arithmetic ==========
     
     // Addition with large integers
-    sum1 := big1 + big2
+    var sum1 int64 = big1 + big2
     assert(sum1 == 109999999999, "big1 + big2 should be 109999999999")
     
     // Subtraction with large integers
-    diff1 := big2 - big1
+    var diff1 int64 = big2 - big1
     assert(diff1 == 90000000001, "big2 - big1 should be 90000000001")
     
     // Multiplication with large integers
-    prod1 := over32 * 2
+    var prod1 int64 = over32 * 2
     assert(prod1 == 4294967296, "over32 * 2 should be 4294967296")
     
     // Division with large integers
-    div1 := big2 / 10
+    var div1 int64 = big2 / 10
     assert(div1 == 10000000000, "big2 / 10 should be 10000000000")
     
     // Mixed operations
-    mixed1 := (big1 + 1) * 2
+    var mixed1 int64 = (big1 + 1) * 2
     assert(mixed1 == 20000000000, "mixed1 should be 20000000000")
     
     // ========== Integer Comparison ==========

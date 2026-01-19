@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "vo"
 path = "src/main.rs"
 
+[features]
+default = ["jit"]
+jit = ["vo-vm/jit"]
+
 [dependencies]
 vo-common = { path = "../vo-common" }
 vo-common-core = { path = "../vo-common-core" }
@@ -20,6 +24,6 @@ vo-analysis = { path = "../vo-analysis" }
 vo-codegen = { path = "../vo-codegen" }
 vo-module = { path = "../vo-module" }
 vo-runtime = { path = "../vo-runtime" }
-vo-vm = { path = "../vo-vm", features = ["jit"] }
+vo-vm = { path = "../vo-vm" }
 rust-embed = "8"
 dirs = "5"

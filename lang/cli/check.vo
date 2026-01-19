@@ -1,6 +1,6 @@
 package main
 
-import "../../libs/vo/runner"
+import "../../libs/vox"
 
 func cmdCheck(args []string) int {
 	path := "."
@@ -11,12 +11,12 @@ func cmdCheck(args []string) int {
 	println("Checking project:", path)
 
 	// Compile without running (type-check)
-	module, err := runner.CompileDir(path)
+	module, err := vox.CompileDir(path)
 	if err != nil {
 		println("[VO:CHECK]", err.Error())
 		return 1
 	}
-	runner.Free(module)
+	vox.Free(module)
 
 	println("Check passed")
 	return 0

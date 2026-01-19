@@ -8,6 +8,7 @@ use std::alloc as heap_alloc;
 #[cfg(not(feature = "std"))]
 use alloc::alloc as heap_alloc;
 
+use crate::slot::{Slot, SLOT_BYTES};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
 /// GC object header - 8 bytes.
@@ -63,7 +64,7 @@ pub enum GcState {
 
 
 impl GcHeader {
-    pub const SIZE: usize = 8;
+    pub const SIZE: usize = SLOT_BYTES;
 
     pub fn new(value_meta: ValueMeta, slots: u16) -> Self {
         Self::new_with_white(value_meta, slots, WHITE0_BIT)
@@ -152,7 +153,7 @@ impl GcHeader {
 
 
 /// GC reference - pointer to GcObject data (after header).
-pub type GcRef = *mut u64;
+pub type GcRef = *mut Slot;
 
 /// Garbage collector.
 pub struct Gc {
@@ -244,10 +245,10 @@ impl Gc {
     
     fn alloc_inner(&mut self, value_meta: ValueMeta, header_slots: u16, slots: usize) -> GcRef {
         let header_size = GcHeader::SIZE;
-        let data_size = slots * 8;
+        let data_size = slots * SLOT_BYTES;
         let total_size = header_size + data_size;
 
-        let layout = core::alloc::Layout::from_size_align(total_size, 8).unwrap();
+        let layout = core::alloc::Layout::from_size_align(total_size, SLOT_BYTES).unwrap();
         let ptr = unsafe { heap_alloc::alloc_zeroed(layout) };
 
         if ptr.is_null() {
@@ -311,7 +312,7 @@ impl Gc {
         } else {
             header.slots as usize
         };
-        GcHeader::SIZE + slots * 8
+        GcHeader::SIZE + slots * SLOT_BYTES
     }
 
     /// Mark an object as gray (pending scan).

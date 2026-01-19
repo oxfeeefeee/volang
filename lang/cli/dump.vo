@@ -1,9 +1,6 @@
 package main
 
-import (
-	"../../libs/vo/bytecode"
-	"strings"
-)
+import "../../libs/vox"
 
 func cmdDump(args []string) int {
 	if len(args) == 0 {
@@ -13,17 +10,18 @@ func cmdDump(args []string) int {
 
 	file := args[0]
 
-	module, err := bytecode.LoadBinary(file)
+	module, err := vox.LoadBytecodeBinary(file)
 	if err != nil {
 		// Try loading as text file
-		module, err = bytecode.LoadText(file)
+		module, err = vox.LoadBytecodeText(file)
 		if err != nil {
 			println("[VO:IO]", err.Error())
 			return 1
 		}
 	}
 
-	text := bytecode.Format(module)
+	text := vox.FormatBytecode(module)
 	print(text)
+	vox.Free(module)
 	return 0
 }

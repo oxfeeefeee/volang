@@ -2,6 +2,7 @@
 
 use crate::gc::{scan_slots_by_types, Gc, GcRef};
 use crate::objects::{array, channel, closure, interface, map, slice};
+use crate::slot::{byte_offset_for_slots, slot_to_ptr, Slot, SLOT_BYTES};
 use vo_common_core::bytecode::StructMeta;
 use vo_common_core::types::{SlotType, ValueKind};
 
@@ -54,7 +55,7 @@ fn scan_array(gc: &mut Gc, obj: GcRef, struct_metas: &[StructMeta]) {
     
     let len = array::len(obj);
     let elem_bytes = array::elem_bytes(obj);
-    let elem_slots = elem_bytes / 8;
+    let elem_slots = elem_bytes / SLOT_BYTES;
     
     // For struct/pointer elements, use slot_types from struct_metas
     if matches!(elem_kind, ValueKind::Struct | ValueKind::Pointer) {
@@ -71,30 +72,31 @@ fn scan_array(gc: &mut Gc, obj: GcRef, struct_metas: &[StructMeta]) {
     // For reference types (slice, map, string, etc.), each element is a single GcRef
     for idx in 0..len {
         for slot in 0..elem_slots {
-            let byte_off = idx * elem_bytes + slot * 8;
-            let ptr = unsafe { (obj as *const u8).add(array::HEADER_SLOTS * 8 + byte_off) as *const u64 };
+            let byte_off = idx * elem_bytes + slot * SLOT_BYTES;
+            let base_off = byte_offset_for_slots(array::HEADER_SLOTS);
+            let ptr = unsafe { (obj as *const u8).add(base_off + byte_off) as *const Slot };
             let child = unsafe { *ptr };
-            if child != 0 { gc.mark_gray(child as GcRef); }
+            if child != 0 { gc.mark_gray(slot_to_ptr(child)); }
         }
     }
 }
 
 fn scan_array_struct_elem(gc: &mut Gc, obj: GcRef, idx: usize, elem_bytes: usize, slot_types: &[SlotType]) {
-    let base_off = array::HEADER_SLOTS * 8 + idx * elem_bytes;
+    let base_off = byte_offset_for_slots(array::HEADER_SLOTS) + idx * elem_bytes;
     let mut i = 0;
     while i < slot_types.len() {
         let st = slot_types[i];
         if st == SlotType::GcRef {
-            let ptr = unsafe { (obj as *const u8).add(base_off + i * 8) as *const u64 };
+            let ptr = unsafe { (obj as *const u8).add(base_off + i * SLOT_BYTES) as *const Slot };
             let child = unsafe { *ptr };
-            if child != 0 { gc.mark_gray(child as GcRef); }
+            if child != 0 { gc.mark_gray(slot_to_ptr(child)); }
         } else if st == SlotType::Interface0 {
-            let header_ptr = unsafe { (obj as *const u8).add(base_off + i * 8) as *const u64 };
+            let header_ptr = unsafe { (obj as *const u8).add(base_off + i * SLOT_BYTES) as *const Slot };
             let header_slot = unsafe { *header_ptr };
             if interface::data_is_gc_ref(header_slot) {
-                let data_ptr = unsafe { (obj as *const u8).add(base_off + (i + 1) * 8) as *const u64 };
+                let data_ptr = unsafe { (obj as *const u8).add(base_off + (i + 1) * SLOT_BYTES) as *const Slot };
                 let child = unsafe { *data_ptr };
-                if child != 0 { gc.mark_gray(child as GcRef); }
+                if child != 0 { gc.mark_gray(slot_to_ptr(child)); }
             }
             i += 1;
         }

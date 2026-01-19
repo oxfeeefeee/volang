@@ -2,22 +2,23 @@
 //!
 //! Layout: GcHeader + ArrayHeader + [elements...]
 //! - GcHeader: kind=Array, meta_id=0 (Array doesn't need its own meta_id)
-//! - ArrayHeader: len (usize), elem_meta (ValueMeta), elem_bytes (u32) - 2 slots
+//! - ArrayHeader: len (Slot), elem_meta (ValueMeta), elem_bytes (u32) - 2 slots
 //! - Elements: packed by elem_bytes (1/2/4/8+ bytes per element)
 
 use crate::gc::{Gc, GcRef};
+use crate::slot::{byte_offset_for_slots, slot_to_usize, slots_for_bytes, Slot, SLOT_BYTES};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
 
 #[repr(C)]
 pub struct ArrayHeader {
-    pub len: usize,
+    pub len: Slot,
     pub elem_meta: ValueMeta,
     pub elem_bytes: u32,
 }
 
 pub const HEADER_SLOTS: usize = 2;
-const _: () = assert!(core::mem::size_of::<ArrayHeader>() == HEADER_SLOTS * 8);
+const _: () = assert!(core::mem::size_of::<ArrayHeader>() == HEADER_SLOTS * SLOT_BYTES);
 
 impl_gc_object!(ArrayHeader);
 
@@ -25,12 +26,12 @@ impl_gc_object!(ArrayHeader);
 /// elem_bytes: actual byte size per element (1/2/4/8 for packed, slots*8 for slot-based)
 pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_bytes: usize, length: usize) -> GcRef {
     let data_bytes = length * elem_bytes;
-    let data_slots = (data_bytes + 7) / 8; // round up to slot boundary
+    let data_slots = slots_for_bytes(data_bytes); // round up to slot boundary
     let total_slots = HEADER_SLOTS + data_slots;
     let array_meta = ValueMeta::new(0, ValueKind::Array);
     let arr = gc.alloc_array(array_meta, total_slots);
     let header = ArrayHeader::as_mut(arr);
-    header.len = length;
+    header.len = length as Slot;
     header.elem_meta = elem_meta;
     header.elem_bytes = elem_bytes as u32;
     arr
@@ -38,7 +39,7 @@ pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_bytes: usize, length: usiz
 
 #[inline]
 pub fn len(arr: GcRef) -> usize {
-    ArrayHeader::as_ref(arr).len
+    slot_to_usize(ArrayHeader::as_ref(arr).len)
 }
 
 #[inline]
@@ -65,8 +66,8 @@ pub fn elem_bytes(arr: GcRef) -> usize {
 #[inline]
 pub fn total_slots(arr: GcRef) -> usize {
     let header = ArrayHeader::as_ref(arr);
-    let data_bytes = header.len * header.elem_bytes as usize;
-    let data_slots = (data_bytes + 7) / 8;
+    let data_bytes = slot_to_usize(header.len) * header.elem_bytes as usize;
+    let data_slots = slots_for_bytes(data_bytes);
     HEADER_SLOTS + data_slots
 }
 
@@ -74,7 +75,7 @@ pub fn total_slots(arr: GcRef) -> usize {
 /// Note: GcRef points to data after GcHeader, so we only skip ArrayHeader here.
 #[inline(always)]
 pub fn data_ptr_bytes(arr: GcRef) -> *mut u8 {
-    unsafe { (arr as *mut u8).add(HEADER_SLOTS * 8) }
+    unsafe { (arr as *mut u8).add(byte_offset_for_slots(HEADER_SLOTS)) }
 }
 
 /// Read single element (returns u64, small types zero-extended)

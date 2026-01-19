@@ -1361,32 +1361,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vo-ast"
-version = "0.1.0"
-dependencies = [
- "linkme",
- "vo-common",
- "vo-common-core",
- "vo-ext",
- "vo-ffi-macro",
- "vo-runtime",
- "vo-syntax",
-]
-
-[[package]]
-name = "vo-bytecode"
-version = "0.1.0"
-dependencies = [
- "linkme",
- "vo-common",
- "vo-common-core",
- "vo-ext",
- "vo-ffi-macro",
- "vo-runtime",
- "vo-vm",
-]
-
-[[package]]
 name = "vo-codegen"
 version = "0.1.0"
 dependencies = [
@@ -1481,18 +1455,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vo-runner"
-version = "0.1.0"
-dependencies = [
- "linkme",
- "vo-ext",
- "vo-ffi-macro",
- "vo-launcher",
- "vo-runtime",
- "vo-vm",
-]
-
-[[package]]
 name = "vo-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1532,6 +1494,20 @@ dependencies = [
  "vo-common-core",
  "vo-jit",
  "vo-runtime",
+]
+
+[[package]]
+name = "vo-vox"
+version = "0.1.0"
+dependencies = [
+ "linkme",
+ "vo-common",
+ "vo-ext",
+ "vo-ffi-macro",
+ "vo-launcher",
+ "vo-runtime",
+ "vo-syntax",
+ "vo-vm",
 ]
 
 [[package]]

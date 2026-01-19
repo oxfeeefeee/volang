@@ -224,10 +224,11 @@ fn get_read_regs(inst: &Instruction) -> Vec<u16> {
         Opcode::Copy | Opcode::Not | Opcode::NegI | Opcode::NegF => {
             regs.push(inst.b);
         }
-        Opcode::AddI | Opcode::SubI | Opcode::MulI | Opcode::DivI | Opcode::ModI |
+        Opcode::AddI | Opcode::SubI | Opcode::MulI | Opcode::DivI | Opcode::DivU | Opcode::ModI | Opcode::ModU |
         Opcode::AddF | Opcode::SubF | Opcode::MulF | Opcode::DivF |
         Opcode::And | Opcode::Or | Opcode::Xor | Opcode::Shl | Opcode::ShrS | Opcode::ShrU |
         Opcode::EqI | Opcode::NeI | Opcode::LtI | Opcode::LeI | Opcode::GtI | Opcode::GeI |
+        Opcode::LtU | Opcode::LeU | Opcode::GtU | Opcode::GeU |
         Opcode::EqF | Opcode::NeF | Opcode::LtF | Opcode::LeF | Opcode::GtF | Opcode::GeF => {
             regs.push(inst.b);
             regs.push(inst.c);
@@ -283,10 +284,11 @@ fn get_write_reg(inst: &Instruction) -> Option<u16> {
     match inst.opcode() {
         // Most arithmetic/logic instructions write to a
         Opcode::Copy | Opcode::Not | Opcode::NegI | Opcode::NegF |
-        Opcode::AddI | Opcode::SubI | Opcode::MulI | Opcode::DivI | Opcode::ModI |
+        Opcode::AddI | Opcode::SubI | Opcode::MulI | Opcode::DivI | Opcode::DivU | Opcode::ModI | Opcode::ModU |
         Opcode::AddF | Opcode::SubF | Opcode::MulF | Opcode::DivF |
         Opcode::And | Opcode::Or | Opcode::Xor | Opcode::Shl | Opcode::ShrS | Opcode::ShrU |
         Opcode::EqI | Opcode::NeI | Opcode::LtI | Opcode::LeI | Opcode::GtI | Opcode::GeI |
+        Opcode::LtU | Opcode::LeU | Opcode::GtU | Opcode::GeU |
         Opcode::EqF | Opcode::NeF | Opcode::LtF | Opcode::LeF | Opcode::GtF | Opcode::GeF |
         Opcode::LoadInt | Opcode::LoadConst |
         Opcode::PtrGet | Opcode::PtrNew | Opcode::SliceGet | Opcode::SliceNew => {

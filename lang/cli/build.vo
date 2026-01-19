@@ -1,6 +1,6 @@
 package main
 
-import "../../libs/vo/runner"
+import "../../libs/vox"
 
 func cmdBuild(args []string) int {
 	path := "."
@@ -10,16 +10,16 @@ func cmdBuild(args []string) int {
 
 	println("Building project:", path)
 
-	module, err := runner.CompileDir(path)
+	module, err := vox.CompileDir(path)
 	if err != nil {
 		println("[VO:COMPILE]", err.Error())
 		return 1
 	}
 
-	println("Running module:", runner.Name(module))
+	println("Running module:", vox.Name(module))
 
-	err = runner.Run(module)
-	runner.Free(module)
+	err = vox.Run(module)
+	vox.Free(module)
 
 	if err != nil {
 		println("[VO:PANIC]", err.Error())

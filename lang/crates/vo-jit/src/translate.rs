@@ -24,7 +24,9 @@ pub fn translate_inst<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) -> Res
         SubI => { sub_i(e, inst); Ok(Completed) }
         MulI => { mul_i(e, inst); Ok(Completed) }
         DivI => { div_i(e, inst); Ok(Completed) }
+        DivU => { div_u(e, inst); Ok(Completed) }
         ModI => { mod_i(e, inst); Ok(Completed) }
+        ModU => { mod_u(e, inst); Ok(Completed) }
         NegI => { neg_i(e, inst); Ok(Completed) }
         AddF => { add_f(e, inst); Ok(Completed) }
         SubF => { sub_f(e, inst); Ok(Completed) }
@@ -37,6 +39,10 @@ pub fn translate_inst<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) -> Res
         LeI => { cmp_i(e, inst, IntCC::SignedLessThanOrEqual); Ok(Completed) }
         GtI => { cmp_i(e, inst, IntCC::SignedGreaterThan); Ok(Completed) }
         GeI => { cmp_i(e, inst, IntCC::SignedGreaterThanOrEqual); Ok(Completed) }
+        LtU => { cmp_i(e, inst, IntCC::UnsignedLessThan); Ok(Completed) }
+        LeU => { cmp_i(e, inst, IntCC::UnsignedLessThanOrEqual); Ok(Completed) }
+        GtU => { cmp_i(e, inst, IntCC::UnsignedGreaterThan); Ok(Completed) }
+        GeU => { cmp_i(e, inst, IntCC::UnsignedGreaterThanOrEqual); Ok(Completed) }
         EqF => { cmp_f(e, inst, FloatCC::Equal); Ok(Completed) }
         NeF => { cmp_f(e, inst, FloatCC::NotEqual); Ok(Completed) }
         LtF => { cmp_f(e, inst, FloatCC::LessThan); Ok(Completed) }
@@ -205,6 +211,26 @@ fn mod_i<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let is_zero = e.builder().ins().icmp(IntCC::Equal, b, zero);
     emit_panic_if(e, is_zero, true);
     let r = e.builder().ins().srem(a, b);
+    e.write_var(inst.a, r);
+}
+
+fn div_u<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
+    let a = e.read_var(inst.b); let b = e.read_var(inst.c);
+    // Check for division by zero
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_zero = e.builder().ins().icmp(IntCC::Equal, b, zero);
+    emit_panic_if(e, is_zero, true);
+    let r = e.builder().ins().udiv(a, b);
+    e.write_var(inst.a, r);
+}
+
+fn mod_u<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
+    let a = e.read_var(inst.b); let b = e.read_var(inst.c);
+    // Check for division by zero
+    let zero = e.builder().ins().iconst(types::I64, 0);
+    let is_zero = e.builder().ins().icmp(IntCC::Equal, b, zero);
+    emit_panic_if(e, is_zero, true);
+    let r = e.builder().ins().urem(a, b);
     e.write_var(inst.a, r);
 }
 

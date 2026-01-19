@@ -453,6 +453,26 @@ impl Vm {
                         ExecResult::Continue
                     }
                 }
+                Opcode::DivU => {
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    if b == 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, "runtime error: integer divide by zero".to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_div(b));
+                        ExecResult::Continue
+                    }
+                }
+                Opcode::ModU => {
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    if b == 0 {
+                        runtime_panic(&mut self.state.gc, fiber, stack, module, "runtime error: integer divide by zero".to_string())
+                    } else {
+                        stack_set(stack, bp + inst.a as usize, a.wrapping_rem(b));
+                        ExecResult::Continue
+                    }
+                }
                 Opcode::NegI => {
                     let a = stack_get(stack, bp + inst.b as usize) as i64;
                     stack_set(stack, bp + inst.a as usize, a.wrapping_neg() as u64);
@@ -524,6 +544,32 @@ impl Vm {
                 Opcode::GeI => {
                     let a = stack_get(stack, bp + inst.b as usize) as i64;
                     let b = stack_get(stack, bp + inst.c as usize) as i64;
+                    stack_set(stack, bp + inst.a as usize, (a >= b) as u64);
+                    ExecResult::Continue
+                }
+                
+                // Unsigned integer comparison
+                Opcode::LtU => {
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, (a < b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::LeU => {
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, (a <= b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::GtU => {
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
+                    stack_set(stack, bp + inst.a as usize, (a > b) as u64);
+                    ExecResult::Continue
+                }
+                Opcode::GeU => {
+                    let a = stack_get(stack, bp + inst.b as usize);
+                    let b = stack_get(stack, bp + inst.c as usize);
                     stack_set(stack, bp + inst.a as usize, (a >= b) as u64);
                     ExecResult::Continue
                 }
@@ -698,10 +744,7 @@ impl Vm {
                     // Get pointers for closure calling capability
                     let vm_ptr = self as *mut Vm as *mut std::ffi::c_void;
                     let fiber_ptr = fiber as *mut crate::fiber::Fiber as *mut std::ffi::c_void;
-                    #[cfg(feature = "jit")]
-                    let closure_call_fn: Option<vo_runtime::ffi::ClosureCallFn> = Some(jit_glue::closure_call_trampoline);
-                    #[cfg(not(feature = "jit"))]
-                    let closure_call_fn: Option<vo_runtime::ffi::ClosureCallFn> = None;
+                    let closure_call_fn: Option<vo_runtime::ffi::ClosureCallFn> = Some(closure_call_trampoline);
                     let result = exec::exec_call_extern(
                         stack,
                         bp,
@@ -1331,6 +1374,65 @@ impl Vm {
         ExecResult::Continue
     }
 
+    /// Execute a closure synchronously from extern function callback.
+    /// Returns true on success, false on panic.
+    pub fn execute_closure_sync(
+        &mut self,
+        func_id: u32,
+        args: &[u64],
+        ret: *mut u64,
+        ret_count: u32,
+    ) -> bool {
+        let module = match &self.module {
+            Some(m) => m as *const Module,
+            None => return false,
+        };
+        let module = unsafe { &*module };
+        
+        let trampoline_id = self.scheduler.acquire_trampoline_fiber();
+        
+        let func_def = &module.functions[func_id as usize];
+        let local_slots = func_def.local_slots;
+        let param_slots = func_def.param_slots as usize;
+        let func_ret_slots = func_def.ret_slots as usize;
+        
+        {
+            let fiber = self.scheduler.trampoline_fiber_mut(trampoline_id);
+            fiber.push_frame(func_id, local_slots, 0, func_ret_slots as u16);
+            let bp = fiber.frames.last().unwrap().bp;
+            for i in 0..param_slots.min(args.len()) {
+                fiber.stack[bp + i] = args[i];
+            }
+        }
+        
+        let success = loop {
+            let exec_result = self.run_fiber(crate::scheduler::FiberId::from_raw(trampoline_id));
+            match exec_result {
+                ExecResult::Done | ExecResult::Return => break true,
+                ExecResult::Panic => break false,
+                ExecResult::Continue => {}
+                ExecResult::Yield | ExecResult::Block => {
+                    // For sync call, blocking is an error
+                    break false;
+                }
+                ExecResult::Osr(_, _, _) => {
+                    // OSR not available without JIT, treat as continue
+                }
+            }
+        };
+        
+        if success {
+            let fiber = self.scheduler.trampoline_fiber(trampoline_id);
+            for i in 0..(ret_count as usize) {
+                if i < fiber.stack.len() {
+                    unsafe { *ret.add(i) = fiber.stack[i] };
+                }
+            }
+        }
+        
+        self.scheduler.release_trampoline_fiber(trampoline_id);
+        success
+    }
 
 }
 
@@ -1338,5 +1440,38 @@ impl Vm {
 impl Default for Vm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Trampoline for calling closures from extern functions.
+/// This allows extern functions like dyn_call_closure to execute closures.
+pub extern "C" fn closure_call_trampoline(
+    vm: *mut std::ffi::c_void,
+    _caller_fiber: *mut std::ffi::c_void,
+    closure_ref: u64,
+    args: *const u64,
+    arg_count: u32,
+    ret: *mut u64,
+    ret_count: u32,
+) -> vo_runtime::ffi::ClosureCallResult {
+    use vo_runtime::gc::GcRef;
+    use vo_runtime::objects::closure;
+    use helpers::build_closure_args;
+    
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let vm = unsafe { &mut *(vm as *mut Vm) };
+        let closure_gcref = closure_ref as GcRef;
+        let func_id = closure::func_id(closure_gcref);
+        
+        let module = vm.module().expect("closure_call_trampoline: module not set");
+        let func_def = &module.functions[func_id as usize];
+        let full_args = build_closure_args(closure_ref, closure_gcref, func_def, args, arg_count);
+        
+        vm.execute_closure_sync(func_id, &full_args, ret, ret_count)
+    }));
+    
+    match result {
+        Ok(true) => vo_runtime::ffi::ClosureCallResult::Ok,
+        _ => vo_runtime::ffi::ClosureCallResult::Panic,
     }
 }

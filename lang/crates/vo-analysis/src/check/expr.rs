@@ -171,7 +171,7 @@ impl Checker {
                     let ty = typ::underlying_type(x.typ.unwrap(), self.objs());
                     let tval = self.otype(ty);
                     let prec = if tval.is_unsigned(self.objs()) {
-                        tval.try_as_basic().map(|b| b.size_of()).unwrap_or(0)
+                        tval.try_as_basic().map(|b| b.size_of() * 8).unwrap_or(0)
                     } else {
                         0
                     };

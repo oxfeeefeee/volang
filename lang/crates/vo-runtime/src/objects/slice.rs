@@ -5,19 +5,20 @@
 
 use crate::gc::{Gc, GcRef};
 use crate::objects::array;
+use crate::slot::{ptr_to_slot, slot_to_ptr, slot_to_usize, Slot, SLOT_BYTES};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
 
 #[repr(C)]
 pub struct SliceData {
-    pub array: GcRef,
-    pub data_ptr: *mut u8,  // Direct pointer to first element
-    pub len: usize,
-    pub cap: usize,         // Required for 3-index slice semantics
+    pub array: Slot,
+    pub data_ptr: Slot,  // Direct pointer to first element
+    pub len: Slot,
+    pub cap: Slot,         // Required for 3-index slice semantics
 }
 
 pub const DATA_SLOTS: u16 = 4;
-const _: () = assert!(core::mem::size_of::<SliceData>() == DATA_SLOTS as usize * 8);
+const _: () = assert!(core::mem::size_of::<SliceData>() == DATA_SLOTS as usize * SLOT_BYTES);
 
 pub const FIELD_ARRAY: usize = 0;
 pub const FIELD_DATA_PTR: usize = 1;
@@ -43,10 +44,10 @@ pub fn from_array_range_with_cap(gc: &mut Gc, arr: GcRef, start_off: usize, leng
     let elem_bytes = array::elem_bytes(arr);
     let s = gc.alloc(ValueMeta::new(0, ValueKind::Slice), DATA_SLOTS);
     let data = SliceData::as_mut(s);
-    data.array = arr;
-    data.data_ptr = unsafe { array::data_ptr_bytes(arr).add(start_off * elem_bytes) };
-    data.len = length;
-    data.cap = capacity;
+    data.array = ptr_to_slot(arr);
+    data.data_ptr = ptr_to_slot(unsafe { array::data_ptr_bytes(arr).add(start_off * elem_bytes) });
+    data.len = length as Slot;
+    data.cap = capacity as Slot;
     s
 }
 
@@ -76,13 +77,13 @@ pub fn from_array(gc: &mut Gc, arr: GcRef) -> GcRef {
 }
 
 #[inline]
-pub fn array_ref(s: GcRef) -> GcRef { SliceData::as_ref(s).array }
+pub fn array_ref(s: GcRef) -> GcRef { slot_to_ptr(SliceData::as_ref(s).array) }
 #[inline]
-pub fn data_ptr(s: GcRef) -> *mut u8 { SliceData::as_ref(s).data_ptr }
+pub fn data_ptr(s: GcRef) -> *mut u8 { slot_to_ptr(SliceData::as_ref(s).data_ptr) }
 #[inline]
-pub fn len(s: GcRef) -> usize { SliceData::as_ref(s).len }
+pub fn len(s: GcRef) -> usize { slot_to_usize(SliceData::as_ref(s).len) }
 #[inline]
-pub fn cap(s: GcRef) -> usize { SliceData::as_ref(s).cap }
+pub fn cap(s: GcRef) -> usize { slot_to_usize(SliceData::as_ref(s).cap) }
 #[inline]
 pub fn elem_kind(s: GcRef) -> ValueKind { array::elem_kind(array_ref(s)) }
 #[inline]
@@ -189,17 +190,18 @@ pub fn set_n(s: GcRef, idx: usize, src: &[u64], elem_bytes: usize) {
 /// Returns None on bounds error (lo > hi or hi > cap).
 pub fn slice_of(gc: &mut Gc, s: GcRef, lo: usize, hi: usize) -> Option<GcRef> {
     let data = SliceData::as_ref(s);
-    if lo > hi || hi > data.cap {
+    let cap = slot_to_usize(data.cap);
+    if lo > hi || hi > cap {
         return None;
     }
-    let elem_bytes = array::elem_bytes(data.array);
-    let new_data_ptr = unsafe { data.data_ptr.add(lo * elem_bytes) };
+    let elem_bytes = array::elem_bytes(array_ref(s));
+    let new_data_ptr = unsafe { data_ptr(s).add(lo * elem_bytes) };
     let new_s = gc.alloc(ValueMeta::new(0, ValueKind::Slice), DATA_SLOTS);
     let new_data = SliceData::as_mut(new_s);
     new_data.array = data.array;
-    new_data.data_ptr = new_data_ptr;
-    new_data.len = hi - lo;
-    new_data.cap = data.cap - lo;
+    new_data.data_ptr = ptr_to_slot(new_data_ptr);
+    new_data.len = (hi - lo) as Slot;
+    new_data.cap = (cap - lo) as Slot;
     Some(new_s)
 }
 
@@ -207,17 +209,18 @@ pub fn slice_of(gc: &mut Gc, s: GcRef, lo: usize, hi: usize) -> Option<GcRef> {
 /// Returns None on bounds error (lo > hi or hi > max or max > cap).
 pub fn slice_of_with_cap(gc: &mut Gc, s: GcRef, lo: usize, hi: usize, max: usize) -> Option<GcRef> {
     let data = SliceData::as_ref(s);
-    if lo > hi || hi > max || max > data.cap {
+    let cap = slot_to_usize(data.cap);
+    if lo > hi || hi > max || max > cap {
         return None;
     }
-    let elem_bytes = array::elem_bytes(data.array);
-    let new_data_ptr = unsafe { data.data_ptr.add(lo * elem_bytes) };
+    let elem_bytes = array::elem_bytes(array_ref(s));
+    let new_data_ptr = unsafe { data_ptr(s).add(lo * elem_bytes) };
     let new_s = gc.alloc(ValueMeta::new(0, ValueKind::Slice), DATA_SLOTS);
     let new_data = SliceData::as_mut(new_s);
     new_data.array = data.array;
-    new_data.data_ptr = new_data_ptr;
-    new_data.len = hi - lo;
-    new_data.cap = max - lo;
+    new_data.data_ptr = ptr_to_slot(new_data_ptr);
+    new_data.len = (hi - lo) as Slot;
+    new_data.cap = (max - lo) as Slot;
     Some(new_s)
 }
 
@@ -229,7 +232,7 @@ pub fn with_new_len(gc: &mut Gc, s: GcRef, new_len: usize) -> GcRef {
     let new_data = SliceData::as_mut(new_s);
     new_data.array = data.array;
     new_data.data_ptr = data.data_ptr;
-    new_data.len = new_len;
+    new_data.len = new_len as Slot;
     new_data.cap = data.cap;
     new_s
 }
@@ -243,11 +246,11 @@ pub fn append(gc: &mut Gc, em: ValueMeta, elem_bytes: usize, s: GcRef, val: &[u6
         return from_array_range(gc, new_arr, 0, 1);
     }
     let data = SliceData::as_ref(s);
-    let cur_len = data.len;
-    let cur_cap = data.cap;
+    let cur_len = slot_to_usize(data.len);
+    let cur_cap = slot_to_usize(data.cap);
     if cur_len < cur_cap {
         // Write directly using data_ptr
-        let ptr = unsafe { data.data_ptr.add(cur_len * elem_bytes) };
+        let ptr = unsafe { data_ptr(s).add(cur_len * elem_bytes) };
         match elem_bytes {
             1 => unsafe { *ptr = val[0] as u8 },
             2 => unsafe { *(ptr as *mut u16) = val[0] as u16 },
@@ -265,7 +268,7 @@ pub fn append(gc: &mut Gc, em: ValueMeta, elem_bytes: usize, s: GcRef, val: &[u6
         let aem = elem_meta(s);
         let new_arr = array::create(gc, aem, elem_bytes, new_cap);
         // Copy from data_ptr directly
-        let src_ptr = data.data_ptr;
+        let src_ptr = data_ptr(s);
         let dst_ptr = array::data_ptr_bytes(new_arr);
         unsafe { core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, cur_len * elem_bytes) };
         array::set_n(new_arr, cur_len, val, elem_bytes);

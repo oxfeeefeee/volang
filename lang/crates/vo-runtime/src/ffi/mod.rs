@@ -905,7 +905,7 @@ impl<'a> ExternCallContext<'a> {
                     ValueKind::Bool | ValueKind::Int8 | ValueKind::Uint8 => 1,
                     ValueKind::Int16 | ValueKind::Uint16 => 2,
                     ValueKind::Int32 | ValueKind::Uint32 | ValueKind::Float32 => 4,
-                    _ => elem_slots * 8,
+                    _ => elem_slots * crate::slot::SLOT_BYTES,
                 };
                 
                 let elem_meta = crate::ValueMeta::new(elem_value_rttid.rttid(), elem_vk);
