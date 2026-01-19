@@ -540,26 +540,32 @@ impl<'a> EscapeAnalyzer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::project::analyze_single_file;
+    use crate::Checker;
+    use crate::importer::NullImporter;
     use vo_syntax::parser;
+    use std::path::PathBuf;
 
     /// Helper to parse and type-check Vo code, returning escaped variable names.
     fn get_escaped_vars(source: &str) -> Vec<String> {
+        use crate::arena::ArenaKey;
+        use crate::objects::PackageKey;
         let (file, _diags, interner) = parser::parse(source, 0);
         
-        match analyze_single_file(file, interner) {
-            Ok(project) => {
-                let mut names: Vec<String> = project.type_info.escaped_vars
-                    .iter()
-                    .map(|&obj| project.tc_objs.lobjs[obj].name().to_string())
-                    .collect();
-                names.sort();
-                names
-            }
-            Err(e) => {
-                panic!("Type check failed: {:?}", e);
-            }
+        let mut checker = Checker::new_with_trace(PackageKey::null(), interner, false);
+        let main_pkg_key = checker.tc_objs.new_package("main".to_string());
+        checker.pkg = main_pkg_key;
+        
+        let mut importer = NullImporter::new(PathBuf::from("."));
+        if checker.check_with_importer(&[file], &mut importer).is_err() {
+            panic!("Type check failed: {:?}", checker.diagnostics.take());
         }
+        
+        let mut names: Vec<String> = checker.result.escaped_vars
+            .iter()
+            .map(|&obj| checker.tc_objs.lobjs[obj].name().to_string())
+            .collect();
+        names.sort();
+        names
     }
 
     // =========================================================================
@@ -629,6 +635,7 @@ mod tests {
 
     #[test]
     fn test_deeply_nested_field_address_escape() {
+        // Take address of nested struct field (not int - Vo only allows &struct)
         let escaped = get_escaped_vars(r#"
             package main
             type A struct { x int }
@@ -636,7 +643,7 @@ mod tests {
             type C struct { b B }
             func main() {
                 var c C
-                p := &c.b.a.x
+                p := &c.b.a
                 _ = p
             }
         "#);

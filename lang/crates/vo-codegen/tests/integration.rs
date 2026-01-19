@@ -1,22 +1,52 @@
 //! Integration tests: parse → check → codegen → VM
 
-use vo_analysis::project::analyze_single_file;
+use vo_analysis::{Checker, Project, AnalysisError};
+use vo_analysis::importer::NullImporter;
 use vo_codegen::compile_project;
 use vo_syntax::parser;
+use vo_common::SourceMap;
 use vo_vm::vm::Vm;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+/// Helper: analyze a single source string (no imports) for tests
+fn analyze_source(source: &str) -> Result<Project, AnalysisError> {
+    use vo_analysis::arena::ArenaKey;
+    use vo_analysis::objects::PackageKey;
+    
+    let (file, diags, interner) = parser::parse(source, 0);
+    if diags.has_errors() {
+        return Err(AnalysisError::Parse(diags, SourceMap::new()));
+    }
+    
+    let mut checker = Checker::new_with_trace(PackageKey::null(), interner.clone(), false);
+    let main_pkg_key = checker.tc_objs.new_package("main".to_string());
+    checker.pkg = main_pkg_key;
+    
+    let mut importer = NullImporter::new(PathBuf::from("."));
+    if checker.check_with_importer(&[file.clone()], &mut importer).is_err() {
+        let diags = checker.diagnostics.take();
+        return Err(AnalysisError::Check(diags, SourceMap::new()));
+    }
+    
+    Ok(Project {
+        tc_objs: checker.tc_objs,
+        interner,
+        packages: vec![main_pkg_key],
+        main_package: main_pkg_key,
+        type_info: checker.result,
+        files: vec![file],
+        imported_files: BTreeMap::new(),
+        imported_type_infos: BTreeMap::new(),
+        source_map: SourceMap::new(),
+        extensions: Vec::new(),
+    })
+}
 
 /// Helper: compile Vo source to Module
 fn compile_source(source: &str) -> vo_vm::bytecode::Module {
-    let (file, diags, interner) = parser::parse(source, 0);
-    if diags.has_errors() {
-        panic!("parse error: {:?}", diags);
-    }
-    
-    let project = analyze_single_file(file, interner)
-        .expect("analysis failed");
-    
-    compile_project(&project)
-        .expect("codegen failed")
+    let project = analyze_source(source).expect("analysis failed");
+    compile_project(&project).expect("codegen failed")
 }
 
 /// Helper: compile and run, verify execution completes

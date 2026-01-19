@@ -135,7 +135,7 @@ impl Checker {
     }
 
     /// Creates a new type checker with trace option.
-    pub(crate) fn new_with_trace(pkg: PackageKey, interner: SymbolInterner, trace_enabled: bool) -> Checker {
+    pub fn new_with_trace(pkg: PackageKey, interner: SymbolInterner, trace_enabled: bool) -> Checker {
         let tc_objs = TCObjects::new();
         Checker {
             tc_objs,
@@ -430,7 +430,7 @@ impl Checker {
     }
     
     /// Type check files with an importer for handling imports.
-    pub(crate) fn check_with_importer(
+    pub fn check_with_importer(
         &mut self,
         files: &[File],
         importer: &mut dyn Importer,
