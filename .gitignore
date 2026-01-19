@@ -62,3 +62,8 @@ lang/benchmark/recursive-tree/go_bench
 lang/benchmark/recursive-tree/c_bench
 lang/benchmark/sieve/go_bench
 lang/cli/.vo-cache/
+
+# Playground
+playground/node_modules/
+playground/dist/
+playground/src/wasm/pkg/

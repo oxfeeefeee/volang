@@ -80,30 +80,14 @@ fn format_args(call: &ExternCallContext, start_slot: u16) -> String {
 }
 
 /// vo_print - print values without newline (Go builtin print semantics)
-#[cfg(feature = "std")]
 fn builtin_print(call: &mut ExternCallContext) -> ExternResult {
-    print!("{}", format_args(call, 0));
-    ExternResult::Ok
-}
-
-/// vo_print - no_std version (no-op, just consume args)
-#[cfg(not(feature = "std"))]
-fn builtin_print(_call: &mut ExternCallContext) -> ExternResult {
-    // In no_std mode, print is a no-op
+    crate::output::write(&format_args(call, 0));
     ExternResult::Ok
 }
 
 /// vo_println - print values with newline (Go builtin println semantics)
-#[cfg(feature = "std")]
 fn builtin_println(call: &mut ExternCallContext) -> ExternResult {
-    println!("{}", format_args(call, 0));
-    ExternResult::Ok
-}
-
-/// vo_println - no_std version (no-op)
-#[cfg(not(feature = "std"))]
-fn builtin_println(_call: &mut ExternCallContext) -> ExternResult {
-    // In no_std mode, println is a no-op
+    crate::output::writeln(&format_args(call, 0));
     ExternResult::Ok
 }
 

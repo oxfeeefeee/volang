@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub mod slot;
+pub mod output;
 
 // Core runtime (no_std compatible)
 pub mod gc;

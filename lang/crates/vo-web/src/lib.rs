@@ -217,26 +217,29 @@ fn compile_source(source: &str, filename: &str) -> Result<Vec<u8>, CompileError>
 /// * `bytecode` - Compiled bytecode from compile()
 ///
 /// # Returns
-/// RunResult with status. Note: stdout goes to console.log in WASM.
+/// RunResult with stdout/stderr captured.
 #[wasm_bindgen]
 pub fn run(bytecode: &[u8]) -> RunResult {
     match run_bytecode(bytecode) {
-        Ok(()) => RunResult {
+        Ok(stdout) => RunResult {
             status: "ok".to_string(),
-            stdout: String::new(),
+            stdout,
             stderr: String::new(),
         },
         Err(msg) => RunResult {
             status: "error".to_string(),
-            stdout: String::new(),
+            stdout: vo_runtime::output::take_output(),
             stderr: msg,
         },
     }
 }
 
-fn run_bytecode(bytecode: &[u8]) -> Result<(), String> {
+fn run_bytecode(bytecode: &[u8]) -> Result<String, String> {
     use vo_vm::vm::Vm;
     use vo_vm::bytecode::Module;
+    
+    // Clear any previous output
+    vo_runtime::output::clear_output();
     
     // Deserialize module
     let module = Module::deserialize(bytecode)
@@ -246,7 +249,10 @@ fn run_bytecode(bytecode: &[u8]) -> Result<(), String> {
     let mut vm = Vm::new();
     vm.load(module);
     
-    vm.run().map_err(|e| format!("{:?}", e))
+    vm.run().map_err(|e| format!("{:?}", e))?;
+    
+    // Capture output
+    Ok(vo_runtime::output::take_output())
 }
 
 /// Compile and run in one step.
