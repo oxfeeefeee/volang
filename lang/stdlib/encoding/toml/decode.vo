@@ -1,0 +1,514 @@
+package toml
+
+import (
+	"dyn"
+	"errors"
+	"strconv"
+)
+
+// Unmarshal parses the TOML-encoded data and returns the result.
+// The result is a dyn.MapObject representing the TOML document.
+func Unmarshal(data []byte) (dyn.MapObject, error) {
+	return UnmarshalString(string(data))
+}
+
+// UnmarshalString parses a TOML string and returns a dyn.MapObject.
+func UnmarshalString(s string) (dyn.MapObject, error) {
+	p := &parser{data: s, pos: 0}
+	return p.parse()
+}
+
+// Valid reports whether data is a valid TOML encoding.
+func Valid(data []byte) bool {
+	_, err := Unmarshal(data)
+	return err == nil
+}
+
+type parser struct {
+	data string
+	pos  int
+}
+
+func (p *parser) parse() (dyn.MapObject, error) {
+	root := make(dyn.MapObject)
+	currentTable := root
+
+	for p.pos < len(p.data) {
+		p.skipWhitespaceAndComments()
+		if p.pos >= len(p.data) {
+			break
+		}
+
+		c := p.data[p.pos]
+
+		if c == '[' {
+			p.pos++
+			if p.pos < len(p.data) && p.data[p.pos] == '[' {
+				p.pos++
+				name, err := p.parseTableName()
+				if err != nil {
+					return nil, err
+				}
+				if p.pos >= len(p.data) || p.data[p.pos] != ']' || p.pos+1 >= len(p.data) || p.data[p.pos+1] != ']' {
+					return nil, errors.Wrap(ErrSyntax, "expected ']]'")
+				}
+				p.pos += 2
+				currentTable, err = p.getOrCreateArrayTable(root, name)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				name, err := p.parseTableName()
+				if err != nil {
+					return nil, err
+				}
+				if p.pos >= len(p.data) || p.data[p.pos] != ']' {
+					return nil, errors.Wrap(ErrSyntax, "expected ']'")
+				}
+				p.pos++
+				currentTable, err = p.getOrCreateTable(root, name)
+				if err != nil {
+					return nil, err
+				}
+			}
+		} else if c == '\n' || c == '\r' {
+			p.pos++
+		} else if isKeyChar(c) || c == '"' || c == '\'' {
+			key, err := p.parseKey()
+			if err != nil {
+				return nil, err
+			}
+			p.skipWhitespace()
+			if p.pos >= len(p.data) || p.data[p.pos] != '=' {
+				return nil, errors.Wrap(ErrSyntax, "expected '='")
+			}
+			p.pos++
+			p.skipWhitespace()
+			value, err := p.parseValue()
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := currentTable[key]; exists {
+				return nil, errors.Wrap(ErrDuplicateKey, key)
+			}
+			currentTable[key] = value
+		} else {
+			return nil, errors.Wrap(ErrSyntax, "unexpected character")
+		}
+	}
+
+	return root, nil
+}
+
+func (p *parser) skipWhitespace() {
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		if c == ' ' || c == '\t' {
+			p.pos++
+		} else {
+			break
+		}
+	}
+}
+
+func (p *parser) skipWhitespaceAndComments() {
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			p.pos++
+		} else if c == '#' {
+			for p.pos < len(p.data) && p.data[p.pos] != '\n' {
+				p.pos++
+			}
+		} else {
+			break
+		}
+	}
+}
+
+func (p *parser) parseTableName() ([]string, error) {
+	var parts []string
+	for {
+		p.skipWhitespace()
+		part, err := p.parseKey()
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+		p.skipWhitespace()
+		if p.pos >= len(p.data) {
+			break
+		}
+		if p.data[p.pos] == '.' {
+			p.pos++
+		} else {
+			break
+		}
+	}
+	return parts, nil
+}
+
+func (p *parser) parseKey() (string, error) {
+	if p.pos >= len(p.data) {
+		return "", ErrUnexpectedEOF
+	}
+
+	c := p.data[p.pos]
+	if c == '"' {
+		return p.parseBasicString()
+	}
+	if c == '\'' {
+		return p.parseLiteralString()
+	}
+
+	start := p.pos
+	for p.pos < len(p.data) && isKeyChar(p.data[p.pos]) {
+		p.pos++
+	}
+	if p.pos == start {
+		return "", errors.Wrap(ErrSyntax, "empty key")
+	}
+	return p.data[start:p.pos], nil
+}
+
+func (p *parser) parseValue() (any, error) {
+	if p.pos >= len(p.data) {
+		return nil, ErrUnexpectedEOF
+	}
+
+	c := p.data[p.pos]
+
+	if c == '"' {
+		return p.parseBasicString()
+	}
+	if c == '\'' {
+		return p.parseLiteralString()
+	}
+	if c == '[' {
+		return p.parseArray()
+	}
+	if c == '{' {
+		return p.parseInlineTable()
+	}
+	if p.hasPrefix("true") {
+		p.pos += 4
+		return true, nil
+	}
+	if p.hasPrefix("false") {
+		p.pos += 5
+		return false, nil
+	}
+	return p.parseNumber()
+}
+
+func (p *parser) hasPrefix(prefix string) bool {
+	if p.pos+len(prefix) > len(p.data) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if p.data[p.pos+i] != prefix[i] {
+			return false
+		}
+	}
+	if p.pos+len(prefix) < len(p.data) {
+		c := p.data[p.pos+len(prefix)]
+		if isKeyChar(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *parser) parseBasicString() (string, error) {
+	if p.pos >= len(p.data) || p.data[p.pos] != '"' {
+		return "", errors.Wrap(ErrSyntax, "expected '\"'")
+	}
+	p.pos++
+
+	buf := make([]byte, 0, 64)
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		if c == '"' {
+			p.pos++
+			return string(buf), nil
+		}
+		if c == '\\' {
+			p.pos++
+			if p.pos >= len(p.data) {
+				return "", ErrUnexpectedEOF
+			}
+			esc := p.data[p.pos]
+			switch esc {
+			case 'b':
+				buf = append(buf, '\b')
+			case 't':
+				buf = append(buf, '\t')
+			case 'n':
+				buf = append(buf, '\n')
+			case 'f':
+				buf = append(buf, '\f')
+			case 'r':
+				buf = append(buf, '\r')
+			case '"':
+				buf = append(buf, '"')
+			case '\\':
+				buf = append(buf, '\\')
+			default:
+				return "", errors.Wrap(ErrSyntax, "invalid escape sequence")
+			}
+			p.pos++
+		} else if c == '\n' || c == '\r' {
+			return "", errors.Wrap(ErrSyntax, "newline in basic string")
+		} else {
+			buf = append(buf, c)
+			p.pos++
+		}
+	}
+	return "", ErrUnexpectedEOF
+}
+
+func (p *parser) parseLiteralString() (string, error) {
+	if p.pos >= len(p.data) || p.data[p.pos] != '\'' {
+		return "", errors.Wrap(ErrSyntax, "expected \"'\"")
+	}
+	p.pos++
+
+	start := p.pos
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		if c == '\'' {
+			s := p.data[start:p.pos]
+			p.pos++
+			return s, nil
+		}
+		if c == '\n' || c == '\r' {
+			return "", errors.Wrap(ErrSyntax, "newline in literal string")
+		}
+		p.pos++
+	}
+	return "", ErrUnexpectedEOF
+}
+
+func (p *parser) parseArray() (dyn.SliceObject, error) {
+	if p.pos >= len(p.data) || p.data[p.pos] != '[' {
+		return nil, errors.Wrap(ErrSyntax, "expected '['")
+	}
+	p.pos++
+
+	arr := make(dyn.SliceObject, 0)
+	first := true
+
+	for {
+		p.skipWhitespaceAndComments()
+		if p.pos >= len(p.data) {
+			return nil, ErrUnexpectedEOF
+		}
+
+		if p.data[p.pos] == ']' {
+			p.pos++
+			return arr, nil
+		}
+
+		if !first {
+			if p.data[p.pos] != ',' {
+				return nil, errors.Wrap(ErrSyntax, "expected ',' or ']'")
+			}
+			p.pos++
+			p.skipWhitespaceAndComments()
+			if p.pos < len(p.data) && p.data[p.pos] == ']' {
+				p.pos++
+				return arr, nil
+			}
+		}
+		first = false
+
+		value, err := p.parseValue()
+		if err != nil {
+			return nil, err
+		}
+		arr = append(arr, value)
+	}
+}
+
+func (p *parser) parseInlineTable() (dyn.MapObject, error) {
+	if p.pos >= len(p.data) || p.data[p.pos] != '{' {
+		return nil, errors.Wrap(ErrSyntax, "expected '{'")
+	}
+	p.pos++
+
+	table := make(dyn.MapObject)
+	first := true
+
+	for {
+		p.skipWhitespace()
+		if p.pos >= len(p.data) {
+			return nil, ErrUnexpectedEOF
+		}
+
+		if p.data[p.pos] == '}' {
+			p.pos++
+			return table, nil
+		}
+
+		if !first {
+			if p.data[p.pos] != ',' {
+				return nil, errors.Wrap(ErrSyntax, "expected ',' or '}'")
+			}
+			p.pos++
+			p.skipWhitespace()
+		}
+		first = false
+
+		key, err := p.parseKey()
+		if err != nil {
+			return nil, err
+		}
+		p.skipWhitespace()
+		if p.pos >= len(p.data) || p.data[p.pos] != '=' {
+			return nil, errors.Wrap(ErrSyntax, "expected '='")
+		}
+		p.pos++
+		p.skipWhitespace()
+		value, err := p.parseValue()
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := table[key]; exists {
+			return nil, errors.Wrap(ErrDuplicateKey, key)
+		}
+		table[key] = value
+	}
+}
+
+func (p *parser) parseNumber() (any, error) {
+	start := p.pos
+
+	if p.pos < len(p.data) && (p.data[p.pos] == '+' || p.data[p.pos] == '-') {
+		p.pos++
+	}
+
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		if isDigit(c) || c == '.' || c == '_' || c == 'e' || c == 'E' || c == '+' || c == '-' {
+			p.pos++
+		} else {
+			break
+		}
+	}
+
+	s := p.data[start:p.pos]
+	if len(s) == 0 {
+		return nil, errors.Wrap(ErrSyntax, "expected value")
+	}
+
+	cleaned := removeUnderscores(s)
+
+	isFloat := false
+	for i := 0; i < len(cleaned); i++ {
+		if cleaned[i] == '.' || cleaned[i] == 'e' || cleaned[i] == 'E' {
+			isFloat = true
+			break
+		}
+	}
+
+	if isFloat {
+		f, ok := strconv.ParseFloat(cleaned, 64)
+		if !ok {
+			return nil, errors.Wrap(ErrInvalidValue, "invalid float")
+		}
+		return f, nil
+	}
+
+	i, err := strconv.ParseInt(cleaned, 10)
+	if err != nil {
+		return nil, errors.Wrap(ErrInvalidValue, "invalid integer")
+	}
+	return i, nil
+}
+
+func (p *parser) getOrCreateTable(root dyn.MapObject, path []string) (dyn.MapObject, error) {
+	current := root
+	for i := 0; i < len(path); i++ {
+		key := path[i]
+		if existing, ok := current[key]; ok {
+			if table, ok := existing.(dyn.MapObject); ok {
+				current = table
+			} else if table, ok := existing.(map[string]any); ok {
+				current = dyn.MapObject(table)
+			} else {
+				return nil, errors.Wrap(ErrTypeMismatch, "expected table")
+			}
+		} else {
+			newTable := make(dyn.MapObject)
+			current[key] = newTable
+			current = newTable
+		}
+	}
+	return current, nil
+}
+
+func (p *parser) getOrCreateArrayTable(root dyn.MapObject, path []string) (dyn.MapObject, error) {
+	current := root
+	for i := 0; i < len(path)-1; i++ {
+		key := path[i]
+		if existing, ok := current[key]; ok {
+			if table, ok := existing.(dyn.MapObject); ok {
+				current = table
+			} else if table, ok := existing.(map[string]any); ok {
+				current = dyn.MapObject(table)
+			} else if arr, ok := existing.(dyn.SliceObject); ok {
+				if len(arr) > 0 {
+					if table, ok := arr[len(arr)-1].(dyn.MapObject); ok {
+						current = table
+					} else if table, ok := arr[len(arr)-1].(map[string]any); ok {
+						current = dyn.MapObject(table)
+					} else {
+						return nil, errors.Wrap(ErrTypeMismatch, "expected table in array")
+					}
+				} else {
+					return nil, errors.Wrap(ErrTypeMismatch, "empty array")
+				}
+			} else {
+				return nil, errors.Wrap(ErrTypeMismatch, "expected table or array")
+			}
+		} else {
+			newTable := make(dyn.MapObject)
+			current[key] = newTable
+			current = newTable
+		}
+	}
+
+	lastKey := path[len(path)-1]
+	var arr dyn.SliceObject
+	if existing, ok := current[lastKey]; ok {
+		if existingArr, ok := existing.(dyn.SliceObject); ok {
+			arr = existingArr
+		} else if existingArr, ok := existing.([]any); ok {
+			arr = dyn.SliceObject(existingArr)
+		} else {
+			return nil, errors.Wrap(ErrTypeMismatch, "expected array")
+		}
+	} else {
+		arr = make(dyn.SliceObject, 0)
+	}
+
+	newTable := make(dyn.MapObject)
+	arr = append(arr, newTable)
+	current[lastKey] = arr
+
+	return newTable, nil
+}
+
+func isDigit(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
+func removeUnderscores(s string) string {
+	buf := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '_' {
+			buf = append(buf, s[i])
+		}
+	}
+	return string(buf)
+}

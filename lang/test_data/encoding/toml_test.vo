@@ -1,121 +1,522 @@
 package main
 
 import (
+	"dyn"
+	"encoding/toml"
 	"fmt"
-    "dyn"
-    "encoding/toml"
 )
 
 func main() {
-    testParseSimple()
-    testParseTable()
-    testParseArray()
-    testParseNested()
-    testStringify()
-    testArrayOfTables()
-    fmt.Println("All TOML tests passed!")
+	// Basic types
+	testBasicTypes()
+	testStrings()
+	testNumbers()
+	testBooleans()
+	
+	// Arrays
+	testArrays()
+	testNestedArrays()
+	testEmptyArray()
+	
+	// Tables
+	testSimpleTable()
+	testNestedTables()
+	testDottedKeys()
+	testInlineTable()
+	
+	// Array of tables
+	testArrayOfTables()
+	testNestedArrayOfTables()
+	
+	// Comments
+	testComments()
+	
+	// Marshal/Unmarshal roundtrip
+	testMarshalRoundtrip()
+	testMarshalNestedTable()
+	testMarshalArrayOfTables()
+	
+	// Valid helper
+	testValid()
+	
+	// Edge cases
+	testEmptyDocument()
+	testWhitespace()
+	testTrailingComma()
+	
+	fmt.Println("[VO:OK] All TOML tests passed!")
 }
 
-func testParseSimple() {
-    input := "title = \"TOML Example\"\ncount = 42\npi = 3.14\nenabled = true\n"
-    obj, err := toml.ParseString(input)
-    assert(err == nil, "parse simple error")
-    assert(obj["title"].(string) == "TOML Example", "title")
-    assert(obj["count"].(int) == 42, "count")
-    assert(obj["enabled"].(bool) == true, "enabled")
-    
-    // Float comparison
-    pi := obj["pi"].(float64)
-    assert(pi > 3.13 && pi < 3.15, "pi")
-    
-    fmt.Println("  testParseSimple passed")
+// ==================== Basic Types ====================
+
+func testBasicTypes() {
+	input := `
+title = "TOML Example"
+count = 42
+pi = 3.14159
+enabled = true
+disabled = false
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testBasicTypes: parse error")
+	assert(obj["title"].(string) == "TOML Example", "title")
+	assert(obj["count"].(int) == 42, "count")
+	assert(obj["enabled"].(bool) == true, "enabled")
+	assert(obj["disabled"].(bool) == false, "disabled")
+	
+	pi := obj["pi"].(float64)
+	assert(pi > 3.14 && pi < 3.15, "pi range")
+	
+	fmt.Println("  testBasicTypes passed")
 }
 
-func testParseTable() {
-    input := "[server]\nhost = \"localhost\"\nport = 8080\n\n[database]\nname = \"mydb\"\n"
-    obj, err := toml.ParseString(input)
-    assert(err == nil, "parse table error")
-    
-    server := obj["server"].(dyn.MapObject)
-    assert(server["host"].(string) == "localhost", "server.host")
-    assert(server["port"].(int) == 8080, "server.port")
-    
-    db := obj["database"].(dyn.MapObject)
-    assert(db["name"].(string) == "mydb", "database.name")
-    
-    fmt.Println("  testParseTable passed")
+func testStrings() {
+	input := `
+basic = "Hello, World!"
+escaped = "Tab:\tNewline:\nQuote:\""
+empty = ""
+unicode = "中文"
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testStrings: parse error")
+	assert(obj["basic"].(string) == "Hello, World!", "basic string")
+	assert(obj["escaped"].(string) == "Tab:\tNewline:\nQuote:\"", "escaped string")
+	assert(obj["empty"].(string) == "", "empty string")
+	assert(obj["unicode"].(string) == "中文", "unicode string")
+	
+	// Literal strings
+	input2 := `
+literal = 'no escape \n here'
+`
+	obj2, err := toml.UnmarshalString(input2)
+	assert(err == nil, "testStrings: literal parse error")
+	assert(obj2["literal"].(string) == "no escape \\n here", "literal string")
+	
+	fmt.Println("  testStrings passed")
 }
 
-func testParseArray() {
-    input := "numbers = [1, 2, 3]\nnames = [\"alice\", \"bob\"]\nmixed = [1, \"two\", true]\n"
-    obj, err := toml.ParseString(input)
-    assert(err == nil, "parse array error")
-    
-    numbers := obj["numbers"].(dyn.SliceObject)
-    assert(len(numbers) == 3, "numbers len")
-    assert(numbers[0].(int) == 1, "numbers[0]")
-    
-    names := obj["names"].(dyn.SliceObject)
-    assert(len(names) == 2, "names len")
-    assert(names[0].(string) == "alice", "names[0]")
-    
-    fmt.Println("  testParseArray passed")
+func testNumbers() {
+	input := `
+positive = 42
+negative = -17
+zero = 0
+large = 9999999
+float_pos = 3.14
+float_neg = -2.718
+float_exp = 1e10
+with_underscore = 1_000_000
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testNumbers: parse error")
+	assert(obj["positive"].(int) == 42, "positive")
+	assert(obj["negative"].(int) == -17, "negative")
+	assert(obj["zero"].(int) == 0, "zero")
+	assert(obj["large"].(int) == 9999999, "large")
+	assert(obj["with_underscore"].(int) == 1000000, "underscore")
+	
+	fp := obj["float_pos"].(float64)
+	assert(fp > 3.13 && fp < 3.15, "float_pos")
+	
+	fn := obj["float_neg"].(float64)
+	assert(fn < -2.7 && fn > -2.8, "float_neg")
+	
+	fmt.Println("  testNumbers passed")
 }
 
-func testParseNested() {
-    input := "[server.http]\nport = 80\n\n[server.https]\nport = 443\n"
-    obj, err := toml.ParseString(input)
-    assert(err == nil, "parse nested error")
-    
-    server := obj["server"].(dyn.MapObject)
-    http := server["http"].(dyn.MapObject)
-    assert(http["port"].(int) == 80, "http port")
-    
-    https := server["https"].(dyn.MapObject)
-    assert(https["port"].(int) == 443, "https port")
-    
-    fmt.Println("  testParseNested passed")
+func testBooleans() {
+	input := `
+yes = true
+no = false
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testBooleans: parse error")
+	assert(obj["yes"].(bool) == true, "yes")
+	assert(obj["no"].(bool) == false, "no")
+	
+	fmt.Println("  testBooleans passed")
 }
 
-func testStringify() {
-    obj := make(dyn.MapObject)
-    obj["name"] = "test"
-    obj["count"] = 100
-    obj["enabled"] = true
-    
-    data, err := toml.Stringify(obj)
-    assert(err == nil, "stringify error")
-    
-    // Re-parse to verify
-    parsed, err := toml.Parse(data)
-    assert(err == nil, "reparse error")
-    assert(parsed["name"].(string) == "test", "stringify name")
-    assert(parsed["count"].(int) == 100, "stringify count")
-    assert(parsed["enabled"].(bool) == true, "stringify enabled")
-    
-    fmt.Println("  testStringify passed")
+// ==================== Arrays ====================
+
+func testArrays() {
+	input := `
+integers = [1, 2, 3, 4, 5]
+strings = ["red", "green", "blue"]
+floats = [1.1, 2.2, 3.3]
+bools = [true, false, true]
+mixed = [1, "two", true]
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testArrays: parse error")
+	
+	ints := obj["integers"].(dyn.SliceObject)
+	assert(len(ints) == 5, "integers len")
+	assert(ints[0].(int) == 1, "integers[0]")
+	assert(ints[4].(int) == 5, "integers[4]")
+	
+	strs := obj["strings"].(dyn.SliceObject)
+	assert(len(strs) == 3, "strings len")
+	assert(strs[0].(string) == "red", "strings[0]")
+	assert(strs[2].(string) == "blue", "strings[2]")
+	
+	mixed := obj["mixed"].(dyn.SliceObject)
+	assert(len(mixed) == 3, "mixed len")
+	assert(mixed[0].(int) == 1, "mixed[0]")
+	assert(mixed[1].(string) == "two", "mixed[1]")
+	assert(mixed[2].(bool) == true, "mixed[2]")
+	
+	fmt.Println("  testArrays passed")
 }
+
+func testNestedArrays() {
+	input := `
+nested = [[1, 2], [3, 4], [5, 6]]
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testNestedArrays: parse error")
+	
+	nested := obj["nested"].(dyn.SliceObject)
+	assert(len(nested) == 3, "nested len")
+	
+	first := nested[0].(dyn.SliceObject)
+	assert(len(first) == 2, "first len")
+	assert(first[0].(int) == 1, "first[0]")
+	assert(first[1].(int) == 2, "first[1]")
+	
+	fmt.Println("  testNestedArrays passed")
+}
+
+func testEmptyArray() {
+	input := `
+empty = []
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testEmptyArray: parse error")
+	
+	empty := obj["empty"].(dyn.SliceObject)
+	assert(len(empty) == 0, "empty len")
+	
+	fmt.Println("  testEmptyArray passed")
+}
+
+// ==================== Tables ====================
+
+func testSimpleTable() {
+	input := `
+[server]
+host = "localhost"
+port = 8080
+
+[database]
+name = "mydb"
+user = "admin"
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testSimpleTable: parse error")
+	
+	server := obj["server"].(dyn.MapObject)
+	assert(server["host"].(string) == "localhost", "server.host")
+	assert(server["port"].(int) == 8080, "server.port")
+	
+	db := obj["database"].(dyn.MapObject)
+	assert(db["name"].(string) == "mydb", "database.name")
+	assert(db["user"].(string) == "admin", "database.user")
+	
+	fmt.Println("  testSimpleTable passed")
+}
+
+func testNestedTables() {
+	input := `
+[server]
+name = "main"
+
+[server.http]
+port = 80
+enabled = true
+
+[server.https]
+port = 443
+enabled = true
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testNestedTables: parse error")
+	
+	server := obj["server"].(dyn.MapObject)
+	assert(server["name"].(string) == "main", "server.name")
+	
+	http := server["http"].(dyn.MapObject)
+	assert(http["port"].(int) == 80, "http.port")
+	assert(http["enabled"].(bool) == true, "http.enabled")
+	
+	https := server["https"].(dyn.MapObject)
+	assert(https["port"].(int) == 443, "https.port")
+	
+	fmt.Println("  testNestedTables passed")
+}
+
+func testDottedKeys() {
+	input := `
+[physical]
+color = "orange"
+shape = "round"
+
+[physical.location]
+x = 10
+y = 20
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testDottedKeys: parse error")
+	
+	phys := obj["physical"].(dyn.MapObject)
+	assert(phys["color"].(string) == "orange", "color")
+	assert(phys["shape"].(string) == "round", "shape")
+	
+	loc := phys["location"].(dyn.MapObject)
+	assert(loc["x"].(int) == 10, "x")
+	assert(loc["y"].(int) == 20, "y")
+	
+	fmt.Println("  testDottedKeys passed")
+}
+
+func testInlineTable() {
+	input := `
+point = {x = 1, y = 2}
+person = {name = "Alice", age = 30}
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testInlineTable: parse error")
+	
+	point := obj["point"].(dyn.MapObject)
+	assert(point["x"].(int) == 1, "point.x")
+	assert(point["y"].(int) == 2, "point.y")
+	
+	person := obj["person"].(dyn.MapObject)
+	assert(person["name"].(string) == "Alice", "person.name")
+	assert(person["age"].(int) == 30, "person.age")
+	
+	fmt.Println("  testInlineTable passed")
+}
+
+// ==================== Array of Tables ====================
 
 func testArrayOfTables() {
-    input := "[[products]]\nname = \"Hammer\"\nprice = 9.99\n\n[[products]]\nname = \"Nail\"\nprice = 0.05\n"
-    obj, err := toml.ParseString(input)
-    assert(err == nil, "parse array of tables error")
-    
-    products := obj["products"].(dyn.SliceObject)
-    assert(len(products) == 2, "products len")
-    
-    p1 := products[0].(dyn.MapObject)
-    assert(p1["name"].(string) == "Hammer", "product 1 name")
-    
-    p2 := products[1].(dyn.MapObject)
-    assert(p2["name"].(string) == "Nail", "product 2 name")
-    
-    fmt.Println("  testArrayOfTables passed")
+	input := `
+[[products]]
+name = "Hammer"
+price = 9.99
+
+[[products]]
+name = "Nail"
+price = 0.05
+
+[[products]]
+name = "Screwdriver"
+price = 5.99
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testArrayOfTables: parse error")
+	
+	products := obj["products"].(dyn.SliceObject)
+	assert(len(products) == 3, "products len")
+	
+	p1 := products[0].(dyn.MapObject)
+	assert(p1["name"].(string) == "Hammer", "product 1 name")
+	
+	p2 := products[1].(dyn.MapObject)
+	assert(p2["name"].(string) == "Nail", "product 2 name")
+	
+	p3 := products[2].(dyn.MapObject)
+	assert(p3["name"].(string) == "Screwdriver", "product 3 name")
+	
+	fmt.Println("  testArrayOfTables passed")
 }
 
+func testNestedArrayOfTables() {
+	input := `
+[[fruits]]
+name = "apple"
+
+[[fruits.varieties]]
+name = "red delicious"
+
+[[fruits.varieties]]
+name = "granny smith"
+
+[[fruits]]
+name = "banana"
+
+[[fruits.varieties]]
+name = "plantain"
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testNestedArrayOfTables: parse error")
+	
+	fruits := obj["fruits"].(dyn.SliceObject)
+	assert(len(fruits) == 2, "fruits len")
+	
+	apple := fruits[0].(dyn.MapObject)
+	assert(apple["name"].(string) == "apple", "apple name")
+	
+	appleVars := apple["varieties"].(dyn.SliceObject)
+	assert(len(appleVars) == 2, "apple varieties len")
+	
+	banana := fruits[1].(dyn.MapObject)
+	assert(banana["name"].(string) == "banana", "banana name")
+	
+	fmt.Println("  testNestedArrayOfTables passed")
+}
+
+// ==================== Comments ====================
+
+func testComments() {
+	input := `
+# This is a comment
+key = "value" # inline comment
+
+# Another comment
+[section] # section comment
+name = "test"
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "testComments: parse error")
+	assert(obj["key"].(string) == "value", "key")
+	
+	section := obj["section"].(dyn.MapObject)
+	assert(section["name"].(string) == "test", "section.name")
+	
+	fmt.Println("  testComments passed")
+}
+
+// ==================== Marshal Roundtrip ====================
+
+func testMarshalRoundtrip() {
+	obj := make(dyn.MapObject)
+	obj["name"] = "test"
+	obj["count"] = 100
+	obj["enabled"] = true
+	obj["ratio"] = 3.14
+	obj["tags"] = dyn.SliceObject{"a", "b", "c"}
+	
+	data, err := toml.Marshal(obj)
+	assert(err == nil, "marshal error")
+	
+	parsed, err := toml.Unmarshal(data)
+	assert(err == nil, "unmarshal error")
+	assert(parsed["name"].(string) == "test", "roundtrip name")
+	assert(parsed["count"].(int) == 100, "roundtrip count")
+	assert(parsed["enabled"].(bool) == true, "roundtrip enabled")
+	
+	tags := parsed["tags"].(dyn.SliceObject)
+	assert(len(tags) == 3, "roundtrip tags len")
+	assert(tags[0].(string) == "a", "roundtrip tags[0]")
+	
+	fmt.Println("  testMarshalRoundtrip passed")
+}
+
+func testMarshalNestedTable() {
+	inner := make(dyn.MapObject)
+	inner["port"] = 8080
+	inner["host"] = "localhost"
+	
+	obj := make(dyn.MapObject)
+	obj["server"] = inner
+	
+	data, err := toml.Marshal(obj)
+	assert(err == nil, "marshal nested error")
+	
+	parsed, err := toml.Unmarshal(data)
+	assert(err == nil, "unmarshal nested error")
+	
+	server := parsed["server"].(dyn.MapObject)
+	assert(server["port"].(int) == 8080, "nested port")
+	assert(server["host"].(string) == "localhost", "nested host")
+	
+	fmt.Println("  testMarshalNestedTable passed")
+}
+
+func testMarshalArrayOfTables() {
+	p1 := make(dyn.MapObject)
+	p1["name"] = "Item1"
+	p1["qty"] = 10
+	
+	p2 := make(dyn.MapObject)
+	p2["name"] = "Item2"
+	p2["qty"] = 20
+	
+	obj := make(dyn.MapObject)
+	obj["items"] = dyn.SliceObject{p1, p2}
+	
+	data, err := toml.Marshal(obj)
+	assert(err == nil, "marshal array of tables error")
+	
+	parsed, err := toml.Unmarshal(data)
+	assert(err == nil, "unmarshal array of tables error")
+	
+	items := parsed["items"].(dyn.SliceObject)
+	assert(len(items) == 2, "items len")
+	
+	item1 := items[0].(dyn.MapObject)
+	assert(item1["name"].(string) == "Item1", "item1 name")
+	assert(item1["qty"].(int) == 10, "item1 qty")
+	
+	fmt.Println("  testMarshalArrayOfTables passed")
+}
+
+// ==================== Valid Helper ====================
+
+func testValid() {
+	assert(toml.Valid([]byte("key = 'value'")), "valid simple")
+	assert(toml.Valid([]byte("[table]\nk = 1")), "valid table")
+	assert(!toml.Valid([]byte("invalid = ")), "invalid")
+	assert(!toml.Valid([]byte("[unclosed")), "unclosed table")
+	
+	fmt.Println("  testValid passed")
+}
+
+// ==================== Edge Cases ====================
+
+func testEmptyDocument() {
+	obj, err := toml.UnmarshalString("")
+	assert(err == nil, "empty doc error")
+	assert(len(obj) == 0, "empty doc len")
+	
+	obj2, err := toml.UnmarshalString("   \n\n   ")
+	assert(err == nil, "whitespace only error")
+	assert(len(obj2) == 0, "whitespace only len")
+	
+	fmt.Println("  testEmptyDocument passed")
+}
+
+func testWhitespace() {
+	input := `
+    key   =    "value"   
+[  section  ]
+    name = "test"
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "whitespace parse error")
+	assert(obj["key"].(string) == "value", "whitespace key")
+	
+	fmt.Println("  testWhitespace passed")
+}
+
+func testTrailingComma() {
+	input := `
+arr = [1, 2, 3,]
+`
+	obj, err := toml.UnmarshalString(input)
+	assert(err == nil, "trailing comma error")
+	
+	arr := obj["arr"].(dyn.SliceObject)
+	assert(len(arr) == 3, "trailing comma arr len")
+	
+	fmt.Println("  testTrailingComma passed")
+}
+
+// ==================== Helper ====================
+
 func assert(cond bool, msg string) {
-    if !cond {
-        fmt.Println("ASSERT FAILED:", msg)
-        panic("assertion failed: " + msg)
-    }
+	if !cond {
+		panic("ASSERT FAILED: " + msg)
+	}
 }
