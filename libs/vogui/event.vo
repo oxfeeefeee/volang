@@ -1,0 +1,200 @@
+// Event handling and handler registration.
+package gui
+
+import "encoding/json"
+
+// Handler represents an event handler binding.
+type Handler struct {
+	ID     int
+	Type   string // "click", "value", "checked", "int", "intValue", "intChecked", "key", "submit", "select", "slider"
+	IntVal int    // Pre-bound integer for OnInt variants
+}
+
+// Event represents an event from JS.
+type Event struct {
+	HandlerID int
+	Payload   string
+}
+
+// Internal handler storage
+var handlers []any
+var handlerMetas []Handler
+var globalKeyHandler any  // func(state any, key string)
+
+// resetHandlers clears handler state before each render.
+func resetHandlers() {
+	handlers = []any{}
+	handlerMetas = []Handler{}
+	// globalKeyHandler persists
+}
+
+// SetGlobalKeyHandler registers a handler for global key events (window.onkeydown).
+// Handler signature: func(state any, key string)
+func SetGlobalKeyHandler(action any) {
+    globalKeyHandler = action
+}
+
+// ============ Handler Constructors ============
+
+// On wraps an action for click events.
+// Action signature: func(s *State)
+func On(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "click"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnValue wraps an action that receives input value.
+// Action signature: func(s *State, value string)
+func OnValue(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "value"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnChecked wraps an action that receives checked state.
+// Action signature: func(s *State, checked bool)
+func OnChecked(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "checked"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnInt wraps an action with a pre-bound integer value.
+// Action signature: func(s *State, val int)
+func OnInt(action any, val int) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "int", IntVal: val}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnIntValue wraps an action with pre-bound int and input value.
+// Action signature: func(s *State, val int, value string)
+func OnIntValue(action any, val int) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "intValue", IntVal: val}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnIntChecked wraps an action with pre-bound int and checked state.
+// Action signature: func(s *State, val int, checked bool)
+func OnIntChecked(action any, val int) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "intChecked", IntVal: val}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnKey wraps an action that receives key name.
+// Action signature: func(s *State, key string)
+func OnKey(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "key"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnSubmit wraps an action for form submit.
+// Action signature: func(s *State)
+func OnSubmit(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "submit"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnSelect wraps an action for select change.
+// Action signature: func(s *State, value string)
+func OnSelect(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "select"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// OnSlider wraps an action for slider change.
+// Action signature: func(s *State, value int)
+func OnSlider(action any) Handler {
+	id := len(handlers)
+	handlers = append(handlers, action)
+	h := Handler{ID: id, Type: "slider"}
+	handlerMetas = append(handlerMetas, h)
+	return h
+}
+
+// ============ Handler Invocation ============
+
+func invokeHandler(state any, idx int, payload string) error {
+	if idx < 0 || idx >= len(handlers) {
+		return nil
+	}
+	handler := handlers[idx]
+	meta := handlerMetas[idx]
+
+	switch meta.Type {
+	case "click", "submit":
+		err := handler~>(state)
+		return err
+	case "value", "select":
+		var p struct{ Value string }
+		json.Unmarshal([]byte(payload), &p)
+		err := handler~>(state, p.Value)
+		return err
+	case "checked":
+		var p struct{ Checked bool }
+		json.Unmarshal([]byte(payload), &p)
+		err := handler~>(state, p.Checked)
+		return err
+	case "int":
+		err := handler~>(state, meta.IntVal)
+		return err
+	case "intValue":
+		var p struct{ Value string }
+		json.Unmarshal([]byte(payload), &p)
+		err := handler~>(state, meta.IntVal, p.Value)
+		return err
+	case "intChecked":
+		var p struct{ Checked bool }
+		json.Unmarshal([]byte(payload), &p)
+		err := handler~>(state, meta.IntVal, p.Checked)
+		return err
+	case "key":
+		var p struct{ Key string }
+		json.Unmarshal([]byte(payload), &p)
+		err := handler~>(state, p.Key)
+		return err
+	case "slider":
+		var p struct{ Value int }
+		json.Unmarshal([]byte(payload), &p)
+		err := handler~>(state, p.Value)
+		return err
+	default:
+		err := handler~>(state)
+		return err
+	}
+}
+
+// invokeGlobalKeyHandler is called by app.vo for global key events
+func invokeGlobalKeyHandler(state any, key string) error {
+    if globalKeyHandler == nil {
+        return nil
+    }
+    // Dynamic call: handler is func(any, string) with no return
+    // Use `err := f~>(...)` for void functions
+    err := globalKeyHandler~>(state, key)
+    return err
+}

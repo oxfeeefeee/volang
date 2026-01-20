@@ -1,0 +1,41 @@
+// Timer support.
+package gui
+
+// TimerHandler is a function called by a timer.
+type TimerHandler func()
+
+var timerHandlers = map[int]TimerHandler{}
+var nextTimerID = 1
+
+// SetInterval starts a timer that calls handler every ms milliseconds.
+// Returns a timer ID that can be used to cancel it.
+func SetInterval(ms int, handler TimerHandler) int {
+	id := nextTimerID
+	nextTimerID++
+	timerHandlers[id] = handler
+	startInterval(id, ms)
+	return id
+}
+
+// ClearInterval stops a timer.
+func ClearInterval(id int) {
+	if _, ok := timerHandlers[id]; ok {
+		delete(timerHandlers, id)
+		clearInterval(id)
+	}
+}
+
+// invokeTimerHandler is called by eventLoop.
+func invokeTimerHandler(id int) {
+	if handler, ok := timerHandlers[id]; ok {
+		println("VoGUI: invoking timer handler for id:", id)
+		handler()
+	} else {
+		println("VoGUI: timer handler not found for id:", id, "map size:", len(timerHandlers))
+	}
+}
+
+// ============ Externs ============
+
+func startInterval(id int, ms int)
+func clearInterval(id int)

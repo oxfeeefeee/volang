@@ -3,7 +3,8 @@
 //! These are low-level builtin functions called directly by runtime.
 //! They don't have corresponding .vo declarations and skip signature validation.
 //!
-//! print/println receive (value, value_kind) pairs and format based on kind.
+//! print/println receive interface{} values (each 2 slots).
+//! All args are uniformly boxed as interface by codegen.
 
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
@@ -14,62 +15,23 @@ use vo_common_core::types::ValueKind;
 
 use crate::ffi::{ExternCallContext, ExternResult};
 use crate::objects::string;
+use super::fmt::format_interface_with_ctx;
 
-/// Format a single (value, value_kind) pair to string.
-fn format_value(call: &ExternCallContext, slot: u16) -> String {
-    let value = call.arg_u64(slot);
-    let kind = ValueKind::from_u8(call.arg_u64(slot + 1) as u8);
-    
-    match kind {
-        ValueKind::Void => "nil".to_string(),
-        ValueKind::Bool => if value != 0 { "true" } else { "false" }.to_string(),
-        ValueKind::Int | ValueKind::Int64 => (value as i64).to_string(),
-        ValueKind::Int8 => (value as i8).to_string(),
-        ValueKind::Int16 => (value as i16).to_string(),
-        ValueKind::Int32 => (value as i32).to_string(),
-        ValueKind::Uint | ValueKind::Uint64 => value.to_string(),
-        ValueKind::Uint8 => (value as u8).to_string(),
-        ValueKind::Uint16 => (value as u16).to_string(),
-        ValueKind::Uint32 => (value as u32).to_string(),
-        ValueKind::Float32 => f32::from_bits(value as u32).to_string(),
-        ValueKind::Float64 => f64::from_bits(value).to_string(),
-        ValueKind::String => {
-            let s = string::as_str(value as crate::gc::GcRef);
-            s.to_string()
-        }
-        ValueKind::Pointer => format!("ptr@{:#x}", value),
-        ValueKind::Slice => format!("slice@{:#x}", value),
-        ValueKind::Map => format!("map@{:#x}", value),
-        ValueKind::Channel => format!("chan@{:#x}", value),
-        ValueKind::Closure => format!("closure@{:#x}", value),
-        ValueKind::Array => format!("array"),
-        ValueKind::Struct => format!("struct"),
-        ValueKind::Interface => format!("interface"),
-    }
-}
-
-/// Format all (value, kind) pairs starting from `start_slot` into a space-separated string.
+/// Format all interface{} args starting from `start_slot` into a space-separated string.
+/// Each arg is 2 slots: [slot0 = packed_info, slot1 = data]
 fn format_args(call: &ExternCallContext, start_slot: u16) -> String {
     let arg_count = call.arg_count();
     let mut result = String::new();
     let mut slot = start_slot;
     
-    while slot + 2 <= arg_count && slot < 32 {
-        let kind_val = call.arg_u64(slot + 1) as u8;
-        if kind_val == 0 && slot > start_slot {
-            break;
-        }
-        
+    while slot + 2 <= arg_count {
         if !result.is_empty() {
             result.push(' ');
         }
-        result.push_str(&format_value(call, slot));
-        
+        let slot0 = call.arg_u64(slot);
+        let slot1 = call.arg_u64(slot + 1);
+        result.push_str(&format_interface_with_ctx(slot0, slot1, Some(call)));
         slot += 2;
-        
-        if kind_val == ValueKind::Void as u8 {
-            break;
-        }
     }
     
     result

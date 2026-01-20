@@ -1,0 +1,36 @@
+{
+  "name": "@vogui/runtime",
+  "version": "0.1.0",
+  "description": "VoGUI JavaScript runtime - DOM rendering for Vo GUI applications",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./styles": {
+      "import": "./dist/styles.js",
+      "types": "./dist/styles.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "vo",
+    "gui",
+    "vogui",
+    "wasm"
+  ],
+  "license": "MIT"
+}

@@ -1,73 +1,51 @@
 <script lang="ts">
-  interface Node {
-    type: string;
-    props?: Record<string, any>;
-    children?: Node[];
-  }
+  import { onMount } from 'svelte';
+  import { 
+    type VoNode, 
+    type EventCallback,
+    render as voguiRender, 
+    setupKeyHandler,
+    injectStyles 
+  } from '../../../libs/vogui/js/src/index';
 
   interface Props {
-    nodeTree: Node | null;
+    nodeTree: VoNode | null;
     interactive?: boolean;
-    onEvent?: (handlerId: number, payload: string) => void;
+    onEvent?: EventCallback;
   }
 
   let { nodeTree, interactive = false, onEvent }: Props = $props();
-
-  function handleClick(handlerId: number | undefined) {
-    if (interactive && onEvent && handlerId !== undefined) {
-      onEvent(handlerId, '{}');
+  
+  let renderEl: HTMLElement;
+  let cleanupKeyHandler: (() => void) | null = null;
+  
+  onMount(() => {
+    injectStyles();
+    return () => {
+      if (cleanupKeyHandler) {
+        cleanupKeyHandler();
+      }
+    };
+  });
+  
+  $effect(() => {
+    if (renderEl && nodeTree) {
+      voguiRender(renderEl, nodeTree, { interactive, onEvent });
+    } else if (renderEl) {
+      renderEl.innerHTML = '';
     }
-  }
-
-  function handleInput(handlerId: number | undefined, value: string) {
-    if (interactive && onEvent && handlerId !== undefined) {
-      onEvent(handlerId, JSON.stringify({ value }));
+  });
+  
+  $effect(() => {
+    if (cleanupKeyHandler) {
+      cleanupKeyHandler();
+      cleanupKeyHandler = null;
     }
-  }
+    if (interactive && onEvent) {
+      cleanupKeyHandler = setupKeyHandler({ interactive, onEvent });
+    }
+  });
 </script>
-
-{#snippet renderNode(node: Node)}
-  {#if node.type === 'Column'}
-    <div class="vo-column">
-      {#if node.children}
-        {#each node.children as child}
-          {@render renderNode(child)}
-        {/each}
-      {/if}
-    </div>
-  {:else if node.type === 'Row'}
-    <div class="vo-row">
-      {#if node.children}
-        {#each node.children as child}
-          {@render renderNode(child)}
-        {/each}
-      {/if}
-    </div>
-  {:else if node.type === 'Text'}
-    <span class="vo-text">{node.props?.content ?? ''}</span>
-  {:else if node.type === 'Button'}
-    <button 
-      class="vo-button" 
-      class:interactive
-      disabled={!interactive}
-      onclick={() => handleClick(node.props?.onClick)}
-    >
-      {node.props?.text ?? 'Button'}
-    </button>
-  {:else if node.type === 'Input'}
-    <input class="vo-input" type="text" value={node.props?.value ?? ''} disabled />
-  {:else if node.type === 'Checkbox'}
-    <label class="vo-checkbox">
-      <input type="checkbox" checked={node.props?.checked ?? false} disabled />
-    </label>
-  {:else if node.type === 'Spacer'}
-    <div class="vo-spacer"></div>
-  {:else if node.type === 'Empty'}
-    <!-- empty -->
-  {:else}
-    <div class="vo-unknown">[{node.type}]</div>
-  {/if}
-{/snippet}
 
 <div class="gui-preview">
   <div class="preview-header">
@@ -75,14 +53,14 @@
     <span class="preview-badge">{interactive ? 'Interactive' : 'Static'}</span>
   </div>
   <div class="preview-content">
-    {#if nodeTree}
-      {@render renderNode(nodeTree)}
-    {:else}
+    {#if !nodeTree}
       <div class="placeholder">
         <div class="placeholder-icon">🖼️</div>
         <div class="placeholder-text">Run GUI code to see preview</div>
         <div class="placeholder-hint">Import "gui" and call gui.Run()</div>
       </div>
+    {:else}
+      <div class="render-container" bind:this={renderEl}></div>
     {/if}
   </div>
 </div>
@@ -158,80 +136,5 @@
     font-size: 12px;
     font-family: var(--font-mono);
     opacity: 0.7;
-  }
-
-  /* VoGUI Component Styles */
-  .vo-column {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .vo-row {
-    display: flex;
-    flex-direction: row;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .vo-text {
-    font-size: 14px;
-    color: #333;
-  }
-
-  :global(.dark) .vo-text {
-    color: #eee;
-  }
-
-  .vo-button {
-    padding: 8px 16px;
-    font-size: 14px;
-    border: none;
-    border-radius: 6px;
-    background: var(--accent);
-    color: white;
-    cursor: not-allowed;
-    opacity: 0.8;
-  }
-
-  .vo-button.interactive {
-    cursor: pointer;
-    opacity: 1;
-  }
-
-  .vo-button.interactive:hover {
-    filter: brightness(1.1);
-  }
-
-  .vo-button.interactive:active {
-    filter: brightness(0.95);
-  }
-
-  .vo-input {
-    padding: 8px 12px;
-    font-size: 14px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-  }
-
-  .vo-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .vo-spacer {
-    flex: 1;
-  }
-
-  .vo-unknown {
-    padding: 4px 8px;
-    background: #fee;
-    color: #c00;
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 12px;
   }
 </style>

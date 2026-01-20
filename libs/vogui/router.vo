@@ -1,0 +1,70 @@
+// Router and navigation.
+package gui
+
+import "strings"
+
+// Route defines a URL path and its corresponding view.
+// Paths can contain parameters like "/users/:id".
+type Route struct {
+	Path string
+	View func(state any, params map[string]string) Node
+}
+
+// Navigate changes the current URL and re-renders the app.
+func Navigate(path string) {
+	gui_navigate(path)
+	// We also need to update internal state.
+	// Since we are in the same package, we can access app globals if we define them.
+	// But let's trigger it via a special internal function or just setting variable if exported.
+	// For now, let's assume we can access a package-level 'currentPath' or similar.
+	// Better: send a navigation event to the event loop to ensure consistency?
+	// Or just update and render.
+	updatePath(path)
+}
+
+// GetCurrentPath returns the current browser URL path.
+func GetCurrentPath() string {
+	return gui_getCurrentPath()
+}
+
+// matchRoute checks if url matches pattern and extracts parameters.
+// pattern: "/users/:id", url: "/users/123" -> matches=true, params={"id": "123"}
+func matchRoute(pattern string, url string) (map[string]string, bool) {
+	pParts := splitPath(pattern)
+	uParts := splitPath(url)
+
+	if len(pParts) != len(uParts) {
+		return nil, false
+	}
+
+	params := make(map[string]string)
+
+	for i := 0; i < len(pParts); i++ {
+		p := pParts[i]
+		u := uParts[i]
+
+		if len(p) > 0 && p[0] == ':' {
+			key := p[1:]
+			params[key] = u
+		} else if p != u {
+			return nil, false
+		}
+	}
+
+	return params, true
+}
+
+func splitPath(path string) []string {
+	// Remove leading/trailing slashes for consistent splitting
+	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimSuffix(path, "/")
+	if path == "" {
+		return []string{}
+	}
+	return strings.Split(path, "/")
+}
+
+// ============ Externs ============
+
+func gui_navigate(path string)
+func gui_getCurrentPath() string

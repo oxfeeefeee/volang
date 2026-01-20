@@ -4,7 +4,7 @@
   import Examples from '../components/Examples.svelte';
   import FileExplorer from '../components/FileExplorer.svelte';
   import GuiPreview from '../components/GuiPreview.svelte';
-  import { runCode, initGuiApp, handleGuiEvent, type RunStatus } from '../wasm/vo.ts';
+  import { runCode, initGuiApp, handleGuiEvent, setRenderCallback, type RunStatus } from '../wasm/vo.ts';
 
   const importKeyword = 'import';
   let code = $state(`package main
@@ -63,6 +63,16 @@ func step2() error {
   let guiMode = $state(false);
   let nodeTree: any = $state(null);
   let consoleCollapsed = $state(false);
+
+  // Register render callback for async updates (timers)
+  setRenderCallback((json: string) => {
+    try {
+      const parsed = JSON.parse(json);
+      nodeTree = parsed.tree;
+    } catch (e) {
+      console.error('Failed to parse render JSON from timer:', e);
+    }
+  });
 
   async function handleRun() {
     status = 'running';
@@ -124,8 +134,10 @@ func step2() error {
   }
 
   async function onGuiEvent(handlerId: number, payload: string) {
+    console.log('[Playground] onGuiEvent:', handlerId, payload);
     try {
       const result = await handleGuiEvent(handlerId, payload);
+      console.log('[Playground] handleGuiEvent result:', result.status, result.renderJson?.length || 0);
       if (result.status !== 'ok') {
         stderr = result.error;
         return;
@@ -280,8 +292,8 @@ func step2() error {
   }
 
   .gui-panel {
-    width: 400px;
-    min-width: 300px;
+    width: 600px;
+    min-width: 400px;
     overflow: hidden;
     border-left: 1px solid var(--border);
   }
@@ -302,7 +314,7 @@ func step2() error {
       width: 220px;
     }
     .gui-panel {
-      width: 320px;
+      width: 500px;
     }
   }
 

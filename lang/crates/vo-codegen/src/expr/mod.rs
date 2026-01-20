@@ -58,6 +58,20 @@ impl CompiledTuple {
             offset += info.type_slot_count(elem_type);
         }
     }
+    
+    /// Iterate over tuple elements with fallible callback.
+    pub fn for_each_element_result<F, E>(&self, info: &TypeInfoWrapper, mut f: F) -> Result<(), E>
+    where
+        F: FnMut(u16, vo_analysis::objects::TypeKey) -> Result<(), E>,
+    {
+        let mut offset = 0u16;
+        for i in 0..info.tuple_len(self.tuple_type) {
+            let elem_type = info.tuple_elem_type(self.tuple_type, i);
+            f(self.base + offset, elem_type)?;
+            offset += info.type_slot_count(elem_type);
+        }
+        Ok(())
+    }
 }
 
 // =============================================================================

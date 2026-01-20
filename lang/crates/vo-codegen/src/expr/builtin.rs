@@ -1,5 +1,6 @@
 //! Builtin function compilation (len, cap, make, append, etc.).
 
+use vo_common_core::types::ValueKind;
 use vo_runtime::SlotType;
 use vo_vm::instruction::Opcode;
 
@@ -10,25 +11,32 @@ use crate::type_info::{encode_i32, TypeInfoWrapper};
 
 use super::{compile_expr, compile_expr_to, compile_expr_to_type, compile_map_key_expr};
 
-/// Emit a single value as (value, value_kind) pair at the given slot.
-/// Returns the number of interface slots used (always 2).
-fn emit_value_kind_pair(
+/// Box a value as interface{} at the given slot.
+/// All values are uniformly represented as interface (2 slots).
+fn emit_boxed_interface(
     dst_slot: u16,
     src_slot: u16,
     src_type: vo_analysis::objects::TypeKey,
+    ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
-) {
-    let slots = info.type_slot_count(src_type);
-    func.emit_copy(dst_slot, src_slot, slots);
-    let vk = info.type_value_kind(src_type) as u8 as i32;
-    let (b, c) = encode_i32(vk);
-    func.emit_op(Opcode::LoadInt, dst_slot + 1, b, c);
+) -> Result<(), CodegenError> {
+    let vk = info.type_value_kind(src_type);
+    
+    if vk == ValueKind::Interface {
+        // Already interface: copy both slots
+        func.emit_copy(dst_slot, src_slot, 2);
+    } else {
+        // Box to interface using IfaceAssign
+        let any_type = info.any_type();
+        crate::stmt::emit_iface_assign_from_concrete(dst_slot, src_slot, src_type, any_type, ctx, func, info)?;
+    }
+    Ok(())
 }
 
-/// Compile arguments as (value, value_kind) pairs for print/println/assert.
+/// Compile arguments as interface{} values for print/println/assert.
 /// Returns (args_start, actual_arg_count) - count may differ from args.len() due to tuple expansion.
-fn compile_args_with_value_kind(
+fn compile_args_as_interfaces(
     args: &[vo_syntax::ast::Expr],
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
@@ -42,7 +50,7 @@ fn compile_args_with_value_kind(
         })
         .sum();
     
-    // Print args are (value, value_kind) pairs = 2 slots each
+    // Each arg is an interface (2 slots)
     let args_start = func.alloc_temp_typed(&vec![SlotType::Interface0, SlotType::Interface1].repeat(total_args));
     let mut slot_offset = 0u16;
     
@@ -51,14 +59,15 @@ fn compile_args_with_value_kind(
         
         if info.is_tuple(arg_type) {
             let tuple = super::CompiledTuple::compile(arg, ctx, func, info)?;
-            tuple.for_each_element(info, |elem_slot, elem_type| {
-                emit_value_kind_pair(args_start + slot_offset, elem_slot, elem_type, func, info);
+            tuple.for_each_element_result(info, |elem_slot, elem_type| {
+                emit_boxed_interface(args_start + slot_offset, elem_slot, elem_type, ctx, func, info)?;
                 slot_offset += 2;
-            });
+                Ok(())
+            })?;
         } else {
             let tmp = func.alloc_temp_typed(&info.type_slot_types(arg_type));
             compile_expr_to(arg, tmp, ctx, func, info)?;
-            emit_value_kind_pair(args_start + slot_offset, tmp, arg_type, func, info);
+            emit_boxed_interface(args_start + slot_offset, tmp, arg_type, ctx, func, info)?;
             slot_offset += 2;
         }
     }
@@ -121,7 +130,7 @@ pub fn compile_builtin_call(
         "print" | "println" => {
             let extern_name = if name == "println" { "vo_println" } else { "vo_print" };
             let extern_id = ctx.get_or_register_extern(extern_name);
-            let (args_start, actual_count) = compile_args_with_value_kind(&call.args, ctx, func, info)?;
+            let (args_start, actual_count) = compile_args_as_interfaces(&call.args, ctx, func, info)?;
             func.emit_with_flags(Opcode::CallExtern, (actual_count * 2) as u8, dst, extern_id as u16, args_start);
         }
         "panic" => {
@@ -336,7 +345,7 @@ pub fn compile_builtin_call(
                 return Err(CodegenError::Internal("assert requires at least 1 argument".to_string()));
             }
             let extern_id = ctx.get_or_register_extern("vo_assert");
-            let (args_start, actual_count) = compile_args_with_value_kind(&call.args, ctx, func, info)?;
+            let (args_start, actual_count) = compile_args_as_interfaces(&call.args, ctx, func, info)?;
             
             // Record debug info for assert (may cause panic)
             let pc = func.current_pc() as u32;

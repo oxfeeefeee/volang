@@ -1,0 +1,158 @@
+// Input components for user interaction.
+package gui
+
+// Button renders a clickable button.
+func Button(text string, onClick Handler) Node {
+	return Node{
+		Type: "Button",
+		Props: map[string]any{
+			"text":    text,
+			"onClick": onClick.ID,
+		},
+	}
+}
+
+// IconButton renders an icon-only button.
+func IconButton(icon string, onClick Handler) Node {
+	return Node{
+		Type: "IconButton",
+		Props: map[string]any{
+			"icon":    icon,
+			"onClick": onClick.ID,
+		},
+	}
+}
+
+// Input renders a text input field.
+func Input(value string, onChange Handler) Node {
+	return Node{
+		Type: "Input",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Password renders a password input field.
+func Password(value string, onChange Handler) Node {
+	return Node{
+		Type: "Password",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// TextArea renders a multiline text input.
+func TextArea(value string, onChange Handler) Node {
+	return Node{
+		Type: "TextArea",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Checkbox renders a checkbox.
+func Checkbox(checked bool, onChange Handler) Node {
+	return Node{
+		Type: "Checkbox",
+		Props: map[string]any{
+			"checked":  checked,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// CheckboxLabel renders a labeled checkbox.
+func CheckboxLabel(label string, checked bool, onChange Handler) Node {
+	return Node{
+		Type: "CheckboxLabel",
+		Props: map[string]any{
+			"label":    label,
+			"checked":  checked,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Switch renders a toggle switch.
+func Switch(on bool, onChange Handler) Node {
+	return Node{
+		Type: "Switch",
+		Props: map[string]any{
+			"on":       on,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Radio renders a radio button.
+func Radio(value string, group string, selected string, onChange Handler) Node {
+	return Node{
+		Type: "Radio",
+		Props: map[string]any{
+			"value":    value,
+			"group":    group,
+			"selected": selected,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Select renders a dropdown select.
+func Select(value string, options []string, onChange Handler) Node {
+	return Node{
+		Type: "Select",
+		Props: map[string]any{
+			"value":    value,
+			"options":  options,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// SelectOption represents a labeled option for SelectLabeled.
+type SelectOption struct {
+	Value string
+	Label string
+}
+
+// SelectLabeled renders a dropdown with labeled options.
+func SelectLabeled(value string, options []SelectOption, onChange Handler) Node {
+	return Node{
+		Type: "SelectLabeled",
+		Props: map[string]any{
+			"value":    value,
+			"options":  options,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Slider renders a slider input.
+func Slider(value int, min int, max int, onChange Handler) Node {
+	return Node{
+		Type: "Slider",
+		Props: map[string]any{
+			"value":    value,
+			"min":      min,
+			"max":      max,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// NumberInput renders a number input.
+func NumberInput(value int, onChange Handler) Node {
+	return Node{
+		Type: "NumberInput",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}

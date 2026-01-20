@@ -13,7 +13,7 @@ vo-runtime = { path = "../../../lang/crates/vo-runtime", default-features = fals
 vo-vm = { path = "../../../lang/crates/vo-vm", default-features = false }
 vo-common = { path = "../../../lang/crates/vo-common", default-features = false }
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["console"] }
+web-sys = { version = "0.3", features = ["console", "Window"] }
 include_dir = "0.7"
 
 [features]

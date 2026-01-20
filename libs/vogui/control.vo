@@ -1,0 +1,46 @@
+// Control flow components.
+package gui
+
+// If conditionally renders a node.
+func If(cond bool, then Node) Node {
+	if cond {
+		return then
+	}
+	return Node{Type: "Empty"}
+}
+
+// IfElse conditionally renders one of two nodes.
+func IfElse(cond bool, then Node, els Node) Node {
+	if cond {
+		return then
+	}
+	return els
+}
+
+// Show renders child but hides it via CSS when not visible (keeps DOM).
+func Show(visible bool, child Node) Node {
+	return Node{
+		Type:     "Show",
+		Props:    map[string]any{"visible": visible},
+		Children: []Node{child},
+	}
+}
+
+// ForEach renders a list by iterating over a slice.
+// items must be []any. render receives (item any, index int).
+func ForEach(items []any, render func(item any, i int) Node) Node {
+	var children []Node
+	for i, item := range items {
+		children = append(children, render(item, i))
+	}
+	return Node{Type: "Fragment", Children: children}
+}
+
+// ForRange renders nodes for a range of integers [start, end).
+func ForRange(start int, end int, render func(i int) Node) Node {
+	var children []Node
+	for i := start; i < end; i++ {
+		children = append(children, render(i))
+	}
+	return Node{Type: "Fragment", Children: children}
+}

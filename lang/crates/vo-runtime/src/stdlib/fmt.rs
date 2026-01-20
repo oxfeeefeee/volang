@@ -27,7 +27,13 @@ use crate::objects::{interface, slice, string};
 // =============================================================================
 
 /// Format a single interface{} value (2 slots) to string.
-fn format_interface(slot0: u64, slot1: u64) -> String {
+/// For error interface, extracts the error message.
+pub fn format_interface(slot0: u64, slot1: u64) -> String {
+    format_interface_with_ctx(slot0, slot1, None)
+}
+
+/// Format interface with optional ExternCallContext for error message extraction.
+pub fn format_interface_with_ctx(slot0: u64, slot1: u64, call: Option<&crate::ffi::ExternCallContext>) -> String {
     let vk = interface::unpack_value_kind(slot0);
     
     match vk {
@@ -46,7 +52,26 @@ fn format_interface(slot0: u64, slot1: u64) -> String {
         ValueKind::String => {
             string::as_str(slot1 as GcRef).to_string()
         }
-        ValueKind::Pointer => format!("0x{:x}", slot1),
+        ValueKind::Pointer => {
+            // Check if this is an error interface
+            if let Some(ctx) = call {
+                let rttid = interface::unpack_rttid(slot0);
+                let wk = ctx.well_known();
+                if wk.error_ptr_rttid.map_or(false, |err_rttid| rttid == err_rttid) {
+                    if let Some(field_offsets) = wk.error_field_offsets {
+                        let ptr = slot1 as GcRef;
+                        if !ptr.is_null() {
+                            use crate::gc::Gc;
+                            let msg_ref = unsafe { Gc::read_slot(ptr, field_offsets[1] as usize) } as GcRef;
+                            if !msg_ref.is_null() {
+                                return string::as_str(msg_ref).to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            format!("0x{:x}", slot1)
+        }
         ValueKind::Slice => format_slice_value(slot1 as GcRef),
         ValueKind::Map => format!("map[...]"),
         ValueKind::Channel => format!("0x{:x}", slot1),
@@ -81,7 +106,7 @@ fn format_slice_value(slice_ref: GcRef) -> String {
 }
 
 /// Format all elements in a []interface{} slice with space separator.
-fn format_args_slice(slice_ref: GcRef) -> String {
+fn format_args_slice_with_ctx(slice_ref: GcRef, call: Option<&ExternCallContext>) -> String {
     if slice_ref.is_null() {
         return String::new();
     }
@@ -101,7 +126,7 @@ fn format_args_slice(slice_ref: GcRef) -> String {
         // Each interface{} is 2 slots (16 bytes)
         let slot0 = unsafe { *data_ptr.add(i * 2) };
         let slot1 = unsafe { *data_ptr.add(i * 2 + 1) };
-        result.push_str(&format_interface(slot0, slot1));
+        result.push_str(&format_interface_with_ctx(slot0, slot1, call));
     }
     
     result
@@ -112,7 +137,7 @@ fn format_args_slice(slice_ref: GcRef) -> String {
 // =============================================================================
 
 /// Format with printf-style format string.
-fn sprintf_impl(format_str: &str, args_ref: GcRef) -> String {
+fn sprintf_impl(format_str: &str, args_ref: GcRef, call: Option<&ExternCallContext>) -> String {
     let args_len = if args_ref.is_null() { 0 } else { slice::len(args_ref) };
     let data_ptr = if args_ref.is_null() { 
         core::ptr::null() 
@@ -147,7 +172,7 @@ fn sprintf_impl(format_str: &str, args_ref: GcRef) -> String {
                 } else {
                     let slot0 = unsafe { *data_ptr.add(arg_idx * 2) };
                     let slot1 = unsafe { *data_ptr.add(arg_idx * 2 + 1) };
-                    result.push_str(&format_with_verb(spec, slot0, slot1));
+                    result.push_str(&format_with_verb(spec, slot0, slot1, call));
                     arg_idx += 1;
                 }
             }
@@ -158,11 +183,11 @@ fn sprintf_impl(format_str: &str, args_ref: GcRef) -> String {
 }
 
 /// Format a value with a specific format verb.
-fn format_with_verb(verb: char, slot0: u64, slot1: u64) -> String {
+fn format_with_verb(verb: char, slot0: u64, slot1: u64, call: Option<&ExternCallContext>) -> String {
     let vk = interface::unpack_value_kind(slot0);
     
     match verb {
-        'v' => format_interface(slot0, slot1),
+        'v' => format_interface_with_ctx(slot0, slot1, call),
         'd' => {
             if vk.is_integer() {
                 (slot1 as i64).to_string()
@@ -173,7 +198,7 @@ fn format_with_verb(verb: char, slot0: u64, slot1: u64) -> String {
         's' => {
             match vk {
                 ValueKind::String => string::as_str(slot1 as GcRef).to_string(),
-                _ => format_interface(slot0, slot1),
+                _ => format_interface_with_ctx(slot0, slot1, call),
             }
         }
         'f' => {
@@ -249,7 +274,7 @@ fn native_write(call: &mut ExternCallContext) -> ExternResult {
 #[vostd_extern_ctx_nostd("fmt", "nativeSprint")]
 fn native_sprint(call: &mut ExternCallContext) -> ExternResult {
     let args_ref = call.arg_ref(slots::ARG_A);
-    let formatted = format_args_slice(args_ref);
+    let formatted = format_args_slice_with_ctx(args_ref, Some(call));
     let gc = call.gc();
     let s = string::from_rust_str(gc, &formatted);
     call.ret_ref(0, s);
@@ -260,7 +285,7 @@ fn native_sprint(call: &mut ExternCallContext) -> ExternResult {
 #[vostd_extern_ctx_nostd("fmt", "nativeSprintln")]
 fn native_sprintln(call: &mut ExternCallContext) -> ExternResult {
     let args_ref = call.arg_ref(slots::ARG_A);
-    let mut formatted = format_args_slice(args_ref);
+    let mut formatted = format_args_slice_with_ctx(args_ref, Some(call));
     formatted.push('\n');
     let gc = call.gc();
     let s = string::from_rust_str(gc, &formatted);
@@ -273,7 +298,7 @@ fn native_sprintln(call: &mut ExternCallContext) -> ExternResult {
 fn native_sprintf(call: &mut ExternCallContext) -> ExternResult {
     let format_str = call.arg_str(slots::ARG_FORMAT);
     let args_ref = call.arg_ref(slots::ARG_A);
-    let formatted = sprintf_impl(format_str, args_ref);
+    let formatted = sprintf_impl(format_str, args_ref, Some(call));
     let gc = call.gc();
     let s = string::from_rust_str(gc, &formatted);
     call.ret_ref(0, s);
