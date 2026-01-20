@@ -8,7 +8,7 @@ import (
 	"strconv"
 )
 
-// Unmarshal parses the JSON-encoded data and returns the result.
+// Decode parses the JSON-encoded data and returns the result as dynamic types.
 // The result is one of:
 //   - dyn.MapObject for JSON objects
 //   - dyn.SliceObject for JSON arrays
@@ -16,7 +16,7 @@ import (
 //   - float64 for JSON numbers (or Number if UseNumber was called)
 //   - bool for JSON booleans
 //   - nil for JSON null
-func Unmarshal(data []byte) (any, error) {
+func Decode(data []byte) (any, error) {
 	p := &parser{data: data, pos: 0, useNumber: false}
 	p.skipWhitespace()
 	if p.pos >= len(p.data) {
@@ -35,7 +35,7 @@ func Unmarshal(data []byte) (any, error) {
 
 // Valid reports whether data is a valid JSON encoding.
 func Valid(data []byte) bool {
-	_, err := Unmarshal(data)
+	_, err := Decode(data)
 	return err == nil
 }
 

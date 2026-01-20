@@ -6,21 +6,21 @@ import (
 	"strconv"
 )
 
-// Unmarshal parses the TOML-encoded data and returns the result.
+// Decode parses the TOML-encoded data and returns the result as dynamic types.
 // The result is a dyn.MapObject representing the TOML document.
-func Unmarshal(data []byte) (dyn.MapObject, error) {
-	return UnmarshalString(string(data))
+func Decode(data []byte) (dyn.MapObject, error) {
+	return DecodeString(string(data))
 }
 
-// UnmarshalString parses a TOML string and returns a dyn.MapObject.
-func UnmarshalString(s string) (dyn.MapObject, error) {
+// DecodeString parses a TOML string and returns a dyn.MapObject.
+func DecodeString(s string) (dyn.MapObject, error) {
 	p := &parser{data: s, pos: 0}
 	return p.parse()
 }
 
 // Valid reports whether data is a valid TOML encoding.
 func Valid(data []byte) bool {
-	_, err := Unmarshal(data)
+	_, err := Decode(data)
 	return err == nil
 }
 

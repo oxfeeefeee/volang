@@ -152,10 +152,12 @@ vo-codegen-vm (main changes)
 └── lower/             # Expand all for-range at compile time
 
 vo-jit (new)
-├── translate.rs       # bytecode → Cranelift IR
-├── compile.rs         # Cranelift → native code
-├── cache.rs           # JIT code cache
-└── trampoline.rs      # VM ↔ JIT bridge
+├── lib.rs             # JitCompiler, JitCache, HelperFuncIds
+├── func_compiler.rs   # Compile entire functions (entry point)
+├── loop_compiler.rs   # Compile loops for OSR
+├── loop_analysis.rs   # Analyze loops for OSR suitability
+├── translate.rs       # Bytecode instruction -> Cranelift IR translation
+└── translator.rs      # IrEmitter trait definition
 ```
 
 ## 5. For-Range Compile-Time Expansion
@@ -544,7 +546,7 @@ impl JitCompiler {
 
 ## 11. Implementation Steps
 
-Note: Steps 1-4 (for-range expansion, iterator removal) are already completed.
+Note: Steps 1-4 (for-range expansion, iterator removal) are already completed. Most JIT core components are also implemented.
 
 ### Phase 1: Basic JIT (no GC, no calls)
 
@@ -554,17 +556,17 @@ Note: Steps 1-4 (for-range expansion, iterator removal) are already completed.
 | 2 | vo-codegen-vm: Expand map/string for-range | ✅ Done |
 | 3 | vo-vm: Remove Iterator enum | ✅ Done |
 | 4 | vo-vm: Remove IterBegin/IterNext/IterEnd opcodes | ✅ Done |
-| 5 | vo-jit: Create crate structure | Pending |
-| 6 | vo-jit: Compile `return constant` | Pending |
-| 7 | vo-jit: Arithmetic, comparison, branch, local vars | Pending |
-| 8 | vo-jit: Heap variable read/write (no GC) | Pending |
+| 5 | vo-jit: Create crate structure | ✅ Done |
+| 6 | vo-jit: Compile `return constant` | ✅ Done |
+| 7 | vo-jit: Arithmetic, comparison, branch, local vars | ✅ Done |
+| 8 | vo-jit: Heap variable read/write (no GC) | ✅ Done |
 
 ### Phase 2: VM ↔ JIT Integration
 
 | Order | Task | Status |
 |-------|------|--------|
-| 9 | vo-jit: VM → JIT trampoline | Pending |
-| 10 | vo-jit: JIT → VM trampoline (vo_call_vm) | Pending |
+| 9 | vo-jit: VM → JIT trampoline | ✅ Done |
+| 10 | vo-jit: JIT → VM trampoline (vo_call_vm) | ✅ Done |
 | 11 | vo-vm: Add hot counter in exec_call/exec_jump | Pending |
 | 12 | vo-vm: Add JIT cache + dispatch in Call | Pending |
 
@@ -572,9 +574,9 @@ Note: Steps 1-4 (for-range expansion, iterator removal) are already completed.
 
 | Order | Task | Status |
 |-------|------|--------|
-| 13 | vo-jit: GcRef spill + stack map generation | Pending |
-| 14 | vo-jit: Safepoint + vo_gc_safepoint | Pending |
-| 15 | vo-jit: Write barrier (inline fast path) | Pending |
+| 13 | vo-jit: GcRef spill + stack map generation | ✅ Done (via Cranelift) |
+| 14 | vo-jit: Safepoint + vo_gc_safepoint | ✅ Done |
+| 15 | vo-jit: Write barrier (inline fast path) | ✅ Done |
 | 16 | vo-runtime-core: GC stack map scanning | Pending |
 
 ### Phase 4: Optimization (Optional)
@@ -589,12 +591,13 @@ Note: Steps 1-4 (for-range expansion, iterator removal) are already completed.
 |------|--------|
 | `vo-jit/Cargo.toml` | Add: new crate with cranelift dependencies |
 | `vo-jit/src/lib.rs` | Add: JitCompiler, JitCache |
-| `vo-jit/src/compiler.rs` | Add: bytecode → Cranelift translation |
-| `vo-jit/src/gc_tracking.rs` | Add: GcRef spill, stack map generation |
+| `vo-jit/src/func_compiler.rs` | Add: Function compilation logic |
+| `vo-jit/src/loop_compiler.rs` | Add: Loop compilation logic |
+| `vo-jit/src/translate.rs` | Add: bytecode → Cranelift translation |
 | `vo-runtime-core/src/jit_api.rs` | Add: JitContext, extern "C" API |
 | `vo-runtime-core/src/gc.rs` | Modify: add stack map scanning |
-| `vo-vm/src/hot_counter.rs` | Add: call/loop counting |
-| `vo-vm/src/vm.rs` | Modify: add JIT cache, hot counter, dispatch |
+| `vo-vm/src/vm/jit_mgr.rs` | Add: JIT manager, hot counting |
+| `vo-vm/src/vm/mod.rs` | Modify: add JIT integration |
 
 ## 13. Summary
 

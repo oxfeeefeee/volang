@@ -1116,9 +1116,17 @@ impl<'a> ExternCallContext<'a> {
             return true;
         }
         
-        // Check if target is any (empty interface)
+        // Check if target is any (empty interface) - any accepts all
         let target_rttid = target.rttid();
         if let Some(RuntimeType::Interface { methods, .. }) = self.runtime_types.get(target_rttid as usize) {
+            if methods.is_empty() {
+                return true;
+            }
+        }
+        
+        // Check if source is any (empty interface) - any can be passed to any type (unbox at runtime)
+        let source_rttid = source.rttid();
+        if let Some(RuntimeType::Interface { methods, .. }) = self.runtime_types.get(source_rttid as usize) {
             if methods.is_empty() {
                 return true;
             }

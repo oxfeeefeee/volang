@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "lang/crates/*",
   "libs/vox/rust",
+  "libs/vogui/rust",
 ]
 
 [workspace.package]

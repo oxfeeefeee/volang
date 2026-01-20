@@ -135,8 +135,9 @@ use include_dir::{include_dir, Dir};
 #[cfg(feature = "compiler")]
 static STDLIB_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../stdlib");
 
+/// Build the standard library filesystem. Exported for libraries to extend.
 #[cfg(feature = "compiler")]
-fn build_stdlib_fs() -> MemoryFs {
+pub fn build_stdlib_fs() -> MemoryFs {
     let mut fs = MemoryFs::new();
     add_dir_to_fs(&STDLIB_DIR, &mut fs, "");
     fs
@@ -162,6 +163,14 @@ fn add_dir_to_fs(dir: &Dir<'_>, fs: &mut MemoryFs, _prefix: &str) {
 
 #[cfg(feature = "compiler")]
 fn compile_source(source: &str, filename: &str) -> Result<Vec<u8>, CompileError> {
+    compile_source_with_std_fs(source, filename, build_stdlib_fs())
+        .map_err(|msg| CompileError { message: msg, line: None, column: None })
+}
+
+/// Compile source with a custom stdlib filesystem.
+/// Exported for libraries (like vogui) that need to add extra packages.
+#[cfg(feature = "compiler")]
+pub fn compile_source_with_std_fs(source: &str, filename: &str, std_fs: MemoryFs) -> Result<Vec<u8>, String> {
     use vo_analysis::analyze_project;
     use vo_codegen::compile_project;
     use vo_module::vfs::{PackageResolver, StdSource, LocalSource, ModSource};
@@ -170,18 +179,11 @@ fn compile_source(source: &str, filename: &str) -> Result<Vec<u8>, CompileError>
     let mut fs = MemoryFs::new();
     fs.add_file(PathBuf::from(filename), source.to_string());
     
-    // Create stdlib FS with embedded stdlib
-    let std_fs = build_stdlib_fs();
-    
     // Create FileSet
     let file_set = FileSet::from_file(&fs, Path::new(filename), PathBuf::from("."))
-        .map_err(|e| CompileError {
-            message: format!("Failed to read file: {}", e),
-            line: None,
-            column: None,
-        })?;
+        .map_err(|e| format!("Failed to read file: {}", e))?;
     
-    // Create package resolver with full stdlib
+    // Create package resolver with provided stdlib
     let empty_fs = MemoryFs::new();
     let resolver = PackageResolver {
         std: StdSource::with_fs(std_fs),
@@ -191,21 +193,11 @@ fn compile_source(source: &str, filename: &str) -> Result<Vec<u8>, CompileError>
     
     // Analyze project
     let project = analyze_project(file_set, &resolver)
-        .map_err(|e| {
-            CompileError {
-                message: format!("{}", e),
-                line: None,
-                column: None,
-            }
-        })?;
+        .map_err(|e| format!("{}", e))?;
     
     // Compile to bytecode
     let module = compile_project(&project)
-        .map_err(|e| CompileError {
-            message: format!("{:?}", e),
-            line: None,
-            column: None,
-        })?;
+        .map_err(|e| format!("{:?}", e))?;
     
     // Serialize to bytes
     Ok(module.serialize())

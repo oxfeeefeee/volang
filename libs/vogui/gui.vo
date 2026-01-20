@@ -8,7 +8,7 @@
 //   type State struct { Count int }
 //
 //   func view(state any) gui.Node {
-//       s := state.(State)
+//       s := state.(*State)
 //       return gui.Column(
 //           gui.Text("Count: ", s.Count),
 //           gui.Button("+1", gui.On(increment)),
@@ -19,7 +19,7 @@
 //
 //   func main() {
 //       gui.Run(gui.App{
-//           Init: func() any { return State{} },
+//           Init: func() any { return &State{} },
 //           View: view,
 //       })
 //   }
@@ -41,6 +41,12 @@ type Handler struct {
 	ID int
 }
 
+// Event represents an event from JS.
+type Event struct {
+	HandlerID int
+	Payload   string
+}
+
 // App defines the application structure.
 type App struct {
 	Init func() any
@@ -50,6 +56,10 @@ type App struct {
 // ============ Internal State ============
 
 var handlers []any
+var currentState any
+var currentApp App
+var eventChan = make(chan Event, 100)
+var doneChan = make(chan struct{})  // blocks main goroutine forever
 
 // ============ Layout Components ============
 
@@ -158,7 +168,7 @@ func Padding(node Node, value int) Node {
 // ============ Event Binding ============
 
 // On wraps an action for event handling.
-// Action signature: func(s *State)
+// Action signature: func(s *State) where State is user-defined
 func On(action any) Handler {
 	id := len(handlers)
 	handlers = append(handlers, action)
@@ -175,12 +185,47 @@ func OnValue(action any) Handler {
 
 // ============ App Lifecycle ============
 
-// Run starts the application.
+// Run initializes the application and starts the event loop.
 func Run(app App) {
+	currentApp = app
+	currentState = app.Init()
+	render()
+	
+	// Register callback that sends events to channel
+	registerEventHandler(sendEvent)
+	
+	// Start event loop goroutine
+	go eventLoop()
+	
+	// Block main goroutine forever
+	<-doneChan
+}
+
+// sendEvent is called by Rust - just sends to channel
+func sendEvent(handlerID int, payload string) {
+	eventChan <- Event{HandlerID: handlerID, Payload: payload}
+}
+
+// eventLoop processes events from channel
+func eventLoop() {
+	for event := range eventChan {
+		if event.HandlerID >= 0 && event.HandlerID < len(handlers) {
+			handler := handlers[event.HandlerID]
+			err := invokeHandler(handler, event.Payload)
+			if err != nil {
+				println("VoGUI: handler error:", err)
+			}
+		}
+		render()
+	}
+}
+
+
+func render() {
 	handlers = []any{}
-	state := app.Init()
-	tree := app.View(state)
+	tree := currentApp.View(currentState)
 	output := map[string]any{
+		"type":     "render",
 		"tree":     tree,
 		"handlers": len(handlers),
 	}
@@ -189,8 +234,25 @@ func Run(app App) {
 		println("VoGUI marshal error:", err)
 		return
 	}
-	println("__VOGUI__" + string(data))
+	emitRender(string(data))
 }
+
+func invokeHandler(handler any, payload string) error {
+	// Dynamic call: handler expects concrete *State, currentState is any
+	// Handler returns nothing, so LHS is just error
+	err := handler~>(currentState)
+	return err
+}
+
+// ============ Extern Declarations ============
+// These functions are implemented in WASM layer.
+
+// registerEventHandler registers the event handler callback.
+// Rust will call this callback for each event from JS.
+func registerEventHandler(handler func(handlerID int, payload string))
+
+// emitRender sends render output to the JS runtime.
+func emitRender(json string)
 
 // ============ Helpers ============
 

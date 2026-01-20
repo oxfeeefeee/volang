@@ -12,7 +12,7 @@ use alloc::format;
 use vo_runtime::gc::GcRef;
 use vo_runtime::objects::{array, string};
 
-mod helpers;
+pub mod helpers;
 mod types;
 
 pub use helpers::{stack_get, stack_set};
@@ -188,25 +188,38 @@ impl Vm {
         fiber.push_frame(entry_func, func.local_slots, 0, 0);
         self.scheduler.spawn(fiber);
 
+        self.run_scheduling_loop(None)
+    }
+    
+    /// Run existing runnable fibers without spawning entry fiber.
+    /// Used for event handling after initial run.
+    pub fn run_scheduled(&mut self) -> Result<(), VmError> {
+        self.run_scheduling_loop(None)
+    }
+    
+    /// Core scheduling loop - runs fibers until all block or limit reached.
+    fn run_scheduling_loop(&mut self, max_iterations: Option<usize>) -> Result<(), VmError> {
+        let mut iterations = 0;
+        
         while self.scheduler.has_runnable() {
+            if let Some(max) = max_iterations {
+                iterations += 1;
+                if iterations > max { break; }
+            }
+            
             let fiber_id = match self.scheduler.schedule_next() {
                 Some(id) => crate::scheduler::FiberId::Regular(id),
                 None => break,
             };
 
-            // Execute time slice for current fiber
             let result = self.run_fiber(fiber_id);
             
             match result {
-                ExecResult::Continue => {
-                    // Time slice exhausted, re-queue fiber
+                ExecResult::Continue | ExecResult::Yield | ExecResult::Osr(_, _, _) => {
                     self.scheduler.suspend_current();
                 }
                 ExecResult::Return | ExecResult::Done => {
                     let _ = self.scheduler.kill_current();
-                }
-                ExecResult::Yield => {
-                    self.scheduler.suspend_current();
                 }
                 ExecResult::Block => {
                     self.scheduler.block_current();
@@ -215,11 +228,6 @@ impl Vm {
                     let (msg, loc_tuple) = self.scheduler.kill_current();
                     let loc = loc_tuple.map(|(func_id, pc)| ErrorLocation { func_id, pc });
                     return Err(VmError::PanicUnwound { msg, loc });
-                }
-                ExecResult::Osr(_, _, _) => {
-                    // OSR result should not propagate here from run_fiber
-                    // If it does, just continue
-                    self.scheduler.suspend_current();
                 }
             }
         }
@@ -235,39 +243,7 @@ impl Vm {
         #[cfg(feature = "jit")]
         let jit_mgr = self.jit_mgr.take();
         
-        // Run all ready fibers once (or until they block/yield)
-        let mut iterations = 0;
-        let max_iterations = 1000; // Prevent infinite loops
-        
-        while let Some(id) = self.scheduler.schedule_next() {
-            iterations += 1;
-            if iterations > max_iterations {
-                break;
-            }
-            
-            let result = self.run_fiber(crate::scheduler::FiberId::Regular(id));
-            
-            match result {
-                ExecResult::Continue => {
-                    self.scheduler.suspend_current();
-                }
-                ExecResult::Return | ExecResult::Done => {
-                    let _ = self.scheduler.kill_current();
-                }
-                ExecResult::Yield => {
-                    self.scheduler.suspend_current();
-                }
-                ExecResult::Block => {
-                    self.scheduler.block_current();
-                }
-                ExecResult::Panic => {
-                    let _ = self.scheduler.kill_current();
-                }
-                ExecResult::Osr(_, _, _) => {
-                    self.scheduler.suspend_current();
-                }
-            }
-        }
+        let _ = self.run_scheduling_loop(Some(1000));
         
         // Restore JIT manager
         #[cfg(feature = "jit")]

@@ -57,7 +57,7 @@ pi = 3.14159
 enabled = true
 disabled = false
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testBasicTypes: parse error")
 	assert(obj["title"].(string) == "TOML Example", "title")
 	assert(obj["count"].(int) == 42, "count")
@@ -77,7 +77,7 @@ escaped = "Tab:\tNewline:\nQuote:\""
 empty = ""
 unicode = "中文"
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testStrings: parse error")
 	assert(obj["basic"].(string) == "Hello, World!", "basic string")
 	assert(obj["escaped"].(string) == "Tab:\tNewline:\nQuote:\"", "escaped string")
@@ -88,7 +88,7 @@ unicode = "中文"
 	input2 := `
 literal = 'no escape \n here'
 `
-	obj2, err := toml.UnmarshalString(input2)
+	obj2, err := toml.DecodeString(input2)
 	assert(err == nil, "testStrings: literal parse error")
 	assert(obj2["literal"].(string) == "no escape \\n here", "literal string")
 	
@@ -106,7 +106,7 @@ float_neg = -2.718
 float_exp = 1e10
 with_underscore = 1_000_000
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testNumbers: parse error")
 	assert(obj["positive"].(int) == 42, "positive")
 	assert(obj["negative"].(int) == -17, "negative")
@@ -128,7 +128,7 @@ func testBooleans() {
 yes = true
 no = false
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testBooleans: parse error")
 	assert(obj["yes"].(bool) == true, "yes")
 	assert(obj["no"].(bool) == false, "no")
@@ -146,7 +146,7 @@ floats = [1.1, 2.2, 3.3]
 bools = [true, false, true]
 mixed = [1, "two", true]
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testArrays: parse error")
 	
 	ints := obj["integers"].(dyn.SliceObject)
@@ -172,7 +172,7 @@ func testNestedArrays() {
 	input := `
 nested = [[1, 2], [3, 4], [5, 6]]
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testNestedArrays: parse error")
 	
 	nested := obj["nested"].(dyn.SliceObject)
@@ -190,7 +190,7 @@ func testEmptyArray() {
 	input := `
 empty = []
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testEmptyArray: parse error")
 	
 	empty := obj["empty"].(dyn.SliceObject)
@@ -211,7 +211,7 @@ port = 8080
 name = "mydb"
 user = "admin"
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testSimpleTable: parse error")
 	
 	server := obj["server"].(dyn.MapObject)
@@ -238,7 +238,7 @@ enabled = true
 port = 443
 enabled = true
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testNestedTables: parse error")
 	
 	server := obj["server"].(dyn.MapObject)
@@ -264,7 +264,7 @@ shape = "round"
 x = 10
 y = 20
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testDottedKeys: parse error")
 	
 	phys := obj["physical"].(dyn.MapObject)
@@ -283,7 +283,7 @@ func testInlineTable() {
 point = {x = 1, y = 2}
 person = {name = "Alice", age = 30}
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testInlineTable: parse error")
 	
 	point := obj["point"].(dyn.MapObject)
@@ -313,7 +313,7 @@ price = 0.05
 name = "Screwdriver"
 price = 5.99
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testArrayOfTables: parse error")
 	
 	products := obj["products"].(dyn.SliceObject)
@@ -348,7 +348,7 @@ name = "banana"
 [[fruits.varieties]]
 name = "plantain"
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testNestedArrayOfTables: parse error")
 	
 	fruits := obj["fruits"].(dyn.SliceObject)
@@ -377,7 +377,7 @@ key = "value" # inline comment
 [section] # section comment
 name = "test"
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "testComments: parse error")
 	assert(obj["key"].(string) == "value", "key")
 	
@@ -400,7 +400,7 @@ func testMarshalRoundtrip() {
 	data, err := toml.Marshal(obj)
 	assert(err == nil, "marshal error")
 	
-	parsed, err := toml.Unmarshal(data)
+	parsed, err := toml.Decode(data)
 	assert(err == nil, "unmarshal error")
 	assert(parsed["name"].(string) == "test", "roundtrip name")
 	assert(parsed["count"].(int) == 100, "roundtrip count")
@@ -424,7 +424,7 @@ func testMarshalNestedTable() {
 	data, err := toml.Marshal(obj)
 	assert(err == nil, "marshal nested error")
 	
-	parsed, err := toml.Unmarshal(data)
+	parsed, err := toml.Decode(data)
 	assert(err == nil, "unmarshal nested error")
 	
 	server := parsed["server"].(dyn.MapObject)
@@ -449,7 +449,7 @@ func testMarshalArrayOfTables() {
 	data, err := toml.Marshal(obj)
 	assert(err == nil, "marshal array of tables error")
 	
-	parsed, err := toml.Unmarshal(data)
+	parsed, err := toml.Decode(data)
 	assert(err == nil, "unmarshal array of tables error")
 	
 	items := parsed["items"].(dyn.SliceObject)
@@ -476,11 +476,11 @@ func testValid() {
 // ==================== Edge Cases ====================
 
 func testEmptyDocument() {
-	obj, err := toml.UnmarshalString("")
+	obj, err := toml.DecodeString("")
 	assert(err == nil, "empty doc error")
 	assert(len(obj) == 0, "empty doc len")
 	
-	obj2, err := toml.UnmarshalString("   \n\n   ")
+	obj2, err := toml.DecodeString("   \n\n   ")
 	assert(err == nil, "whitespace only error")
 	assert(len(obj2) == 0, "whitespace only len")
 	
@@ -493,7 +493,7 @@ func testWhitespace() {
 [  section  ]
     name = "test"
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "whitespace parse error")
 	assert(obj["key"].(string) == "value", "whitespace key")
 	
@@ -504,7 +504,7 @@ func testTrailingComma() {
 	input := `
 arr = [1, 2, 3,]
 `
-	obj, err := toml.UnmarshalString(input)
+	obj, err := toml.DecodeString(input)
 	assert(err == nil, "trailing comma error")
 	
 	arr := obj["arr"].(dyn.SliceObject)

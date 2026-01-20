@@ -1,0 +1,20 @@
+[package]
+name = "vogui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Use vo-web as the platform layer
+vo-web = { path = "../../../lang/crates/vo-web" }
+vo-runtime = { path = "../../../lang/crates/vo-runtime", default-features = false }
+vo-vm = { path = "../../../lang/crates/vo-vm", default-features = false }
+vo-common = { path = "../../../lang/crates/vo-common", default-features = false }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["console"] }
+include_dir = "0.7"
+
+[features]
+default = []

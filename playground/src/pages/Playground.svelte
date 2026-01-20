@@ -4,11 +4,12 @@
   import Examples from '../components/Examples.svelte';
   import FileExplorer from '../components/FileExplorer.svelte';
   import GuiPreview from '../components/GuiPreview.svelte';
-  import { runCode, type RunStatus } from '../wasm/vo.ts';
+  import { runCode, initGuiApp, handleGuiEvent, type RunStatus } from '../wasm/vo.ts';
 
+  const importKeyword = 'import';
   let code = $state(`package main
 
-import "errors"
+${importKeyword} "errors"
 
 // Vo: Go-inspired with elegant error handling
 // Features: goroutine, channel, ? operator, fail
@@ -70,32 +71,71 @@ func step2() error {
     nodeTree = null;
     guiMode = false;
 
+    // Detect GUI code by checking for gui.Run
+    const isGuiCode = code.includes('gui.Run') && code.includes('import "gui"');
+
     try {
-      const result = await runCode(code);
-      let output = result.stdout;
-      
-      // Check for VoGUI output
-      if (output.startsWith('__VOGUI__')) {
-        guiMode = true;
-        const jsonStr = output.slice(9).trim();
-        try {
-          const parsed = JSON.parse(jsonStr);
-          nodeTree = parsed.tree;
-          stdout = '';  // Clear stdout for GUI mode
-        } catch (parseErr) {
-          stderr = 'Failed to parse GUI output: ' + parseErr;
+      if (isGuiCode) {
+        // Use initGuiApp for GUI code
+        const result = await initGuiApp(code);
+        console.log('initGuiApp result:', result);
+        if (result.status !== 'ok') {
+          stderr = result.error || 'Unknown error';
           status = 'error';
           return;
         }
+        guiMode = true;
+        console.log('renderJson:', result.renderJson);
+        if (result.renderJson) {
+          const parsed = JSON.parse(result.renderJson);
+          console.log('parsed tree:', parsed);
+          nodeTree = parsed.tree;
+        }
+        status = 'success';
       } else {
-        stdout = output;
+        // Regular code execution
+        const result = await runCode(code);
+        let output = result.stdout;
+        
+        // Check for VoGUI output (legacy path)
+        if (output.startsWith('__VOGUI__')) {
+          guiMode = true;
+          const jsonStr = output.slice(9).trim();
+          try {
+            const parsed = JSON.parse(jsonStr);
+            nodeTree = parsed.tree;
+            stdout = '';
+          } catch (parseErr) {
+            stderr = 'Failed to parse GUI output: ' + parseErr;
+            status = 'error';
+            return;
+          }
+        } else {
+          stdout = output;
+        }
+        
+        stderr = result.stderr;
+        status = result.status === 'ok' ? 'success' : 'error';
       }
-      
-      stderr = result.stderr;
-      status = result.status === 'ok' ? 'success' : 'error';
     } catch (e) {
       stderr = e instanceof Error ? e.message : String(e);
       status = 'error';
+    }
+  }
+
+  async function onGuiEvent(handlerId: number, payload: string) {
+    try {
+      const result = await handleGuiEvent(handlerId, payload);
+      if (result.status !== 'ok') {
+        stderr = result.error;
+        return;
+      }
+      if (result.renderJson) {
+        const parsed = JSON.parse(result.renderJson);
+        nodeTree = parsed.tree;
+      }
+    } catch (e) {
+      stderr = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -151,7 +191,7 @@ func step2() error {
       </div>
       {#if guiMode}
         <div class="gui-panel">
-          <GuiPreview {nodeTree} />
+          <GuiPreview {nodeTree} interactive={true} onEvent={onGuiEvent} />
         </div>
       {/if}
     </div>

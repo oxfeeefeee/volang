@@ -16,7 +16,7 @@ use vo_common_core::runtime_type::RuntimeType;
 
 use crate::ffi::ExternCallContext;
 use crate::gc::GcRef;
-use crate::objects::{interface, string as str_obj};
+use crate::objects::{array, interface, map, slice, string as str_obj};
 use crate::slot::SLOT_BYTES;
 use super::tag::{get_tag_value, parse_field_options};
 
@@ -37,6 +37,18 @@ pub trait FormatWriter {
     
     /// Called after writing a field value.
     fn write_field_end(&mut self);
+    
+    /// Called when starting an array.
+    fn write_array_start(&mut self);
+    
+    /// Called when ending an array.
+    fn write_array_end(&mut self);
+    
+    /// Called before writing an array element.
+    fn write_array_elem_start(&mut self, first: bool);
+    
+    /// Called after writing an array element.
+    fn write_array_elem_end(&mut self);
     
     /// Write an integer value.
     fn write_int(&mut self, val: i64);
@@ -205,18 +217,52 @@ fn marshal_field_value_depth<W: FormatWriter>(
         ValueKind::Interface => {
             let s0 = unsafe { *(field_ptr as *const u64) };
             let s1 = unsafe { *((field_ptr as *const u64).add(1)) };
-            marshal_any_value(s0, s1, writer)?;
+            marshal_any_value_depth(call, s0, s1, writer, depth + 1)?;
+        }
+        ValueKind::Slice => {
+            let slice_ref = unsafe { *(field_ptr as *const u64) } as GcRef;
+            marshal_slice_value_depth(call, slice_ref, rttid, writer, depth + 1)?;
+        }
+        ValueKind::Array => {
+            let arr_ref = field_ptr as GcRef;
+            marshal_array_value_depth(call, arr_ref, rttid, writer, depth + 1)?;
+        }
+        ValueKind::Map => {
+            let map_ref = unsafe { *(field_ptr as *const u64) } as GcRef;
+            marshal_map_value_depth(call, map_ref, rttid, writer, depth + 1)?;
         }
         _ => writer.write_null(),
     }
     Ok(())
 }
 
-pub fn marshal_any_value<W: FormatWriter>(slot0: u64, slot1: u64, writer: &mut W) -> Result<(), &'static str> {
+pub fn marshal_any_value<W: FormatWriter>(
+    call: &ExternCallContext,
+    slot0: u64,
+    slot1: u64,
+    writer: &mut W,
+) -> Result<(), &'static str> {
+    marshal_any_value_depth(call, slot0, slot1, writer, 0)
+}
+
+fn marshal_any_value_depth<W: FormatWriter>(
+    call: &ExternCallContext,
+    slot0: u64,
+    slot1: u64,
+    writer: &mut W,
+    depth: usize,
+) -> Result<(), &'static str> {
+    if depth > MAX_DEPTH {
+        return Err("max depth exceeded (possible cycle)");
+    }
+    
     let vk = interface::unpack_value_kind(slot0);
+    let rttid = interface::unpack_rttid(slot0);
+    
     match vk {
         ValueKind::Void => writer.write_null(),
         ValueKind::Int | ValueKind::Int64 => writer.write_int(slot1 as i64),
+        ValueKind::Int32 => writer.write_int32(slot1 as i32),
         ValueKind::Float64 => {
             let val = f64::from_bits(slot1);
             writer.write_float(val)?;
@@ -226,6 +272,267 @@ pub fn marshal_any_value<W: FormatWriter>(slot0: u64, slot1: u64, writer: &mut W
             let str_ref = slot1 as GcRef;
             if str_ref.is_null() { writer.write_string(""); }
             else { writer.write_string(str_obj::as_str(str_ref)); }
+        }
+        ValueKind::Struct => {
+            let ptr = slot1 as GcRef;
+            if ptr.is_null() { writer.write_null(); }
+            else { marshal_struct_value_depth(call, ptr, rttid, writer, depth + 1)?; }
+        }
+        ValueKind::Pointer => {
+            let ptr = slot1 as GcRef;
+            if ptr.is_null() { writer.write_null(); }
+            else {
+                let elem_rttid = get_pointed_type_rttid(call, rttid);
+                marshal_struct_value_depth(call, ptr, elem_rttid, writer, depth + 1)?;
+            }
+        }
+        ValueKind::Slice => {
+            let slice_ref = slot1 as GcRef;
+            marshal_slice_value_depth(call, slice_ref, rttid, writer, depth + 1)?;
+        }
+        ValueKind::Array => {
+            let arr_ref = slot1 as GcRef;
+            marshal_array_value_depth(call, arr_ref, rttid, writer, depth + 1)?;
+        }
+        ValueKind::Map => {
+            let map_ref = slot1 as GcRef;
+            marshal_map_value_depth(call, map_ref, rttid, writer, depth + 1)?;
+        }
+        // Note: ValueKind::Interface should not appear here.
+        // When assigning interface to any, the inner value is unwrapped.
+        _ => writer.write_null(),
+    }
+    Ok(())
+}
+
+fn marshal_slice_value_depth<W: FormatWriter>(
+    call: &ExternCallContext,
+    slice_ref: GcRef,
+    rttid: u32,
+    writer: &mut W,
+    depth: usize,
+) -> Result<(), &'static str> {
+    if slice_ref.is_null() {
+        writer.write_null();
+        return Ok(());
+    }
+    
+    let elem_value_rttid = call.get_elem_value_rttid_from_base(rttid);
+    let elem_vk = elem_value_rttid.value_kind();
+    let elem_rttid = elem_value_rttid.rttid();
+    let length = slice::len(slice_ref);
+    let elem_bytes = array::elem_bytes(slice::array_ref(slice_ref));
+    
+    writer.write_array_start();
+    for i in 0..length {
+        writer.write_array_elem_start(i == 0);
+        marshal_elem_value_depth(call, slice::data_ptr(slice_ref), i, elem_bytes, elem_vk, elem_rttid, writer, depth)?;
+        writer.write_array_elem_end();
+    }
+    writer.write_array_end();
+    Ok(())
+}
+
+fn marshal_array_value_depth<W: FormatWriter>(
+    call: &ExternCallContext,
+    arr_ref: GcRef,
+    rttid: u32,
+    writer: &mut W,
+    depth: usize,
+) -> Result<(), &'static str> {
+    if arr_ref.is_null() {
+        writer.write_null();
+        return Ok(());
+    }
+    
+    let elem_value_rttid = call.get_elem_value_rttid_from_base(rttid);
+    let elem_vk = elem_value_rttid.value_kind();
+    let elem_rttid = elem_value_rttid.rttid();
+    let length = array::len(arr_ref);
+    let elem_bytes = array::elem_bytes(arr_ref);
+    
+    writer.write_array_start();
+    for i in 0..length {
+        writer.write_array_elem_start(i == 0);
+        marshal_elem_value_depth(call, array::data_ptr_bytes(arr_ref), i, elem_bytes, elem_vk, elem_rttid, writer, depth)?;
+        writer.write_array_elem_end();
+    }
+    writer.write_array_end();
+    Ok(())
+}
+
+fn marshal_map_value_depth<W: FormatWriter>(
+    call: &ExternCallContext,
+    map_ref: GcRef,
+    _rttid: u32,
+    writer: &mut W,
+    depth: usize,
+) -> Result<(), &'static str> {
+    if map_ref.is_null() {
+        writer.write_null();
+        return Ok(());
+    }
+    
+    let key_vk = map::key_kind(map_ref);
+    let val_vk = map::val_kind(map_ref);
+    let val_meta_id = map::val_meta(map_ref).meta_id();
+    
+    // JSON only supports string keys
+    if key_vk != ValueKind::String {
+        return Err("json: unsupported map key type (only string keys allowed)");
+    }
+    
+    writer.write_object_start();
+    let mut iter = map::iter_init(map_ref);
+    let mut first = true;
+    while let Some((key, val)) = map::iter_next(&mut iter) {
+        let key_str_ref = key[0] as GcRef;
+        let key_str = if key_str_ref.is_null() { "" } else { str_obj::as_str(key_str_ref) };
+        
+        if !writer.write_field_start(key_str, first) { continue; }
+        first = false;
+        
+        marshal_map_val_depth(call, val, val_vk, val_meta_id, writer, depth)?;
+        writer.write_field_end();
+    }
+    writer.write_object_end();
+    Ok(())
+}
+
+fn marshal_elem_value_depth<W: FormatWriter>(
+    call: &ExternCallContext,
+    data_ptr: *mut u8,
+    idx: usize,
+    elem_bytes: usize,
+    elem_vk: ValueKind,
+    elem_rttid: u32,
+    writer: &mut W,
+    depth: usize,
+) -> Result<(), &'static str> {
+    let ptr = unsafe { data_ptr.add(idx * elem_bytes) };
+    
+    match elem_vk {
+        ValueKind::Int | ValueKind::Int64 => {
+            let val = unsafe { *(ptr as *const i64) };
+            writer.write_int(val);
+        }
+        ValueKind::Int32 => {
+            let val = unsafe { *(ptr as *const i32) };
+            writer.write_int32(val);
+        }
+        ValueKind::Int8 => {
+            let val = unsafe { *(ptr as *const i8) };
+            writer.write_int(val as i64);
+        }
+        ValueKind::Int16 => {
+            let val = unsafe { *(ptr as *const i16) };
+            writer.write_int(val as i64);
+        }
+        ValueKind::Uint | ValueKind::Uint64 => {
+            let val = unsafe { *(ptr as *const u64) };
+            writer.write_int(val as i64);
+        }
+        ValueKind::Uint8 => {
+            let val = unsafe { *(ptr as *const u8) };
+            writer.write_int(val as i64);
+        }
+        ValueKind::Uint16 => {
+            let val = unsafe { *(ptr as *const u16) };
+            writer.write_int(val as i64);
+        }
+        ValueKind::Uint32 => {
+            let val = unsafe { *(ptr as *const u32) };
+            writer.write_int(val as i64);
+        }
+        ValueKind::Float64 => {
+            let val = unsafe { *(ptr as *const f64) };
+            writer.write_float(val)?;
+        }
+        ValueKind::Float32 => {
+            let val = unsafe { *(ptr as *const f32) };
+            writer.write_float(val as f64)?;
+        }
+        ValueKind::Bool => {
+            let val = unsafe { *ptr } != 0;
+            writer.write_bool(val);
+        }
+        ValueKind::String => {
+            let str_ref = unsafe { *(ptr as *const u64) } as GcRef;
+            if str_ref.is_null() { writer.write_string(""); }
+            else { writer.write_string(str_obj::as_str(str_ref)); }
+        }
+        ValueKind::Struct => {
+            marshal_struct_value_depth(call, ptr as GcRef, elem_rttid, writer, depth + 1)?;
+        }
+        ValueKind::Pointer => {
+            let ptr_val = unsafe { *(ptr as *const u64) } as GcRef;
+            if ptr_val.is_null() { writer.write_null(); }
+            else {
+                let pointed_rttid = get_pointed_type_rttid(call, elem_rttid);
+                marshal_struct_value_depth(call, ptr_val, pointed_rttid, writer, depth + 1)?;
+            }
+        }
+        ValueKind::Interface => {
+            let s0 = unsafe { *(ptr as *const u64) };
+            let s1 = unsafe { *((ptr as *const u64).add(1)) };
+            marshal_any_value_depth(call, s0, s1, writer, depth + 1)?;
+        }
+        ValueKind::Slice => {
+            let slice_ref = unsafe { *(ptr as *const u64) } as GcRef;
+            marshal_slice_value_depth(call, slice_ref, elem_rttid, writer, depth + 1)?;
+        }
+        ValueKind::Map => {
+            let map_ref = unsafe { *(ptr as *const u64) } as GcRef;
+            marshal_map_value_depth(call, map_ref, elem_rttid, writer, depth + 1)?;
+        }
+        _ => writer.write_null(),
+    }
+    Ok(())
+}
+
+fn marshal_map_val_depth<W: FormatWriter>(
+    call: &ExternCallContext,
+    val: &[u64],
+    val_vk: ValueKind,
+    val_meta_id: u32,
+    writer: &mut W,
+    depth: usize,
+) -> Result<(), &'static str> {
+    match val_vk {
+        ValueKind::Int | ValueKind::Int64 => writer.write_int(val[0] as i64),
+        ValueKind::Int32 => writer.write_int32(val[0] as i32),
+        ValueKind::Float64 => {
+            let v = f64::from_bits(val[0]);
+            writer.write_float(v)?;
+        }
+        ValueKind::Bool => writer.write_bool(val[0] != 0),
+        ValueKind::String => {
+            let str_ref = val[0] as GcRef;
+            if str_ref.is_null() { writer.write_string(""); }
+            else { writer.write_string(str_obj::as_str(str_ref)); }
+        }
+        ValueKind::Struct => {
+            let ptr = val.as_ptr() as GcRef;
+            marshal_struct_value_depth(call, ptr, val_meta_id, writer, depth + 1)?;
+        }
+        ValueKind::Pointer => {
+            let ptr_val = val[0] as GcRef;
+            if ptr_val.is_null() { writer.write_null(); }
+            else {
+                let elem_rttid = get_pointed_type_rttid(call, val_meta_id);
+                marshal_struct_value_depth(call, ptr_val, elem_rttid, writer, depth + 1)?;
+            }
+        }
+        ValueKind::Interface => {
+            marshal_any_value_depth(call, val[0], val[1], writer, depth + 1)?;
+        }
+        ValueKind::Slice => {
+            let slice_ref = val[0] as GcRef;
+            marshal_slice_value_depth(call, slice_ref, val_meta_id, writer, depth + 1)?;
+        }
+        ValueKind::Map => {
+            let map_ref = val[0] as GcRef;
+            marshal_map_value_depth(call, map_ref, val_meta_id, writer, depth + 1)?;
         }
         _ => writer.write_null(),
     }

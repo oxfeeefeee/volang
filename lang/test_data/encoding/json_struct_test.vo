@@ -101,7 +101,7 @@ func main() {
 
 func testBasicMarshal() {
 	p := &Person{Name: "Alice", Age: 30, Height: 1.75, Active: true}
-	data, err := json.MarshalStruct(p)
+	data, err := json.Marshal(p)
 	if err != nil {
 		panic("testBasicMarshal failed: " + err.Error())
 	}
@@ -115,7 +115,7 @@ func testBasicMarshal() {
 func testBasicUnmarshal() {
 	data := []byte(`{"name":"Bob","age":25,"height":1.80,"active":false}`)
 	var p Person
-	err := json.UnmarshalStruct(data, &p)
+	err := json.Unmarshal(data, &p)
 	if err != nil {
 		panic("testBasicUnmarshal failed: " + err.Error())
 	}
@@ -128,7 +128,7 @@ func testBasicUnmarshal() {
 func testZeroValues() {
 	// Marshal zero values
 	e := &Empty{}
-	data, err := json.MarshalStruct(e)
+	data, err := json.Marshal(e)
 	if err != nil {
 		panic("testZeroValues marshal failed: " + err.Error())
 	}
@@ -139,7 +139,7 @@ func testZeroValues() {
 	
 	// Unmarshal to zero struct
 	var e2 Empty
-	err = json.UnmarshalStruct([]byte(`{}`), &e2)
+	err = json.Unmarshal([]byte(`{}`), &e2)
 	if err != nil {
 		panic("testZeroValues unmarshal failed: " + err.Error())
 	}
@@ -151,7 +151,7 @@ func testZeroValues() {
 
 func testSpecialChars() {
 	m := &Message{Content: "Hello\nWorld\t\"quoted\"\\backslash", Author: "Test"}
-	data, err := json.MarshalStruct(m)
+	data, err := json.Marshal(m)
 	if err != nil {
 		panic("testSpecialChars marshal failed: " + err.Error())
 	}
@@ -163,7 +163,7 @@ func testSpecialChars() {
 	
 	// Unmarshal back
 	var m2 Message
-	err = json.UnmarshalStruct(data, &m2)
+	err = json.Unmarshal(data, &m2)
 	if err != nil {
 		panic("testSpecialChars unmarshal failed: " + err.Error())
 	}
@@ -179,7 +179,7 @@ func testNestedStruct() {
 		CEO:     Person{Name: "Jane", Age: 45, Height: 1.65, Active: true},
 		Founded: 2010,
 	}
-	data, err := json.MarshalStruct(c)
+	data, err := json.Marshal(c)
 	if err != nil {
 		panic("testNestedStruct marshal failed: " + err.Error())
 	}
@@ -188,7 +188,7 @@ func testNestedStruct() {
 	
 	// Test unmarshal nested struct
 	var c2 Company
-	err = json.UnmarshalStruct(data, &c2)
+	err = json.Unmarshal(data, &c2)
 	if err != nil {
 		panic("testNestedStruct unmarshal failed: " + err.Error())
 	}
@@ -201,7 +201,7 @@ func testNestedStruct() {
 func testPointerField() {
 	leader := &Person{Name: "Leader", Age: 50, Height: 1.80, Active: true}
 	t := &Team{Name: "Alpha", Leader: leader}
-	data, err := json.MarshalStruct(t)
+	data, err := json.Marshal(t)
 	if err != nil {
 		panic("testPointerField marshal failed: " + err.Error())
 	}
@@ -210,7 +210,7 @@ func testPointerField() {
 	
 	// Test unmarshal pointer field
 	var t2 Team
-	err = json.UnmarshalStruct(data, &t2)
+	err = json.Unmarshal(data, &t2)
 	if err != nil {
 		panic("testPointerField unmarshal failed: " + err.Error())
 	}
@@ -222,7 +222,7 @@ func testPointerField() {
 
 func testNilPointerField() {
 	t := &Team{Name: "Beta", Leader: nil}
-	data, err := json.MarshalStruct(t)
+	data, err := json.Marshal(t)
 	if err != nil {
 		panic("testNilPointerField marshal failed: " + err.Error())
 	}
@@ -237,7 +237,7 @@ func testExtraFields() {
 	// JSON has extra fields not in struct - should be ignored
 	data := []byte(`{"name":"Extra","age":100,"unknown":"field","another":123}`)
 	var p Person
-	err := json.UnmarshalStruct(data, &p)
+	err := json.Unmarshal(data, &p)
 	if err != nil {
 		panic("testExtraFields failed: " + err.Error())
 	}
@@ -251,7 +251,7 @@ func testMissingFields() {
 	// JSON missing some fields - should use zero values
 	data := []byte(`{"name":"Partial"}`)
 	var p Person
-	err := json.UnmarshalStruct(data, &p)
+	err := json.Unmarshal(data, &p)
 	if err != nil {
 		panic("testMissingFields failed: " + err.Error())
 	}
@@ -267,7 +267,7 @@ func testEmbeddedStruct() {
 		Address: Address{Street: "123 Main St", City: "Boston", Zip: 12345},
 		Salary:  50000,
 	}
-	data, err := json.MarshalStruct(e)
+	data, err := json.Marshal(e)
 	if err != nil {
 		panic("testEmbeddedStruct marshal failed: " + err.Error())
 	}
@@ -277,7 +277,7 @@ func testEmbeddedStruct() {
 	
 	// Test unmarshal embedded struct
 	var e2 Employee
-	err = json.UnmarshalStruct(data, &e2)
+	err = json.Unmarshal(data, &e2)
 	if err != nil {
 		panic("testEmbeddedStruct unmarshal failed: " + err.Error())
 	}
@@ -295,7 +295,7 @@ func testMultiLevelEmbed() {
 		},
 		Name: "top",
 	}
-	data, err := json.MarshalStruct(t)
+	data, err := json.Marshal(t)
 	if err != nil {
 		panic("testMultiLevelEmbed marshal failed: " + err.Error())
 	}
@@ -304,7 +304,7 @@ func testMultiLevelEmbed() {
 	
 	// Test unmarshal multi-level embedded
 	var t2 Top
-	err = json.UnmarshalStruct(data, &t2)
+	err = json.Unmarshal(data, &t2)
 	if err != nil {
 		panic("testMultiLevelEmbed unmarshal failed: " + err.Error())
 	}
@@ -320,7 +320,7 @@ func testLinkedList() {
 	n2 := &Node{Value: 2, Next: n3}
 	n1 := &Node{Value: 1, Next: n2}
 	
-	data, err := json.MarshalStruct(n1)
+	data, err := json.Marshal(n1)
 	if err != nil {
 		panic("testLinkedList marshal failed: " + err.Error())
 	}
@@ -329,7 +329,7 @@ func testLinkedList() {
 	
 	// Test unmarshal linked list
 	var n Node
-	err = json.UnmarshalStruct(data, &n)
+	err = json.Unmarshal(data, &n)
 	if err != nil {
 		panic("testLinkedList unmarshal failed: " + err.Error())
 	}
@@ -355,7 +355,7 @@ func testTreeStructure() {
 		Right: &TreeNode{Value: 3, Left: nil, Right: nil},
 	}
 	
-	data, err := json.MarshalStruct(tree)
+	data, err := json.Marshal(tree)
 	if err != nil {
 		panic("testTreeStructure marshal failed: " + err.Error())
 	}
@@ -375,7 +375,7 @@ func testCyclicReference() {
 	// Marshal should either:
 	// 1. Detect cycle and return error, or
 	// 2. Use max depth limit and output null for deep refs
-	data, err := json.MarshalStruct(a)
+	data, err := json.Marshal(a)
 	if err != nil {
 		// Cycle detection error is acceptable
 		fmt.Println("testCyclicReference: OK - cycle detected: " + err.Error())

@@ -15,8 +15,8 @@ use super::serde_toml::{TomlWriter, TomlReader};
 
 use vo_ffi_macro::vostd_extern_ctx_nostd;
 
-#[vostd_extern_ctx_nostd("toml", "MarshalStruct")]
-fn marshal_struct(call: &mut ExternCallContext) -> ExternResult {
+#[vostd_extern_ctx_nostd("toml", "marshalAny")]
+fn marshal_any(call: &mut ExternCallContext) -> ExternResult {
     let v_slot0 = call.arg_u64(0);
     let v_slot1 = call.arg_u64(1);
     
@@ -32,7 +32,7 @@ fn marshal_struct(call: &mut ExternCallContext) -> ExternResult {
             let elem_rttid = get_pointed_type_rttid(call, rttid);
             marshal_struct_value(call, ptr, elem_rttid, &mut writer)
         }
-        _ => marshal_any_value(v_slot0, v_slot1, &mut writer),
+        _ => marshal_any_value(call, v_slot0, v_slot1, &mut writer),
     };
     
     match result {
@@ -52,8 +52,8 @@ fn marshal_struct(call: &mut ExternCallContext) -> ExternResult {
     }
 }
 
-#[vostd_extern_ctx_nostd("toml", "UnmarshalStruct")]
-fn unmarshal_struct_extern(call: &mut ExternCallContext) -> ExternResult {
+#[vostd_extern_ctx_nostd("toml", "Unmarshal")]
+fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     let toml_str = {
         let data = call.arg_bytes(0);
         if data.is_empty() {
@@ -95,4 +95,4 @@ fn unmarshal_struct_extern(call: &mut ExternCallContext) -> ExternResult {
     ExternResult::Ok
 }
 
-crate::stdlib_register!(toml: MarshalStruct, UnmarshalStruct);
+crate::stdlib_register!(toml: marshalAny, Unmarshal);

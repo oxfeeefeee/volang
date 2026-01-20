@@ -57,6 +57,22 @@ impl FormatWriter for JsonWriter {
         // Nothing needed for JSON
     }
     
+    fn write_array_start(&mut self) {
+        self.buf.push(b'[');
+    }
+    
+    fn write_array_end(&mut self) {
+        self.buf.push(b']');
+    }
+    
+    fn write_array_elem_start(&mut self, first: bool) {
+        if !first { self.buf.push(b','); }
+    }
+    
+    fn write_array_elem_end(&mut self) {
+        // Nothing needed for JSON
+    }
+    
     fn write_int(&mut self, val: i64) {
         self.buf.extend_from_slice(format!("{}", val).as_bytes());
     }

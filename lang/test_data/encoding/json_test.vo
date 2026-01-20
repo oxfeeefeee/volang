@@ -22,43 +22,43 @@ func main() {
 
 func testUnmarshal() {
 	// Simple values
-	v, err := json.Unmarshal([]byte(`"hello"`))
+	v, err := json.Decode([]byte(`"hello"`))
 	assert(err == nil, "unmarshal string")
 	assert(v.(string) == "hello", "string value")
 
-	v, err = json.Unmarshal([]byte(`123`))
+	v, err = json.Decode([]byte(`123`))
 	assert(err == nil, "unmarshal number")
 	f := v.(float64)
 	assert(f == 123.0, "number value")
 
-	v, err = json.Unmarshal([]byte(`true`))
+	v, err = json.Decode([]byte(`true`))
 	assert(err == nil, "unmarshal bool")
 	assert(v.(bool) == true, "bool value")
 
-	v, err = json.Unmarshal([]byte(`false`))
+	v, err = json.Decode([]byte(`false`))
 	assert(err == nil, "unmarshal false")
 	assert(v.(bool) == false, "false value")
 
-	v, err = json.Unmarshal([]byte(`null`))
+	v, err = json.Decode([]byte(`null`))
 	assert(err == nil, "unmarshal null")
 	assert(v == nil, "null value")
 
 	// Object
-	v, err = json.Unmarshal([]byte(`{"name": "test", "value": 42}`))
+	v, err = json.Decode([]byte(`{"name": "test", "value": 42}`))
 	assert(err == nil, "unmarshal object")
 	obj := v.(dyn.MapObject)
 	assert(obj["name"].(string) == "test", "object name")
 	assert(obj["value"].(float64) == 42.0, "object value")
 
 	// Array
-	v, err = json.Unmarshal([]byte(`[1, 2, 3]`))
+	v, err = json.Decode([]byte(`[1, 2, 3]`))
 	assert(err == nil, "unmarshal array")
 	arr := v.(dyn.SliceObject)
 	assert(len(arr) == 3, "array length")
 	assert(arr[0].(float64) == 1.0, "array[0]")
 
 	// Nested
-	v, err = json.Unmarshal([]byte(`{"items": [{"id": 1}, {"id": 2}]}`))
+	v, err = json.Decode([]byte(`{"items": [{"id": 1}, {"id": 2}]}`))
 	assert(err == nil, "unmarshal nested")
 	obj = v.(dyn.MapObject)
 	items := obj["items"].(dyn.SliceObject)
@@ -66,29 +66,29 @@ func testUnmarshal() {
 	assert(items[0].(dyn.MapObject)["id"].(float64) == 1.0, "nested id")
 
 	// Unicode escape
-	v, err = json.Unmarshal([]byte(`"hello\u0020world"`))
+	v, err = json.Decode([]byte(`"hello\u0020world"`))
 	assert(err == nil, "unmarshal unicode")
 	assert(v.(string) == "hello world", "unicode value")
 
 	// Escape sequences
-	v, err = json.Unmarshal([]byte(`"line1\nline2\ttab"`))
+	v, err = json.Decode([]byte(`"line1\nline2\ttab"`))
 	assert(err == nil, "unmarshal escapes")
 	assert(v.(string) == "line1\nline2\ttab", "escape value")
 
 	// Empty object/array
-	v, err = json.Unmarshal([]byte(`{}`))
+	v, err = json.Decode([]byte(`{}`))
 	assert(err == nil, "unmarshal empty object")
 	assert(len(v.(dyn.MapObject)) == 0, "empty object")
 
-	v, err = json.Unmarshal([]byte(`[]`))
+	v, err = json.Decode([]byte(`[]`))
 	assert(err == nil, "unmarshal empty array")
 	assert(len(v.(dyn.SliceObject)) == 0, "empty array")
 
 	// Errors
-	_, err = json.Unmarshal([]byte(`{invalid}`))
+	_, err = json.Decode([]byte(`{invalid}`))
 	assert(err != nil, "error on invalid json")
 
-	_, err = json.Unmarshal([]byte(`{"key": }`))
+	_, err = json.Decode([]byte(`{"key": }`))
 	assert(err != nil, "error on missing value")
 }
 
@@ -257,36 +257,36 @@ func testIndent() {
 
 func testEdgeCases() {
 	// Deeply nested
-	v, err := json.Unmarshal([]byte(`[[[[1]]]]`))
+	v, err := json.Decode([]byte(`[[[[1]]]]`))
 	assert(err == nil, "deep array")
 	assert(v.(dyn.SliceObject)[0].(dyn.SliceObject)[0].(dyn.SliceObject)[0].(dyn.SliceObject)[0].(float64) == 1.0, "deep value")
 
 	// Negative number
-	v, err = json.Unmarshal([]byte(`-123`))
+	v, err = json.Decode([]byte(`-123`))
 	assert(err == nil, "negative")
 	assert(v.(float64) == -123.0, "negative value")
 
 	// Exponent
-	v, err = json.Unmarshal([]byte(`1.5e10`))
+	v, err = json.Decode([]byte(`1.5e10`))
 	assert(err == nil, "exponent")
 	assert(v.(float64) == 1.5e10, "exponent value")
 
 	// Negative exponent
-	v, err = json.Unmarshal([]byte(`1.5e-3`))
+	v, err = json.Decode([]byte(`1.5e-3`))
 	assert(err == nil, "neg exponent")
 
 	// Unicode in key
-	v, err = json.Unmarshal([]byte(`{"中文": "value"}`))
+	v, err = json.Decode([]byte(`{"中文": "value"}`))
 	assert(err == nil, "unicode key")
 	assert(v.(dyn.MapObject)["中文"].(string) == "value", "unicode key value")
 
 	// Empty string
-	v, err = json.Unmarshal([]byte(`""`))
+	v, err = json.Decode([]byte(`""`))
 	assert(err == nil, "empty string")
 	assert(v.(string) == "", "empty string value")
 
 	// Whitespace handling
-	v, err = json.Unmarshal([]byte("  \n\t { \"a\" : 1 }  \n"))
+	v, err = json.Decode([]byte("  \n\t { \"a\" : 1 }  \n"))
 	assert(err == nil, "whitespace")
 	assert(v.(dyn.MapObject)["a"].(float64) == 1.0, "whitespace value")
 }

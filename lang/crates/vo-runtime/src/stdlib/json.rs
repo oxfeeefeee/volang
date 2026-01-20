@@ -2,7 +2,7 @@
 //! Uses the serde module for visitor-pattern based marshaling.
 
 #[cfg(not(feature = "std"))]
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 #[cfg(not(feature = "std"))]
@@ -19,8 +19,7 @@ use super::serde_json::{JsonWriter, JsonReader, write_json_string_to_buf};
 
 use vo_ffi_macro::vostd_extern_ctx_nostd;
 
-#[vostd_extern_ctx_nostd("json", "MarshalStruct")]
-fn marshal_struct(call: &mut ExternCallContext) -> ExternResult {
+fn marshal_impl(call: &mut ExternCallContext) -> ExternResult {
     let v_slot0 = call.arg_u64(0);
     let v_slot1 = call.arg_u64(1);
     
@@ -36,7 +35,7 @@ fn marshal_struct(call: &mut ExternCallContext) -> ExternResult {
             let elem_rttid = get_pointed_type_rttid(call, rttid);
             marshal_struct_value(call, ptr, elem_rttid, &mut writer)
         }
-        _ => marshal_any_value(v_slot0, v_slot1, &mut writer),
+        _ => marshal_any_value(call, v_slot0, v_slot1, &mut writer),
     };
     
     match result {
@@ -56,8 +55,13 @@ fn marshal_struct(call: &mut ExternCallContext) -> ExternResult {
     }
 }
 
-#[vostd_extern_ctx_nostd("json", "UnmarshalStruct")]
-fn unmarshal_struct_extern(call: &mut ExternCallContext) -> ExternResult {
+#[vostd_extern_ctx_nostd("json", "marshalAny")]
+fn marshal_any(call: &mut ExternCallContext) -> ExternResult {
+    marshal_impl(call)
+}
+
+#[vostd_extern_ctx_nostd("json", "Unmarshal")]
+fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     let json_str = {
         let data = call.arg_bytes(0);
         if data.is_empty() {
@@ -228,4 +232,4 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
     }
 }
 
-crate::stdlib_register!(json: MarshalStruct, UnmarshalStruct, writeJsonString, parseJsonString);
+crate::stdlib_register!(json: marshalAny, Unmarshal, writeJsonString, parseJsonString);

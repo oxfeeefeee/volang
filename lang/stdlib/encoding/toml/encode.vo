@@ -7,23 +7,19 @@ import (
 )
 
 // Marshal returns the TOML encoding of v.
-// Supports: dyn.MapObject, map[string]any, string, int, float64, bool.
-// Note: TOML does not support null values.
+// Supports all types: structs, pointers, dyn.MapObject, map[string]any.
+// Note: TOML does not support null values and root must be a table.
 func Marshal(v any) ([]byte, error) {
-	obj, ok := v.(dyn.MapObject)
-	if !ok {
-		if m, ok := v.(map[string]any); ok {
-			obj = dyn.MapObject(m)
-		} else {
-			return nil, errors.Wrap(ErrMarshal, "TOML root must be a table")
-		}
+	switch val := v.(type) {
+	case dyn.MapObject:
+		buf := make([]byte, 0, 256)
+		return writeTable(buf, val, "")
+	case map[string]any:
+		buf := make([]byte, 0, 256)
+		return writeTable(buf, dyn.MapObject(val), "")
+	default:
+		return marshalAny(v)
 	}
-	buf := make([]byte, 0, 256)
-	buf, err := writeTable(buf, obj, "")
-	if err != nil {
-		return nil, err
-	}
-	return buf, nil
 }
 
 func writeTable(buf []byte, obj dyn.MapObject, prefix string) ([]byte, error) {

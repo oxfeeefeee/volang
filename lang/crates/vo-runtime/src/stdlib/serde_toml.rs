@@ -1,7 +1,7 @@
 //! TOML format implementation for serde.
 
 #[cfg(not(feature = "std"))]
-use alloc::string::String;
+use alloc::string::{String, ToString};
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 #[cfg(not(feature = "std"))]
@@ -46,6 +46,22 @@ impl FormatWriter for TomlWriter {
     
     fn write_field_end(&mut self) {
         self.buf.push(b'\n');
+    }
+    
+    fn write_array_start(&mut self) {
+        self.buf.push(b'[');
+    }
+    
+    fn write_array_end(&mut self) {
+        self.buf.push(b']');
+    }
+    
+    fn write_array_elem_start(&mut self, first: bool) {
+        if !first { self.buf.extend_from_slice(b", "); }
+    }
+    
+    fn write_array_elem_end(&mut self) {
+        // Nothing needed for TOML
     }
     
     fn write_int(&mut self, val: i64) {

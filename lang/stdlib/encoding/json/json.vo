@@ -1,3 +1,10 @@
+// Package json implements encoding and decoding of JSON.
+//
+// Public API:
+//   - Marshal(v any) ([]byte, error)           - encode to JSON (encode.vo)
+//   - Unmarshal(data []byte, v any) error      - decode into struct (native)
+//   - Decode(data []byte) (any, error)         - decode to dynamic types (decode.vo)
+//   - Encoder / Decoder                        - streaming API
 package json
 
 import (
@@ -5,90 +12,50 @@ import (
 	"strconv"
 )
 
-// Native struct marshal/unmarshal functions (implemented in Rust)
-// These use StructMeta for reflection since Vo doesn't have runtime reflection.
-
-// MarshalStruct marshals a struct or pointer to struct to JSON.
-func MarshalStruct(v any) ([]byte, error)
-
-// UnmarshalStruct unmarshals JSON into a pointer to struct.
-func UnmarshalStruct(data []byte, v any) error
-
-// writeJsonString appends the JSON-encoded string s to buf.
-// If escapeHTML is true, <, >, & are escaped as \uXXXX.
+// Native functions (implemented in Rust)
+func Unmarshal(data []byte, v any) error
+func marshalAny(v any) ([]byte, error)
 func writeJsonString(buf []byte, s string, escapeHTML bool) []byte
-
-// parseJsonString parses a JSON string starting at data[pos].
-// Returns (parsed string, new position, error).
 func parseJsonString(data []byte, pos int) (string, int, error)
 
-// Error codes
+// Errors
 var (
-	// ErrSyntax indicates a JSON syntax error.
-	ErrSyntax = errors.NewCode(errors.CodeJsonSyntax, "json syntax error")
-
-	// ErrUnexpectedEOF indicates unexpected end of input.
+	ErrSyntax        = errors.NewCode(errors.CodeJsonSyntax, "json syntax error")
 	ErrUnexpectedEOF = errors.NewCode(errors.CodeJsonUnexpectedEOF, "unexpected end of JSON input")
-
-	// ErrInvalidValue indicates an invalid value.
-	ErrInvalidValue = errors.NewCode(errors.CodeJsonInvalidValue, "invalid JSON value")
-
-	// ErrTypeMismatch indicates a type mismatch.
-	ErrTypeMismatch = errors.NewCode(errors.CodeJsonTypeMismatch, "JSON type mismatch")
-
-	// ErrMarshal indicates a serialization error.
-	ErrMarshal = errors.NewCode(errors.CodeJsonMarshal, "JSON marshal error")
-
-	// ErrUnmarshal indicates a deserialization error.
-	ErrUnmarshal = errors.NewCode(errors.CodeJsonUnmarshal, "JSON unmarshal error")
+	ErrInvalidValue  = errors.NewCode(errors.CodeJsonInvalidValue, "invalid JSON value")
+	ErrTypeMismatch  = errors.NewCode(errors.CodeJsonTypeMismatch, "JSON type mismatch")
+	ErrMarshal       = errors.NewCode(errors.CodeJsonMarshal, "JSON marshal error")
+	ErrUnmarshal     = errors.NewCode(errors.CodeJsonUnmarshal, "JSON unmarshal error")
 )
 
-// Number represents a JSON number literal.
-// It preserves the original string representation for precision.
+// Number preserves the original string representation of a JSON number.
 type Number string
 
-// String returns the literal text of the number.
-func (n Number) String() string {
-	return string(n)
-}
+func (n Number) String() string { return string(n) }
 
-// Int64 returns the number as an int64.
 func (n Number) Int64() (int64, error) {
 	i, err := strconv.ParseInt(string(n), 10)
 	if err != nil {
-		return 0, errors.Wrap(ErrInvalidValue, "json.Number is not a valid integer")
+		return 0, errors.Wrap(ErrInvalidValue, "invalid integer")
 	}
 	return int64(i), nil
 }
 
-// Float64 returns the number as a float64.
 func (n Number) Float64() (float64, error) {
 	f, ok := strconv.ParseFloat(string(n), 64)
 	if !ok {
-		return 0, errors.Wrap(ErrInvalidValue, "json.Number is not a valid float")
+		return 0, errors.Wrap(ErrInvalidValue, "invalid float")
 	}
 	return f, nil
 }
 
 // RawMessage is a raw encoded JSON value.
-// It implements Marshaler and Unmarshaler and can be used to delay JSON decoding
-// or precompute a JSON encoding.
 type RawMessage []byte
 
-// Delim is a JSON array or object delimiter, one of [ ] { or }.
+// Delim is a JSON delimiter: [ ] { }
 type Delim rune
 
-// String returns the delimiter as a string.
-func (d Delim) String() string {
-	return string(d)
-}
+func (d Delim) String() string { return string(d) }
 
-// Token is a JSON token returned by Decoder.Token().
-// The token types are:
-//   - Delim: for the four JSON delimiters [ ] { }
-//   - bool: for JSON booleans
-//   - float64: for JSON numbers (when UseNumber is not called)
-//   - Number: for JSON numbers (when UseNumber is called)
-//   - string: for JSON string literals
-//   - nil: for JSON null
+// Token is returned by Decoder.Token(): Delim, bool, float64, Number, string, or nil.
 type Token interface{}

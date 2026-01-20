@@ -1564,6 +1564,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vogui"
+version = "0.1.0"
+dependencies = [
+ "include_dir",
+ "vo-common",
+ "vo-runtime",
+ "vo-vm",
+ "vo-web",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

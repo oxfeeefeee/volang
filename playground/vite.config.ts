@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@vo-web': path.resolve(__dirname, '../lang/crates/vo-web/pkg'),
+      '@vogui': path.resolve(__dirname, '../libs/vogui/rust/pkg'),
     },
   },
   server: {

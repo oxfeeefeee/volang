@@ -20,14 +20,14 @@ func main() {
 		Country: "USA",
 	}
 
-	data, err := json.MarshalStruct(p)
+	data, err := json.Marshal(p)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(string(data))
 
 	var p2 Person
-	err = json.UnmarshalStruct([]byte(`{"name":"Bob","age":25,"email_address":"bob@test.com","country":"UK"}`), &p2)
+	err = json.Unmarshal([]byte(`{"name":"Bob","age":25,"email_address":"bob@test.com","country":"UK"}`), &p2)
 	if err != nil {
 		panic(err)
 	}

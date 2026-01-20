@@ -1,55 +1,78 @@
 <script lang="ts">
   interface Node {
-    Type: string;
-    Props?: Record<string, any>;
-    Children?: Node[];
+    type: string;
+    props?: Record<string, any>;
+    children?: Node[];
   }
 
-  let { nodeTree }: { nodeTree: Node | null } = $props();
+  interface Props {
+    nodeTree: Node | null;
+    interactive?: boolean;
+    onEvent?: (handlerId: number, payload: string) => void;
+  }
+
+  let { nodeTree, interactive = false, onEvent }: Props = $props();
+
+  function handleClick(handlerId: number | undefined) {
+    if (interactive && onEvent && handlerId !== undefined) {
+      onEvent(handlerId, '{}');
+    }
+  }
+
+  function handleInput(handlerId: number | undefined, value: string) {
+    if (interactive && onEvent && handlerId !== undefined) {
+      onEvent(handlerId, JSON.stringify({ value }));
+    }
+  }
 </script>
 
 {#snippet renderNode(node: Node)}
-  {#if node.Type === 'Column'}
+  {#if node.type === 'Column'}
     <div class="vo-column">
-      {#if node.Children}
-        {#each node.Children as child}
+      {#if node.children}
+        {#each node.children as child}
           {@render renderNode(child)}
         {/each}
       {/if}
     </div>
-  {:else if node.Type === 'Row'}
+  {:else if node.type === 'Row'}
     <div class="vo-row">
-      {#if node.Children}
-        {#each node.Children as child}
+      {#if node.children}
+        {#each node.children as child}
           {@render renderNode(child)}
         {/each}
       {/if}
     </div>
-  {:else if node.Type === 'Text'}
-    <span class="vo-text">{node.Props?.content ?? ''}</span>
-  {:else if node.Type === 'Button'}
-    <button class="vo-button" disabled>
-      {node.Props?.text ?? 'Button'}
+  {:else if node.type === 'Text'}
+    <span class="vo-text">{node.props?.content ?? ''}</span>
+  {:else if node.type === 'Button'}
+    <button 
+      class="vo-button" 
+      class:interactive
+      disabled={!interactive}
+      onclick={() => handleClick(node.props?.onClick)}
+    >
+      {node.props?.text ?? 'Button'}
     </button>
-  {:else if node.Type === 'Input'}
-    <input class="vo-input" type="text" value={node.Props?.value ?? ''} disabled />
-  {:else if node.Type === 'Checkbox'}
+  {:else if node.type === 'Input'}
+    <input class="vo-input" type="text" value={node.props?.value ?? ''} disabled />
+  {:else if node.type === 'Checkbox'}
     <label class="vo-checkbox">
-      <input type="checkbox" checked={node.Props?.checked ?? false} disabled />
+      <input type="checkbox" checked={node.props?.checked ?? false} disabled />
     </label>
-  {:else if node.Type === 'Spacer'}
+  {:else if node.type === 'Spacer'}
     <div class="vo-spacer"></div>
-  {:else if node.Type === 'Empty'}
+  {:else if node.type === 'Empty'}
     <!-- empty -->
   {:else}
-    <div class="vo-unknown">[{node.Type}]</div>
+    <div class="vo-unknown">[{node.type}]</div>
   {/if}
 {/snippet}
 
 <div class="gui-preview">
   <div class="preview-header">
     <span class="preview-title">GUI Preview</span>
-    <span class="preview-badge">Phase 1: Static</span>
+    <span class="preview-badge">{interactive ? 'Interactive' : 'Static'}</span>
   </div>
   <div class="preview-content">
     {#if nodeTree}
@@ -169,6 +192,19 @@
     color: white;
     cursor: not-allowed;
     opacity: 0.8;
+  }
+
+  .vo-button.interactive {
+    cursor: pointer;
+    opacity: 1;
+  }
+
+  .vo-button.interactive:hover {
+    filter: brightness(1.1);
+  }
+
+  .vo-button.interactive:active {
+    filter: brightness(0.95);
   }
 
   .vo-input {

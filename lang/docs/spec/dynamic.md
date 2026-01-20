@@ -392,25 +392,6 @@ fn dyn_get_index(d: any, key: any) -> (any, error) {
     }
 }
 
-fn dyn_call(callee: any, args: any, expected_sig: rttid) -> (any, error) {
-    // Runtime signature check before call:
-    // 1. Return value count must match LHS count
-    // 2. Parameter count must match args count
-    // 3. Parameter types must be compatible (rttid comparison)
-    //
-    // If signature mismatch, return SignatureError without calling.
-    // If callee returns multiple values, the result is []any.
-    // If callee returns a single value, the result is that value.
-    // If callee returns nothing, the result is nil.
-    if !check_signature(callee, expected_sig) {
-        return (any(nil), SignatureError)
-    }
-    match call(callee, args) {
-        Ok(v) => (v, nil),
-        Err(e) => (any(nil), e),
-    }
-}
-
 // dyn_assert not needed - uses standard interface type assertion
 
 fn dyn_set_attr(d: any, name: &str, val: any) -> error {

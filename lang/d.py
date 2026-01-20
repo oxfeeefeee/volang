@@ -136,7 +136,7 @@ def get_newest_mtime(*paths: Path, pattern: str = '*') -> float:
 
 
 def invalidate_cli_cache_if_needed():
-    """Clear CLI .vo-cache if source files are newer than cache."""
+    """Clear CLI .vo-cache if source files or vox binary are newer than cache."""
     import shutil
     
     if not CLI_CACHE_DIR.exists():
@@ -153,8 +153,13 @@ def invalidate_cli_cache_if_needed():
     # Check vox Rust extension source files
     vox_rust_mtime = get_newest_mtime(VOX_EXT_RUST_DIR, pattern='*.rs')
     
-    # Check if any source is newer than cache
-    newest_src = max(cli_src_mtime, vox_vo_mtime, vox_rust_mtime)
+    # Check vo-vox extension binary mtime (catches runtime changes)
+    # This is what CLI actually uses to compile/run code
+    vox_lib = PROJECT_ROOT / 'target' / 'debug' / 'libvo_vox.so'
+    vox_lib_mtime = vox_lib.stat().st_mtime if vox_lib.exists() else 0.0
+    
+    # Check if any source or binary is newer than cache
+    newest_src = max(cli_src_mtime, vox_vo_mtime, vox_rust_mtime, vox_lib_mtime)
     if newest_src > cache_mtime:
         print(f"{Colors.DIM}CLI cache outdated, clearing...{Colors.NC}")
         shutil.rmtree(CLI_CACHE_DIR)
@@ -202,24 +207,35 @@ def clean_caches(target: str = 'all'):
 
 
 def build_wasm():
-    """Build vo-web for WASM using wasm-pack."""
+    """Build vo-web and vogui for WASM using wasm-pack."""
+    # Build vo-web
     print(f"{Colors.BOLD}Building vo-web WASM...{Colors.NC}")
-    
     build_cmd = ['wasm-pack', 'build', 'lang/crates/vo-web', '--target', 'web', '--features', 'compiler']
-    
     code, stdout, stderr = run_cmd(build_cmd, capture=False)
     if code != 0:
-        print(f"{Colors.RED}WASM build failed{Colors.NC}")
+        print(f"{Colors.RED}vo-web WASM build failed{Colors.NC}")
         sys.exit(1)
     
     pkg_dir = PROJECT_ROOT / 'lang' / 'crates' / 'vo-web' / 'pkg'
     wasm_file = pkg_dir / 'vo_web_bg.wasm'
     if wasm_file.exists():
         size_kb = wasm_file.stat().st_size / 1024
-        print(f"\n{Colors.GREEN}✓ Built:{Colors.NC} {pkg_dir}")
-        print(f"  WASM size: {size_kb:.1f} KB")
-    else:
-        print(f"{Colors.GREEN}✓ Build completed{Colors.NC}")
+        print(f"{Colors.GREEN}✓ vo-web:{Colors.NC} {size_kb:.1f} KB")
+    
+    # Build vogui
+    print(f"\n{Colors.BOLD}Building vogui WASM...{Colors.NC}")
+    vogui_dir = PROJECT_ROOT / 'libs' / 'vogui' / 'rust'
+    build_cmd = ['wasm-pack', 'build', str(vogui_dir), '--target', 'web', '--out-dir', 'pkg']
+    code, stdout, stderr = run_cmd(build_cmd, capture=False)
+    if code != 0:
+        print(f"{Colors.RED}vogui WASM build failed{Colors.NC}")
+        sys.exit(1)
+    
+    vogui_pkg = vogui_dir / 'pkg'
+    vogui_wasm = vogui_pkg / 'vogui_bg.wasm'
+    if vogui_wasm.exists():
+        size_kb = vogui_wasm.stat().st_size / 1024
+        print(f"{Colors.GREEN}✓ vogui:{Colors.NC} {size_kb:.1f} KB")
 
 
 def run_playground(build_only: bool = False):
@@ -255,9 +271,13 @@ def ensure_vox_extension_built(arch: str = '64', release: bool = False):
     # Check if library exists and is up-to-date
     if lib_path.exists():
         lib_mtime = lib_path.stat().st_mtime
-        src_mtime = get_newest_mtime(VOX_EXT_RUST_DIR, pattern='*.rs')
+        # Check vox source files
+        vox_src_mtime = get_newest_mtime(VOX_EXT_RUST_DIR, pattern='*.rs')
         cargo_mtime = (VOX_EXT_DIR / 'rust' / 'Cargo.toml').stat().st_mtime
-        if lib_mtime > max(src_mtime, cargo_mtime):
+        # Also check all runtime/vm/codegen source files (vox depends on them)
+        crates_dir = PROJECT_ROOT / 'lang' / 'crates'
+        runtime_mtime = get_newest_mtime(crates_dir, pattern='*.rs')
+        if lib_mtime > max(vox_src_mtime, cargo_mtime, runtime_mtime):
             return  # Up-to-date
     
     print(f"{Colors.DIM}Building vo-vox extension ({profile})...{Colors.NC}")
@@ -339,7 +359,7 @@ class TestRunner:
             self.cli_cache = CLI_DIR
 
     def _make_vo_cmd(self, *args) -> list[str]:
-        """Build vo command, prepending QEMU for 32-bit."""
+        """Build vo command: vo --cache <cli_path> <cli_args...>"""
         base = [str(self.vo_bin), '--cache', str(self.cli_cache)] + list(args)
         if self.arch == '32':
             return [QEMU_ARM, '-L', QEMU_ARM_LD_PREFIX] + base
@@ -454,9 +474,6 @@ class TestRunner:
             self._run_wasm_tests()
             return
         
-        # Invalidate CLI cache if source files changed
-        invalidate_cli_cache_if_needed()
-        
         # Build vo-launcher
         target_info = f" (target: {TARGET_32})" if self.arch == '32' else ""
         print(f"{Colors.DIM}Building vo-launcher{target_info}...{Colors.NC}")
@@ -470,6 +487,9 @@ class TestRunner:
         
         # Build vo-vox extension (both 32-bit and 64-bit need it)
         ensure_vox_extension_built(arch=self.arch, release=False)
+        
+        # Invalidate CLI cache if source files or binary changed
+        invalidate_cli_cache_if_needed()
         
         # Setup 32-bit CLI cache with adjusted extension paths
         if self.arch == '32':
@@ -918,9 +938,6 @@ class BenchmarkRunner:
             sys.exit(1)
 
     def _build_vo(self):
-        # Invalidate CLI cache if source files changed
-        invalidate_cli_cache_if_needed()
-        
         target_info = f" (target: {TARGET_32})" if self.arch == '32' else ""
         print(f"Building Vo (release){target_info}...")
         build_cmd = ['cargo', 'build', '--release', '-p', 'vo-launcher']
@@ -933,6 +950,9 @@ class BenchmarkRunner:
         
         # Build vo-vox extension (release mode for benchmarks)
         ensure_vox_extension_built(arch=self.arch, release=True)
+        
+        # Invalidate CLI cache if source files or binary changed
+        invalidate_cli_cache_if_needed()
 
     def _list_benchmarks(self):
         print("Available benchmarks:")

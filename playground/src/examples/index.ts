@@ -294,5 +294,41 @@ func Button(text string, handler int) map[string]any {
 }
 `,
   },
-];
+  {
+    name: 'GUI Counter (P1)',
+    code: `package main
 
+import "gui"
+
+type State struct {
+    Count int
+}
+
+func view(state any) gui.Node {
+    s := state.(*State)
+    return gui.Column(
+        gui.Text("Count: ", s.Count),
+        gui.Row(
+            gui.Button("-1", gui.On(decrement)),
+            gui.Button("+1", gui.On(increment)),
+        ),
+    )
+}
+
+func increment(s *State) {
+    s.Count++
+}
+
+func decrement(s *State) {
+    s.Count--
+}
+
+func main() {
+    gui.Run(gui.App{
+        Init: func() any { return &State{} },
+        View: view,
+    })
+}
+`,
+  },
+];

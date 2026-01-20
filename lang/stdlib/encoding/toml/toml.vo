@@ -1,19 +1,20 @@
+// Package toml implements encoding and decoding of TOML.
+//
+// Public API:
+//   - Marshal(v any) ([]byte, error)              - encode to TOML (encode.vo)
+//   - Unmarshal(data []byte, v any) error         - decode into struct (native)
+//   - Decode(data []byte) (dyn.MapObject, error)  - decode to dynamic types (decode.vo)
 package toml
 
 import "errors"
 
-// Native struct marshal/unmarshal functions (implemented in Rust)
-// These use StructMeta for reflection since Vo doesn't have runtime reflection.
+// Native functions (implemented in Rust)
+func Unmarshal(data []byte, v any) error
+func marshalAny(v any) ([]byte, error)
 
-// MarshalStruct marshals a struct or pointer to struct to TOML.
-func MarshalStruct(v any) ([]byte, error)
-
-// UnmarshalStruct unmarshals TOML into a pointer to struct.
-func UnmarshalStruct(data []byte, v any) error
-
-// Error codes
+// Errors
 var (
-	ErrSyntax       = errors.NewCode(errors.CodeTomlSyntax, "toml syntax error")
+	ErrSyntax        = errors.NewCode(errors.CodeTomlSyntax, "toml syntax error")
 	ErrUnexpectedEOF = errors.NewCode(errors.CodeTomlUnexpectedEOF, "unexpected end of TOML input")
 	ErrInvalidValue  = errors.NewCode(errors.CodeTomlInvalidValue, "invalid TOML value")
 	ErrTypeMismatch  = errors.NewCode(errors.CodeTomlTypeMismatch, "TOML type mismatch")
