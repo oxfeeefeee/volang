@@ -39,6 +39,7 @@
     stderr = '';
     renderData = null;
     guiMode = false;
+    consoleCollapsed = false;
     activePanel = 'console';
 
     // Detect GUI code by checking for gui.Run
