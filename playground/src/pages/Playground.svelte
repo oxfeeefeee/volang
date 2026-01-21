@@ -373,6 +373,7 @@
   .dpad-btn {
     width: 48px;
     height: 48px;
+    min-height: unset;
     background: rgba(0, 0, 0, 0.4);
     color: rgba(255, 255, 255, 0.9);
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -410,6 +411,7 @@
   .action-btn {
     width: 56px;
     height: 56px;
+    min-height: unset;
     border-radius: 50%;
     font-size: 16px;
     font-weight: 700;
@@ -432,6 +434,7 @@
   .action-btn.pause {
     width: 40px;
     height: 40px;
+    border-radius: 50%;
     background: rgba(0, 0, 0, 0.4);
     color: rgba(255, 255, 255, 0.9);
     font-size: 14px;
@@ -452,9 +455,6 @@
   }
 
   @media (max-width: 900px) {
-    .playground[data-gui='true'] .main-area {
-      padding-bottom: 180px;
-    }
 
     .editor-row {
       flex-direction: column;
