@@ -4,390 +4,9 @@
   import FileExplorer from '../components/FileExplorer.svelte';
   import GuiPreview from '../components/GuiPreview.svelte';
   import { runCode, initGuiApp, handleGuiEvent, setRenderCallback, type RunStatus } from '../wasm/vo.ts';
+  import guiTetris from '../assets/examples/gui_tetris.vo?raw';
 
-  let code = $state(`// Tetris Game
-package main
-
-import "gui"
-
-// ============ Constants ============
-
-const Rows = 20
-const Cols = 10
-const CellSize = 25
-
-// ============ Types ============
-
-type Point struct {
-	X int
-	Y int
-}
-
-type Piece struct {
-	Type  int // 0-6: I, J, L, O, S, T, Z
-	Rot   int // 0-3
-	X     int
-	Y     int
-	Cells []Point // Relative coordinates
-}
-
-type State struct {
-	Grid      []int // Rows * Cols, 0=empty, >0=colorIndex
-	Score     int
-	Level     int
-	GameOver  bool
-	Paused    bool
-	Current   Piece
-	TimerID   int
-	TickCount int
-    RngState  int
-}
-
-// Colors for pieces: 0=Empty, 1=Cyan, 2=Blue, 3=Orange, 4=Yellow, 5=Green, 6=Purple, 7=Red
-var colors = []string{
-	"#1a1a2e", // Background
-	"#00f0f0", // I - Cyan
-	"#0000f0", // J - Blue
-	"#f0a000", // L - Orange
-	"#f0f000", // O - Yellow
-	"#00f000", // S - Green
-	"#a000f0", // T - Purple
-	"#f00000", // Z - Red
-}
-
-// Shapes: [Type][Rotation][4 cells]
-// Coordinates are relative to pivot
-// I: Type 0
-var shapeI = []Point{Point{-1, 0}, Point{0, 0}, Point{1, 0}, Point{2, 0}}
-// J: Type 1
-var shapeJ = []Point{Point{-1, -1}, Point{-1, 0}, Point{0, 0}, Point{1, 0}}
-// L: Type 2
-var shapeL = []Point{Point{1, -1}, Point{-1, 0}, Point{0, 0}, Point{1, 0}}
-// O: Type 3
-var shapeO = []Point{Point{0, 0}, Point{1, 0}, Point{0, 1}, Point{1, 1}}
-// S: Type 4
-var shapeS = []Point{Point{0, 0}, Point{1, 0}, Point{-1, 1}, Point{0, 1}}
-// T: Type 5
-var shapeT = []Point{Point{0, 0}, Point{-1, 0}, Point{1, 0}, Point{0, -1}}
-// Z: Type 6
-var shapeZ = []Point{Point{-1, 0}, Point{0, 0}, Point{0, 1}, Point{1, 1}}
-
-// ============ App ============
-
-func main() {
-    gui.SetGlobalKeyHandler(handleKey)
-	gui.Run(gui.App{
-		Init: initGame,
-		View: view,
-	})
-}
-
-func initGame() any {
-	s := &State{
-		Grid:     make([]int, Rows*Cols),
-		Score:    0,
-		Level:    1,
-		GameOver: false,
-		Paused:   false,
-        RngState: 12345, // Seed
-	}
-	spawnPiece(s)
-	// Start timer: 500ms
-	s.TimerID = gui.SetInterval(500, func() {
-		tick(s)
-	})
-	return s
-}
-
-// ============ Update Logic ============
-
-func tick(s *State) {
-	if s.GameOver || s.Paused {
-		return
-	}
-	
-	// Move down
-	if canMove(s, s.Current, 0, 1) {
-		s.Current.Y++
-	} else {
-		lockPiece(s)
-		clearLines(s)
-		spawnPiece(s)
-		if !canMove(s, s.Current, 0, 0) {
-			s.GameOver = true
-		}
-	}
-}
-
-func handleKey(state any, key string) {
-	s := state.(*State)
-	if s.GameOver {
-        if key == "Enter" {
-            restart(s)
-        }
-		return
-	}
-    
-    if key == "p" || key == "P" {
-        s.Paused = !s.Paused
-        return
-    }
-
-	if s.Paused {
-		return
-	}
-
-	switch key {
-	case "ArrowLeft":
-		if canMove(s, s.Current, -1, 0) {
-			s.Current.X--
-		}
-	case "ArrowRight":
-		if canMove(s, s.Current, 1, 0) {
-			s.Current.X++
-		}
-	case "ArrowDown":
-		if canMove(s, s.Current, 0, 1) {
-			s.Current.Y++
-		}
-	case "ArrowUp":
-		rotatePiece(s)
-    case " ":
-        dropPiece(s)
-	}
-}
-
-func restart(s *State) {
-    s.Grid = make([]int, Rows*Cols)
-    s.Score = 0
-    s.Level = 1
-    s.GameOver = false
-    s.Paused = false
-    spawnPiece(s)
-}
-
-func spawnPiece(s *State) {
-    // Random type 0-6
-    t := rand(s) % 7
-    s.Current = Piece{
-        Type: t,
-        Rot: 0,
-        X: Cols / 2 - 1,
-        Y: 0,
-        Cells: getCells(t, 0),
-    }
-}
-
-func getCells(t int, rot int) []Point {
-    var base []Point
-    if t == 0 { base = shapeI }
-    if t == 1 { base = shapeJ }
-    if t == 2 { base = shapeL }
-    if t == 3 { base = shapeO }
-    if t == 4 { base = shapeS }
-    if t == 5 { base = shapeT }
-    if t == 6 { base = shapeZ }
-    
-    // Rotate
-    cells := make([]Point, 4)
-    for i, p := range base {
-        x, y := p.X, p.Y
-        for r := 0; r < rot; r++ {
-            // Rotate 90 deg clockwise: (x, y) -> (-y, x)
-            x, y = -y, x
-        }
-        cells[i] = Point{x, y}
-    }
-    return cells
-}
-
-func rotatePiece(s *State) {
-    newRot := (s.Current.Rot + 1) % 4
-    newCells := getCells(s.Current.Type, newRot)
-    
-    // Test if valid
-    p := s.Current
-    p.Rot = newRot
-    p.Cells = newCells
-    
-    if canMove(s, p, 0, 0) {
-        s.Current = p
-    } else {
-        // Wall kicks (simple)
-        if canMove(s, p, 1, 0) {
-            s.Current = p
-            s.Current.X++
-        } else if canMove(s, p, -1, 0) {
-            s.Current = p
-            s.Current.X--
-        }
-    }
-}
-
-func canMove(s *State, p Piece, dx int, dy int) bool {
-    for _, cell := range p.Cells {
-        nx := p.X + cell.X + dx
-        ny := p.Y + cell.Y + dy
-        
-        if nx < 0 || nx >= Cols || ny >= Rows {
-            return false
-        }
-        if ny >= 0 {
-            idx := ny*Cols + nx
-            if s.Grid[idx] != 0 {
-                return false
-            }
-        }
-    }
-    return true
-}
-
-func lockPiece(s *State) {
-    c := s.Current.Type + 1
-    for _, cell := range s.Current.Cells {
-        nx := s.Current.X + cell.X
-        ny := s.Current.Y + cell.Y
-        if ny >= 0 && ny < Rows && nx >= 0 && nx < Cols {
-            s.Grid[ny*Cols+nx] = c
-        }
-    }
-}
-
-func clearLines(s *State) {
-    lines := 0
-    for y := Rows - 1; y >= 0; y-- {
-        full := true
-        for x := 0; x < Cols; x++ {
-            if s.Grid[y*Cols+x] == 0 {
-                full = false
-                break
-            }
-        }
-        if full {
-            lines++
-            // Move lines down
-            for ky := y; ky > 0; ky-- {
-                for kx := 0; kx < Cols; kx++ {
-                    s.Grid[ky*Cols+kx] = s.Grid[(ky-1)*Cols+kx]
-                }
-            }
-            // Clear top line
-            for kx := 0; kx < Cols; kx++ {
-                s.Grid[kx] = 0
-            }
-            y++ // Recheck this line
-        }
-    }
-    if lines > 0 {
-        s.Score += lines * 100 * s.Level
-    }
-}
-
-func dropPiece(s *State) {
-    for canMove(s, s.Current, 0, 1) {
-        s.Current.Y++
-    }
-    lockPiece(s)
-    clearLines(s)
-    spawnPiece(s)
-    if !canMove(s, s.Current, 0, 0) {
-        s.GameOver = true
-    }
-}
-
-// Pseudo-random number generator
-func rand(s *State) int {
-    s.RngState = (s.RngState * 1103515245 + 12345) % 2147483648
-    if s.RngState < 0 {
-        s.RngState = -s.RngState
-    }
-    return s.RngState
-}
-
-// ============ View ============
-
-func view(state any) gui.Node {
-	s := state.(*State)
-    
-	return gui.Center(
-		gui.Column(
-            // Header
-			gui.Row(
-				gui.H2("TETRIS").Fg("#a000f0"),
-				gui.Spacer(),
-				gui.Column(
-                    gui.Text("Score: ", s.Score).Font(16).Bold(),
-                    gui.Text("Level: ", s.Level).Font(12),
-                ),
-			).W(CellSize * Cols).M(10),
-            
-            // Game Board
-            gui.Column(
-                renderGrid(s),
-            ).Bg("#000").Border("2px solid #333").P(0),
-            
-            // Controls Info
-            gui.Text("Controls: Arrows to move/rotate, Space to drop").Font(12).Fg("#666").M(10),
-            
-            // Game Over Overlay
-            gui.Show(s.GameOver, 
-                gui.Center(
-                    gui.Column(
-                        gui.H2("GAME OVER").Fg("#f00"),
-                        gui.Text("Final Score: ", s.Score),
-                        gui.Button("Restart", gui.On(actionRestart)).Bg("#a000f0").Fg("#fff"),
-                    ).P(20).Bg("rgba(0,0,0,0.8)").Rounded(10),
-                ).Style(map[string]any{
-                    "position": "absolute", 
-                    "top": 0, "left": 0, "right": 0, "bottom": 0,
-                }),
-            ),
-		).Style(map[string]any{"position": "relative"}),
-	)
-}
-
-func renderGrid(s *State) gui.Node {
-    var cells []gui.Node
-    
-    // Fill with background grid
-    displayGrid := make([]int, Rows*Cols)
-    copy(displayGrid, s.Grid)
-    
-    // Draw current piece
-    if !s.GameOver {
-        c := s.Current.Type + 1
-        for _, cell := range s.Current.Cells {
-            nx := s.Current.X + cell.X
-            ny := s.Current.Y + cell.Y
-            if ny >= 0 && ny < Rows && nx >= 0 && nx < Cols {
-                displayGrid[ny*Cols+nx] = c
-            }
-        }
-    }
-    
-    for i := 0; i < Rows*Cols; i++ {
-        colorIdx := displayGrid[i]
-        color := colors[colorIdx]
-        cells = append(cells, 
-            gui.Node{Type: "Block"}.
-                W(CellSize).H(CellSize).
-                Bg(color).
-                Border("1px solid rgba(255,255,255,0.1)"),
-        )
-    }
-    
-    return gui.Grid(Cols, cells...).Gap(0)
-}
-
-func actionRestart(s *State) {
-    restart(s)
-}
-
-func copy(dst []int, src []int) {
-    for i := 0; i < len(src); i++ {
-        dst[i] = src[i]
-    }
-}`);
+  let code = $state(guiTetris);
 
   let stdout = $state('');
   let stderr = $state('');
@@ -396,6 +15,9 @@ func copy(dst []int, src []int) {
   let guiMode = $state(false);
   let nodeTree: any = $state(null);
   let consoleCollapsed = $state(false);
+
+  type Panel = 'gui' | 'editor' | 'console' | 'files';
+  let activePanel = $state<Panel>('gui');
 
   // Register render callback for async updates (timers)
   setRenderCallback((json: string) => {
@@ -413,6 +35,7 @@ func copy(dst []int, src []int) {
     stderr = '';
     nodeTree = null;
     guiMode = false;
+    activePanel = 'console';
 
     // Detect GUI code by checking for gui.Run
     const isGuiCode = code.includes('gui.Run') && code.includes('import "gui"');
@@ -425,9 +48,11 @@ func copy(dst []int, src []int) {
         if (result.status !== 'ok') {
           stderr = result.error || 'Unknown error';
           status = 'error';
+          activePanel = 'console';
           return;
         }
         guiMode = true;
+        consoleCollapsed = true;
         console.log('renderJson:', result.renderJson);
         if (result.renderJson) {
           const parsed = JSON.parse(result.renderJson);
@@ -435,6 +60,7 @@ func copy(dst []int, src []int) {
           nodeTree = parsed.tree;
         }
         status = 'success';
+        activePanel = 'gui';
       } else {
         // Regular code execution
         const result = await runCode(code);
@@ -459,10 +85,12 @@ func copy(dst []int, src []int) {
         
         stderr = result.stderr;
         status = result.status === 'ok' ? 'success' : 'error';
+        activePanel = 'console';
       }
     } catch (e) {
       stderr = e instanceof Error ? e.message : String(e);
       status = 'error';
+      activePanel = 'console';
     }
   }
 
@@ -490,16 +118,33 @@ func copy(dst []int, src []int) {
     status = 'idle';
     guiMode = false;
     nodeTree = null;
+    activePanel = 'editor';
   }
 
   function handleFileSelect(content: string, filename: string) {
     code = content;
     currentFile = filename;
     handleReset();
+    activePanel = 'editor';
   }
+
+  async function sendGuiKey(key: string) {
+    await onGuiEvent(-2, JSON.stringify({ key }));
+  }
+
+  // Touch control key mappings (gamepad-style)
+  const TOUCH_KEYS = {
+    up: 'ArrowUp',
+    down: 'ArrowDown',
+    left: 'ArrowLeft',
+    right: 'ArrowRight',
+    a: ' ',        // Space - primary action (jump/confirm/drop)
+    b: 'Enter',    // Enter - secondary action (start/select)
+    pause: 'Escape'
+  };
 </script>
 
-<div class="playground">
+<div class="playground" data-active={activePanel} data-gui={guiMode ? 'true' : 'false'}>
   <div class="toolbar">
     <div class="toolbar-left">
       <div class="actions">
@@ -519,24 +164,57 @@ func copy(dst []int, src []int) {
     </div>
   </div>
 
+  <div class="mobile-tabs">
+    <button class="tab-btn" class:active={activePanel === 'gui'} onclick={() => (activePanel = 'gui')}>
+      GUI
+    </button>
+    <button class="tab-btn" class:active={activePanel === 'editor'} onclick={() => (activePanel = 'editor')}>
+      Editor
+    </button>
+    <button class="tab-btn" class:active={activePanel === 'console'} onclick={() => (activePanel = 'console')}>
+      Console
+    </button>
+    <button class="tab-btn" class:active={activePanel === 'files'} onclick={() => (activePanel = 'files')}>
+      Files
+    </button>
+  </div>
+
   <div class="main-area">
     <div class="editor-row">
-      <div class="sidebar">
+      <div class="sidebar panel panel-files">
         <FileExplorer onSelect={handleFileSelect} bind:selectedFile={currentFile} />
       </div>
-      <div class="editor-panel">
+      <div class="editor-panel panel panel-editor">
         <Editor bind:value={code} />
       </div>
-      {#if guiMode}
-        <div class="gui-panel">
-          <GuiPreview {nodeTree} interactive={true} onEvent={onGuiEvent} />
-        </div>
-      {/if}
+      <div class="gui-panel panel panel-gui" class:inactive={!guiMode}>
+        <GuiPreview {nodeTree} interactive={guiMode} onEvent={guiMode ? onGuiEvent : undefined} />
+      </div>
     </div>
-    <div class="console-panel" class:collapsed={consoleCollapsed && guiMode}>
+    <div class="console-panel panel panel-console" class:collapsed={consoleCollapsed && guiMode}>
       <Output {stdout} {stderr} {status} collapsible={guiMode} bind:collapsed={consoleCollapsed} />
     </div>
   </div>
+
+  {#if guiMode}
+    <div class="touch-controls">
+      <!-- D-Pad (left side) -->
+      <div class="dpad">
+        <button class="dpad-btn up" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.up); }}>▲</button>
+        <button class="dpad-btn left" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.left); }}>◀</button>
+        <button class="dpad-btn right" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.right); }}>▶</button>
+        <button class="dpad-btn down" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.down); }}>▼</button>
+      </div>
+      <!-- Action buttons (right side) -->
+      <div class="action-btns">
+        <button class="action-btn pause" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.pause); }}>⏸</button>
+        <div class="ab-row">
+          <button class="action-btn b" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.b); }}>B</button>
+          <button class="action-btn a" onpointerdown={(e) => { e.preventDefault(); sendGuiKey(TOUCH_KEYS.a); }}>A</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -595,12 +273,14 @@ func copy(dst []int, src []int) {
     flex-direction: column;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
   }
 
   .editor-row {
     display: flex;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
   }
 
   .sidebar {
@@ -624,15 +304,142 @@ func copy(dst []int, src []int) {
     border-left: 1px solid var(--border);
   }
 
+  .gui-panel.inactive {
+    display: none;
+  }
+
   .console-panel {
     border-top: 1px solid var(--border);
     height: 200px;
     flex-shrink: 0;
     overflow: hidden;
+    transition: height 0.2s ease;
   }
 
   .console-panel.collapsed {
     height: 40px;
+  }
+
+  .mobile-tabs {
+    display: none;
+    padding: 8px var(--page-gutter);
+    gap: 8px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .tab-btn.active {
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .touch-controls {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 16px var(--page-gutter) 24px;
+    justify-content: space-between;
+    align-items: flex-end;
+    pointer-events: none;
+  }
+
+  /* D-Pad (left side) - classic cross layout */
+  .dpad {
+    display: grid;
+    grid-template-areas:
+      ".    up   ."
+      "left .    right"
+      ".    down .";
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(3, 48px);
+    gap: 4px;
+    pointer-events: auto;
+  }
+
+  .dpad-btn {
+    width: 48px;
+    height: 48px;
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .dpad-btn.up { grid-area: up; }
+  .dpad-btn.down { grid-area: down; }
+  .dpad-btn.left { grid-area: left; }
+  .dpad-btn.right { grid-area: right; }
+
+  .dpad-btn:active {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Action buttons (right side) */
+  .action-btns {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+    pointer-events: auto;
+  }
+
+  .ab-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .action-btn {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    font-size: 16px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+  }
+
+  .action-btn.a {
+    background: rgba(46, 204, 113, 0.5);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .action-btn.b {
+    background: rgba(231, 76, 60, 0.5);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .action-btn.pause {
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+  }
+
+  .action-btn:active {
+    transform: scale(0.92);
+    opacity: 0.8;
   }
 
   @media (max-width: 1200px) {
@@ -645,26 +452,85 @@ func copy(dst []int, src []int) {
   }
 
   @media (max-width: 900px) {
+    .playground[data-gui='true'] .main-area {
+      padding-bottom: 180px;
+    }
+
     .editor-row {
       flex-direction: column;
     }
+
     .sidebar {
-      display: none;
+      width: 100%;
+      min-width: 0;
     }
+
     .editor-panel {
       border-right: none;
-      border-bottom: 1px solid var(--border);
-      flex: 1;
+      min-width: 0;
     }
+
     .gui-panel {
       width: 100%;
-      height: 200px;
+      flex: 1;
+      min-height: 280px;
+      min-width: 0;
       border-left: none;
+      border-top: 1px solid var(--border);
     }
+
     .toolbar {
       flex-direction: column;
-      align-items: flex-start;
+      align-items: stretch;
+      gap: 12px;
+      padding: 12px var(--page-gutter);
+    }
+
+    .toolbar-left {
+      flex-wrap: wrap;
       gap: 10px;
+    }
+
+    .actions {
+      width: 100%;
+    }
+
+    .actions button {
+      flex: 1;
+    }
+
+    .mobile-tabs {
+      display: flex;
+    }
+
+    .panel {
+      display: none;
+      height: 100%;
+    }
+
+    .playground[data-active='files'] .panel-files {
+      display: flex;
+    }
+
+    .playground[data-active='editor'] .panel-editor {
+      display: flex;
+    }
+
+    .playground[data-active='gui'] .panel-gui {
+      display: flex;
+    }
+
+    .playground[data-active='console'] .panel-console {
+      display: flex;
+    }
+
+    .console-panel {
+      height: 100%;
+      border-top: none;
+    }
+
+    .touch-controls {
+      display: flex;
     }
   }
 </style>

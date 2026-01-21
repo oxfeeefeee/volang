@@ -16,23 +16,62 @@
 
   let { nodeTree, interactive = false, onEvent }: Props = $props();
   
-  let renderEl: HTMLElement;
+  let renderEl: HTMLElement | undefined = $state();
+  let contentEl: HTMLElement | undefined = $state();
   let cleanupKeyHandler: (() => void) | null = null;
+  let scale = $state(1);
   
-  onMount(() => {
-    injectStyles();
-    return () => {
-      if (cleanupKeyHandler) {
-        cleanupKeyHandler();
-      }
-    };
-  });
   
   $effect(() => {
     if (renderEl && nodeTree) {
       voguiRender(renderEl, nodeTree, { interactive, onEvent });
+      // Calculate scale after render
+      requestAnimationFrame(() => updateScale());
     } else if (renderEl) {
       renderEl.innerHTML = '';
+      scale = 1;
+    }
+  });
+
+  function updateScale() {
+    if (!contentEl || !renderEl) return;
+    
+    // Temporarily reset scale to measure true content size
+    const prevScale = scale;
+    renderEl.style.transform = 'scale(1)';
+    
+    const container = contentEl.getBoundingClientRect();
+    const content = renderEl.getBoundingClientRect();
+    
+    if (content.width === 0 || content.height === 0) {
+      renderEl.style.transform = `scale(${prevScale})`;
+      return;
+    }
+    
+    const scaleX = container.width / content.width;
+    const scaleY = container.height / content.height;
+    scale = Math.min(scaleX, scaleY, 1); // Never scale up, only down
+  }
+
+  // Recalculate on resize
+  onMount(() => {
+    injectStyles();
+    const resizeObserver = new ResizeObserver(() => {
+      if (nodeTree) updateScale();
+    });
+    return () => {
+      resizeObserver.disconnect();
+      if (cleanupKeyHandler) cleanupKeyHandler();
+    };
+  });
+
+  $effect(() => {
+    if (contentEl) {
+      const resizeObserver = new ResizeObserver(() => {
+        if (nodeTree) updateScale();
+      });
+      resizeObserver.observe(contentEl);
+      return () => resizeObserver.disconnect();
     }
   });
   
@@ -52,16 +91,21 @@
     <span class="preview-title">GUI Preview</span>
     <span class="preview-badge">{interactive ? 'Interactive' : 'Static'}</span>
   </div>
-  <div class="preview-content">
+  <div class="preview-content" bind:this={contentEl}>
     {#if !nodeTree}
       <div class="placeholder">
         <div class="placeholder-icon">🖼️</div>
         <div class="placeholder-text">Run GUI code to see preview</div>
         <div class="placeholder-hint">Import "gui" and call gui.Run()</div>
       </div>
-    {:else}
-      <div class="render-container" bind:this={renderEl}></div>
     {/if}
+    <div 
+      class="render-container" 
+      class:hidden={!nodeTree} 
+      bind:this={renderEl}
+      style:transform="scale({scale})"
+      style:transform-origin="top left"
+    ></div>
   </div>
 </div>
 
@@ -103,9 +147,10 @@
 
   .preview-content {
     flex: 1;
-    padding: 16px;
-    overflow: auto;
+    padding: 8px;
+    overflow: hidden;
     background: #ffffff;
+    position: relative;
   }
 
   :global(.dark) .preview-content {
@@ -136,5 +181,9 @@
     font-size: 12px;
     font-family: var(--font-mono);
     opacity: 0.7;
+  }
+
+  .render-container.hidden {
+    display: none;
   }
 </style>

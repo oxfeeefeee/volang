@@ -155,6 +155,28 @@
     max-width: 900px; /* Limit line length for readability */
   }
 
+  @media (max-width: 900px) {
+    .docs-container {
+      flex-direction: column;
+      height: auto;
+      min-height: calc(100vh - var(--header-height));
+    }
+
+    .sidebar {
+      width: 100%;
+      padding: 16px var(--page-gutter);
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      max-height: 40vh;
+    }
+
+    .content {
+      padding: 24px var(--page-gutter);
+      max-width: none;
+      overflow: visible;
+    }
+  }
+
   /* Basic Markdown Styles */
   :global(.markdown-body h1), :global(.markdown-body h2), :global(.markdown-body h3) {
     margin-top: 24px;

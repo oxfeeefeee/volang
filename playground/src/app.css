@@ -6,6 +6,10 @@
 
   /* Spacing */
   --header-height: 64px;
+  --page-gutter: 24px;
+  --page-gutter-compact: 16px;
+  --touch-target: 44px;
+  --touch-control: 56px;
 
   /* Default to light theme */
   --bg-primary: #ffffff;
@@ -105,6 +109,7 @@ body {
   line-height: 1.5;
   transition: background-color 0.2s ease, color 0.2s ease;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button {
@@ -150,6 +155,23 @@ button:disabled {
 /* Utility for tech aesthetics */
 .tech-border {
   border: 1px solid var(--border);
+}
+
+@media (max-width: 900px) {
+  :root {
+    --header-height: 56px;
+    --page-gutter: 16px;
+    --touch-target: 48px;
+    --touch-control: 64px;
+  }
+
+  body {
+    font-size: 15px;
+  }
+
+  button {
+    min-height: var(--touch-target);
+  }
 }
 
 .tech-grid-bg {

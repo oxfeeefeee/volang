@@ -1,6 +1,12 @@
 <script lang="ts">
   import { currentRoute, navigate } from '../lib/router';
   import ThemeToggle from './ThemeToggle.svelte';
+
+  let menuOpen = $state(false);
+
+  function closeMenu() {
+    menuOpen = false;
+  }
 </script>
 
 <nav class="navbar">
@@ -38,6 +44,28 @@
         GitHub
       </a>
       <div class="divider"></div>
+      <ThemeToggle />
+    </div>
+    <button class="menu-toggle" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen}>
+      <span class="menu-label">Menu</span>
+      <span class="menu-icon">☰</span>
+    </button>
+  </div>
+  <div class="mobile-menu" class:open={menuOpen}>
+    <button class="mobile-link" onclick={() => { navigate('home'); closeMenu(); }}>
+      Home
+    </button>
+    <button class="mobile-link" onclick={() => { navigate('docs'); closeMenu(); }}>
+      Docs
+    </button>
+    <button class="mobile-link" onclick={() => { navigate('playground'); closeMenu(); }}>
+      Playground
+    </button>
+    <a class="mobile-link" href="https://github.com/oxfeeefeee/volang" target="_blank" onclick={closeMenu}>
+      GitHub
+    </a>
+    <div class="mobile-theme">
+      <span class="mobile-theme-label">Theme</span>
       <ThemeToggle />
     </div>
   </div>
@@ -105,6 +133,75 @@
     gap: 8px;
   }
 
+  .menu-toggle {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .menu-icon {
+    font-size: 16px;
+  }
+
+  .mobile-menu {
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    padding: 20px var(--page-gutter);
+    gap: 12px;
+    border-top: 1px solid var(--border);
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 90;
+  }
+
+  .mobile-menu.open {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+
+  .mobile-link {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    text-align: left;
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+
+  .mobile-theme {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .mobile-theme-label {
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
   .nav-link {
     background: transparent;
     border: none;
@@ -133,5 +230,19 @@
     height: 24px;
     background: var(--border);
     margin: 0 8px;
+  }
+
+  @media (max-width: 900px) {
+    .navbar-content {
+      padding: 0 var(--page-gutter);
+    }
+
+    .links {
+      display: none;
+    }
+
+    .menu-toggle {
+      display: inline-flex;
+    }
   }
 </style>
