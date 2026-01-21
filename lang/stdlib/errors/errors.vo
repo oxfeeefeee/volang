@@ -9,7 +9,10 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-    return e.msg
+    if e.cause == nil {
+        return e.msg
+    }
+    return e.msg + ": " + e.cause.Error()
 }
 
 func (e *Error) Code() int {

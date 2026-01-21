@@ -1,12 +1,17 @@
 // Control flow components.
 package gui
 
+// Empty returns an empty node that renders nothing.
+func Empty() Node {
+	return Node{Type: "Empty"}
+}
+
 // If conditionally renders a node.
 func If(cond bool, then Node) Node {
 	if cond {
 		return then
 	}
-	return Node{Type: "Empty"}
+	return Empty()
 }
 
 // IfElse conditionally renders one of two nodes.

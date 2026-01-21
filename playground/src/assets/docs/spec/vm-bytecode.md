@@ -60,169 +60,149 @@ impl Instruction {
 ```rust
 #[repr(u8)]
 pub enum Opcode {
+    // === HINT: NOP / Loop metadata for JIT ===
+    Hint = 0,
+
     // === LOAD: Load immediate/constant ===
-    Nop = 0,
-    LoadNil,      // slots[a] = nil
-    LoadTrue,     // slots[a] = true
-    LoadFalse,    // slots[a] = false
     LoadInt,      // slots[a] = sign_extend(b | (c << 16))
     LoadConst,    // slots[a] = constants[b]
-    
+
     // === COPY: Stack slot copy ===
     Copy,         // slots[a] = slots[b]
     CopyN,        // slots[a..a+c] = slots[b..b+c]
-    
+
     // === SLOT: Stack dynamic indexing (for stack arrays) ===
     SlotGet,      // slots[a] = slots[b + slots[c]]
     SlotSet,      // slots[a + slots[b]] = slots[c]
     SlotGetN,     // slots[a..a+flags] = slots[b + slots[c]*flags..]
     SlotSetN,     // slots[a + slots[b]*flags..] = slots[c..c+flags]
-    
+
     // === GLOBAL: Global variables ===
     GlobalGet,    // slots[a] = globals[b]
     GlobalGetN,   // slots[a..a+flags] = globals[b..], flags=n
     GlobalSet,    // globals[a] = slots[b]
     GlobalSetN,   // globals[a..] = slots[b..b+flags], flags=n
-    
+
     // === PTR: Heap pointer operations ===
     PtrNew,       // slots[a] = alloc(slots[b]), b=meta_reg, flags=slots
-    PtrClone,     // slots[a] = clone(slots[b]), slots from src header
     PtrGet,       // slots[a] = heap[slots[b]].offset[c]
     PtrSet,       // heap[slots[a]].offset[b] = slots[c]
     PtrGetN,      // slots[a..a+flags] = heap[slots[b]].offset[c..]
     PtrSetN,      // heap[slots[a]].offset[b..] = slots[c..c+flags]
-    
+    PtrAdd,       // a=dst, b=ptr, c=offset_slots (ptr arithmetic: dst = ptr + offset * 8)
+
     // === ARITH: Integer arithmetic ===
-    AddI, SubI, MulI, DivI, ModI, NegI,
-    
+    AddI, SubI, MulI, DivI, DivU, ModI, ModU, NegI,
+
     // === ARITH: Float arithmetic ===
     AddF, SubF, MulF, DivF, NegF,
-    
+
     // === CMP: Integer comparison ===
-    EqI, NeI, LtI, LeI, GtI, GeI,
-    
+    EqI, NeI, LtI, LtU, LeI, LeU, GtI, GtU, GeI, GeU,
+
     // === CMP: Float comparison ===
     EqF, NeF, LtF, LeF, GtF, GeF,
-    
+
     // === CMP: Reference comparison ===
+    // Note: IsNil checks if value is 0 (for pointers/interfaces)
+    // Note: EqRef/NeRef compare raw bits
+    // Note: IfaceEq compares two interface values (2 slots each)
     EqRef, NeRef, IsNil,
-    
+
     // === BIT: Bitwise operations ===
-    And, Or, Xor, Not, Shl, ShrS, ShrU,
-    
+    And, Or, Xor, AndNot, Not, Shl, ShrS, ShrU,
+
     // === LOGIC: Logical operations ===
     BoolNot,
-    
+
     // === JUMP: Control flow ===
     Jump,         // pc += sign_extend(b | (c << 16))
     JumpIf,       // if slots[a]: pc += sign_extend(b | (c << 16))
     JumpIfNot,    // if !slots[a]: pc += sign_extend(b | (c << 16))
-    
+
     // === CALL: Function calls ===
     Call,         // call functions[a|(flags<<16)], args at b, c=(arg_slots<<8|ret_slots)
     CallExtern,   // call externs[a|(flags<<16)], args at b, c=(arg_slots<<8|ret_slots)
     CallClosure,  // call slots[a], args at b, c=(arg_slots<<8|ret_slots)
     CallIface,    // call iface at a, args at b, c=(arg_slots<<8|ret_slots), flags=method_idx
     Return,       // return values at a, ret_slots=b
-    
+
     // === STR: String operations ===
     StrNew,       // slots[a] = constants[b] (string constant)
     StrLen,       // slots[a] = len(slots[b])
     StrIndex,     // slots[a] = slots[b][slots[c]]
     StrConcat,    // slots[a] = slots[b] + slots[c]
-    StrSlice,     // slots[a] = str[lo:hi], b=str, c=params_start, lo=slots[c], hi=slots[c+1]
+    StrSlice,     // slots[a] = str[lo:hi], b=str, c=params_start
     StrEq, StrNe, StrLt, StrLe, StrGt, StrGe,
-    
+    StrDecodeRune,// Decode UTF-8 rune at position: (rune, width) = decode(str, pos)
+
     // === ARRAY: Heap array operations ===
     ArrayNew,     // slots[a] = new array, b=meta_reg, c=len_reg, flags=elem_slots
     ArrayGet,     // slots[a..a+flags] = arr[idx], b=arr, c=idx, flags=elem_slots
     ArraySet,     // arr[idx] = slots[c..c+flags], a=arr, b=idx, flags=elem_slots
-    ArrayLen,     // slots[a] = len(slots[b])
-    
+    ArrayAddr,    // a=dst, b=array_gcref, c=index, flags=elem_bytes
+
     // === SLICE: Slice operations ===
     SliceNew,     // slots[a] = make([]T, len, cap), b=meta_reg, c=params_start, flags=elem_slots
     SliceGet,     // slots[a..a+flags] = slice[idx], b=slice, c=idx, flags=elem_slots
     SliceSet,     // slice[idx] = slots[c..c+flags], a=slice, b=idx, flags=elem_slots
     SliceLen,     // slots[a] = len(slots[b])
     SliceCap,     // slots[a] = cap(slots[b])
-    SliceSlice,   // slots[a] = slice[lo:hi:max], b=slice, c=params_start, flags: bit0=has_max
-                  // lo=slots[c], hi=slots[c+1], max=slots[c+2] if has_max else cap
+    SliceSlice,   // slots[a] = slice[lo:hi:max], b=slice, c=params_start
     SliceAppend,  // slots[a] = append(slice, slots[c..c+flags]), b=slice, flags=elem_slots
-    
-    // === MAP: Map operations (uses meta slot for key/val slots) ===
-    // Meta slot format: slots[x] = (key_slots << 16) | (val_slots << 1) | has_ok
-    // Key starts at slots[x+1..x+1+key_slots]
+    SliceAddr,    // a=dst, b=slice_reg, c=index, flags=elem_bytes
+
+    // === MAP: Map operations ===
     MapNew,       // slots[a] = make(map), b=type_info_reg, c=(key_slots<<8)|val_slots
     MapGet,       // slots[a..] = map[key], b=map, c=meta_and_key
-                  // slots[c] = (key_slots<<16)|(val_slots<<1)|has_ok, key=slots[c+1..]
     MapSet,       // map[key] = val, a=map, b=meta_and_key, c=val_start
-                  // slots[b] = (key_slots<<8)|val_slots, key=slots[b+1..]
     MapDelete,    // delete(map, key), a=map, b=meta_and_key
-                  // slots[b] = key_slots, key=slots[b+1..]
     MapLen,       // slots[a] = len(slots[b])
-    
+    MapIterInit,  // a=iter_slot (7 slots), b=map_reg
+    MapIterNext,  // a=key_slot, b=iter_slot, flags=key_slots|(val_slots<<4)
+
     // === CHAN: Channel operations ===
     ChanNew,      // slots[a] = make(chan T, cap), b=meta_reg, c=cap_reg, flags=elem_slots
     ChanSend,     // chan <- slots[b..b+flags], a=chan, flags=elem_slots
     ChanRecv,     // slots[a..] = <-chan, b=chan, flags=(elem_slots<<1)|has_ok
     ChanClose,    // close(slots[a])
-    
+    ChanLen,      // slots[a] = len(slots[b])
+    ChanCap,      // slots[a] = cap(slots[b])
+
     // === SELECT: Select statement ===
     SelectBegin,  // a=case_count, flags: bit0=has_default
     SelectSend,   // a=chan_reg, b=val_reg, flags=elem_slots
     SelectRecv,   // a=dst_reg, b=chan_reg, flags=(elem_slots<<1)|has_ok
     SelectExec,   // slots[a] = chosen_index (-1=default)
-    
-    // === ITER: Iterator (for-range, uses meta slot) ===
-    // Meta slot format: slots[a] = (key_slots << 8) | val_slots
-    // Container at slots[a+1]
-    IterBegin,    // a=meta_and_container, b=type
-                  // slots[a] = (key_slots<<8)|val_slots, container=slots[a+1]
-    IterNext,     // a=key_dst, b=val_dst, c=done_offset; slots count from IterState
-    IterEnd,      // end iteration, pop iter_stack
-    
+
     // === CLOSURE: Closure operations ===
     ClosureNew,   // slots[a] = new_closure(func_id=b|(flags<<16), capture_count=c)
     ClosureGet,   // slots[a] = slots[0].captures[b] (closure implicit in r0)
     ClosureSet,   // slots[0].captures[a] = slots[b] (closure implicit in r0)
-    
+
     // === GO: Goroutine ===
-    GoCall,       // go slots[a]() (0-arg closure, same as defer)
-    Yield,
-    
+    GoStart,      // start goroutine, a=func_id_low/closure_reg, b=args_start, c=arg_slots, flags=is_closure|func_id_high
+
     // === DEFER: Defer and error handling ===
     DeferPush,    // push defer: closure=slots[a]
     ErrDeferPush, // push errdefer: closure=slots[a]
     Panic,        // panic(slots[a])
     Recover,      // slots[a] = recover()
-    // Note: defer uses 0-arg closure, executed automatically on Return
-    
-    // === IFACE: Interface operations (interface uses slots[a] and slots[a+1]) ===
-    // slot0 format: [itab_id:32 | named_type_id:24 | value_kind:8]
-    // slot1: data (immediate value or GcRef)
-    // nil check: value_kind == Void (same as Go: typed nil is NOT nil interface)
+
+    // === IFACE: Interface operations ===
     IfaceAssign,  // dst=slots[a..a+2], src=slots[b], c=const_idx, flags=value_kind
-                  // c points to Int64 constant:
-                  //   - Concrete type: (named_type_id << 32) | itab_id, itab built at compile time
-                  //   - Interface rvalue: iface_meta_id (high 32 bits = 0), itab built at runtime
-                  // - Method set check done at compile time
-                  // - Struct/Array: deep copy (ptr_clone)
-                  // - Interface: copy slot0, deep copy slot1 if Struct/Array
-                  // - Others: direct copy
     IfaceAssert,  // a=dst, b=src_iface, c=target_id
-                  // flags = assert_kind | (has_ok << 2) | (target_slots << 3)
-                  // assert_kind: 0=rttid comparison, 1=interface method check
-                  // c meaning: rttid comparison→rttid, interface→iface_meta_id
-    
+    IfaceEq,      // a = (b == c), b,c are 2-slot interfaces
+
     // === CONV: Type conversion ===
     ConvI2F,      // slots[a] = float64(slots[b])
     ConvF2I,      // slots[a] = int64(slots[b])
-    ConvI32I64,   // slots[a] = int64(int32(slots[b]))
-    ConvI64I32,   // slots[a] = int32(slots[b])
-    
+    ConvF64F32,   // slots[a] = float32(slots[b])
+    ConvF32F64,   // slots[a] = float64(slots[b])
+    Trunc,        // a = truncate(b), flags = target width (signed/unsigned + width)
+
     // === DEBUG: Debug operations ===
-    // Note: Print uses CallExtern
-    // Note: assert uses JumpIf + CallExtern(print) + Panic
+    IndexCheck,   // panic if a >= b (unsigned comparison)
 }
 ```
 
@@ -284,6 +264,16 @@ pub struct FunctionDef {
     pub param_slots: u16,    // slots used by parameters
     pub local_slots: u16,    // local variable slots
     pub ret_slots: u16,      // return value slots
+    /// Receiver slots for methods (0 for functions, >0 for methods)
+    pub recv_slots: u16,
+    /// Number of GcRefs for heap-allocated named returns
+    pub heap_ret_gcref_count: u16,
+    /// Starting slot for heap-allocated named return GcRefs
+    pub heap_ret_gcref_start: u16,
+    /// Slot count for each heap-allocated named return
+    pub heap_ret_slots: Vec<u16>,
+    /// True if this is a closure (anonymous function) that expects closure ref in slot 0
+    pub is_closure: bool,
     pub code: Vec<Instruction>,
     pub slot_types: Vec<SlotType>,  // for GC scanning
 }
@@ -301,6 +291,54 @@ pub struct GlobalDef {
     pub slots: u16,
     pub value_kind: u8,
     pub meta_id: u32,  // 24-bit meta_id
+    pub slot_types: Vec<SlotType>,
+}
+
+/// Struct metadata (physical layout only)
+pub struct StructMeta {
+    pub slot_types: Vec<SlotType>,
+    pub fields: Vec<FieldMeta>,
+    pub field_index: HashMap<String, usize>,
+}
+
+pub struct FieldMeta {
+    pub name: String,
+    pub offset: u16,
+    pub slot_count: u16,
+    pub type_info: ValueRttid,
+    pub embedded: bool,
+    pub tag: Option<String>,
+}
+
+/// Interface metadata
+pub struct InterfaceMeta {
+    pub name: String,
+    pub method_names: Vec<String>,
+    pub methods: Vec<InterfaceMethodMeta>,
+}
+
+pub struct InterfaceMethodMeta {
+    pub name: String,
+    pub signature_rttid: u32,
+}
+
+/// Method info for a named type
+pub struct MethodInfo {
+    pub func_id: u32,
+    pub is_pointer_receiver: bool,
+    pub signature_rttid: u32,
+}
+
+/// Named type metadata (for itab building and type assertion)
+pub struct NamedTypeMeta {
+    pub name: String,
+    pub underlying_meta: ValueMeta,             // [struct_meta_id:24 | value_kind:8]
+    pub methods: HashMap<String, MethodInfo>,
+}
+
+/// Itab: interface method table (method_idx -> func_id)
+pub struct Itab {
+    pub methods: Vec<u32>,
 }
 
 /// Bytecode module
@@ -309,38 +347,15 @@ pub struct Module {
     pub struct_metas: Vec<StructMeta>,
     pub interface_metas: Vec<InterfaceMeta>,
     pub named_type_metas: Vec<NamedTypeMeta>,  // index = named_type_id
+    pub runtime_types: Vec<RuntimeType>,       // rttid -> RuntimeType
+    pub itabs: Vec<Itab>,                      // compile-time built itabs
+    pub well_known: WellKnownTypes,            // pre-computed type IDs
     pub constants: Vec<Constant>,
     pub globals: Vec<GlobalDef>,
     pub functions: Vec<FunctionDef>,
     pub externs: Vec<ExternDef>,
     pub entry_func: u32,
-}
-
-/// Struct metadata (physical layout only)
-pub struct StructMeta {
-    pub size_slots: u16,
-    pub slot_types: Vec<SlotType>,
-    pub field_names: Vec<String>,
-    pub field_offsets: Vec<u16>,
-}
-
-/// Interface metadata
-pub struct InterfaceMeta {
-    pub name: String,
-    pub method_names: Vec<String>,  // ordered method names
-}
-
-/// Method info for a named type
-pub struct MethodInfo {
-    pub func_id: u32,
-    pub is_pointer_receiver: bool,
-}
-
-/// Named type metadata (for itab building and type assertion)
-pub struct NamedTypeMeta {
-    pub name: String,
-    pub underlying_meta: ValueMeta,             // [struct_meta_id:24 | value_kind:8]
-    pub methods: HashMap<String, MethodInfo>,
+    pub debug_info: DebugInfo,
 }
 ```
 
@@ -386,6 +401,7 @@ Note: iface_dispatch removed, itab built lazily at runtime.
 ### 5.1 Call Frame
 
 ```rust
+#[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
     pub func_id: u32,
     pub pc: usize,
@@ -398,64 +414,89 @@ pub struct CallFrame {
 ### 5.2 Defer Entry
 
 ```rust
-/// Defer entry - uses closure uniformly
+#[derive(Debug, Clone)]
 pub struct DeferEntry {
     pub frame_depth: usize,
-    pub closure: GcRef,      // 0-arg closure
+    pub func_id: u32,
+    pub closure: GcRef,
+    pub args: GcRef,     // Arguments stored in a heap array
+    pub arg_slots: u16,
+    pub is_closure: bool,
     pub is_errdefer: bool,
 }
 ```
 
-### 5.3 Iterator
+### 5.3 Unwinding State (Defer/Panic)
+
+Replaces `DeferState`. Unified state for defer execution during return or panic unwinding.
 
 ```rust
-pub enum Iterator {
-    /// Heap array/slice: arr=underlying array GcRef
-    HeapArray { arr: GcRef, len: u32, elem_slots: u8, pos: u32 },
-    /// Stack array: base_slot relative to frame bp
-    StackArray { bp: usize, base_slot: u16, len: u32, elem_slots: u8, pos: u32 },
-    Map { map: GcRef, pos: usize },
-    String { s: GcRef, byte_pos: usize },
-    IntRange { cur: i64, end: i64, step: i64 },
-    Channel { ch: GcRef },  // for v := range ch
+#[derive(Debug, Clone)]
+pub struct UnwindingState {
+    /// Defers remaining to execute (LIFO order)
+    pub pending: Vec<DeferEntry>,
+    /// Frame depth after the unwinding function was popped
+    pub target_depth: usize,
+    /// What kind of unwinding is in progress
+    pub kind: UnwindingKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum UnwindingKind {
+    Return {
+        return_kind: PendingReturnKind,
+        caller_ret_reg: u16,
+        caller_ret_count: usize,
+    },
+    Panic {
+        heap_gcrefs: Option<Vec<u64>>,
+        slots_per_ref: Vec<usize>,
+        caller_ret_reg: u16,
+        caller_ret_count: usize,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum PendingReturnKind {
+    None,
+    Stack { vals: Vec<u64>, slot_types: Vec<SlotType> },
+    Heap { gcrefs: Vec<u64>, slots_per_ref: Vec<usize> },
 }
 ```
 
-### 5.4 Defer State
+### 5.4 Fiber
 
 ```rust
-/// Defer execution state (stored during Return)
-/// Go semantics: return value is determined before defer executes,
-/// so we must store ret_vals before running defer closures.
-pub struct DeferState {
-    pub pending: Vec<DeferEntry>,  // pending defers (LIFO)
-    pub ret_vals: Vec<u64>,        // stored return values
-    pub caller_ret_reg: u16,
-    pub caller_ret_count: usize,
-    pub is_error_return: bool,     // for errdefer decision
-}
-```
-
-### 5.5 Fiber
-
-```rust
-/// Fiber (coroutine)
+#[derive(Debug)]
 pub struct Fiber {
     pub id: u32,
     pub status: FiberStatus,
     pub stack: Vec<u64>,
     pub frames: Vec<CallFrame>,
     pub defer_stack: Vec<DeferEntry>,
-    pub defer_state: Option<DeferState>,  // active during Return with pending defers
-    pub iter_stack: Vec<Iterator>,
-    pub select_state: Option<SelectState>,  // active during select
-    pub panic_value: Option<GcRef>,
+    pub unwinding: Option<UnwindingState>,
+    pub select_state: Option<SelectState>,
+    pub panic_state: Option<PanicState>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FiberStatus {
     Running,
     Suspended,
     Dead,
+}
+```
+
+### 5.5 Panic State
+
+```rust
+#[derive(Debug, Clone)]
+pub enum PanicState {
+    /// Recoverable panic (can be caught by recover)
+    /// Stores full interface{} value: (slot0, slot1)
+    Recoverable(u64, u64),
+    /// Fatal panic (internal VM/JIT errors)
+    Fatal(String),
 }
 ```
 
@@ -466,55 +507,31 @@ pub struct Scheduler {
     pub fibers: Vec<Fiber>,
     pub ready_queue: VecDeque<u32>,
     pub current: Option<u32>,
+    
+    /// Trampoline fibers for JIT->VM calls
+    pub trampoline_fibers: Vec<Fiber>,
+    pub trampoline_free_slots: Vec<u32>,
 }
 ```
 
-### 5.7 Itab
+### 5.7 VM
 
 ```rust
-/// Itab - interface method table (lazy built)
-pub struct Itab {
-    pub methods: Vec<u32>,  // method_idx -> func_id
-}
-// No need to store meta_id - use slot0.value_meta.meta_id() directly
-```
-
-### 5.8 VM
-
-```rust
-/// VM main structure
 pub struct Vm {
+    /// JIT manager (optional)
+    pub jit_mgr: Option<JitManager>,
     pub module: Option<Module>,
-    pub gc: Gc,
     pub scheduler: Scheduler,
+    pub state: VmState,
+}
+
+/// VM mutable state (borrowed independently)
+pub struct VmState {
+    pub gc: Gc,
     pub globals: Vec<u64>,
-    // Itab cache (lazy built)
-    pub itab_cache: HashMap<(u32, u32), u32>,  // (named_type_id, iface_meta_id) -> itab_id
-    pub itabs: Vec<Itab>,                       // itab_id -> Itab
-}
-
-impl Vm {
-    pub fn new() -> Self;
-    
-    /// Load module
-    pub fn load(&mut self, module: Module);
-    
-    /// Run entry function
-    pub fn run(&mut self) -> Result<(), VmError>;
-    
-    /// Execute single instruction
-    fn exec_instruction(&mut self, fiber_id: u32) -> ExecResult;
-    
-    /// Read/write registers
-    fn read_reg(&self, fiber_id: u32, reg: u16) -> u64;
-    fn write_reg(&mut self, fiber_id: u32, reg: u16, val: u64);
-}
-
-enum ExecResult {
-    Continue,
-    Return,
-    Yield,
-    Panic(GcRef),
+    pub itab_cache: ItabCache,
+    pub extern_registry: ExternRegistry,
+    pub program_args: Vec<String>,
 }
 ```
 
@@ -630,162 +647,60 @@ impl Vm {
 }
 ```
 
-### 6.5 Return Implementation
+### 6.5 Return Implementation (Unified Unwinding)
+
+Return and Panic are now handled by a unified unwinding mechanism (`UnwindingState`).
 
 ```rust
 Opcode::Return => {
     // a=ret_start, b=ret_count
-    let ret_start = inst.a as usize;
-    let ret_count = inst.b as usize;
-    
-    // 1. Store return values temporarily
-    let ret_vals: Vec<u64> = (0..ret_count)
-        .map(|i| self.read_reg(fiber_id, (ret_start + i) as u16))
-        .collect();
-    
-    // 2. Collect current frame's defers (LIFO order)
-    let frame_depth = fiber.frames.len();
-    let mut pending: Vec<DeferEntry> = fiber.defer_stack
-        .drain_filter(|d| d.frame_depth == frame_depth)
-        .collect();
-    pending.reverse();  // LIFO
-    
-    // 3. Check for errdefer, if present determine error return at runtime
-    // Note: compiler ensures functions with errdefer have error return value (interface, 2 slots)
-    let has_errdefer = pending.iter().any(|d| d.is_errdefer);
-    let is_error = if has_errdefer && ret_count >= 2 {
-        // error is interface, check value_kind != Void
-        let err_header = ret_vals[ret_count - 2];
-        (err_header & 0xFF) != 0  // value_kind != Void
+    if fiber.is_direct_defer_context() {
+        // Return from a defer function: pop frame and continue unwinding
+        exec::unwind::handle_return_defer_returned(fiber, &mut vm.state, module);
     } else {
-        false
-    };
-    
-    // 4. Filter errdefer
-    if !is_error {
-        pending.retain(|d| !d.is_errdefer);
-    }
-    
-    // 5. If has defer, enter defer execution mode
-    if !pending.is_empty() {
-        let caller_frame = &fiber.frames[fiber.frames.len() - 2];
-        fiber.defer_state = Some(DeferState {
-            pending,
-            ret_vals,
-            caller_ret_reg: caller_frame.ret_reg,
-            caller_ret_count: ret_count,
-            is_error_return: is_error,
-        });
-        
-        // Execute first defer closure
-        let first = fiber.defer_state.as_mut().unwrap().pending.pop().unwrap();
-        // CallClosure(first.closure, no args)
-        // ...
-    } else {
-        // 6. No defer, return directly
-        let caller_frame = fiber.frames.pop().unwrap();
-        for (i, val) in ret_vals.into_iter().enumerate() {
-            self.write_reg(fiber_id, caller_frame.ret_reg + i as u16, val);
-        }
+        // Normal return: start unwinding (execute defers if any)
+        exec::unwind::handle_return(fiber, &mut vm.state, module, inst);
     }
 }
 ```
 
-### 6.6 Defer Execution Flow
+**Unwinding Logic**:
+1.  **Initial Return**:
+    *   Store return values (Stack or Heap kind).
+    *   Collect current frame's defers (LIFO).
+    *   Filter `errdefer`: Only keep if function returns error (checked via `ret_vals`).
+    *   Create `UnwindingState` with `kind=Return`.
+    *   Pop current frame.
+    *   If defers exist, execute the first one.
+    *   If no defers, write return values to caller and continue.
 
-**Execution Flow**:
-1. `DeferPush` / `ErrDeferPush`: save closure to `defer_stack`
-2. On `Return`:
-   - Collect current frame's defers (LIFO)
-   - If errdefer exists, check if last return value is non-nil -> is_error
-   - errdefer only executes when is_error=true
-   - Execute each via CallClosure
-3. After defer closure returns, continue with next
-4. All done, write stored return values to caller
+2.  **Defer Execution**:
+    *   Defer functions run in a new frame (depth = target_depth + 1).
+    *   When defer returns, `handle_return_defer_returned` is called.
+    *   It checks if more defers are pending.
+    *   If yes, execute next.
+    *   If no, finish unwinding (write return values for Return kind, or continue panic for Panic kind).
 
-**Codegen Constraint**: `errdefer` can only be used in functions with error return value, otherwise compile error.
+### 6.6 Defer Implementation
 
-**Codegen Note**: `defer foo(x, y)` should be wrapped as:
-```vo
-// Generate a 0-arg closure, capturing x, y
-closure := func() { foo(x, y) }
-DeferPush closure
+```rust
+Opcode::DeferPush | Opcode::ErrDeferPush => {
+    // a=closure_reg
+    // Logic: Create DeferEntry, push to fiber.defer_stack
+    // Arguments are captured/copied to heap if necessary
+}
 ```
 
 ### 6.7 GC Root Scanning
 
-```rust
-impl Vm {
-    /// Scan all GC roots
-    pub fn scan_roots(&self, gc: &mut Gc) {
-        // 1. Scan global variables
-        for (i, &val) in self.globals.iter().enumerate() {
-            let def = &self.module.as_ref().unwrap().globals[i];
-            if needs_gc(def.value_kind) && val != 0 {
-                gc.mark_gray(val as GcRef);
-            }
-        }
-        
-        // 2. Scan all Fiber stacks
-        for fiber in &self.scheduler.fibers {
-            for frame in &fiber.frames {
-                let func = &module.functions[frame.func_id as usize];
-                for (i, &st) in func.slot_types.iter().enumerate() {
-                    let slot_idx = frame.bp + i;
-                    match st {
-                        SlotType::GcRef => {
-                            let val = fiber.stack[slot_idx];
-                            if val != 0 { gc.mark_gray(val as GcRef); }
-                        }
-                        SlotType::Interface1 => {
-                            // Dynamically check previous slot
-                            let header = fiber.stack[slot_idx - 1];
-                            if needs_gc(extract_value_kind(header)) {
-                                let val = fiber.stack[slot_idx];
-                                if val != 0 { gc.mark_gray(val as GcRef); }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            
-            // 3. Scan defer_stack
-            for entry in &fiber.defer_stack {
-                gc.mark_gray(entry.closure);
-            }
-            
-            // 4. Scan defer_state
-            if let Some(state) = &fiber.defer_state {
-                for entry in &state.pending {
-                    gc.mark_gray(entry.closure);
-                }
-                // Scan stored return values - types from FunctionDef.slot_types
-                let func_id = fiber.frames.last().unwrap().func_id;
-                let func_def = &module.functions[func_id as usize];
-                let ret_start = func_def.slot_types.len() - func_def.ret_slots as usize;
-                for (i, &val) in state.ret_vals.iter().enumerate() {
-                    if func_def.slot_types[ret_start + i] == SlotType::GcRef && val != 0 {
-                        gc.mark_gray(val as GcRef);
-                    }
-                }
-            }
-            
-            // 5. Scan iter_stack
-            for iter in &fiber.iter_stack {
-                match iter {
-                    Iterator::HeapArray { arr, .. } => gc.mark_gray(*arr),
-                    Iterator::StackArray { .. } => {} // no GcRef, scanned via stack slots
-                    Iterator::Map { map, .. } => gc.mark_gray(*map),
-                    Iterator::String { s, .. } => gc.mark_gray(*s),
-                    Iterator::Channel { ch, .. } => gc.mark_gray(*ch),
-                    Iterator::IntRange { .. } => {}
-                }
-            }
-        }
-    }
-}
-```
+GC scanning must cover:
+1.  **Global Variables**: `vm.state.globals`.
+2.  **Fiber Stacks**: Scan slots based on `SlotType`.
+3.  **Defer Stack**: `fiber.defer_stack` (closures and args).
+4.  **Unwinding State**: `fiber.unwinding` (pending defers, stored return values, panic state).
+5.  **Panic State**: `fiber.panic_state` (panic value).
+6.  **Trampoline Fibers**: Scan their stacks and states.
+
 
 ### 6.8 Channel Operations
 
@@ -843,19 +758,15 @@ Opcode::ChanClose => {
 }
 ```
 
-### 6.9 GoCall Implementation
+### 6.9 GoStart Implementation
 
 ```rust
-Opcode::GoCall => {
-    // go slots[a]()  (0-arg closure)
-    let closure = slots[a] as GcRef;
-    let func_id = closure::func_id(closure);
-    let func = &module.functions[func_id as usize];
-    
-    let mut new_fiber = Fiber::new(scheduler.next_fiber_id());
-    new_fiber.push_frame(func_id, func.local_slots, 0, 0);
-    new_fiber.write_reg(0, closure as u64);  // closure as r0
-    scheduler.spawn(new_fiber);
+Opcode::GoStart => {
+    // a=func_id_low/closure_reg, b=args_start, c=arg_slots, flags=is_closure|func_id_high
+    // 1. Resolve function ID or closure
+    // 2. Create new fiber
+    // 3. Copy arguments to new fiber's stack
+    // 4. Spawn fiber (add to ready queue)
 }
 
 Opcode::Yield => {
@@ -867,13 +778,18 @@ Opcode::Yield => {
 
 ```rust
 Opcode::Panic => {
-    fiber.panic_value = Some(slots[a] as GcRef);
-    return ExecResult::Panic(fiber.panic_value.unwrap());
+    // a=panic_val_slot
+    // 1. Set fiber.panic_state
+    // 2. Start unwinding (UnwindingKind::Panic)
+    // 3. Execute defers
+    // 4. If recover() called, switch to UnwindingKind::Return
 }
 
 Opcode::Recover => {
-    // Only valid in defer function
-    slots[a] = fiber.panic_value.take().map(|v| v as u64).unwrap_or(0);
+    // a=dst_slot
+    // 1. Check if in direct defer context (fiber.is_direct_defer_context())
+    // 2. If yes, take panic value, write to dst, and switch unwinding mode
+    // 3. If no, write nil to dst
 }
 ```
 

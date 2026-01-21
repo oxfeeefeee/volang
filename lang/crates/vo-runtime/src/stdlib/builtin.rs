@@ -298,24 +298,19 @@ fn conv_str_runes(call: &mut ExternCallContext) -> ExternResult {
 }
 
 /// Panic with an error value.
-/// Used by dynamic write in functions without error return value.
+/// Used by ? operator and dynamic write in functions without error return value.
 /// Args: error interface (2 slots: slot0=meta, slot1=data)
 fn panic_with_error(call: &mut ExternCallContext) -> ExternResult {
     let error_slot0 = call.arg_u64(0);
     let error_data = call.arg_u64(1);
-    let value_kind = ValueKind::from_u8((error_slot0 & 0xFF) as u8);
     
-    let msg = if value_kind == ValueKind::Void {
-        "panic: nil error".to_string()
-    } else if value_kind == ValueKind::String {
-        let s = string::as_str(error_data as crate::gc::GcRef);
-        format!("panic: {}", s)
-    } else {
-        "panic: dynamic write failed".to_string()
-    };
+    // Use format_interface_with_ctx to properly extract error message
+    let error_str = super::fmt::format_interface_with_ctx(error_slot0, error_data, Some(call));
+    let msg = format!("panic: {}", error_str);
     
     ExternResult::Panic(msg)
 }
+
 
 /// Register builtin extern functions (for no_std mode).
 /// Builtin functions are defined directly with ExternFnWithContext signature.

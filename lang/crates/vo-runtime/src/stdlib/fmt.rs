@@ -61,11 +61,7 @@ pub fn format_interface_with_ctx(slot0: u64, slot1: u64, call: Option<&crate::ff
                     if let Some(field_offsets) = wk.error_field_offsets {
                         let ptr = slot1 as GcRef;
                         if !ptr.is_null() {
-                            use crate::gc::Gc;
-                            let msg_ref = unsafe { Gc::read_slot(ptr, field_offsets[1] as usize) } as GcRef;
-                            if !msg_ref.is_null() {
-                                return string::as_str(msg_ref).to_string();
-                            }
+                            return format_error_chain(ptr, field_offsets, ctx);
                         }
                     }
                 }
@@ -80,6 +76,37 @@ pub fn format_interface_with_ctx(slot0: u64, slot1: u64, call: Option<&crate::ff
         ValueKind::Struct => format!("{{...}}"),
         ValueKind::Interface => format!("0x{:x}", slot1),
     }
+}
+
+/// Format error chain recursively: "msg: cause_msg: cause_cause_msg..."
+/// field_offsets: [code, msg, cause, data]
+fn format_error_chain(ptr: GcRef, field_offsets: [u16; 4], ctx: &ExternCallContext) -> String {
+    use crate::gc::Gc;
+    
+    // Read msg field
+    let msg_ref = unsafe { Gc::read_slot(ptr, field_offsets[1] as usize) } as GcRef;
+    let msg = if !msg_ref.is_null() {
+        string::as_str(msg_ref).to_string()
+    } else {
+        String::new()
+    };
+    
+    // Read cause field (interface: 2 slots)
+    let cause_slot0 = unsafe { Gc::read_slot(ptr, field_offsets[2] as usize) };
+    let cause_slot1 = unsafe { Gc::read_slot(ptr, field_offsets[2] as usize + 1) };
+    
+    // Check if cause is nil (slot0 == 0 means nil interface)
+    if cause_slot0 == 0 {
+        return msg;
+    }
+    
+    // Recursively format cause
+    let cause_msg = format_interface_with_ctx(cause_slot0, cause_slot1, Some(ctx));
+    if cause_msg.is_empty() || cause_msg == "<nil>" {
+        return msg;
+    }
+    
+    format!("{}: {}", msg, cause_msg)
 }
 
 /// Format a slice value for %v output.

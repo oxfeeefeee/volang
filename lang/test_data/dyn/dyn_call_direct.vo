@@ -59,31 +59,29 @@ func testDynCallProtocol() {
     fmt.Println("Callable~>(string): error (expected)")
 }
 
-// Test method value as callable
-func testMethodValueCall() {
-    type Calc struct {
-        val int
-    }
-    c := &Calc{val: 100}
-    
-    // Get method as closure via dynamic access
-    var obj any = c
-    method := obj~>Add?
-    
-    // method is a closure bound to c
-    // Direct call on the method closure
-    result, err := method~>(50)
-    assert(err == nil, "method value call should succeed")
-    assert(result.(int) == 150, "method call should return 150")
-    fmt.Println("c.Add~>(50) =", result.(int))
+type Calc struct {
+    val int
 }
 
 func (c *Calc) Add(x int) int {
     return c.val + x
 }
 
-type Calc struct {
-    val int
+// Test method value as callable
+func testMethodValueCall() {
+    c := &Calc{val: 100}
+    
+    // Get method as closure via dynamic access
+    var obj any = c
+    method, err := obj~>Add
+    assert(err == nil, "method access should succeed")
+    
+    // method is a closure bound to c
+    // Direct call on the method closure
+    result, err2 := method~>(50)
+    assert(err2 == nil, "method value call should succeed")
+    assert(result.(int) == 150, "method call should return 150")
+    fmt.Println("c.Add~>(50) =", result.(int))
 }
 
 func main() {

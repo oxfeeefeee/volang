@@ -943,6 +943,16 @@ impl FuncBuilder {
     pub fn return_types(&self) -> &[vo_analysis::objects::TypeKey] {
         &self.return_types
     }
+    
+    /// Check if the function returns error as its last return value.
+    /// Used to determine if ? should propagate (return) or panic.
+    pub fn has_error_return(&self, info: &crate::type_info::TypeInfoWrapper) -> bool {
+        if let Some(last_ret_type) = self.return_types.last() {
+            info.is_error_type(*last_ret_type)
+        } else {
+            false
+        }
+    }
 
     pub fn set_recv_slots(&mut self, slots: u16) {
         self.recv_slots = slots;

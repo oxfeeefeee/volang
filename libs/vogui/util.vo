@@ -1,38 +1,19 @@
 // Internal utility functions.
 package gui
 
+import "strconv"
+
 func toString(v any) string {
 	switch x := v.(type) {
 	case string:
 		return x
 	case int:
-		return intToString(x)
+		return strconv.Itoa(x)
 	case bool:
 		if x {
 			return "true"
 		}
 		return "false"
-	default:
-		return "<unknown>"
 	}
-}
-
-func intToString(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := false
-	if n < 0 {
-		neg = true
-		n = -n
-	}
-	s := ""
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
+	return "<unknown>"
 }

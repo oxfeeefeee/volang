@@ -152,10 +152,10 @@ func main() {
     p6 := NewParser("42")
     obj = p6
     
-    // Use ? to propagate dyn error, then check method error
-    result := obj~>ParseInt()?
+    // Get result with error handling
+    result, _, dynErr6 := obj~>ParseInt()
+    assert(dynErr6 == nil, "dyn call should succeed")
     val := result.(int)
-    // Note: can't use ? on method error directly as it's wrapped in any
     fmt.Println("Test 6: chained result =", val)
     
     fmt.Println("dyn_method_returns_error: ok")

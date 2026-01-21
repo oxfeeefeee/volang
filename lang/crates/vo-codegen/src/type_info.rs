@@ -150,6 +150,12 @@ impl<'a> TypeInfoWrapper<'a> {
         }
     }
     
+    /// Check if a type is the error interface.
+    pub fn is_error_type(&self, type_key: TypeKey) -> bool {
+        let Some(ref universe) = self.project.tc_objs.universe else { return false };
+        typ::identical(type_key, universe.error_type(), self.tc_objs())
+    }
+    
     /// Convert TypeKey to RuntimeType.
     /// This is the unified entry point for type conversion in codegen.
     pub fn type_to_runtime_type(&self, type_key: TypeKey, ctx: &mut crate::context::CodegenContext) -> vo_runtime::RuntimeType {

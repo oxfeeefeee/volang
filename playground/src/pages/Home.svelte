@@ -9,13 +9,13 @@
     <div class="hero-content">
       <div class="badge">v0.1.0 Beta</div>
       <h1 class="title">
-        <span class="gradient-text">Pragmatic.</span>
-        <span class="gradient-text">Modern.</span>
-        <span class="gradient-text">Go-like.</span>
+        <span class="gradient-text">Go-like Syntax.</span>
+        <span class="gradient-text">Rust Power.</span>
+        <span class="gradient-text">Vibe Ready.</span>
       </h1>
       <p class="subtitle">
-        A statically typed language designed for simplicity and productivity. 
-        Built with Rust, running on WASM.
+        The scripting language for the Rust world. Statically typed, low ceremony, 
+        and built for the AI coding era. Most Go programs run with minimal changes.
       </p>
       <div class="actions">
         <button class="btn-primary btn-lg" onclick={() => navigate('playground')}>
@@ -23,7 +23,7 @@
           <span class="arrow">→</span>
         </button>
         <button class="btn-secondary btn-lg" onclick={() => navigate('docs')}>
-          Documentation
+          Why Vo?
         </button>
       </div>
     </div>
@@ -31,45 +31,47 @@
 
   <section class="features-container">
     <div class="section-header">
-      <h2>Engineered for Clarity</h2>
-      <p>Familiar syntax with modern improvements.</p>
+      <h2>Scripting Ergonomics, Compiled Power</h2>
+      <p>Writes like a script, runs like Go. The sweet spot between Go, Python, and Lua.</p>
     </div>
 
     <div class="features">
       <div class="feature-card">
+        <div class="icon-box">⚡</div>
+        <h3>Flexible Execution</h3>
+        <p>
+          Run like a script (VM), accelerate with JIT, or deploy like Go (AOT).
+          Single binary, no dependencies.
+        </p>
+        <div class="code-preview">
+          <code>vo run script.vo   # VM</code>
+          <code>vo build -o app    # AOT</code>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="icon-box">✨</div>
+        <h3>Go, Refined</h3>
+        <p>
+          No generics to wrestle with. No pointer arithmetic to debug.
+          Just value types, interfaces, and clean, readable code.
+        </p>
+        <div class="code-preview">
+          <code>// Simple. Typed. Safe.</code>
+          <code>func main() &#123; ... &#125;</code>
+        </div>
+      </div>
+
+      <div class="feature-card">
         <div class="icon-box">?</div>
-        <h3>Error Handling</h3>
+        <h3>Modern Errors</h3>
         <p>
-          Propagate errors with <code>?</code>. Return early with <code>fail</code>.
-          Zero boilerplate, maximum clarity.
+          Stop typing <code>if err != nil</code>. Use <code>?</code> to propagate
+          and <code>errdefer</code> for cleanup. Zero boilerplate.
         </p>
         <div class="code-preview">
-          <code>data := readFile(path)?</code>
-          <code>config := parse(data)?</code>
-        </div>
-      </div>
-
-      <div class="feature-card">
-        <div class="icon-box">~></div>
-        <h3>Dynamic Access</h3>
-        <p>
-          Seamlessly work with untyped data using <code>~></code> operators.
-          Perfect for JSON and dynamic APIs.
-        </p>
-        <div class="code-preview">
-          <code>name := json~>user~>name?.(string)</code>
-        </div>
-      </div>
-
-      <div class="feature-card">
-        <div class="icon-box">{'{}'}</div>
-        <h3>Simplified Semantics</h3>
-        <p>
-          No pointers to primitives. No complex inheritance.
-          Pure struct methods and value semantics.
-        </p>
-        <div class="code-preview">
-          <code>func (p *Point) Move(x, y int)</code>
+          <code>f := open(path)?</code>
+          <code>errdefer f.close()</code>
         </div>
       </div>
     </div>

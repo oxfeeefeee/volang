@@ -2,20 +2,40 @@
   import JSZip from 'jszip';
   import { onMount } from 'svelte';
 
-  let { onSelect }: { onSelect: (code: string, filename: string) => void } = $props();
+  let { onSelect, selectedFile = $bindable('') }: { onSelect: (code: string, filename: string) => void, selectedFile?: string } = $props();
   
-  let files: { name: string; content: string }[] = $state([]);
-  let loading = $state(true);
+  type Tab = 'examples' | 'tests';
+  let activeTab: Tab = $state('examples');
+  
+  let examples: { name: string; content: string }[] = $state([]);
+  let testFiles: { name: string; content: string }[] = $state([]);
+  let loadingExamples = $state(true);
+  let loadingTests = $state(true);
   let searchQuery = $state('');
-  let selectedFile = $state('');
 
+  const currentFiles = $derived(activeTab === 'examples' ? examples : testFiles);
+  const loading = $derived(activeTab === 'examples' ? loadingExamples : loadingTests);
+  
   const filteredFiles = $derived(
     searchQuery 
-      ? files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-      : files
+      ? currentFiles.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : currentFiles
   );
 
+  // Load examples using import.meta.glob
+  const exampleModules = import.meta.glob('../assets/examples/*.vo', { as: 'raw', eager: true });
+
   onMount(async () => {
+    // Load examples from assets
+    const loadedExamples: { name: string; content: string }[] = [];
+    for (const [path, content] of Object.entries(exampleModules)) {
+      const name = path.split('/').pop() || path;
+      loadedExamples.push({ name, content: content as string });
+    }
+    examples = loadedExamples.sort((a, b) => a.name.localeCompare(b.name));
+    loadingExamples = false;
+
+    // Load test files from zip
     try {
       const response = await fetch('/test_data.zip');
       const blob = await response.blob();
@@ -30,11 +50,11 @@
         }
       }
       
-      files = loadedFiles.sort((a, b) => a.name.localeCompare(b.name));
+      testFiles = loadedFiles.sort((a, b) => a.name.localeCompare(b.name));
     } catch (e) {
       console.error('Failed to load test_data.zip:', e);
     } finally {
-      loading = false;
+      loadingTests = false;
     }
   });
 
@@ -42,12 +62,32 @@
     selectedFile = file.name;
     onSelect(file.content, file.name);
   }
+  
+  function switchTab(tab: Tab) {
+    activeTab = tab;
+    searchQuery = '';
+    selectedFile = '';
+  }
 </script>
 
 <div class="file-explorer">
-  <div class="explorer-header">
-    <span class="title">Test Files</span>
-    <span class="count">{files.length}</span>
+  <div class="tabs">
+    <button 
+      class="tab" 
+      class:active={activeTab === 'examples'}
+      onclick={() => switchTab('examples')}
+    >
+      Examples
+      <span class="count">{examples.length}</span>
+    </button>
+    <button 
+      class="tab" 
+      class:active={activeTab === 'tests'}
+      onclick={() => switchTab('tests')}
+    >
+      Test Files
+      <span class="count">{testFiles.length}</span>
+    </button>
   </div>
   
   <div class="search-box">
@@ -89,29 +129,50 @@
     border-right: 1px solid var(--border);
   }
 
-  .explorer-header {
+  .tabs {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  .title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+  .tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 12px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
     color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+  }
+
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
   }
 
   .count {
-    font-size: 11px;
-    padding: 2px 8px;
+    font-size: 10px;
+    padding: 1px 6px;
     background: var(--bg-tertiary);
     border-radius: 10px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
+  }
+
+  .tab.active .count {
+    background: var(--accent-light);
+    color: var(--accent);
   }
 
   .search-box {

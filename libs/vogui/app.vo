@@ -45,23 +45,21 @@ func sendEvent(handlerID int, payload string) {
 // eventLoop processes events from channel
 func eventLoop() {
 	for event := range eventChan {
-		if event.HandlerID == -1 {
-			// Timer event: Payload contains timer ID
+		switch event.HandlerID {
+		case eventIDTimer:
 			var p struct{ Id int }
 			json.Unmarshal([]byte(event.Payload), &p)
 			invokeTimerHandler(p.Id)
-		} else if event.HandlerID == -2 {
-			// Global Key event: Payload contains key
+		case eventIDGlobalKey:
 			var p struct{ Key string }
 			json.Unmarshal([]byte(event.Payload), &p)
 			err := invokeGlobalKeyHandler(currentState, p.Key)
 			if err != nil {
 				println("VoGUI: global key handler error:", err)
 			}
-		} else if event.HandlerID == -3 {
-			// Navigation event (popstate): Just re-render
-		} else {
-			// UI event
+		case eventIDNavigation:
+			// popstate: just re-render
+		default:
 			err := invokeHandler(currentState, event.HandlerID, event.Payload)
 			if err != nil {
 				println("VoGUI: handler error:", err)

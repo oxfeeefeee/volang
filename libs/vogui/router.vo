@@ -13,12 +13,6 @@ type Route struct {
 // Navigate changes the current URL and re-renders the app.
 func Navigate(path string) {
 	gui_navigate(path)
-	// We also need to update internal state.
-	// Since we are in the same package, we can access app globals if we define them.
-	// But let's trigger it via a special internal function or just setting variable if exported.
-	// For now, let's assume we can access a package-level 'currentPath' or similar.
-	// Better: send a navigation event to the event loop to ensure consistency?
-	// Or just update and render.
 	updatePath(path)
 }
 

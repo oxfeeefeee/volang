@@ -13,9 +13,8 @@
     'module': '../assets/docs/spec/module.md',
     'native-ffi': '../assets/docs/spec/native-ffi.md',
     'memory-model': '../assets/docs/spec/memory-model-and-instructions.md',
-    'type-attributes': '../assets/docs/spec/type-attributes.md',
     'vm-bytecode': '../assets/docs/spec/vm-bytecode.md',
-    'vm-jit': '../assets/docs/spec/vm-jit-unified-design.md',
+    'vm-jit': '../assets/docs/spec/vm-jit-design.md',
   };
 
   const menu = [
@@ -26,7 +25,6 @@
       { id: 'module', label: 'Module System' },
       { id: 'native-ffi', label: 'Native FFI' },
       { id: 'memory-model', label: 'Memory Model' },
-      { id: 'type-attributes', label: 'Type Attributes' },
     ]},
     { title: 'Internals', items: [
       { id: 'vm-bytecode', label: 'VM Bytecode' },

@@ -52,19 +52,18 @@ pub enum ValueKind {
     Uint64 = 11,
     Float32 = 12,
     Float64 = 13,
-    FuncPtr = 14,       // Bare function pointer (no captures)
 
     // === Compound Value Types (multi-slot, may contain GC refs) ===
-    Array = 16,         // [N]T - elements inline
-    Struct = 21,        // Fields inline
-    Interface = 23,     // 2 slots: header + data
+    Array = 14,         // [N]T - elements inline
+    Struct = 15,        // Fields inline
+    Interface = 16,     // 2 slots: header + data
 
     // === Reference Types (1 slot GcRef, heap allocated) ===
-    String = 15,
-    Slice = 17,
-    Map = 18,
-    Channel = 19,
-    Closure = 20,
+    String = 17,
+    Slice = 18,
+    Map = 19,
+    Channel = 20,
+    Closure = 21,
     Pointer = 22,       // *T - explicit pointer type (reference semantics)
 }
 ```
@@ -463,10 +462,6 @@ pub struct Instruction {
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `Nop` | - | No operation |
-| `LoadNil` | a | `slots[a] = nil` |
-| `LoadTrue` | a | `slots[a] = true` |
-| `LoadFalse` | a | `slots[a] = false` |
 | `LoadInt` | a, b, c | `slots[a] = sign_extend(b \| (c << 16))` |
 | `LoadConst` | a, b | `slots[a] = constants[b]` |
 
@@ -507,6 +502,8 @@ For stack-allocated arrays with dynamic indices.
 | `PtrSet` | a, b, c | `heap[slots[a]].offset[b] = slots[c]` (single slot) |
 | `PtrGetN` | a, b, c, flags | `slots[a..a+flags] = heap[slots[b]].offset[c..]` |
 | `PtrSetN` | a, b, c, flags | `heap[slots[a]].offset[b..] = slots[c..c+flags]` |
+| `PtrAdd` | a, b, c | `slots[a] = slots[b] + slots[c] * 8` (pointer arithmetic) |
+| `PtrAdd` | a, b, c | `slots[a] = slots[b] + slots[c] * 8` (pointer arithmetic) |
 
 #### 6.3.6 ARITH: Integer Arithmetic
 
@@ -515,8 +512,10 @@ For stack-allocated arrays with dynamic indices.
 | `AddI` | a, b, c | `slots[a] = slots[b] + slots[c]` |
 | `SubI` | a, b, c | `slots[a] = slots[b] - slots[c]` |
 | `MulI` | a, b, c | `slots[a] = slots[b] * slots[c]` |
-| `DivI` | a, b, c | `slots[a] = slots[b] / slots[c]` |
-| `ModI` | a, b, c | `slots[a] = slots[b] % slots[c]` |
+| `DivI` | a, b, c | `slots[a] = slots[b] / slots[c]` (signed) |
+| `DivU` | a, b, c | `slots[a] = slots[b] / slots[c]` (unsigned) |
+| `ModI` | a, b, c | `slots[a] = slots[b] % slots[c]` (signed) |
+| `ModU` | a, b, c | `slots[a] = slots[b] % slots[c]` (unsigned) |
 | `NegI` | a, b | `slots[a] = -slots[b]` |
 
 #### 6.3.7 ARITH: Float Arithmetic
@@ -535,10 +534,14 @@ For stack-allocated arrays with dynamic indices.
 |--------|----------|-------------|
 | `EqI` | a, b, c | `slots[a] = slots[b] == slots[c]` |
 | `NeI` | a, b, c | `slots[a] = slots[b] != slots[c]` |
-| `LtI` | a, b, c | `slots[a] = slots[b] < slots[c]` |
-| `LeI` | a, b, c | `slots[a] = slots[b] <= slots[c]` |
-| `GtI` | a, b, c | `slots[a] = slots[b] > slots[c]` |
-| `GeI` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
+| `LtI` | a, b, c | `slots[a] = slots[b] < slots[c]` (signed) |
+| `LtU` | a, b, c | `slots[a] = slots[b] < slots[c]` (unsigned) |
+| `LeI` | a, b, c | `slots[a] = slots[b] <= slots[c]` (signed) |
+| `LeU` | a, b, c | `slots[a] = slots[b] <= slots[c]` (unsigned) |
+| `GtI` | a, b, c | `slots[a] = slots[b] > slots[c]` (signed) |
+| `GtU` | a, b, c | `slots[a] = slots[b] > slots[c]` (unsigned) |
+| `GeI` | a, b, c | `slots[a] = slots[b] >= slots[c]` (signed) |
+| `GeU` | a, b, c | `slots[a] = slots[b] >= slots[c]` (unsigned) |
 
 #### 6.3.9 CMP: Float Comparison
 
@@ -566,6 +569,7 @@ For stack-allocated arrays with dynamic indices.
 | `And` | a, b, c | `slots[a] = slots[b] & slots[c]` |
 | `Or` | a, b, c | `slots[a] = slots[b] \| slots[c]` |
 | `Xor` | a, b, c | `slots[a] = slots[b] ^ slots[c]` |
+| `AndNot` | a, b, c | `slots[a] = slots[b] & ^slots[c]` |
 | `Not` | a, b | `slots[a] = ^slots[b]` (bitwise NOT) |
 | `Shl` | a, b, c | `slots[a] = slots[b] << slots[c]` |
 | `ShrS` | a, b, c | `slots[a] = slots[b] >> slots[c]` (arithmetic) |
@@ -612,6 +616,7 @@ For stack-allocated arrays with dynamic indices.
 | `StrLe` | a, b, c | `slots[a] = slots[b] <= slots[c]` |
 | `StrGt` | a, b, c | `slots[a] = slots[b] > slots[c]` |
 | `StrGe` | a, b, c | `slots[a] = slots[b] >= slots[c]` |
+| `StrDecodeRune` | a, b, c | `(rune, width) = decode(str, pos)`, a=dst (2 slots), b=str, c=pos |
 
 #### 6.3.16 ARRAY: Heap Array Operations
 
@@ -623,6 +628,7 @@ For escaped arrays allocated on the heap.
 | `ArrayGet` | a, b, c, flags | `slots[a..a+flags] = arr[idx]`, b=arr, c=idx, flags=elem_slots |
 | `ArraySet` | a, b, c, flags | `arr[idx] = slots[c..c+flags]`, a=arr, b=idx, flags=elem_slots |
 | `ArrayLen` | a, b | `slots[a] = len(slots[b])` |
+| `ArrayAddr` | a, b, c, flags | `slots[a] = &arr[idx]`, b=arr, c=idx, flags=elem_bytes |
 
 `ArrayNew` encoding: `slots[b]` contains elem's `ValueMeta` (loaded via `LoadConst`), `slots[c]` contains length, `flags` contains elem_slots.
 
@@ -637,6 +643,7 @@ For escaped arrays allocated on the heap.
 | `SliceCap` | a, b | `slots[a] = cap(slots[b])` |
 | `SliceSlice` | a, b, c, flags | `slots[a] = slice[lo:hi:max]`, b=slice, c=params_start, flags: bit0=has_max. lo=slots[c], hi=slots[c+1], max=slots[c+2] if has_max else cap |
 | `SliceAppend` | a, b, c, flags | `slots[a] = append(slice, slots[c..c+flags])`, b=slice, flags=elem_slots |
+| `SliceAddr` | a, b, c, flags | `slots[a] = &slice[idx]`, b=slice, c=idx, flags=elem_bytes |
 
 `SliceNew` encoding: `slots[b]` contains elem's `ValueMeta`, `slots[c]` contains length, `slots[c+1]` contains capacity, `flags` contains elem_slots.
 
@@ -651,15 +658,13 @@ Uses meta slot for key/val slots encoding (no size limit).
 | `MapSet` | a, b, c | `map[key] = val`, a=map, b=meta_and_key, c=val_start |
 | `MapDelete` | a, b | `delete(map, key)`, a=map, b=meta_and_key |
 | `MapLen` | a, b | `slots[a] = len(slots[b])` |
+| `MapIterInit` | a, b | `slots[a] = new_iter(map)`, b=map |
+| `MapIterNext` | a, b, flags | `key, val = iter.next()`, a=key_dst, b=iter, flags=(key_slots \| val_slots << 4) |
 
 **Meta slot encoding**:
 - `MapGet`: `slots[c] = (key_slots << 16) | (val_slots << 1) | has_ok`, key=`slots[c+1..]`
 - `MapSet`: `slots[b] = (key_slots << 8) | val_slots`, key=`slots[b+1..]`
 - `MapDelete`: `slots[b] = key_slots`, key=`slots[b+1..]`
-
-`MapNew` encoding: `LoadConst r, <packed_u64>` + `MapNew dst, r, slots_packed`.
-- `slots[b]` (packed_u64): `[key_meta:32 | val_meta:32]`, each meta = `[meta_id:24 | kind:8]` (same as `ValueMeta`)
-- `c`: `(key_slots << 8) | val_slots`
 
 #### 6.3.19 CHAN: Channel Operations
 
@@ -669,13 +674,15 @@ Uses meta slot for key/val slots encoding (no size limit).
 | `ChanSend` | a, b, flags | `chan <- slots[b..b+flags]`, a=chan, flags=elem_slots |
 | `ChanRecv` | a, b, flags | `slots[a..] = <-chan`, b=chan, flags=(elem_slots<<1)\|has_ok |
 | `ChanClose` | a | `close(slots[a])` |
+| `ChanLen` | a, b | `slots[a] = len(slots[b])` |
+| `ChanCap` | a, b | `slots[a] = cap(slots[b])` |
 
 `ChanNew` encoding: `slots[b]` contains elem's `ValueMeta`, `slots[c]` contains capacity, `flags` contains elem_slots.
 
 #### 6.3.20 SELECT: Select Statement
 
 | Opcode | Operands | Description |
-|--------|----------|-------------|
+|--------|----------|-----------|
 | `SelectBegin` | a, flags | Begin select, a=case_count, flags: bit0=has_default |
 | `SelectSend` | a, b, flags | Add send case: a=chan_reg, b=val_reg, flags=elem_slots |
 | `SelectRecv` | a, b, flags | Add recv case: a=dst_reg, b=chan_reg, flags=(elem_slots<<1)\|has_ok |
@@ -702,13 +709,11 @@ Uses meta slot for key/val slots encoding (no size limit).
 | `ClosureGet` | a, b | `slots[a] = slots[0].captures[b]` (closure implicit in r0) |
 | `ClosureSet` | a, b | `slots[0].captures[a] = slots[b]` (closure implicit in r0) |
 
-Note: Escaped variables are heap-allocated directly, and closures store GcRefs to them (no indirection).
-
 #### 6.3.23 GO: Goroutine
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
-| `GoCall` | a | `go slots[a]()` (0-arg closure, same as defer) |
+| `GoStart` | a, b, c, flags | `go call`, a=func_id_low, b=args_start, c=arg_slots, flags=is_closure\|func_id_high |
 | `Yield` | - | Yield current goroutine |
 
 #### 6.3.24 DEFER: Defer and Error Handling
@@ -720,14 +725,13 @@ Note: Escaped variables are heap-allocated directly, and closures store GcRefs t
 | `Panic` | a | `panic(slots[a])` |
 | `Recover` | a | `slots[a] = recover()` |
 
-Note: `DeferPop` removed. Defers are executed automatically by `Return`.
-
 #### 6.3.25 IFACE: Interface Operations
 
 | Opcode | Operands | Description |
 |--------|----------|-------------|
 | `IfaceAssign` | a, b, c, flags | Assign to interface: dst=`slots[a..a+2]`, src=`slots[b]`, c=`const_idx`, flags=`value_kind` |
 | `IfaceAssert` | a, b, c, flags | Type assert: dst=`a`, src_iface=`b`, target_id=`c`, flags=`assert_kind \| (has_ok << 2) \| (target_slots << 3)` |
+| `IfaceEq` | a, b, c | `slots[a] = (slots[b..b+2] == slots[c..c+2])` (deep equality check) |
 
 **IfaceAssign Semantics**:
 
@@ -735,8 +739,8 @@ Note: `DeferPop` removed. Defers are executed automatically by `Return`.
 // a = dst slot (interface occupies 2 slots: a, a+1)
 // b = src value slot (interface source: b, b+1)
 // c = constant pool index (Int64)
-//     - 具体类型: (named_type_id << 32) | itab_id，编译时已建 itab
-//     - Interface: iface_meta_id（高32位为0），运行时建 itab
+//     - Concrete type: (named_type_id << 32) | itab_id, itab built at compile time
+//     - Interface: iface_meta_id (high 32 bits 0), itab built at runtime
 // flags = value_kind of source
 
 let vk = flags;
@@ -745,7 +749,7 @@ let named_type_id = (packed >> 32) as u32;
 let low = (packed & 0xFFFFFFFF) as u32;
 
 let (actual_named_type_id, actual_vk, itab_id) = if vk == Interface {
-    // Interface → Interface: 运行时查/建 itab
+    // Interface -> Interface: lookup/build itab at runtime
     let src_slot0 = slots[b];
     let src_named_type_id = (src_slot0 >> 8) & 0xFFFFFF;
     let src_vk = src_slot0 & 0xFF;
@@ -753,7 +757,7 @@ let (actual_named_type_id, actual_vk, itab_id) = if vk == Interface {
     let itab_id = vm.get_or_create_itab(src_named_type_id, iface_meta_id);
     (src_named_type_id, src_vk, itab_id)
 } else {
-    // 具体类型 → Interface: 编译时已建 itab
+    // Concrete type -> Interface: itab built at compile time
     (named_type_id, vk, low)
 };
 
@@ -775,28 +779,28 @@ match actual_vk {
 }
 ```
 
-**Source value types** (三种右值):
-| 右值类型 | named_type_id | itab | 说明 |
-|----------|---------------|------|------|
-| Primitive | 0 (from const) | 编译时构建 | int, float, bool, string, etc. |
-| Named type | from const | 编译时构建 | struct, type alias, etc. |
-| Interface | from src.slot0 | 运行时构建 | 需要 itab_cache |
+**Source value types** (Three kinds of rvalues):
+| Rvalue Type | named_type_id | itab | Description |
+|-------------|---------------|------|-------------|
+| Primitive | 0 (from const) | Built at compile time | int, float, bool, string, etc. |
+| Named type | from const | Built at compile time | struct, type alias, etc. |
+| Interface | from src.slot0 | Built at runtime | Uses itab_cache |
 
-**常量格式** (Int64):
-- 具体类型右值: `(named_type_id << 32) | itab_id`，itab 编译时已构建
-- Interface 右值: `iface_meta_id`（高 32 位为 0），itab 运行时构建
+**Constant Format** (Int64):
+- Concrete type rvalue: `(named_type_id << 32) | itab_id`, itab built at compile time
+- Interface rvalue: `iface_meta_id` (high 32 bits 0), itab built at runtime
 
 **Itab Structure**:
 ```rust
-// 字节码中
+// In bytecode
 struct Module {
-    itabs: Vec<Itab>,  // 编译时构建的 itabs
+    itabs: Vec<Itab>,  // Built at compile time
     // ...
 }
 
-// VM 运行时
+// In VM runtime
 struct VM {
-    itabs: Vec<Itab>,           // 初始化时从 module.itabs 拷贝，运行时追加
+    itabs: Vec<Itab>,           // Copied from module.itabs at init, appended at runtime
     itab_cache: HashMap<(u32, u32), u32>,  // (named_type_id, iface_meta_id) -> itab_id
 }
 
@@ -805,14 +809,14 @@ struct Itab {
 }
 ```
 
-**运行时逻辑**:
+**Runtime Logic**:
 ```rust
 let packed = constants[c].as_int64();
 let named_type_id = (packed >> 32) as u32;
 let low = (packed & 0xFFFFFFFF) as u32;
 
 let (actual_named_type_id, actual_vk, itab_id) = if vk == ValueKind::Interface {
-    // Interface → Interface: 运行时查/建 itab
+    // Interface -> Interface: lookup/build itab at runtime
     let src_slot0 = slots[b];
     let src_named_type_id = (src_slot0 >> 8) & 0xFFFFFF;
     let src_vk = src_slot0 & 0xFF;
@@ -820,13 +824,12 @@ let (actual_named_type_id, actual_vk, itab_id) = if vk == ValueKind::Interface {
     let itab_id = vm.get_or_create_itab(src_named_type_id, iface_meta_id);
     (src_named_type_id, src_vk, itab_id)
 } else {
-    // 具体类型 → Interface: 编译时已建 itab
+    // Concrete type -> Interface: itab built at compile time
     (named_type_id, vk, low)  // low = itab_id
 };
 ```
 
 **IfaceAssert Semantics**:
-
 ```rust
 // a = dst, b = src_iface (2 slots), c = target_id
 // flags = assert_kind | (has_ok << 2) | (target_slots << 3)
@@ -880,8 +883,13 @@ if matches {
 | `ConvF2I` | a, b | `slots[a] = int64(slots[b])` |
 | `ConvI32I64` | a, b | `slots[a] = int64(int32(slots[b]))` |
 | `ConvI64I32` | a, b | `slots[a] = int32(slots[b])` |
+| `Trunc` | a, b, flags | `slots[a] = truncate(slots[b])`, flags describes target type (bits, sign) |
 
 #### 6.3.27 DEBUG: Debug Operations
+
+| Opcode | Operands | Description |
+|--------|----------|-------------|
+| `IndexCheck` | a, b | `if slots[a] >= slots[b] { panic }` (bounds check) |
 
 Note: `Print` uses CallExtern (`vo_print`). Assert is implemented using `JumpIf` + `CallExtern(print)` + `Panic`.
 

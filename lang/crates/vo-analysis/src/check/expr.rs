@@ -1353,28 +1353,9 @@ impl Checker {
             ExprKind::TryUnwrap(inner) => {
                 // Vo extension: ? operator for error propagation
                 // The inner expression must return a value where the last element is of type error.
-                // If error != nil, the function returns early with that error.
+                // If function returns error: propagate (return) the error.
+                // If function doesn't return error: panic on error.
                 // If error == nil, the result is the value(s) without the error part.
-                
-                // D1: Check that function has error return value (? can only propagate if there's somewhere to propagate to)
-                if let Some(sig_key) = self.octx.sig {
-                    let sig = self.otype(sig_key).try_as_signature().unwrap();
-                    let results = self.otype(sig.results()).try_as_tuple().unwrap();
-                    let vars = results.vars();
-                    let error_type = self.universe().error_type();
-                    let has_error_return = if let Some(last_var) = vars.last() {
-                        let last_type = self.lobj(*last_var).typ().unwrap_or(self.invalid_type());
-                        typ::identical(last_type, error_type, self.objs())
-                            || crate::lookup::missing_method(last_type, error_type, true, self).is_none()
-                    } else {
-                        false
-                    };
-                    if !has_error_return {
-                        self.error_code(TypeError::TryUnwrapNoErrorReturn, e.span);
-                        x.mode = OperandMode::Invalid;
-                        return;
-                    }
-                }
                 
                 self.multi_expr(x, inner);
                 if x.invalid() {

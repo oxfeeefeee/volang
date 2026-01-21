@@ -530,6 +530,9 @@ impl Checker {
         dyn_access_expr: &Expr,
         has_try_unwrap: bool,
     ) {
+        // Note: When has_try_unwrap=true, codegen will decide whether to
+        // propagate (return) or panic based on whether the function returns error.
+
         let ll = lhs.len();
         // When has_try_unwrap, error is consumed by ?, so dyn returns ll+1 values (ll values + error)
         // When !has_try_unwrap, LHS must include error, so dyn returns ll values
@@ -578,18 +581,7 @@ impl Checker {
         let dyn_resolve = match self.resolve_dyn_access_method(base_type, &dyn_access.op, dyn_access_expr.span) {
             Ok(resolve) => resolve,
             Err(()) => {
-                // Error already reported - initialize LHS with invalid types
-                let invalid_type = self.invalid_type();
-                match &lhs {
-                    DynAccessLhs::Assign(_) => {}
-                    DynAccessLhs::Init(objs) => {
-                        for &obj in objs.iter() {
-                            if self.lobj(obj).typ().is_none() {
-                                self.lobj_mut(obj).set_type(Some(invalid_type));
-                            }
-                        }
-                    }
-                }
+                self.set_lhs_invalid_types(&lhs);
                 return;
             }
         };
@@ -597,7 +589,6 @@ impl Checker {
 
         // Build return type and assign to LHS
         let error_type = self.universe().error_type();
-        let any_type = self.new_t_empty_interface();
 
         if dyn_ret_count == 1 {
             // No return values, only error (e.g., `err = a~>Do()` or `a~>Do()?`)
@@ -606,10 +597,9 @@ impl Checker {
             if has_try_unwrap {
                 // TryUnwrap of error produces NoValue
                 self.result.record_type_and_value(rhs_expr.id, OperandMode::NoValue, error_type);
-            }
-            if !has_try_unwrap {
+            } else {
                 // Only assign error to LHS when not using ?
-                self.finish_dyn_access_lhs_single(&lhs, rhs_expr, error_type);
+                self.finish_dyn_access_lhs(&lhs, rhs_expr, &[error_type]);
             }
             // When has_try_unwrap and dyn_ret_count==1, ll==0, nothing to assign (just side effect)
         } else {
@@ -641,99 +631,49 @@ impl Checker {
             // When !has_try_unwrap, dyn_access_expr == rhs_expr
             self.result.record_type_and_value(dyn_access_expr.id, OperandMode::Value, tuple_type);
             if has_try_unwrap {
-                // For TryUnwrap, also record the unwrapped type (without error)
-                let unwrapped_type = if value_count == 1 {
-                    elem_types[0]
-                } else {
-                    let unwrapped_vars: Vec<_> = elem_types[..value_count]
-                        .iter()
-                        .map(|&t| self.new_var(Span::default(), None, String::new(), Some(t)))
-                        .collect();
-                    self.new_t_tuple(unwrapped_vars)
-                };
+                // For TryUnwrap, record the unwrapped type (without error)
+                let unwrapped_type = self.make_result_type(&elem_types[..value_count]);
                 self.result.record_type_and_value(rhs_expr.id, OperandMode::Value, unwrapped_type);
-                
-                // Only assign non-error values to LHS
-                let value_types = &elem_types[..value_count];
-                self.finish_dyn_access_lhs_multi_no_error(&lhs, rhs_expr, value_types);
+                self.finish_dyn_access_lhs(&lhs, rhs_expr, &elem_types[..value_count]);
             } else {
-                // Assign all values including error to LHS
-                self.finish_dyn_access_lhs_multi(&lhs, rhs_expr, &elem_types, tuple_type);
+                self.finish_dyn_access_lhs(&lhs, rhs_expr, &elem_types);
             }
         }
     }
 
-    /// Finish single-value dynamic access (only error).
-    fn finish_dyn_access_lhs_single(
-        &mut self,
-        lhs: &DynAccessLhs,
-        rhs_expr: &Expr,
-        error_type: TypeKey,
-    ) {
-        match lhs {
-            DynAccessLhs::Assign(exprs) => {
-                let mut x = Operand::new();
-                x.mode = OperandMode::Value;
-                x.typ = Some(error_type);
-                x.set_expr(rhs_expr);
-                self.assign_var(&exprs[0], &mut x);
-            }
-            DynAccessLhs::Init(objs) => {
-                self.lobj_mut(objs[0]).set_type(Some(error_type));
-            }
+    /// Create result type from a slice of types: single type or tuple.
+    fn make_result_type(&mut self, types: &[TypeKey]) -> TypeKey {
+        if types.len() == 1 {
+            types[0]
+        } else {
+            let vars: Vec<_> = types
+                .iter()
+                .map(|&t| self.new_var(Span::default(), None, String::new(), Some(t)))
+                .collect();
+            self.new_t_tuple(vars)
         }
     }
 
-    /// Finish multi-value dynamic access (including error in LHS).
-    fn finish_dyn_access_lhs_multi(
+    /// Finish dynamic access by assigning types to LHS.
+    fn finish_dyn_access_lhs(
         &mut self,
         lhs: &DynAccessLhs,
         rhs_expr: &Expr,
-        elem_types: &[TypeKey],
-        tuple_type: TypeKey,
-    ) {
-        match lhs {
-            DynAccessLhs::Assign(exprs) => {
-                let tuple_detail = self.otype(tuple_type).try_as_tuple().unwrap();
-                let vars = tuple_detail.vars().to_vec();
-                for (i, expr) in exprs.iter().enumerate() {
-                    let var_type = self.lobj(vars[i]).typ();
-                    let mut x = Operand::new();
-                    x.mode = OperandMode::Value;
-                    x.typ = var_type;
-                    x.set_expr(rhs_expr);
-                    self.assign_var(expr, &mut x);
-                }
-            }
-            DynAccessLhs::Init(objs) => {
-                for (i, &obj) in objs.iter().enumerate() {
-                    self.lobj_mut(obj).set_type(Some(elem_types[i]));
-                }
-            }
-        }
-    }
-    
-    /// Finish multi-value dynamic access without error (for TryUnwrap case).
-    /// Only assigns non-error values to LHS since error is consumed by ?.
-    fn finish_dyn_access_lhs_multi_no_error(
-        &mut self,
-        lhs: &DynAccessLhs,
-        rhs_expr: &Expr,
-        value_types: &[TypeKey],
+        types: &[TypeKey],
     ) {
         match lhs {
             DynAccessLhs::Assign(exprs) => {
                 for (i, expr) in exprs.iter().enumerate() {
                     let mut x = Operand::new();
                     x.mode = OperandMode::Value;
-                    x.typ = Some(value_types[i]);
+                    x.typ = Some(types[i]);
                     x.set_expr(rhs_expr);
                     self.assign_var(expr, &mut x);
                 }
             }
             DynAccessLhs::Init(objs) => {
                 for (i, &obj) in objs.iter().enumerate() {
-                    self.lobj_mut(obj).set_type(Some(value_types[i]));
+                    self.lobj_mut(obj).set_type(Some(types[i]));
                 }
             }
         }

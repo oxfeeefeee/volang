@@ -1125,28 +1125,37 @@ fn compile_try_unwrap(
     let error_start = inner_start + inner_slots - error_slots;
     let skip_fail_jump = func.emit_jump(Opcode::JumpIfNot, error_start);
     
-    let ret_types: Vec<_> = func.return_types().to_vec();
-    let mut total_ret_slots = 0u16;
-    for ret_type in &ret_types {
-        total_ret_slots += info.type_slot_count(*ret_type);
+    // Check if function returns error - determines propagate vs panic behavior
+    if func.has_error_return(info) {
+        // Propagate mode: return zero values with error
+        let ret_types: Vec<_> = func.return_types().to_vec();
+        let mut total_ret_slots = 0u16;
+        for ret_type in &ret_types {
+            total_ret_slots += info.type_slot_count(*ret_type);
+        }
+        
+        let mut ret_slot_types = Vec::new();
+        for ret_type in &ret_types {
+            ret_slot_types.extend(info.type_slot_types(*ret_type));
+        }
+        let ret_start = func.alloc_temp_typed(&ret_slot_types);
+        for i in 0..total_ret_slots {
+            func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
+        }
+        
+        if !ret_types.is_empty() {
+            let ret_error_slots = info.type_slot_count(*ret_types.last().unwrap());
+            let ret_error_start = ret_start + total_ret_slots - ret_error_slots;
+            func.emit_copy(ret_error_start, error_start, ret_error_slots);
+        }
+        
+        func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
+    } else {
+        // Panic mode: panic with error directly
+        let panic_extern = ctx.get_or_register_extern("panic_with_error");
+        func.emit_with_flags(Opcode::CallExtern, 2, error_start, panic_extern as u16, error_start);
     }
     
-    let mut ret_slot_types = Vec::new();
-    for ret_type in &ret_types {
-        ret_slot_types.extend(info.type_slot_types(*ret_type));
-    }
-    let ret_start = func.alloc_temp_typed(&ret_slot_types);
-    for i in 0..total_ret_slots {
-        func.emit_op(Opcode::LoadInt, ret_start + i, 0, 0);
-    }
-    
-    if !ret_types.is_empty() {
-        let ret_error_slots = info.type_slot_count(*ret_types.last().unwrap());
-        let ret_error_start = ret_start + total_ret_slots - ret_error_slots;
-        func.emit_copy(ret_error_start, error_start, ret_error_slots);
-    }
-    
-    func.emit_with_flags(Opcode::Return, 1, ret_start, total_ret_slots, 0);
     func.patch_jump(skip_fail_jump, func.current_pc());
     
     let value_slots = inner_slots - error_slots;
