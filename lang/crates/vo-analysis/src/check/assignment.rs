@@ -4,16 +4,13 @@
 //! initialization, and short variable declarations.
 
 
-use vo_common::span::{BytePos, Span};
+use vo_common::span::Span;
 use vo_syntax::ast::Ident;
 use vo_syntax::ast::Expr;
 
 use crate::objects::{ObjKey, TypeKey};
 use crate::operand::{Operand, OperandMode};
 use crate::typ::{self, BasicType, Type};
-
-/// Default span for error reporting when no span is available.
-const DEFAULT_SPAN: Span = Span { start: BytePos(0), end: BytePos(0) };
 
 use super::checker::Checker;
 use super::errors::TypeError;
@@ -155,7 +152,7 @@ impl Checker {
 
         if typ::is_untyped(xt, self.objs()) {
             if t.is_none() && xt == self.basic_type(BasicType::UntypedNil) {
-                self.error_code_msg(TypeError::UseOfUntypedNil, DEFAULT_SPAN, format!("use of untyped nil in {}", note));
+                self.error_code_msg(TypeError::UseOfUntypedNil, x.pos(), format!("use of untyped nil in {}", note));
                 x.mode = OperandMode::Invalid;
                 return;
             }
@@ -184,9 +181,9 @@ impl Checker {
         let mut reason = String::new();
         if !self.assignable_to(x, t.unwrap(), &mut reason) {
             if reason.is_empty() {
-                self.error_code_msg(TypeError::CannotAssign, DEFAULT_SPAN, format!("cannot use value as type in {}", note));
+                self.error_code_msg(TypeError::CannotAssign, x.pos(), format!("cannot use value as type in {}", note));
             } else {
-                self.error_code_msg(TypeError::CannotAssign, DEFAULT_SPAN, format!("cannot use value as type in {}: {}", note, reason));
+                self.error_code_msg(TypeError::CannotAssign, x.pos(), format!("cannot use value as type in {}: {}", note, reason));
             }
             x.mode = OperandMode::Invalid;
         }
@@ -220,7 +217,7 @@ impl Checker {
                 }
             }
         } else {
-            self.error_code(TypeError::NotConstant, DEFAULT_SPAN);
+            self.error_code(TypeError::NotConstant, x.pos());
         }
     }
 
@@ -245,7 +242,7 @@ impl Checker {
             let lhs_type = if typ::is_untyped(xt, self.objs()) {
                 // convert untyped types to default types
                 if xt == self.basic_type(BasicType::UntypedNil) {
-                    self.error_code_msg(TypeError::UseOfUntypedNil, DEFAULT_SPAN, format!("use of untyped nil in {}", msg));
+                    self.error_code_msg(TypeError::UseOfUntypedNil, x.pos(), format!("use of untyped nil in {}", msg));
                     invalid_type
                 } else {
                     typ::untyped_default_type(xt, self.objs())

@@ -8,71 +8,40 @@
     injectStyles 
   } from '../../../libs/vogui/js/src/index';
 
+  interface RenderData {
+    type: 'render';
+    tree?: VoNode;
+  }
+
   interface Props {
-    nodeTree: VoNode | null;
+    renderData: RenderData | null;
     interactive?: boolean;
     onEvent?: EventCallback;
   }
 
-  let { nodeTree, interactive = false, onEvent }: Props = $props();
+  let { renderData, interactive = false, onEvent }: Props = $props();
   
   let renderEl: HTMLElement | undefined = $state();
   let contentEl: HTMLElement | undefined = $state();
   let cleanupKeyHandler: (() => void) | null = null;
-  let scale = $state(1);
-  
   
   $effect(() => {
-    if (renderEl && nodeTree) {
-      voguiRender(renderEl, nodeTree, { interactive, onEvent });
-      // Calculate scale after render
-      requestAnimationFrame(() => updateScale());
-    } else if (renderEl) {
-      renderEl.innerHTML = '';
-      scale = 1;
-    }
-  });
-
-  function updateScale() {
-    if (!contentEl || !renderEl) return;
-    
-    // Temporarily reset scale to measure true content size
-    const prevScale = scale;
-    renderEl.style.transform = 'scale(1)';
-    
-    const container = contentEl.getBoundingClientRect();
-    const content = renderEl.getBoundingClientRect();
-    
-    if (content.width === 0 || content.height === 0) {
-      renderEl.style.transform = `scale(${prevScale})`;
+    if (!renderEl || !renderData) {
+      if (renderEl) renderEl.innerHTML = '';
       return;
     }
     
-    const scaleX = container.width / content.width;
-    const scaleY = container.height / content.height;
-    scale = Math.min(scaleX, scaleY); // Scale to fit container
-  }
-
-  // Recalculate on resize
-  onMount(() => {
-    injectStyles();
-    const resizeObserver = new ResizeObserver(() => {
-      if (nodeTree) updateScale();
-    });
-    return () => {
-      resizeObserver.disconnect();
-      if (cleanupKeyHandler) cleanupKeyHandler();
-    };
+    if (renderData.tree) {
+      // DOM morphing happens inside voguiRender
+      voguiRender(renderEl, renderData.tree, { interactive, onEvent });
+    }
   });
 
-  $effect(() => {
-    if (contentEl) {
-      const resizeObserver = new ResizeObserver(() => {
-        if (nodeTree) updateScale();
-      });
-      resizeObserver.observe(contentEl);
-      return () => resizeObserver.disconnect();
-    }
+  onMount(() => {
+    injectStyles();
+    return () => {
+      if (cleanupKeyHandler) cleanupKeyHandler();
+    };
   });
   
   $effect(() => {
@@ -92,7 +61,7 @@
     <span class="preview-badge">{interactive ? 'Interactive' : 'Static'}</span>
   </div>
   <div class="preview-content" bind:this={contentEl}>
-    {#if !nodeTree}
+    {#if !renderData}
       <div class="placeholder">
         <div class="placeholder-icon">🖼️</div>
         <div class="placeholder-text">Run GUI code to see preview</div>
@@ -101,10 +70,8 @@
     {/if}
     <div 
       class="render-container" 
-      class:hidden={!nodeTree} 
+      class:hidden={!renderData} 
       bind:this={renderEl}
-      style:transform="scale({scale})"
-      style:transform-origin="center center"
     ></div>
   </div>
 </div>
@@ -147,13 +114,10 @@
 
   .preview-content {
     flex: 1;
-    padding: 8px;
-    overflow: hidden;
+    padding: 16px;
+    overflow: auto;
     background: #ffffff;
     position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
 
   :global(.dark) .preview-content {

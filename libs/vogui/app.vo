@@ -49,7 +49,7 @@ func eventLoop() {
 		case eventIDTimer:
 			var p struct{ Id int }
 			json.Unmarshal([]byte(event.Payload), &p)
-			invokeTimerHandler(p.Id)
+			invokeTimerHandler(p.Id, currentState)
 		case eventIDGlobalKey:
 			var p struct{ Key string }
 			json.Unmarshal([]byte(event.Payload), &p)

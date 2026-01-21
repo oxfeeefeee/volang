@@ -86,8 +86,8 @@ func initGame() any {
 	}
 	spawnPiece(s)
 	// Start timer: 500ms
-	s.TimerID = gui.SetInterval(500, func() {
-		tick(s)
+	s.TimerID = gui.SetInterval(500, func(state any) {
+		tick(state.(*State))
 	})
 	return s
 }
@@ -332,12 +332,12 @@ func view(state any) gui.Node {
                         gui.Text("Final Score: ", s.Score),
                         gui.Button("Restart", gui.On(actionRestart)).Bg("#a000f0").Fg("#fff"),
                     ).P(20).Bg("rgba(0,0,0,0.8)").Rounded(10),
-                ).Style(map[string]any{
+                ).Styles(map[string]any{
                     "position": "absolute", 
-                    "top": 0, "left": 0, "right": 0, "bottom": 0,
+                    "top": "0", "left": "0", "right": "0", "bottom": "0",
                 }),
             ),
-		).Style(map[string]any{"position": "relative"}),
+		).Styles(map[string]any{"position": "relative"}),
 	)
 }
 

@@ -112,6 +112,36 @@ export function setRenderCallback(callback: RenderCallback) {
   }
 };
 
+// Timeout support
+const activeTimeouts = new Map<number, number>();
+
+(window as any).startTimeout = (id: number, ms: number) => {
+  if (activeTimeouts.has(id)) {
+    clearTimeout(activeTimeouts.get(id)!);
+  }
+  
+  const timeoutId = setTimeout(async () => {
+    activeTimeouts.delete(id);
+    try {
+      const result = await handleGuiEvent(-1, JSON.stringify({ id: id }));
+      if (result.status === 'ok' && onRender) {
+        onRender(result.renderJson);
+      }
+    } catch (e) {
+      console.error('Timeout handler failed:', e);
+    }
+  }, ms);
+  
+  activeTimeouts.set(id, timeoutId);
+};
+
+(window as any).clearTimeout = (id: number) => {
+  if (activeTimeouts.has(id)) {
+    clearTimeout(activeTimeouts.get(id)!);
+    activeTimeouts.delete(id);
+  }
+};
+
 // Router
 (window as any).navigate = (path: string) => {
   window.history.pushState({}, '', path);

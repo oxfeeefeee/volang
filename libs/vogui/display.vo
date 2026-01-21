@@ -78,6 +78,16 @@ func Image(src string) Node {
 	return Node{Type: "Image", Props: map[string]any{"src": src}}
 }
 
+// Avatar renders a circular avatar image.
+func Avatar(src string) Node {
+	return Node{Type: "Avatar", Props: map[string]any{"src": src}}
+}
+
+// Video renders a video player.
+func Video(src string) Node {
+	return Node{Type: "Video", Props: map[string]any{"src": src}}
+}
+
 // Icon renders a Lucide icon.
 func Icon(name string) Node {
 	return Node{Type: "Icon", Props: map[string]any{"name": name}}

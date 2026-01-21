@@ -25,12 +25,19 @@
 //   }
 //
 // Files:
-//   - node.vo    : Node type and chainable style methods
-//   - layout.vo  : Layout components (Column, Row, Grid, etc.)
-//   - display.vo : Display components (Text, H1-H6, Badge, etc.)
-//   - input.vo   : Input components (Button, Input, Select, etc.)
-//   - control.vo : Control flow (If, IfElse, Show, ForEach, etc.)
-//   - event.vo   : Event handlers (On, OnValue, OnInt, etc.)
-//   - app.vo     : Application lifecycle (Run, render, eventLoop)
-//   - util.vo    : Internal utilities
+//   - node.vo      : Node type and chainable style methods
+//   - layout.vo    : Layout components (Column, Row, Grid, Stack, etc.)
+//   - display.vo   : Display components (Text, H1-H6, Badge, Avatar, etc.)
+//   - input.vo     : Input components (Button, Input, Select, DateInput, etc.)
+//   - control.vo   : Control flow (If, IfElse, Show, ForEach, ForEachKeyed)
+//   - event.vo     : Event handlers (On, OnValue, OnInt, OnFiles, etc.)
+//   - app.vo       : Application lifecycle (Run, render, eventLoop)
+//   - timer.vo     : Timer API (SetTimeout, SetInterval, Clear*)
+//   - router.vo    : SPA routing (Route, Navigate, GetCurrentPath)
+//   - container.vo : Container components (Card, Panel, Accordion, Tabs)
+//   - overlay.vo   : Overlay components (Modal, Drawer, Tooltip, Dropdown)
+//   - form.vo      : Form components (Form, FormField, FormError, etc.)
+//   - list.vo      : List/Table components (List, Table, TableRow, etc.)
+//   - nav.vo       : Navigation components (Nav, Breadcrumb, Pagination, Steps)
+//   - util.vo      : Internal utilities
 package gui

@@ -67,3 +67,4 @@ lang/cli/.vo-cache/
 playground/node_modules/
 playground/dist/
 playground/src/wasm/pkg/
+libs/vogui/js/node_modules/

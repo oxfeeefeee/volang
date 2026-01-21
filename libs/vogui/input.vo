@@ -156,3 +156,66 @@ func NumberInput(value int, onChange Handler) Node {
 		},
 	}
 }
+
+// DateInput renders a date picker.
+func DateInput(value string, onChange Handler) Node {
+	return Node{
+		Type: "DateInput",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// TimeInput renders a time picker.
+func TimeInput(value string, onChange Handler) Node {
+	return Node{
+		Type: "TimeInput",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// ColorInput renders a color picker.
+func ColorInput(value string, onChange Handler) Node {
+	return Node{
+		Type: "ColorInput",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// FileInfo represents information about a selected file.
+type FileInfo struct {
+	Name string
+	Size int
+	Type string
+}
+
+// FileInput renders a file picker.
+func FileInput(accept string, onFiles Handler) Node {
+	return Node{
+		Type: "FileInput",
+		Props: map[string]any{
+			"accept":  accept,
+			"onFiles": onFiles.ID,
+		},
+	}
+}
+
+// SearchInput renders a search input with submit.
+func SearchInput(value string, onChange Handler, onSubmit Handler) Node {
+	return Node{
+		Type: "SearchInput",
+		Props: map[string]any{
+			"value":    value,
+			"onChange": onChange.ID,
+			"onSubmit": onSubmit.ID,
+		},
+	}
+}

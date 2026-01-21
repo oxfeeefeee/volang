@@ -1,0 +1,28 @@
+// Bug: Parser rejects spreading function return value with trailing comma
+// Original error: expected ), found , at main.vo:492:27
+// Pattern: foo(getSlice()...,)  <- trailing comma after spread
+package main
+
+type Node struct {
+	Value int
+}
+
+func getNodes() []Node {
+	return []Node{{1}, {2}, {3}}
+}
+
+func Column(children ...Node) Node {
+	sum := 0
+	for i := 0; i < len(children); i++ {
+		sum = sum + children[i].Value
+	}
+	return Node{sum}
+}
+
+func main() {
+	// This should work - spread with trailing comma (Go allows this)
+	r := Column(
+		getNodes()...,
+	)
+	assert(r.Value == 6)
+}

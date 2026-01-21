@@ -49,3 +49,19 @@ func ForRange(start int, end int, render func(i int) Node) Node {
 	}
 	return Node{Type: "Fragment", Children: children}
 }
+
+// ForEachKeyed renders a list with explicit keys for efficient updates.
+// Use when items may be reordered or filtered.
+func ForEachKeyed(items []any, keyFn func(item any) string, render func(item any, i int) Node) Node {
+	var children []Node
+	for i, item := range items {
+		child := render(item, i)
+		key := keyFn(item)
+		if child.Props == nil {
+			child.Props = make(map[string]any)
+		}
+		child.Props["key"] = key
+		children = append(children, child)
+	}
+	return Node{Type: "Fragment", Children: children}
+}

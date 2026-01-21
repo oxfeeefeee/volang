@@ -23,7 +23,11 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "dependencies": {
+    "morphdom": "^2.7.0"
+  },
   "devDependencies": {
+    "@types/morphdom": "^2.0.0",
     "typescript": "^5.0.0"
   },
   "keywords": [

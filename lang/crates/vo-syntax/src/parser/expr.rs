@@ -420,6 +420,8 @@ impl<'a> Parser<'a> {
             
             if self.eat(TokenKind::Ellipsis) {
                 spread = true;
+                // Allow trailing comma after spread: foo(slice...,)
+                self.eat(TokenKind::Comma);
                 break;
             }
             

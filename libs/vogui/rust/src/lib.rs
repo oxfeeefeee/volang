@@ -259,6 +259,8 @@ pub fn register_gui_externs(registry: &mut ExternRegistry, externs: &[ExternDef]
                 registry.register(id as u32, extern_register_event_handler);
             }
             "gui_emitRender" => registry.register(id as u32, extern_emit_render),
+            "gui_startTimeout" => registry.register(id as u32, extern_start_timeout),
+            "gui_clearTimeout" => registry.register(id as u32, extern_clear_timeout),
             "gui_startInterval" => {
                 web_sys::console::log_1(&"[VoGUI-Rust] Registering gui_startInterval".into());
                 registry.register(id as u32, extern_start_interval);
@@ -290,6 +292,19 @@ fn extern_emit_render(call: &mut ExternCall) -> ExternResult {
 // =============================================================================
 // Timer Externs
 // =============================================================================
+
+fn extern_start_timeout(call: &mut ExternCall) -> ExternResult {
+    let id = call.arg_i64(0) as i32;
+    let ms = call.arg_i64(1) as i32;
+    start_js_timeout(id, ms);
+    ExternResult::Ok
+}
+
+fn extern_clear_timeout(call: &mut ExternCall) -> ExternResult {
+    let id = call.arg_i64(0) as i32;
+    clear_js_timeout(id);
+    ExternResult::Ok
+}
 
 fn extern_start_interval(call: &mut ExternCall) -> ExternResult {
     let id = call.arg_i64(0) as i32;
@@ -336,6 +351,12 @@ fn extern_get_current_path(call: &mut ExternCallContext) -> ExternResult {
 
 #[wasm_bindgen]
 extern "C" {
+    #[wasm_bindgen(js_name = startTimeout)]
+    fn start_js_timeout(id: i32, ms: i32);
+
+    #[wasm_bindgen(js_name = clearTimeout)]
+    fn clear_js_timeout(id: i32);
+
     #[wasm_bindgen(js_name = startInterval)]
     fn start_js_interval(id: i32, ms: i32);
 

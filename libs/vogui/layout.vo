@@ -16,6 +16,11 @@ func Center(child Node) Node {
 	return Node{Type: "Center", Children: []Node{child}}
 }
 
+// Stack layers children on top of each other (z-axis).
+func Stack(children ...Node) Node {
+	return Node{Type: "Stack", Children: children}
+}
+
 // Spacer fills available space.
 func Spacer() Node {
 	return Node{Type: "Spacer"}
@@ -39,6 +44,11 @@ func Wrap(children ...Node) Node {
 // Grid creates a CSS grid layout.
 func Grid(cols int, children ...Node) Node {
 	return Node{Type: "Grid", Props: map[string]any{"cols": cols}, Children: children}
+}
+
+// GridItem specifies column span for a grid child.
+func GridItem(span int, child Node) Node {
+	return Node{Type: "GridItem", Props: map[string]any{"span": span}, Children: []Node{child}}
 }
 
 // Fragment groups children without a wrapper element.

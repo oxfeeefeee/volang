@@ -13,19 +13,21 @@
   let status: RunStatus = $state('idle');
   let currentFile = $state('gui_tetris.vo');
   let guiMode = $state(false);
-  let nodeTree: any = $state(null);
+  let renderData: { type: 'render' | 'patch'; tree?: any; patches?: any[] } | null = $state(null);
   let consoleCollapsed = $state(false);
   let guiFullscreen = $state(false);
   let showTouchControls = $state(true);
 
   type Panel = 'gui' | 'editor' | 'console' | 'files';
   let activePanel = $state<Panel>('gui');
+  let guiPanelWidth = $state(600);
+  let isResizing = $state(false);
 
   // Register render callback for async updates (timers)
   setRenderCallback((json: string) => {
     try {
       const parsed = JSON.parse(json);
-      nodeTree = parsed.tree;
+      renderData = { type: 'render', tree: parsed.tree };
     } catch (e) {
       console.error('Failed to parse render JSON from timer:', e);
     }
@@ -35,7 +37,7 @@
     status = 'running';
     stdout = '';
     stderr = '';
-    nodeTree = null;
+    renderData = null;
     guiMode = false;
     activePanel = 'console';
 
@@ -46,7 +48,6 @@
       if (isGuiCode) {
         // Use initGuiApp for GUI code
         const result = await initGuiApp(code);
-        console.log('initGuiApp result:', result);
         if (result.status !== 'ok') {
           stderr = result.error || 'Unknown error';
           status = 'error';
@@ -55,11 +56,9 @@
         }
         guiMode = true;
         consoleCollapsed = true;
-        console.log('renderJson:', result.renderJson);
         if (result.renderJson) {
           const parsed = JSON.parse(result.renderJson);
-          console.log('parsed tree:', parsed);
-          nodeTree = parsed.tree;
+          renderData = { type: 'render', tree: parsed.tree };
         }
         status = 'success';
         activePanel = 'gui';
@@ -74,7 +73,7 @@
           const jsonStr = output.slice(9).trim();
           try {
             const parsed = JSON.parse(jsonStr);
-            nodeTree = parsed.tree;
+            renderData = { type: 'render', tree: parsed.tree };
             stdout = '';
           } catch (parseErr) {
             stderr = 'Failed to parse GUI output: ' + parseErr;
@@ -96,18 +95,37 @@
     }
   }
 
+  function startResize(e: MouseEvent) {
+    e.preventDefault();
+    isResizing = true;
+    const startX = e.clientX;
+    const startWidth = guiPanelWidth;
+    
+    function onMouseMove(e: MouseEvent) {
+      const delta = startX - e.clientX;
+      guiPanelWidth = Math.max(300, Math.min(1200, startWidth + delta));
+    }
+    
+    function onMouseUp() {
+      isResizing = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+    
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }
+
   async function onGuiEvent(handlerId: number, payload: string) {
-    console.log('[Playground] onGuiEvent:', handlerId, payload);
     try {
       const result = await handleGuiEvent(handlerId, payload);
-      console.log('[Playground] handleGuiEvent result:', result.status, result.renderJson?.length || 0);
       if (result.status !== 'ok') {
         stderr = result.error;
         return;
       }
       if (result.renderJson) {
         const parsed = JSON.parse(result.renderJson);
-        nodeTree = parsed.tree;
+        renderData = { type: 'render', tree: parsed.tree };
       }
     } catch (e) {
       stderr = e instanceof Error ? e.message : String(e);
@@ -119,7 +137,7 @@
     stderr = '';
     status = 'idle';
     guiMode = false;
-    nodeTree = null;
+    renderData = null;
     activePanel = 'editor';
   }
 
@@ -189,8 +207,13 @@
       <div class="editor-panel panel panel-editor">
         <Editor bind:value={code} />
       </div>
-      <div class="gui-panel panel panel-gui" class:inactive={!guiMode}>
-        <GuiPreview {nodeTree} interactive={guiMode} onEvent={guiMode ? onGuiEvent : undefined} />
+      <div 
+        class="resizer" 
+        class:hidden={!guiMode}
+        onmousedown={startResize}
+      ></div>
+      <div class="gui-panel panel panel-gui" class:inactive={!guiMode} style:width="{guiPanelWidth}px">
+        <GuiPreview {renderData} interactive={guiMode} onEvent={guiMode ? onGuiEvent : undefined} />
         {#if guiMode}
           <div class="gui-mobile-toolbar">
             <button 
@@ -319,11 +342,29 @@
     min-width: 300px;
   }
 
+  .resizer {
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+
+  .resizer:hover,
+  .resizer:active {
+    background: var(--accent);
+  }
+
+  .resizer.hidden {
+    display: none;
+  }
+
   .gui-panel {
-    width: 600px;
-    min-width: 400px;
+    min-width: 300px;
+    max-width: 1200px;
     overflow: hidden;
     border-left: 1px solid var(--border);
+    flex-shrink: 0;
   }
 
   .gui-panel.inactive {

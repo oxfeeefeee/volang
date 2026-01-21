@@ -1,6 +1,7 @@
 // VoGUI DOM Renderer
-// Framework-agnostic rendering of VoNode tree to DOM
+// Framework-agnostic rendering of VoNode tree to DOM with morphdom
 
+import morphdom from 'morphdom';
 import { VoNode, RendererConfig, StylePropertyMap } from './types';
 
 /** Convert Vo style object to CSS string */
@@ -103,6 +104,26 @@ export function renderNode(node: VoNode, config: RendererConfig, handlers?: Retu
       el.className = 'vo-grid';
       const cols = node.props?.cols ?? 2;
       el.style.cssText = `grid-template-columns: repeat(${cols}, 1fr); ${style}`;
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'GridItem': {
+      const el = document.createElement('div');
+      el.className = 'vo-grid-item';
+      const span = node.props?.span ?? 1;
+      el.style.cssText = `grid-column: span ${span}; ${style}`;
+      if (node.children?.[0]) {
+        const child = renderNode(node.children[0], config, handlers);
+        if (child) el.appendChild(child);
+      }
+      return el;
+    }
+    
+    case 'Stack': {
+      const el = document.createElement('div');
+      el.className = 'vo-stack';
+      if (style) el.style.cssText = style;
       renderChildren(el, node.children);
       return el;
     }
@@ -282,6 +303,22 @@ export function renderNode(node: VoNode, config: RendererConfig, handlers?: Retu
       return el;
     }
     
+    case 'Avatar': {
+      const el = document.createElement('img');
+      el.className = 'vo-avatar';
+      el.src = node.props?.src ?? '';
+      el.alt = '';
+      return el;
+    }
+    
+    case 'Video': {
+      const el = document.createElement('video');
+      el.className = 'vo-video';
+      el.src = node.props?.src ?? '';
+      el.controls = true;
+      return el;
+    }
+    
     case 'Icon': {
       const el = document.createElement('span');
       el.className = 'vo-icon';
@@ -341,6 +378,7 @@ export function renderNode(node: VoNode, config: RendererConfig, handlers?: Retu
       el.className = 'vo-textarea';
       el.value = node.props?.value ?? '';
       el.disabled = !interactive;
+      if (style) el.style.cssText = style;
       el.oninput = () => handlers.handleInput(node.props?.onChange, el.value);
       return el;
     }
@@ -402,6 +440,38 @@ export function renderNode(node: VoNode, config: RendererConfig, handlers?: Retu
       return el;
     }
     
+    case 'SelectLabeled': {
+      const el = document.createElement('select');
+      el.className = 'vo-select';
+      el.disabled = !interactive;
+      for (const opt of (node.props?.options ?? [])) {
+        const option = document.createElement('option');
+        option.value = opt.Value ?? '';
+        option.textContent = opt.Label ?? opt.Value ?? '';
+        option.selected = opt.Value === node.props?.value;
+        el.appendChild(option);
+      }
+      el.onchange = () => handlers.handleInput(node.props?.onChange, el.value);
+      return el;
+    }
+    
+    case 'Radio': {
+      const label = document.createElement('label');
+      label.className = 'vo-radio';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = node.props?.group ?? '';
+      input.value = node.props?.value ?? '';
+      input.checked = node.props?.value === node.props?.selected;
+      input.disabled = !interactive;
+      input.onchange = () => handlers.handleInput(node.props?.onChange, input.value);
+      const span = document.createElement('span');
+      span.textContent = node.props?.value ?? '';
+      label.appendChild(input);
+      label.appendChild(span);
+      return label;
+    }
+    
     case 'Slider': {
       const el = document.createElement('input');
       el.className = 'vo-slider';
@@ -424,6 +494,514 @@ export function renderNode(node: VoNode, config: RendererConfig, handlers?: Retu
       return el;
     }
     
+    case 'DateInput': {
+      const el = document.createElement('input');
+      el.className = 'vo-input vo-date-input';
+      el.type = 'date';
+      el.value = node.props?.value ?? '';
+      el.disabled = !interactive;
+      el.oninput = () => handlers.handleInput(node.props?.onChange, el.value);
+      return el;
+    }
+    
+    case 'TimeInput': {
+      const el = document.createElement('input');
+      el.className = 'vo-input vo-time-input';
+      el.type = 'time';
+      el.value = node.props?.value ?? '';
+      el.disabled = !interactive;
+      el.oninput = () => handlers.handleInput(node.props?.onChange, el.value);
+      return el;
+    }
+    
+    case 'ColorInput': {
+      const el = document.createElement('input');
+      el.className = 'vo-color-input';
+      el.type = 'color';
+      el.value = node.props?.value ?? '#000000';
+      el.disabled = !interactive;
+      el.oninput = () => handlers.handleInput(node.props?.onChange, el.value);
+      return el;
+    }
+    
+    case 'FileInput': {
+      const el = document.createElement('input');
+      el.className = 'vo-file-input';
+      el.type = 'file';
+      el.accept = node.props?.accept ?? '';
+      el.disabled = !interactive;
+      el.onchange = () => {
+        if (interactive && config.onEvent && node.props?.onFiles !== undefined) {
+          const files = Array.from(el.files || []).map(f => ({
+            name: f.name,
+            size: f.size,
+            type: f.type,
+          }));
+          config.onEvent(node.props.onFiles, JSON.stringify({ files }));
+        }
+      };
+      return el;
+    }
+    
+    case 'SearchInput': {
+      const container = document.createElement('div');
+      container.className = 'vo-search-input';
+      const el = document.createElement('input');
+      el.type = 'search';
+      el.className = 'vo-input';
+      el.value = node.props?.value ?? '';
+      el.disabled = !interactive;
+      el.oninput = () => handlers.handleInput(node.props?.onChange, el.value);
+      el.onkeydown = (e) => {
+        if (e.key === 'Enter') handlers.handleClick(node.props?.onSubmit);
+      };
+      container.appendChild(el);
+      return container;
+    }
+    
+    // Container
+    case 'Card': {
+      const el = document.createElement('div');
+      el.className = 'vo-card';
+      if (style) el.style.cssText = style;
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'CardHeader': {
+      const el = document.createElement('div');
+      el.className = 'vo-card-header';
+      el.textContent = node.props?.title ?? '';
+      return el;
+    }
+    
+    case 'CardBody': {
+      const el = document.createElement('div');
+      el.className = 'vo-card-body';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'CardFooter': {
+      const el = document.createElement('div');
+      el.className = 'vo-card-footer';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'Panel': {
+      const el = document.createElement('div');
+      el.className = 'vo-panel';
+      if (style) el.style.cssText = style;
+      const header = document.createElement('div');
+      header.className = 'vo-panel-header';
+      header.textContent = node.props?.title ?? '';
+      el.appendChild(header);
+      const body = document.createElement('div');
+      body.className = 'vo-panel-body';
+      renderChildren(body, node.children);
+      el.appendChild(body);
+      return el;
+    }
+    
+    case 'Accordion': {
+      const el = document.createElement('div');
+      el.className = 'vo-accordion';
+      const items = node.props?.items ?? [];
+      items.forEach((item: any, idx: number) => {
+        const panel = document.createElement('div');
+        panel.className = 'vo-accordion-item';
+        const header = document.createElement('div');
+        header.className = 'vo-accordion-header';
+        header.textContent = item.title ?? '';
+        if (interactive) {
+          header.onclick = () => {
+            if (config.onEvent && node.props?.onChange !== undefined) {
+              config.onEvent(node.props.onChange, JSON.stringify({ value: idx }));
+            }
+          };
+        }
+        const content = document.createElement('div');
+        content.className = 'vo-accordion-content';
+        content.style.display = item.open ? 'block' : 'none';
+        if (item.content) {
+          const child = renderNode(item.content, config, handlers);
+          if (child) content.appendChild(child);
+        }
+        panel.appendChild(header);
+        panel.appendChild(content);
+        el.appendChild(panel);
+      });
+      return el;
+    }
+    
+    case 'Tabs': {
+      const el = document.createElement('div');
+      el.className = 'vo-tabs';
+      const tabList = document.createElement('div');
+      tabList.className = 'vo-tab-list';
+      const tabs = node.props?.tabs ?? [];
+      const active = node.props?.active ?? 0;
+      tabs.forEach((tab: any, idx: number) => {
+        const tabBtn = document.createElement('button');
+        tabBtn.className = 'vo-tab' + (idx === active ? ' active' : '');
+        tabBtn.textContent = tab.label ?? '';
+        tabBtn.disabled = !interactive;
+        if (interactive) {
+          tabBtn.onclick = () => {
+            if (config.onEvent && node.props?.onChange !== undefined) {
+              config.onEvent(node.props.onChange, JSON.stringify({ value: idx }));
+            }
+          };
+        }
+        tabList.appendChild(tabBtn);
+      });
+      el.appendChild(tabList);
+      const tabContent = document.createElement('div');
+      tabContent.className = 'vo-tab-content';
+      if (tabs[active]?.content) {
+        const child = renderNode(tabs[active].content, config, handlers);
+        if (child) tabContent.appendChild(child);
+      }
+      el.appendChild(tabContent);
+      return el;
+    }
+    
+    // Overlay
+    case 'Modal': {
+      const overlay = document.createElement('div');
+      overlay.className = 'vo-modal-overlay';
+      if (!node.props?.open) {
+        overlay.style.display = 'none';
+        return overlay;
+      }
+      if (interactive) {
+        overlay.onclick = (e) => {
+          if (e.target === overlay) handlers.handleClick(node.props?.onClose);
+        };
+      }
+      const modal = document.createElement('div');
+      modal.className = 'vo-modal';
+      renderChildren(modal, node.children);
+      overlay.appendChild(modal);
+      return overlay;
+    }
+    
+    case 'ModalHeader': {
+      const el = document.createElement('div');
+      el.className = 'vo-modal-header';
+      el.textContent = node.props?.title ?? '';
+      return el;
+    }
+    
+    case 'ModalBody': {
+      const el = document.createElement('div');
+      el.className = 'vo-modal-body';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'ModalFooter': {
+      const el = document.createElement('div');
+      el.className = 'vo-modal-footer';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'Drawer': {
+      const overlay = document.createElement('div');
+      overlay.className = 'vo-drawer-overlay';
+      if (!node.props?.open) {
+        overlay.style.display = 'none';
+        return overlay;
+      }
+      if (interactive) {
+        overlay.onclick = (e) => {
+          if (e.target === overlay) handlers.handleClick(node.props?.onClose);
+        };
+      }
+      const drawer = document.createElement('div');
+      drawer.className = `vo-drawer vo-drawer-${node.props?.side ?? 'left'}`;
+      renderChildren(drawer, node.children);
+      overlay.appendChild(drawer);
+      return overlay;
+    }
+    
+    case 'Tooltip': {
+      const el = document.createElement('div');
+      el.className = 'vo-tooltip-wrapper';
+      if (node.children?.[0]) {
+        const child = renderNode(node.children[0], config, handlers);
+        if (child) el.appendChild(child);
+      }
+      const tip = document.createElement('div');
+      tip.className = 'vo-tooltip';
+      tip.textContent = node.props?.content ?? '';
+      el.appendChild(tip);
+      return el;
+    }
+    
+    case 'Popover': {
+      const el = document.createElement('div');
+      el.className = 'vo-popover-wrapper';
+      if (node.children?.[0]) {
+        const trigger = renderNode(node.children[0], config, handlers);
+        if (trigger) el.appendChild(trigger);
+      }
+      const pop = document.createElement('div');
+      pop.className = 'vo-popover';
+      if (node.props?.content) {
+        const content = renderNode(node.props.content, config, handlers);
+        if (content) pop.appendChild(content);
+      }
+      el.appendChild(pop);
+      return el;
+    }
+    
+    case 'Dropdown': {
+      const el = document.createElement('div');
+      el.className = 'vo-dropdown-wrapper';
+      if (node.children?.[0]) {
+        const trigger = renderNode(node.children[0], config, handlers);
+        if (trigger) el.appendChild(trigger);
+      }
+      const menu = document.createElement('div');
+      menu.className = 'vo-dropdown-menu';
+      const items = node.props?.items ?? [];
+      items.forEach((item: any) => {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'vo-dropdown-item';
+        menuItem.textContent = item.label ?? '';
+        if (interactive && item.onClick !== undefined) {
+          menuItem.onclick = () => handlers.handleClick(item.onClick);
+        }
+        menu.appendChild(menuItem);
+      });
+      el.appendChild(menu);
+      return el;
+    }
+    
+    case 'ContextMenu': {
+      const el = document.createElement('div');
+      el.className = 'vo-context-menu-wrapper';
+      if (node.children?.[0]) {
+        const child = renderNode(node.children[0], config, handlers);
+        if (child) el.appendChild(child);
+      }
+      return el;
+    }
+    
+    // Form
+    case 'Form': {
+      const el = document.createElement('form');
+      el.className = 'vo-form';
+      el.onsubmit = (e) => {
+        e.preventDefault();
+        handlers.handleClick(node.props?.onSubmit);
+      };
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'FormField': {
+      const el = document.createElement('div');
+      el.className = 'vo-form-field';
+      const label = document.createElement('label');
+      label.className = 'vo-form-label';
+      label.textContent = node.props?.label ?? '';
+      el.appendChild(label);
+      if (node.children?.[0]) {
+        const child = renderNode(node.children[0], config, handlers);
+        if (child) el.appendChild(child);
+      }
+      return el;
+    }
+    
+    case 'FormError': {
+      const el = document.createElement('div');
+      el.className = 'vo-form-error';
+      el.textContent = node.props?.message ?? '';
+      return el;
+    }
+    
+    case 'FormHelp': {
+      const el = document.createElement('div');
+      el.className = 'vo-form-help';
+      el.textContent = node.props?.message ?? '';
+      return el;
+    }
+    
+    case 'FormSection': {
+      const el = document.createElement('fieldset');
+      el.className = 'vo-form-section';
+      const legend = document.createElement('legend');
+      legend.textContent = node.props?.title ?? '';
+      el.appendChild(legend);
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    // List & Table
+    case 'List': {
+      const el = document.createElement('ul');
+      el.className = 'vo-list';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'ListItem': {
+      const el = document.createElement('li');
+      el.className = 'vo-list-item';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'OrderedList': {
+      const el = document.createElement('ol');
+      el.className = 'vo-ordered-list';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'Table': {
+      const el = document.createElement('table');
+      el.className = 'vo-table';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'TableHead': {
+      const el = document.createElement('thead');
+      el.className = 'vo-table-head';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'TableBody': {
+      const el = document.createElement('tbody');
+      el.className = 'vo-table-body';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'TableRow': {
+      const el = document.createElement('tr');
+      el.className = 'vo-table-row';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'TableCell': {
+      const el = document.createElement('td');
+      el.className = 'vo-table-cell';
+      if (style) el.style.cssText = style;
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'TableHeaderCell': {
+      const el = document.createElement('th');
+      el.className = 'vo-table-header-cell';
+      el.textContent = node.props?.content ?? '';
+      return el;
+    }
+    
+    // Navigation
+    case 'Nav': {
+      const el = document.createElement('nav');
+      el.className = 'vo-nav';
+      renderChildren(el, node.children);
+      return el;
+    }
+    
+    case 'NavItem': {
+      const el = document.createElement('button');
+      el.className = 'vo-nav-item' + (node.props?.active ? ' active' : '');
+      el.textContent = node.props?.text ?? '';
+      el.disabled = !interactive;
+      el.onclick = () => handlers.handleClick(node.props?.onClick);
+      return el;
+    }
+    
+    case 'NavLink': {
+      const el = document.createElement('a');
+      el.className = 'vo-nav-link';
+      el.href = node.props?.to ?? '#';
+      el.textContent = node.props?.text ?? '';
+      if (interactive) {
+        el.onclick = (e) => {
+          e.preventDefault();
+          if (config.onEvent) {
+            config.onEvent(-3, JSON.stringify({ path: node.props?.to }));
+          }
+        };
+      }
+      return el;
+    }
+    
+    case 'Breadcrumb': {
+      const el = document.createElement('nav');
+      el.className = 'vo-breadcrumb';
+      const items = node.props?.items ?? [];
+      items.forEach((item: any, idx: number) => {
+        if (idx > 0) {
+          const sep = document.createElement('span');
+          sep.className = 'vo-breadcrumb-sep';
+          sep.textContent = '/';
+          el.appendChild(sep);
+        }
+        const link = document.createElement('a');
+        link.className = 'vo-breadcrumb-item';
+        link.href = item.href ?? '#';
+        link.textContent = item.label ?? '';
+        el.appendChild(link);
+      });
+      return el;
+    }
+    
+    case 'Pagination': {
+      const el = document.createElement('div');
+      el.className = 'vo-pagination';
+      const current = node.props?.current ?? 1;
+      const total = node.props?.total ?? 1;
+      for (let i = 1; i <= total; i++) {
+        const btn = document.createElement('button');
+        btn.className = 'vo-pagination-btn' + (i === current ? ' active' : '');
+        btn.textContent = String(i);
+        btn.disabled = !interactive;
+        if (interactive) {
+          btn.onclick = () => {
+            if (config.onEvent && node.props?.onChange !== undefined) {
+              config.onEvent(node.props.onChange, JSON.stringify({ value: i }));
+            }
+          };
+        }
+        el.appendChild(btn);
+      }
+      return el;
+    }
+    
+    case 'Steps': {
+      const el = document.createElement('div');
+      el.className = 'vo-steps';
+      const current = node.props?.current ?? 0;
+      const items = node.props?.items ?? [];
+      items.forEach((item: string, idx: number) => {
+        const step = document.createElement('div');
+        step.className = 'vo-step' + (idx < current ? ' completed' : '') + (idx === current ? ' active' : '');
+        const num = document.createElement('span');
+        num.className = 'vo-step-num';
+        num.textContent = String(idx + 1);
+        const label = document.createElement('span');
+        label.className = 'vo-step-label';
+        label.textContent = item;
+        step.appendChild(num);
+        step.appendChild(label);
+        el.appendChild(step);
+      });
+      return el;
+    }
+    
     // Utility
     case 'Spacer': {
       const el = document.createElement('div');
@@ -443,18 +1021,59 @@ export function renderNode(node: VoNode, config: RendererConfig, handlers?: Retu
   }
 }
 
-/** Render VoNode tree into a container element */
+/** Render VoNode tree into a container element using morphdom */
 export function render(container: HTMLElement, tree: VoNode | null, config: RendererConfig): void {
-  container.innerHTML = '';
-  if (tree) {
-    const el = renderNode(tree, config);
-    if (el) container.appendChild(el);
+  if (!tree) {
+    container.innerHTML = '';
+    return;
   }
+  
+  const handlers = createEventHandlers(config);
+  const newEl = renderNode(tree, config, handlers);
+  if (!newEl || !(newEl instanceof HTMLElement)) {
+    container.innerHTML = '';
+    if (newEl) container.appendChild(newEl);
+    return;
+  }
+  
+  const oldEl = container.firstElementChild as HTMLElement | null;
+  if (!oldEl) {
+    container.appendChild(newEl);
+    return;
+  }
+  
+  // Use morphdom for efficient DOM updates
+  morphdom(oldEl, newEl, {
+    onBeforeElUpdated(fromEl, toEl) {
+      // Preserve focused input values
+      if (document.activeElement === fromEl) {
+        if ('value' in fromEl && 'value' in toEl) {
+          (toEl as HTMLInputElement).value = (fromEl as HTMLInputElement).value;
+        }
+        if ('checked' in fromEl && 'checked' in toEl) {
+          (toEl as HTMLInputElement).checked = (fromEl as HTMLInputElement).checked;
+        }
+      }
+      // Copy event handlers (morphdom doesn't handle these)
+      const events = ['onclick', 'oninput', 'onchange', 'onsubmit', 'onkeydown'];
+      for (const evt of events) {
+        if ((toEl as any)[evt]) {
+          (fromEl as any)[evt] = (toEl as any)[evt];
+        }
+      }
+      return true;
+    }
+  });
 }
 
 /** Setup global key handler */
 export function setupKeyHandler(config: RendererConfig): () => void {
   const handler = (event: KeyboardEvent) => {
+    // Skip global key events when focused on input elements
+    const target = event.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
     if (config.interactive && config.onEvent) {
       config.onEvent(-2, JSON.stringify({ key: event.key }));
     }

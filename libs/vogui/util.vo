@@ -1,19 +1,8 @@
 // Internal utility functions.
 package gui
 
-import "strconv"
+import "fmt"
 
 func toString(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case int:
-		return strconv.Itoa(x)
-	case bool:
-		if x {
-			return "true"
-		}
-		return "false"
-	}
-	return "<unknown>"
+	return fmt.Sprint(v)
 }

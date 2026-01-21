@@ -22,6 +22,7 @@ const (
 	handlerSubmit     = 8
 	handlerSelect     = 9
 	handlerSlider     = 10
+	handlerFiles      = 11
 )
 
 // Handler represents an event handler binding.
@@ -103,6 +104,10 @@ func OnSelect(action any) Handler { return registerHandler(action, handlerSelect
 // Action signature: func(s *State, value int)
 func OnSlider(action any) Handler { return registerHandler(action, handlerSlider, 0) }
 
+// OnFiles wraps an action for file input change.
+// Action signature: func(s *State, files []FileInfo)
+func OnFiles(action any) Handler { return registerHandler(action, handlerFiles, 0) }
+
 // ============ Handler Invocation ============
 
 func invokeHandler(state any, idx int, payload string) error {
@@ -141,6 +146,10 @@ func invokeHandler(state any, idx int, payload string) error {
 		var p struct{ Value int }
 		json.Unmarshal([]byte(payload), &p)
 		return handler~>(state, p.Value)
+	case handlerFiles:
+		var p struct{ Files []FileInfo }
+		json.Unmarshal([]byte(payload), &p)
+		return handler~>(state, p.Files)
 	}
 	return handler~>(state)
 }
