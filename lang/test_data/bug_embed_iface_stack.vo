@@ -1,0 +1,51 @@
+// Regression test: Bug fix for embedded interface method call on stack value
+// Previously, calling a method on an embedded interface field of a stack-allocated
+// struct would cause a misaligned pointer dereference because codegen incorrectly
+// used ptr_get (for heap) instead of copy (for stack).
+//
+// Fix: vo-codegen/src/expr/call.rs - EmbeddedInterface dispatch now checks
+// if receiver is pointer or has pointer steps before choosing ptr_get vs copy.
+package main
+
+import "fmt"
+
+type Reader interface {
+    Read() string
+}
+
+type ReaderImpl struct {
+    data string
+}
+
+func (r ReaderImpl) Read() string {
+    return r.data
+}
+
+type Wrapper struct {
+    Reader
+    extra string
+}
+
+func main() {
+    // Test 1: Stack-allocated struct with embedded interface
+    w := Wrapper{
+        Reader: ReaderImpl{data: "hello"},
+        extra:  "world",
+    }
+    result := w.Read()
+    assert(result == "hello", "embedded interface method on stack value should work")
+    
+    // Test 2: Pointer to struct with embedded interface (heap)
+    wp := &Wrapper{
+        Reader: ReaderImpl{data: "pointer"},
+        extra:  "test",
+    }
+    result2 := wp.Read()
+    assert(result2 == "pointer", "embedded interface method on heap pointer should work")
+    
+    // Test 3: Struct literal with embedded interface
+    result3 := Wrapper{Reader: ReaderImpl{data: "literal"}, extra: "lit"}.Read()
+    assert(result3 == "literal", "embedded interface method on struct literal should work")
+    
+    fmt.Println("bug_embed_iface_stack: ok")
+}

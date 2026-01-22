@@ -449,9 +449,21 @@ fn compile_method_call_dispatch(
         }
         MethodDispatch::EmbeddedInterface { embed_offset, iface_type, method_idx } => {
             // Embedded interface dispatch
-            let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+            // Need to handle both stack values and heap pointers correctly
+            let recv_is_ptr = info.is_pointer(recv_type);
+            let has_pointer_step = call_info.embed_path.steps.iter().any(|s| s.is_pointer);
+            
             let iface_slot = func.alloc_interface();  // Interface is 2 slots
-            func.emit_ptr_get(iface_slot, recv_reg, *embed_offset, 2);
+            
+            if recv_is_ptr || has_pointer_step {
+                // Receiver is a pointer or path contains pointer - use ptr_get
+                let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+                func.emit_ptr_get(iface_slot, recv_reg, *embed_offset, 2);
+            } else {
+                // Receiver is a stack value - use copy from stack slot + offset
+                let recv_reg = compile_expr(&sel.expr, ctx, func, info)?;
+                func.emit_copy(iface_slot, recv_reg + embed_offset, 2);
+            }
             
             let (param_types, is_variadic) = info.get_interface_method_signature(*iface_type, method_name);
             let arg_slots = calc_method_arg_slots(call, &param_types, is_variadic, info);
