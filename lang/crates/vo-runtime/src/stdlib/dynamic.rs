@@ -30,10 +30,22 @@ fn is_integer_value_kind(vk: ValueKind) -> bool {
     matches!(vk, ValueKind::Int | ValueKind::Int64 | ValueKind::Int32 | ValueKind::Int16 | ValueKind::Int8)
 }
 
+/// A pointer dereference step in an embedding path.
+///
+/// Only pointer embedded fields (e.g., `*Inner`) create steps.
+/// Value embedded fields just contribute to the final offset.
+#[derive(Debug, Clone, Copy)]
+struct PtrDerefStep {
+    /// Offset to read the pointer value from the current struct
+    offset: usize,
+}
+
 /// Result of looking up a field, possibly through embedded structs.
 struct FieldLookupResult {
-    /// Total offset from base struct to the field
-    total_offset: usize,
+    /// Pointer dereference steps to reach the final struct
+    ptr_derefs: Vec<PtrDerefStep>,
+    /// Final offset within the last struct (after following all steps)
+    final_offset: usize,
     /// Number of slots the field occupies
     slot_count: usize,
     /// Field's rttid
@@ -43,19 +55,26 @@ struct FieldLookupResult {
 }
 
 /// Recursively lookup a field by name, searching through embedded structs.
-/// Returns the field info with cumulative offset if found.
+///
+/// Design:
+/// - `ptr_derefs` accumulates pointer dereference steps (for `*T` embeddings)
+/// - `current_offset` accumulates value embedding offsets (for `T` embeddings)
+/// - When we hit a pointer embedding, we record it and reset offset to 0
+/// - The final `final_offset` is relative to the last pointer dereference (or base struct)
 fn lookup_field_recursive(
     call: &ExternCallContext,
     struct_meta_id: usize,
     field_name: &str,
-    base_offset: usize,
+    current_offset: usize,
+    ptr_derefs: &mut Vec<PtrDerefStep>,
 ) -> Option<FieldLookupResult> {
     let struct_meta = call.struct_meta(struct_meta_id)?;
     
     // First, try direct field lookup
     if let Some(field) = struct_meta.get_field(field_name) {
         return Some(FieldLookupResult {
-            total_offset: base_offset + field.offset as usize,
+            ptr_derefs: ptr_derefs.clone(),
+            final_offset: current_offset + field.offset as usize,
             slot_count: field.slot_count as usize,
             rttid: field.type_info.rttid(),
             value_kind: field.type_info.value_kind(),
@@ -68,17 +87,51 @@ fn lookup_field_recursive(
             continue;
         }
         
-        // Get the struct_meta_id of the embedded field's type
-        let embedded_struct_meta_id = call.get_struct_meta_id_from_rttid(field.type_info.rttid());
-        if let Some(embedded_meta_id) = embedded_struct_meta_id {
-            let embedded_offset = base_offset + field.offset as usize;
-            if let Some(result) = lookup_field_recursive(call, embedded_meta_id as usize, field_name, embedded_offset) {
-                return Some(result);
+        let field_vk = field.type_info.value_kind();
+        let field_rttid = field.type_info.rttid();
+        
+        if field_vk == ValueKind::Pointer {
+            // Pointer embedding (e.g., `*Inner`): need runtime dereference
+            let elem_value_rttid = call.get_elem_value_rttid_from_base(field_rttid);
+            let underlying_rttid = elem_value_rttid.rttid();
+            
+            if let Some(embedded_meta_id) = call.get_struct_meta_id_from_rttid(underlying_rttid) {
+                ptr_derefs.push(PtrDerefStep {
+                    offset: current_offset + field.offset as usize,
+                });
+                
+                // After dereference, offset resets to 0 in the pointed-to struct
+                if let Some(result) = lookup_field_recursive(call, embedded_meta_id as usize, field_name, 0, ptr_derefs) {
+                    return Some(result);
+                }
+                
+                ptr_derefs.pop(); // Backtrack
+            }
+        } else {
+            // Value embedding (e.g., `Inner`): just add to offset
+            if let Some(embedded_meta_id) = call.get_struct_meta_id_from_rttid(field_rttid) {
+                let embedded_offset = current_offset + field.offset as usize;
+                if let Some(result) = lookup_field_recursive(call, embedded_meta_id as usize, field_name, embedded_offset, ptr_derefs) {
+                    return Some(result);
+                }
             }
         }
     }
     
     None
+}
+
+/// Follow pointer dereferences to get the final struct reference.
+/// Returns None if any pointer in the path is nil.
+fn follow_ptr_derefs(derefs: &[PtrDerefStep], mut data_ref: GcRef) -> Option<GcRef> {
+    for step in derefs {
+        let ptr_value = unsafe { Gc::read_slot(data_ref, step.offset) };
+        data_ref = ptr_value as GcRef;
+        if data_ref.is_null() {
+            return None;
+        }
+    }
+    Some(data_ref)
 }
 
 /// Prepare a value for assignment to an interface-typed field/element.
@@ -274,7 +327,8 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
     };
     
     // Find field by name, searching through embedded structs recursively
-    let field_result = match lookup_field_recursive(&call, struct_meta_id, field_name, 0) {
+    let mut ptr_derefs = Vec::new();
+    let field_result = match lookup_field_recursive(&call, struct_meta_id, field_name, 0, &mut ptr_derefs) {
         Some(r) => r,
         None => {
             // Field not found - check if it's a method
@@ -287,9 +341,15 @@ fn dyn_get_attr(call: &mut ExternCallContext) -> ExternResult {
         return dyn_error(call, call.dyn_err().nil_base, "struct data is nil");
     }
     
+    // Follow pointer dereferences to reach the final struct
+    let final_data_ref = match follow_ptr_derefs(&field_result.ptr_derefs, data_ref) {
+        Some(r) => r,
+        None => return dyn_error(call, call.dyn_err().nil_base, "nil pointer in embedding path"),
+    };
+    
     // Read raw slots from struct field
     let raw_slots: Vec<u64> = (0..field_result.slot_count)
-        .map(|i| unsafe { Gc::read_slot(data_ref, field_result.total_offset + i) })
+        .map(|i| unsafe { Gc::read_slot(final_data_ref, field_result.final_offset + i) })
         .collect();
     
     // Box to interface format using unified boxing logic
@@ -631,12 +691,19 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
     };
 
     // Find field by name, searching through embedded structs recursively
-    let field_result = match lookup_field_recursive(&call, struct_meta_id, field_name, 0) {
+    let mut ptr_derefs = Vec::new();
+    let field_result = match lookup_field_recursive(&call, struct_meta_id, field_name, 0, &mut ptr_derefs) {
         Some(r) => r,
         None => return dyn_error_only(call, call.dyn_err().bad_field, &format!("field '{}' not found", field_name)),
     };
     
-    let field_offset = field_result.total_offset;
+    // Follow pointer dereferences to reach the final struct
+    let final_data_ref = match follow_ptr_derefs(&field_result.ptr_derefs, data_ref) {
+        Some(r) => r,
+        None => return dyn_error_only(call, call.dyn_err().nil_base, "nil pointer in embedding path"),
+    };
+    
+    let field_offset = field_result.final_offset;
     let field_slots = field_result.slot_count;
     let expected_vk = field_result.value_kind;
     let expected_rttid = field_result.rttid;
@@ -655,8 +722,8 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
             Err(e) => return dyn_error_only(call, call.dyn_err().type_mismatch, e),
         };
 
-        struct_ops::set_field(data_ref, field_offset, stored_slot0);
-        struct_ops::set_field(data_ref, field_offset + 1, stored_slot1);
+        struct_ops::set_field(final_data_ref, field_offset, stored_slot0);
+        struct_ops::set_field(final_data_ref, field_offset + 1, stored_slot1);
 
         call.ret_nil(0);
         call.ret_nil(1);
@@ -682,11 +749,11 @@ fn dyn_set_attr(call: &mut ExternCallContext) -> ExternResult {
             }
             for i in 0..field_slots {
                 let v = unsafe { Gc::read_slot(src_ref, i) };
-                unsafe { Gc::write_slot(data_ref, field_offset + i, v) };
+                unsafe { Gc::write_slot(final_data_ref, field_offset + i, v) };
             }
         }
         _ => {
-            struct_ops::set_field(data_ref, field_offset, val_slot1);
+            struct_ops::set_field(final_data_ref, field_offset, val_slot1);
         }
     }
 

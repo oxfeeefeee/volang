@@ -1,0 +1,55 @@
+// Test: Dynamic access (~>) with pointer embedding
+// Bug fix: dyn access to promoted fields through pointer embedding (*T) was not working.
+// The fix adds pointer dereference support in lookup_field_recursive and follow_embed_path.
+package main
+
+type Inner struct {
+	val int
+}
+
+type Outer struct {
+	*Inner  // pointer embedding
+	name string
+}
+
+func main() {
+	inner := &Inner{val: 42}
+	o := &Outer{Inner: inner, name: "test"}
+	
+	// Static access works
+	println("o.val =", o.val)
+	println("o.name =", o.name)
+	
+	var a any = o
+	
+	// Direct field - should work
+	name, err := a~>name
+	if err != nil {
+		println("name error:", err.Error())
+	} else {
+		println("dyn name =", name.(string))
+	}
+	
+	// Access the pointer field itself - should work
+	innerPtr, err := a~>Inner
+	if err != nil {
+		println("Inner error:", err.Error())
+	} else {
+		println("dyn Inner found")
+		// Try to access val from innerPtr
+		v, e := innerPtr~>val
+		if e != nil {
+			println("innerPtr~>val error:", e.Error())
+		} else {
+			println("innerPtr~>val =", v.(int))
+		}
+	}
+	
+	// Promoted field through pointer embedding - this fails
+	val, err := a~>val
+	if err != nil {
+		println("val error:", err.Error())
+	} else {
+		println("dyn val =", val.(int))
+	}
+}
