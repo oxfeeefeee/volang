@@ -1,0 +1,251 @@
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+// ============================================================================
+// Interface typed nil vs nil interface (Go semantics):
+// - A nil interface has no type and no value
+// - A typed nil interface has a type but nil value
+// - These are NOT equal to each other in Go
+// ============================================================================
+
+type Buffer struct {
+	data []byte
+}
+
+func (b *Buffer) Read(p []byte) (int, error) {
+	if b == nil {
+		return 0, io.EOF
+	}
+	n := copy(p, b.data)
+	return n, nil
+}
+
+func (b *Buffer) Write(p []byte) (int, error) {
+	if b == nil {
+		return 0, io.EOF
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+// ============================================================================
+// Test 1: Nil interface vs typed nil - they are NOT equal
+// ============================================================================
+func test1() {
+	var nilInterface io.Reader = nil      // nil interface
+	var typedNil io.Reader = (*Buffer)(nil)  // typed nil (has type *Buffer, value nil)
+	
+	// In Go: nil interface == nil, but typed nil != nil
+	assert(nilInterface == nil, "test1: nil interface == nil")
+	assert(typedNil != nil, "test1: typed nil != nil")  // KEY DIFFERENCE!
+	
+	fmt.Println("Test 1 PASSED: nil interface vs typed nil")
+}
+
+// ============================================================================
+// Test 2: Typed nil can still call methods (if method handles nil receiver)
+// ============================================================================
+func test2() {
+	var r io.Reader = (*Buffer)(nil)
+	
+	buf := make([]byte, 10)
+	n, err := r.Read(buf)
+	
+	assert(n == 0, "test2: read 0 bytes")
+	assert(err == io.EOF, "test2: got EOF")
+	
+	fmt.Println("Test 2 PASSED: typed nil can call methods")
+}
+
+// ============================================================================
+// Test 3: Function returning typed nil
+// ============================================================================
+func maybeReader(want bool) io.Reader {
+	if want {
+		return &Buffer{data: []byte("data")}
+	}
+	return (*Buffer)(nil)  // Returns typed nil, not nil interface
+}
+
+func test3() {
+	r1 := maybeReader(true)
+	r2 := maybeReader(false)
+	
+	assert(r1 != nil, "test3: r1 not nil")
+	assert(r2 != nil, "test3: r2 is typed nil, so != nil")  // Important!
+	
+	fmt.Println("Test 3 PASSED: function returning typed nil")
+}
+
+// ============================================================================
+// Test 4: Return explicit nil for true nil interface
+// ============================================================================
+func maybeReaderProper(want bool) io.Reader {
+	if want {
+		return &Buffer{data: []byte("data")}
+	}
+	return nil  // Returns nil interface
+}
+
+func test4() {
+	r1 := maybeReaderProper(true)
+	r2 := maybeReaderProper(false)
+	
+	assert(r1 != nil, "test4: r1 not nil")
+	assert(r2 == nil, "test4: r2 is nil interface")
+	
+	fmt.Println("Test 4 PASSED: explicit nil return")
+}
+
+// ============================================================================
+// Test 5: Type assertion on typed nil
+// ============================================================================
+func test5() {
+	var r io.Reader = (*Buffer)(nil)
+	
+	// Type assertion should succeed (type is *Buffer)
+	buf, ok := r.(*Buffer)
+	assert(ok, "test5: assertion ok")
+	assert(buf == nil, "test5: value is nil")
+	
+	fmt.Println("Test 5 PASSED: assertion on typed nil")
+}
+
+// ============================================================================
+// Test 6: Type assertion on nil interface
+// ============================================================================
+func test6() {
+	var r io.Reader = nil
+	
+	// Type assertion on nil interface should fail
+	buf, ok := r.(*Buffer)
+	assert(!ok, "test6: assertion fails")
+	assert(buf == nil, "test6: result is nil")
+	
+	fmt.Println("Test 6 PASSED: assertion on nil interface")
+}
+
+// ============================================================================
+// Test 7: Comparing two typed nils of same type
+// ============================================================================
+func test7() {
+	var r1 io.Reader = (*Buffer)(nil)
+	var r2 io.Reader = (*Buffer)(nil)
+	
+	assert(r1 == r2, "test7: same typed nils are equal")
+	
+	fmt.Println("Test 7 PASSED: comparing typed nils")
+}
+
+// ============================================================================
+// Test 8: Type switch with typed nil
+// ============================================================================
+func classify(r io.Reader) string {
+	switch r.(type) {
+	case nil:
+		return "nil"
+	case *Buffer:
+		return "Buffer"
+	default:
+		return "other"
+	}
+}
+
+func test8() {
+	var nilIface io.Reader = nil
+	var typedNil io.Reader = (*Buffer)(nil)
+	var actual io.Reader = &Buffer{}
+	
+	assert(classify(nilIface) == "nil", "test8: nil interface -> nil")
+	assert(classify(typedNil) == "Buffer", "test8: typed nil -> Buffer")
+	assert(classify(actual) == "Buffer", "test8: actual -> Buffer")
+	
+	fmt.Println("Test 8 PASSED: type switch with typed nil")
+}
+
+// ============================================================================
+// Test 9: Checking for nil properly with type assertion
+// ============================================================================
+func isActuallyNil(r io.Reader) bool {
+	if r == nil {
+		return true
+	}
+	// For typed nil, check the concrete value
+	if buf, ok := r.(*Buffer); ok {
+		return buf == nil
+	}
+	return false
+}
+
+func test9() {
+	var nilIface io.Reader = nil
+	var typedNil io.Reader = (*Buffer)(nil)
+	var actual io.Reader = &Buffer{}
+	
+	assert(isActuallyNil(nilIface), "test9: nil interface")
+	assert(isActuallyNil(typedNil), "test9: typed nil")
+	assert(!isActuallyNil(actual), "test9: actual")
+	
+	fmt.Println("Test 9 PASSED: checking nil properly")
+}
+
+// ============================================================================
+// Test 10: Slice containing typed nil
+// ============================================================================
+func test10() {
+	readers := []io.Reader{
+		&Buffer{data: []byte("a")},
+		(*Buffer)(nil),  // typed nil
+		nil,             // nil interface
+		&Buffer{data: []byte("b")},
+	}
+	
+	// Count actual nils
+	nilIfaceCount := 0
+	typedNilCount := 0
+	actualCount := 0
+	
+	for _, r := range readers {
+		if r == nil {
+			nilIfaceCount++
+		} else if buf, ok := r.(*Buffer); ok && buf == nil {
+			typedNilCount++
+		} else {
+			actualCount++
+		}
+	}
+	
+	assert(nilIfaceCount == 1, "test10: 1 nil interface")
+	assert(typedNilCount == 1, "test10: 1 typed nil")
+	assert(actualCount == 2, "test10: 2 actual")
+	
+	fmt.Println("Test 10 PASSED: slice with typed nil")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	
+	fmt.Println("")
+	fmt.Println("=== iface_typed_nil: ALL 10 TESTS PASSED ===")
+}

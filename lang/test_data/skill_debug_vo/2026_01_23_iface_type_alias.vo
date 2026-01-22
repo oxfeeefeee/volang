@@ -1,0 +1,302 @@
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+// ============================================================================
+// Interface with type aliases and named types:
+// 1. Named type aliasing interface
+// 2. Named type implementing multiple interfaces
+// 3. Interface conversion through named type
+// 4. Type switch with named types
+// 5. Interface slice of named types
+// ============================================================================
+
+type Buffer struct {
+	data []byte
+	pos  int
+}
+
+func (b *Buffer) Read(p []byte) (int, error) {
+	if b.pos >= len(b.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, b.data[b.pos:])
+	b.pos += n
+	return n, nil
+}
+
+func (b *Buffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *Buffer) Reset() {
+	b.pos = 0
+}
+
+func (b *Buffer) String() string {
+	return string(b.data)
+}
+
+// ============================================================================
+// Named type for interface
+// ============================================================================
+type MyReader io.Reader
+type MyWriter io.Writer
+type MyReadWriter io.ReadWriter
+
+// ============================================================================
+// Test 1: Assign concrete to named interface type
+// ============================================================================
+func test1() {
+	buf := &Buffer{data: []byte("named")}
+	
+	var r MyReader = buf
+	
+	data := make([]byte, 32)
+	n, _ := r.Read(data)
+	assert(string(data[:n]) == "named", "test1: named reader")
+	
+	fmt.Println("Test 1 PASSED: assign to named interface type")
+}
+
+// ============================================================================
+// Test 2: Conversion between named and original interface
+// ============================================================================
+func test2() {
+	buf := &Buffer{data: []byte("convert")}
+	
+	var r io.Reader = buf
+	var mr MyReader = r  // io.Reader -> MyReader
+	
+	data := make([]byte, 32)
+	n, _ := mr.Read(data)
+	assert(string(data[:n]) == "convert", "test2: after conversion")
+	
+	// Convert back
+	var r2 io.Reader = mr
+	buf.Reset()
+	n, _ = r2.Read(data)
+	assert(string(data[:n]) == "convert", "test2: back to io.Reader")
+	
+	fmt.Println("Test 2 PASSED: conversion between named and original")
+}
+
+// ============================================================================
+// Test 3: Named interface in function parameter
+// ============================================================================
+func readFromMy(r MyReader) string {
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	return string(buf[:n])
+}
+
+func test3() {
+	buf := &Buffer{data: []byte("param")}
+	
+	// Pass concrete type
+	s := readFromMy(buf)
+	assert(s == "param", "test3: param result")
+	
+	fmt.Println("Test 3 PASSED: named interface in parameter")
+}
+
+// ============================================================================
+// Test 4: Named interface in return
+// ============================================================================
+func createMyReader(s string) MyReader {
+	return &Buffer{data: []byte(s)}
+}
+
+func test4() {
+	r := createMyReader("returned")
+	
+	data := make([]byte, 32)
+	n, _ := r.Read(data)
+	assert(string(data[:n]) == "returned", "test4: returned")
+	
+	fmt.Println("Test 4 PASSED: named interface in return")
+}
+
+// ============================================================================
+// Test 5: Type assertion with named interface
+// ============================================================================
+func test5() {
+	buf := &Buffer{data: []byte("assert")}
+	var mr MyReader = buf
+	
+	// Assert to concrete type
+	concrete, ok := mr.(*Buffer)
+	assert(ok, "test5: assertion ok")
+	assert(concrete.String() == "assert", "test5: concrete string")
+	
+	fmt.Println("Test 5 PASSED: assertion from named interface")
+}
+
+// ============================================================================
+// Test 6: Named interface slice
+// ============================================================================
+func test6() {
+	readers := []MyReader{
+		&Buffer{data: []byte("a")},
+		&Buffer{data: []byte("b")},
+		&Buffer{data: []byte("c")},
+	}
+	
+	results := make([]string, 0, 3)
+	for _, r := range readers {
+		buf := make([]byte, 32)
+		n, _ := r.Read(buf)
+		results = append(results, string(buf[:n]))
+	}
+	
+	assert(results[0] == "a", "test6: a")
+	assert(results[1] == "b", "test6: b")
+	assert(results[2] == "c", "test6: c")
+	
+	fmt.Println("Test 6 PASSED: named interface slice")
+}
+
+// ============================================================================
+// Test 7: Named interface in map
+// ============================================================================
+func test7() {
+	readers := make(map[string]MyReader)
+	readers["first"] = &Buffer{data: []byte("first_data")}
+	readers["second"] = &Buffer{data: []byte("second_data")}
+	
+	buf := make([]byte, 32)
+	n, _ := readers["first"].Read(buf)
+	assert(string(buf[:n]) == "first_data", "test7: first")
+	
+	fmt.Println("Test 7 PASSED: named interface in map")
+}
+
+// ============================================================================
+// Test 8: Named ReadWriter type
+// ============================================================================
+func test8() {
+	buf := &Buffer{data: []byte("rw")}
+	var mrw MyReadWriter = buf
+	
+	// Write
+	mrw.Write([]byte("_added"))
+	
+	// Read
+	buf.Reset()
+	data := make([]byte, 32)
+	n, _ := mrw.Read(data)
+	assert(string(data[:n]) == "rw_added", "test8: read after write")
+	
+	fmt.Println("Test 8 PASSED: named ReadWriter")
+}
+
+// ============================================================================
+// Test 9: Convert MyReadWriter to MyReader
+// ============================================================================
+func test9() {
+	buf := &Buffer{data: []byte("narrow")}
+	var mrw MyReadWriter = buf
+	
+	// Narrow to MyReader (implicit through common underlying type)
+	var mr MyReader = mrw
+	
+	data := make([]byte, 32)
+	n, _ := mr.Read(data)
+	assert(string(data[:n]) == "narrow", "test9: narrowed read")
+	
+	fmt.Println("Test 9 PASSED: narrow MyReadWriter to MyReader")
+}
+
+// ============================================================================
+// Test 10: Named interface nil
+// ============================================================================
+func test10() {
+	var r MyReader = nil
+	
+	assert(r == nil, "test10: is nil")
+	
+	r = &Buffer{data: []byte("not_nil")}
+	assert(r != nil, "test10: not nil")
+	
+	fmt.Println("Test 10 PASSED: named interface nil")
+}
+
+// ============================================================================
+// Test 11: Type switch with named interface
+// ============================================================================
+func classifyMyReader(r MyReader) string {
+	switch r.(type) {
+	case *Buffer:
+		return "Buffer"
+	case nil:
+		return "nil"
+	default:
+		return "other"
+	}
+}
+
+func test11() {
+	buf := &Buffer{}
+	var r MyReader = buf
+	
+	assert(classifyMyReader(r) == "Buffer", "test11: is Buffer")
+	assert(classifyMyReader(nil) == "nil", "test11: is nil")
+	
+	fmt.Println("Test 11 PASSED: type switch with named interface")
+}
+
+// ============================================================================
+// Test 12: Named interface in struct field
+// ============================================================================
+type Container struct {
+	R MyReader
+	W MyWriter
+}
+
+func test12() {
+	buf := &Buffer{data: []byte("container")}
+	
+	c := Container{
+		R: buf,
+		W: buf,
+	}
+	
+	c.W.Write([]byte("_more"))
+	
+	buf.Reset()
+	data := make([]byte, 32)
+	n, _ := c.R.Read(data)
+	assert(string(data[:n]) == "container_more", "test12: container")
+	
+	fmt.Println("Test 12 PASSED: named interface in struct field")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	
+	fmt.Println("")
+	fmt.Println("=== iface_type_alias: ALL 12 TESTS PASSED ===")
+}

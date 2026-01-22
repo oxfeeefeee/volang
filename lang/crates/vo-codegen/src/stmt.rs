@@ -893,12 +893,21 @@ fn compile_stmt_with_label(
                 }
                 
                 // 3. Assign temporaries to LHS
-                for (lhs_opt, (tmp, _slots, _rhs_type)) in lhs_lvalues.into_iter().zip(rhs_temps.iter()) {
+                for (lhs_opt, (tmp, _slots, rhs_type)) in lhs_lvalues.into_iter().zip(rhs_temps.iter()) {
                     if let Some((lv, lhs_type)) = lhs_opt {
-                        // Apply truncation for narrow integer types (Go semantics)
-                        emit_int_trunc(*tmp, lhs_type, func, info);
-                        let slot_types = info.type_slot_types(lhs_type);
-                        emit_lvalue_store(&lv, *tmp, ctx, func, &slot_types);
+                        // Handle interface assignment specially
+                        if info.is_interface(lhs_type) {
+                            // Convert concrete/interface value to interface format
+                            let iface_tmp = func.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1]);
+                            emit_value_convert(iface_tmp, *tmp, *rhs_type, lhs_type, ctx, func, info)?;
+                            // Store interface value (slot1 may contain GcRef)
+                            emit_lvalue_store(&lv, iface_tmp, ctx, func, &[vo_runtime::SlotType::Value, vo_runtime::SlotType::Interface1]);
+                        } else {
+                            // Apply truncation for narrow integer types (Go semantics)
+                            emit_int_trunc(*tmp, lhs_type, func, info);
+                            let slot_types = info.type_slot_types(lhs_type);
+                            emit_lvalue_store(&lv, *tmp, ctx, func, &slot_types);
+                        }
                     }
                 }
             } else {
