@@ -971,9 +971,21 @@ impl Checker {
                 return;
             }
             ExprKind::Unary(u) => {
-                self.expr(x, &u.operand);
-                if x.invalid() {
-                    return;
+                // For Deref (*), the operand might be a type expression (e.g., *Counter in method expression)
+                if u.op == UnaryOp::Deref {
+                    self.expr_or_type(x, &u.operand);
+                    if x.invalid() {
+                        return;
+                    }
+                    if x.mode == OperandMode::TypeExpr {
+                        x.typ = Some(self.new_t_pointer(x.typ.unwrap()));
+                        return;
+                    }
+                } else {
+                    self.expr(x, &u.operand);
+                    if x.invalid() {
+                        return;
+                    }
                 }
                 self.unary(x, Some(e), u.op, &u.operand);
             }

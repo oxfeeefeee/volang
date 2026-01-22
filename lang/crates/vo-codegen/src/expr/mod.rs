@@ -611,10 +611,16 @@ fn compile_selector(
         return compile_pkg_qualified_name(expr, sel, dst, ctx, func, info);
     }
 
-    // Check if this is a method value (t.M)
+    // Check if this is a method value (t.M) or method expression (T.M / (*T).M)
     if let Some(selection) = info.get_selection(expr.id) {
-        if *selection.kind() == vo_analysis::selection::SelectionKind::MethodVal {
-            return compile_method_value(expr, sel, selection, dst, ctx, func, info);
+        match selection.kind() {
+            vo_analysis::selection::SelectionKind::MethodVal => {
+                return compile_method_value(expr, sel, selection, dst, ctx, func, info);
+            }
+            vo_analysis::selection::SelectionKind::MethodExpr => {
+                return compile_method_expr(expr, sel, selection, dst, ctx, func, info);
+            }
+            vo_analysis::selection::SelectionKind::FieldVal => {}
         }
     }
 
@@ -905,6 +911,46 @@ fn compile_interface_method_value(
     // Set captures at offset 1 (after ClosureHeader)
     func.emit_ptr_set_with_barrier(dst, 1, iface_reg, 2, true);
     
+    Ok(())
+}
+
+/// Compile method expression (T.M or (*T).M).
+/// Returns a function where the receiver becomes the first parameter.
+/// Unlike method value, method expression does not capture a receiver.
+fn compile_method_expr(
+    _expr: &Expr,
+    sel: &vo_syntax::ast::SelectorExpr,
+    selection: &vo_analysis::selection::Selection,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    let recv_type = selection.recv().ok_or_else(|| {
+        CodegenError::Internal("method expression has no receiver type".to_string())
+    })?;
+    let method_name = info.project.interner.resolve(sel.sel.symbol)
+        .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
+    
+    let call_info = crate::embed::resolve_method_call(
+        recv_type,
+        method_name,
+        sel.sel.symbol,
+        Some(selection),
+        false,
+        ctx,
+        &info.project.tc_objs,
+        &info.project.interner,
+    ).ok_or_else(|| CodegenError::Internal(format!(
+        "method {} not found on type {:?}", method_name, recv_type
+    )))?;
+    
+    let method_func_id = match call_info.dispatch {
+        crate::embed::MethodDispatch::Static { func_id, .. } => func_id,
+        _ => return Err(CodegenError::Internal("method expression requires static dispatch".to_string())),
+    };
+    
+    func.emit_closure_new(dst, method_func_id, 0);
     Ok(())
 }
 

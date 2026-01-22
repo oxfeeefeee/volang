@@ -1,4 +1,4 @@
-// Test: method values - bound method references
+// Test: method values and method expressions
 package main
 
 
@@ -13,6 +13,10 @@ func (c Counter) Get() int {
 
 func (c Counter) Add(n int) int {
     return c.value + n
+}
+
+func (c *Counter) Increment() {
+    c.value += 1
 }
 
 func main() {
@@ -52,9 +56,43 @@ func main() {
     assert(funcs[1]() == 20, "funcs[1]")
     assert(funcs[2]() == 30, "funcs[2]")
     
-    // NOTE: Pointer receiver method values are SKIPPED due to VM bug:
-    // func (c *Counter) Increment() { c.value += 1 }
-    // incFunc := c.Increment  // <- crashes VM
+    // Test 6: Pointer receiver method values
+    c8 := &Counter{value: 100}
+    incFunc := c8.Increment
+    incFunc()
+    assert(c8.value == 101, "pointer receiver method value should mutate")
     
-    fmt.Println("method_value_bound: ok")
+    // Test 7: Method expression - value receiver (T.Method)
+    f1 := Counter.Get
+    c9 := Counter{value: 50}
+    result7 := f1(c9)
+    assert(result7 == 50, "Counter.Get method expr failed")
+    
+    // Test 8: Method expression - pointer receiver ((*T).Method)
+    f2 := (*Counter).Increment
+    c10 := &Counter{value: 200}
+    f2(c10)
+    assert(c10.value == 201, "(*Counter).Increment method expr failed")
+    
+    // Test 9: Method expression with arguments
+    f3 := Counter.Add
+    c11 := Counter{value: 10}
+    result9 := f3(c11, 25)
+    assert(result9 == 35, "Counter.Add method expr failed")
+    
+    // Test 10: Method expression stored in struct field
+    type FuncHolder struct {
+        fn func(Counter) int
+    }
+    holder := FuncHolder{fn: Counter.Get}
+    c12 := Counter{value: 77}
+    result10 := holder.fn(c12)
+    assert(result10 == 77, "method expr in struct field failed")
+    
+    // Test 11: Method expression in slice
+    funcsExpr := []func(Counter) int{Counter.Get}
+    c13 := Counter{value: 99}
+    assert(funcsExpr[0](c13) == 99, "method expr in slice failed")
+    
+    fmt.Println("method_expression: ok")
 }
