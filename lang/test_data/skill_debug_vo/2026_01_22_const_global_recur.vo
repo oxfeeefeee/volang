@@ -1,0 +1,261 @@
+package main
+
+import (
+	"fmt"
+)
+
+// ============================================================================
+// Constants, global variables, and recursion
+// ============================================================================
+
+// ============================================================================
+// Global constants
+// ============================================================================
+const (
+	ConstA = 100
+	ConstB = ConstA * 2
+	ConstC = "hello"
+)
+
+const (
+	Sunday = iota
+	Monday
+	Tuesday
+	Wednesday
+	Thursday
+	Friday
+	Saturday
+)
+
+const (
+	_  = iota             // 0, ignored
+	KB = 1 << (10 * iota) // 1 << 10
+	MB                    // 1 << 20
+	GB                    // 1 << 30
+)
+
+// ============================================================================
+// Global variables
+// ============================================================================
+var globalInt = 42
+var globalStr = "global"
+var globalSlice = []int{1, 2, 3}
+var globalMap = map[string]int{"a": 1, "b": 2}
+
+// ============================================================================
+// Test 1: Constants
+// ============================================================================
+func test1() {
+	assert(ConstA == 100, "test1: ConstA")
+	assert(ConstB == 200, "test1: ConstB")
+	assert(ConstC == "hello", "test1: ConstC")
+	
+	fmt.Println("Test 1 PASSED: constants")
+}
+
+// ============================================================================
+// Test 2: Iota for days
+// ============================================================================
+func test2() {
+	assert(Sunday == 0, "test2: Sunday")
+	assert(Monday == 1, "test2: Monday")
+	assert(Saturday == 6, "test2: Saturday")
+	
+	fmt.Println("Test 2 PASSED: iota days")
+}
+
+// ============================================================================
+// Test 3: Iota with expression
+// ============================================================================
+func test3() {
+	assert(KB == 1024, "test3: KB")
+	assert(MB == 1024*1024, "test3: MB")
+	assert(GB == 1024*1024*1024, "test3: GB")
+	
+	fmt.Println("Test 3 PASSED: iota with expression")
+}
+
+// ============================================================================
+// Test 4: Global variables read
+// ============================================================================
+func test4() {
+	assert(globalInt == 42, "test4: globalInt")
+	assert(globalStr == "global", "test4: globalStr")
+	assert(len(globalSlice) == 3, "test4: globalSlice len")
+	assert(globalMap["a"] == 1, "test4: globalMap")
+	
+	fmt.Println("Test 4 PASSED: global variables read")
+}
+
+// ============================================================================
+// Test 5: Global variables modify
+// ============================================================================
+func test5() {
+	oldVal := globalInt
+	globalInt = 100
+	assert(globalInt == 100, "test5: globalInt modified")
+	globalInt = oldVal  // Restore
+	
+	globalSlice = append(globalSlice, 4)
+	assert(len(globalSlice) == 4, "test5: globalSlice appended")
+	globalSlice = globalSlice[:3]  // Restore
+	
+	fmt.Println("Test 5 PASSED: global variables modify")
+}
+
+// ============================================================================
+// Test 6: Recursive factorial
+// ============================================================================
+func factorial(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	return n * factorial(n-1)
+}
+
+func test6() {
+	assert(factorial(0) == 1, "test6: 0!")
+	assert(factorial(1) == 1, "test6: 1!")
+	assert(factorial(5) == 120, "test6: 5!")
+	assert(factorial(10) == 3628800, "test6: 10!")
+	
+	fmt.Println("Test 6 PASSED: recursive factorial")
+}
+
+// ============================================================================
+// Test 7: Recursive fibonacci
+// ============================================================================
+func fib(n int) int {
+	if n <= 1 {
+		return n
+	}
+	return fib(n-1) + fib(n-2)
+}
+
+func test7() {
+	assert(fib(0) == 0, "test7: fib(0)")
+	assert(fib(1) == 1, "test7: fib(1)")
+	assert(fib(10) == 55, "test7: fib(10)")
+	
+	fmt.Println("Test 7 PASSED: recursive fibonacci")
+}
+
+// ============================================================================
+// Test 8: Mutual recursion
+// ============================================================================
+func isEven(n int) bool {
+	if n == 0 {
+		return true
+	}
+	return isOdd(n - 1)
+}
+
+func isOdd(n int) bool {
+	if n == 0 {
+		return false
+	}
+	return isEven(n - 1)
+}
+
+func test8() {
+	assert(isEven(0) == true, "test8: 0 is even")
+	assert(isEven(2) == true, "test8: 2 is even")
+	assert(isEven(3) == false, "test8: 3 is not even")
+	assert(isOdd(5) == true, "test8: 5 is odd")
+	
+	fmt.Println("Test 8 PASSED: mutual recursion")
+}
+
+// ============================================================================
+// Test 9: Tail-recursive style (not optimized, but should work)
+// ============================================================================
+func sum(n, acc int) int {
+	if n == 0 {
+		return acc
+	}
+	return sum(n-1, acc+n)
+}
+
+func test9() {
+	assert(sum(10, 0) == 55, "test9: sum 1..10")
+	assert(sum(100, 0) == 5050, "test9: sum 1..100")
+	
+	fmt.Println("Test 9 PASSED: tail-recursive style")
+}
+
+// ============================================================================
+// Test 10: Local const
+// ============================================================================
+func test10() {
+	const localConst = 42
+	const localStr = "local"
+	
+	assert(localConst == 42, "test10: local const int")
+	assert(localStr == "local", "test10: local const string")
+	
+	// Local const doesn't shadow global
+	assert(ConstA == 100, "test10: global still accessible")
+	
+	fmt.Println("Test 10 PASSED: local const")
+}
+
+// ============================================================================
+// Test 11: Const in expression
+// ============================================================================
+func test11() {
+	const x = 10
+	const y = x + 5
+	const z = y * 2
+	
+	assert(z == 30, "test11: const expression chain")
+	
+	// Use const in runtime expression
+	result := z + globalInt
+	assert(result == 72, "test11: const + global")
+	
+	fmt.Println("Test 11 PASSED: const in expression")
+}
+
+// ============================================================================
+// Test 12: Deep recursion (stack test)
+// ============================================================================
+func countdown(n int) int {
+	if n == 0 {
+		return 0
+	}
+	return 1 + countdown(n-1)
+}
+
+func test12() {
+	// Not too deep to avoid stack overflow
+	result := countdown(100)
+	assert(result == 100, "test12: countdown 100")
+	
+	fmt.Println("Test 12 PASSED: deep recursion")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	
+	fmt.Println("")
+	fmt.Println("=== const_global_recur: ALL 12 TESTS PASSED ===")
+}

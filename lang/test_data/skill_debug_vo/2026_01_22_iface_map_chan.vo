@@ -1,0 +1,260 @@
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+// ============================================================================
+// Interface edge cases with maps, channels, and complex expressions
+// ============================================================================
+
+type Buffer struct {
+	name string
+	data []byte
+}
+
+func (b *Buffer) Read(p []byte) (int, error) {
+	n := copy(p, b.data)
+	if n == 0 {
+		return 0, io.EOF
+	}
+	b.data = b.data[n:]
+	return n, nil
+}
+
+func (b *Buffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+// ============================================================================
+// Test 1: Interface from map lookup - found case
+// ============================================================================
+func test1() {
+	m := map[string]io.Reader{
+		"a": &Buffer{name: "buf_a", data: []byte("data_a")},
+	}
+	
+	r, ok := m["a"]
+	assert(ok, "test1: key found")
+	assert(r != nil, "test1: value not nil")
+	
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	assert(string(buf[:n]) == "data_a", "test1: read data")
+	
+	fmt.Println("Test 1 PASSED: interface from map lookup - found")
+}
+
+// ============================================================================
+// Test 2: Interface from map lookup - not found case
+// ============================================================================
+func test2() {
+	m := map[string]io.Reader{
+		"a": &Buffer{name: "buf_a", data: []byte("data_a")},
+	}
+	
+	r, ok := m["nonexistent"]
+	assert(!ok, "test2: key not found")
+	assert(r == nil, "test2: value is nil")
+	
+	fmt.Println("Test 2 PASSED: interface from map lookup - not found")
+}
+
+// ============================================================================
+// Test 3: Interface as channel element - buffered send/recv
+// ============================================================================
+func test3() {
+	ch := make(chan io.Reader, 2)
+	
+	ch <- &Buffer{name: "ch1", data: []byte("channel_data_1")}
+	ch <- &Buffer{name: "ch2", data: []byte("channel_data_2")}
+	
+	r1 := <-ch
+	r2 := <-ch
+	
+	buf := make([]byte, 32)
+	n1, _ := r1.Read(buf)
+	assert(string(buf[:n1]) == "channel_data_1", "test3: r1 data")
+	
+	n2, _ := r2.Read(buf)
+	assert(string(buf[:n2]) == "channel_data_2", "test3: r2 data")
+	
+	fmt.Println("Test 3 PASSED: interface as channel element")
+}
+
+// ============================================================================
+// Test 4: Interface method call on function result
+// ============================================================================
+func getBuffer(name string, data string) io.Reader {
+	return &Buffer{name: name, data: []byte(data)}
+}
+
+func test4() {
+	buf := make([]byte, 32)
+	n, _ := getBuffer("direct", "direct_data").Read(buf)
+	assert(string(buf[:n]) == "direct_data", "test4: direct method call")
+	
+	fmt.Println("Test 4 PASSED: method call on function result")
+}
+
+// ============================================================================
+// Test 5: Multiple returns with interface
+// ============================================================================
+func maybeGetReader(ok bool) (io.Reader, bool) {
+	if ok {
+		return &Buffer{name: "maybe", data: []byte("maybe_data")}, true
+	}
+	return nil, false
+}
+
+func test5() {
+	r, ok := maybeGetReader(true)
+	assert(ok, "test5: got reader")
+	assert(r != nil, "test5: reader not nil")
+	
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	assert(string(buf[:n]) == "maybe_data", "test5: data")
+	
+	r2, ok2 := maybeGetReader(false)
+	assert(!ok2, "test5: no reader")
+	assert(r2 == nil, "test5: nil reader")
+	
+	fmt.Println("Test 5 PASSED: multiple returns with interface")
+}
+
+// ============================================================================
+// Test 6: Interface conversion in return statement
+// ============================================================================
+func returnAsReader(b *Buffer) io.Reader {
+	return b
+}
+
+func test6() {
+	b := &Buffer{name: "conv", data: []byte("conv_data")}
+	r := returnAsReader(b)
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	assert(string(buf[:n]) == "conv_data", "test6: as Reader")
+	
+	fmt.Println("Test 6 PASSED: interface conversion in return")
+}
+
+// ============================================================================
+// Test 7: Struct with interface field - zero value
+// ============================================================================
+type Holder struct {
+	Reader io.Reader
+	Name   string
+}
+
+func test7() {
+	h := Holder{Name: "test"}
+	assert(h.Reader == nil, "test7: Reader is nil")
+	
+	h.Reader = &Buffer{name: "h_r", data: []byte("holder_read")}
+	buf := make([]byte, 32)
+	n, _ := h.Reader.Read(buf)
+	assert(string(buf[:n]) == "holder_read", "test7: read from field")
+	
+	fmt.Println("Test 7 PASSED: struct with interface field zero value")
+}
+
+// ============================================================================
+// Test 8: Interface in slice element assignment
+// ============================================================================
+func test8() {
+	readers := make([]io.Reader, 3)
+	
+	for i := range readers {
+		assert(readers[i] == nil, "test8: initial nil")
+	}
+	
+	readers[0] = &Buffer{name: "s0", data: []byte("slice_0")}
+	readers[1] = &Buffer{name: "s1", data: []byte("slice_1")}
+	readers[2] = &Buffer{name: "s2", data: []byte("slice_2")}
+	
+	buf := make([]byte, 32)
+	for i, r := range readers {
+		n, _ := r.Read(buf)
+		expected := fmt.Sprintf("slice_%d", i)
+		assert(string(buf[:n]) == expected, "test8: read "+expected)
+	}
+	
+	fmt.Println("Test 8 PASSED: interface in slice element assignment")
+}
+
+// ============================================================================
+// Test 9: Interface from map iteration
+// ============================================================================
+func test9() {
+	m := map[string]io.Reader{
+		"x": &Buffer{name: "mx", data: []byte("map_x")},
+		"y": &Buffer{name: "my", data: []byte("map_y")},
+	}
+	
+	count := 0
+	buf := make([]byte, 32)
+	
+	for k, r := range m {
+		n, _ := r.Read(buf)
+		data := string(buf[:n])
+		
+		if k == "x" {
+			assert(data == "map_x", "test9: x data")
+			count++
+		} else if k == "y" {
+			assert(data == "map_y", "test9: y data")
+			count++
+		}
+	}
+	
+	assert(count == 2, "test9: found both")
+	
+	fmt.Println("Test 9 PASSED: interface from map iteration")
+}
+
+// ============================================================================
+// Test 10: any holding interface
+// ============================================================================
+func test10() {
+	b := &Buffer{name: "any_buf", data: []byte("any_data")}
+	var r io.Reader = b
+	var a any = r
+	
+	// any -> io.Reader
+	r2, ok := a.(io.Reader)
+	assert(ok, "test10: any -> Reader ok")
+	
+	buf := make([]byte, 32)
+	n, _ := r2.Read(buf)
+	assert(string(buf[:n]) == "any_data", "test10: read from any")
+	
+	fmt.Println("Test 10 PASSED: any holding interface")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	
+	fmt.Println("")
+	fmt.Println("=== iface_map_chan: ALL 10 TESTS PASSED ===")
+}

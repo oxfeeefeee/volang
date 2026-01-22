@@ -1,0 +1,420 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"errors"
+)
+
+// ============================================================================
+// Interface type assertion and type switch with cross-package interfaces:
+// 1. Type assertion success/fail cases
+// 2. Type switch with io.Reader, io.Writer, etc.
+// 3. Assertion from any to cross-pkg interface
+// 4. Nested type assertions
+// 5. Type switch with multiple cross-pkg interface cases
+// ============================================================================
+
+// === Concrete types ===
+
+type Buffer struct {
+	data []byte
+	pos  int
+}
+
+func (b *Buffer) Read(p []byte) (int, error) {
+	if b.pos >= len(b.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, b.data[b.pos:])
+	b.pos += n
+	return n, nil
+}
+
+func (b *Buffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *Buffer) Close() error {
+	b.data = nil
+	b.pos = 0
+	return nil
+}
+
+type ReadOnlyBuf struct {
+	data []byte
+	pos  int
+}
+
+func (r *ReadOnlyBuf) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+type WriteOnlyBuf struct {
+	data []byte
+}
+
+func (w *WriteOnlyBuf) Write(p []byte) (int, error) {
+	w.data = append(w.data, p...)
+	return len(p), nil
+}
+
+// ============================================================================
+// Test: Type assertion success - io.Reader to io.ReadWriter
+// ============================================================================
+func test1() {
+	buf := &Buffer{data: []byte("test")}
+	var r io.Reader = buf
+	
+	// Successful assertion to wider interface
+	rw, ok := r.(io.ReadWriter)
+	assert(ok, "test1: assertion should succeed")
+	assert(rw != nil, "test1: rw not nil")
+	
+	// Verify it works
+	rw.Write([]byte("_more"))
+	assert(string(buf.data) == "test_more", "test1: write worked")
+	
+	fmt.Println("Test 1 PASSED: io.Reader -> io.ReadWriter assertion success")
+}
+
+// ============================================================================
+// Test: Type assertion failure - ReadOnlyBuf doesn't implement io.Writer
+// ============================================================================
+func test2() {
+	rob := &ReadOnlyBuf{data: []byte("readonly")}
+	var r io.Reader = rob
+	
+	// Should fail - ReadOnlyBuf doesn't have Write
+	w, ok := r.(io.Writer)
+	assert(!ok, "test2: assertion should fail")
+	assert(w == nil, "test2: w is nil on fail")
+	
+	fmt.Println("Test 2 PASSED: type assertion failure")
+}
+
+// ============================================================================
+// Test: Type assertion to concrete type through cross-pkg interface
+// ============================================================================
+func test3() {
+	buf := &Buffer{data: []byte("concrete")}
+	var r io.Reader = buf
+	
+	// Assert to concrete type
+	concrete, ok := r.(*Buffer)
+	assert(ok, "test3: concrete assertion ok")
+	assert(concrete.data != nil, "test3: data not nil")
+	assert(string(concrete.data) == "concrete", "test3: data matches")
+	
+	fmt.Println("Test 3 PASSED: assertion to concrete type")
+}
+
+// ============================================================================
+// Test: Type assertion failure to wrong concrete type
+// ============================================================================
+func test4() {
+	rob := &ReadOnlyBuf{data: []byte("wrong")}
+	var r io.Reader = rob
+	
+	// Try to assert to Buffer - should fail
+	buf, ok := r.(*Buffer)
+	assert(!ok, "test4: wrong type assertion should fail")
+	assert(buf == nil, "test4: nil on fail")
+	
+	fmt.Println("Test 4 PASSED: assertion to wrong concrete type fails")
+}
+
+// ============================================================================
+// Test: Type switch with cross-pkg interfaces
+// ============================================================================
+func classifyReader(r io.Reader) string {
+	switch v := r.(type) {
+	case io.ReadWriteCloser:
+		_ = v
+		return "ReadWriteCloser"
+	case io.ReadWriter:
+		_ = v
+		return "ReadWriter"
+	case io.ReadCloser:
+		_ = v
+		return "ReadCloser"
+	default:
+		return "Reader"
+	}
+}
+
+func test5() {
+	buf := &Buffer{data: []byte("buf")}
+	rob := &ReadOnlyBuf{data: []byte("rob")}
+	
+	// Buffer implements Read, Write, Close -> ReadWriteCloser
+	assert(classifyReader(buf) == "ReadWriteCloser", "test5: Buffer is ReadWriteCloser")
+	
+	// ReadOnlyBuf only has Read -> Reader
+	assert(classifyReader(rob) == "Reader", "test5: ReadOnlyBuf is Reader")
+	
+	fmt.Println("Test 5 PASSED: type switch with cross-pkg interfaces")
+}
+
+// ============================================================================
+// Test: Type switch with nil
+// ============================================================================
+func classifyWithNil(r io.Reader) string {
+	switch r.(type) {
+	case nil:
+		return "nil"
+	case *Buffer:
+		return "Buffer"
+	default:
+		return "other"
+	}
+}
+
+func test6() {
+	var r io.Reader = nil
+	assert(classifyWithNil(r) == "nil", "test6: nil case")
+	
+	r = &Buffer{}
+	assert(classifyWithNil(r) == "Buffer", "test6: Buffer case")
+	
+	r = &ReadOnlyBuf{}
+	assert(classifyWithNil(r) == "other", "test6: other case")
+	
+	fmt.Println("Test 6 PASSED: type switch with nil case")
+}
+
+// ============================================================================
+// Test: Assertion from any to cross-pkg interface
+// ============================================================================
+func test7() {
+	buf := &Buffer{data: []byte("from_any")}
+	var a any = buf
+	
+	// any -> io.Reader
+	r, ok := a.(io.Reader)
+	assert(ok, "test7: any -> Reader ok")
+	
+	data := make([]byte, 32)
+	n, _ := r.Read(data)
+	assert(string(data[:n]) == "from_any", "test7: read data")
+	
+	fmt.Println("Test 7 PASSED: any -> io.Reader assertion")
+}
+
+// ============================================================================
+// Test: Assertion from any to io.ReadWriter
+// ============================================================================
+func test8() {
+	buf := &Buffer{data: []byte("rw")}
+	var a any = buf
+	
+	// any -> io.ReadWriter
+	rw, ok := a.(io.ReadWriter)
+	assert(ok, "test8: any -> ReadWriter ok")
+	
+	rw.Write([]byte("_added"))
+	assert(string(buf.data) == "rw_added", "test8: write worked")
+	
+	fmt.Println("Test 8 PASSED: any -> io.ReadWriter assertion")
+}
+
+// ============================================================================
+// Test: Assertion failure from any
+// ============================================================================
+func test9() {
+	wob := &WriteOnlyBuf{}
+	var a any = wob
+	
+	// WriteOnlyBuf doesn't implement Reader
+	r, ok := a.(io.Reader)
+	assert(!ok, "test9: assertion should fail")
+	assert(r == nil, "test9: nil on fail")
+	
+	fmt.Println("Test 9 PASSED: any -> io.Reader assertion failure")
+}
+
+// ============================================================================
+// Test: Chain of assertions
+// ============================================================================
+func test10() {
+	buf := &Buffer{data: []byte("chain")}
+	var a any = buf
+	
+	// any -> io.Reader -> io.ReadWriter
+	r, ok := a.(io.Reader)
+	assert(ok, "test10: any -> Reader")
+	
+	rw, ok := r.(io.ReadWriter)
+	assert(ok, "test10: Reader -> ReadWriter")
+	
+	rwc, ok := rw.(io.ReadWriteCloser)
+	assert(ok, "test10: ReadWriter -> ReadWriteCloser")
+	
+	err := rwc.Close()
+	assert(err == nil, "test10: Close worked")
+	
+	fmt.Println("Test 10 PASSED: chain of assertions")
+}
+
+// ============================================================================
+// Test: Type switch on any with interface cases
+// ============================================================================
+func classifyAny(a any) string {
+	switch v := a.(type) {
+	case io.ReadWriteCloser:
+		_ = v
+		return "ReadWriteCloser"
+	case io.Writer:
+		_ = v
+		return "Writer"
+	case io.Reader:
+		_ = v
+		return "Reader"
+	case error:
+		_ = v
+		return "error"
+	default:
+		return "unknown"
+	}
+}
+
+func test11() {
+	buf := &Buffer{}
+	rob := &ReadOnlyBuf{}
+	wob := &WriteOnlyBuf{}
+	err := errors.New("test error")
+	
+	assert(classifyAny(buf) == "ReadWriteCloser", "test11: Buffer")
+	assert(classifyAny(rob) == "Reader", "test11: ReadOnlyBuf")
+	assert(classifyAny(wob) == "Writer", "test11: WriteOnlyBuf")
+	assert(classifyAny(err) == "error", "test11: error")
+	assert(classifyAny(42) == "unknown", "test11: int")
+	
+	fmt.Println("Test 11 PASSED: type switch on any with interface cases")
+}
+
+// ============================================================================
+// Test: Assertion in function parameter position
+// ============================================================================
+func processReader(r io.Reader) string {
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	return string(buf[:n])
+}
+
+func test12() {
+	buf := &Buffer{data: []byte("param")}
+	var a any = buf
+	
+	// Assert and pass in same expression
+	if r, ok := a.(io.Reader); ok {
+		result := processReader(r)
+		assert(result == "param", "test12: param result")
+	} else {
+		panic("test12: assertion failed")
+	}
+	
+	fmt.Println("Test 12 PASSED: assertion in conditional")
+}
+
+// ============================================================================
+// Test: Multiple assertions in single function
+// ============================================================================
+func multiAssert(a any) (bool, bool, bool) {
+	_, r := a.(io.Reader)
+	_, w := a.(io.Writer)
+	_, c := a.(io.Closer)
+	return r, w, c
+}
+
+func test13() {
+	buf := &Buffer{}
+	rob := &ReadOnlyBuf{}
+	wob := &WriteOnlyBuf{}
+	
+	r1, w1, c1 := multiAssert(buf)
+	assert(r1 && w1 && c1, "test13: Buffer has all")
+	
+	r2, w2, c2 := multiAssert(rob)
+	assert(r2 && !w2 && !c2, "test13: ReadOnlyBuf only reader")
+	
+	r3, w3, c3 := multiAssert(wob)
+	assert(!r3 && w3 && !c3, "test13: WriteOnlyBuf only writer")
+	
+	fmt.Println("Test 13 PASSED: multiple assertions")
+}
+
+// ============================================================================
+// Test: Type assertion preserves data
+// ============================================================================
+func test14() {
+	original := &Buffer{data: []byte("preserve")}
+	var r io.Reader = original
+	
+	// Assert and modify
+	if rw, ok := r.(io.ReadWriter); ok {
+		rw.Write([]byte("_modified"))
+	}
+	
+	// Original should be modified (same underlying object)
+	assert(string(original.data) == "preserve_modified", "test14: data preserved")
+	
+	fmt.Println("Test 14 PASSED: assertion preserves data")
+}
+
+// ============================================================================
+// Test: Assertion from interface field
+// ============================================================================
+type Holder struct {
+	R io.Reader
+}
+
+func test15() {
+	buf := &Buffer{data: []byte("field")}
+	h := Holder{R: buf}
+	
+	// Assert field to wider interface
+	if rw, ok := h.R.(io.ReadWriter); ok {
+		rw.Write([]byte("_from_field"))
+		assert(string(buf.data) == "field_from_field", "test15: write through field")
+	} else {
+		panic("test15: assertion failed")
+	}
+	
+	fmt.Println("Test 15 PASSED: assertion from interface field")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	test13()
+	test14()
+	test15()
+	
+	fmt.Println("")
+	fmt.Println("=== iface_assert_switch: ALL 15 TESTS PASSED ===")
+}

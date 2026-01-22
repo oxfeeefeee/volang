@@ -352,6 +352,11 @@ pub fn resolve_lvalue(
             Ok(LValue::Deref { ptr_reg, offset: 0, elem_slots })
         }
         
+        // === Parenthesized expression ===
+        ExprKind::Paren(inner) => {
+            resolve_lvalue(inner, ctx, func, info)
+        }
+        
         _ => Err(CodegenError::InvalidLHS),
     }
 }

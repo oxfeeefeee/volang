@@ -1,0 +1,300 @@
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+// ============================================================================
+// Interface in arrays, binary expressions, and complex assignments
+// ============================================================================
+
+type Buffer struct {
+	data []byte
+}
+
+func (b *Buffer) Read(p []byte) (int, error) {
+	n := copy(p, b.data)
+	return n, io.EOF
+}
+
+func (b *Buffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+// ============================================================================
+// Test 1: Fixed-size array of interfaces
+// ============================================================================
+func test1() {
+	var arr [3]io.Reader
+	
+	arr[0] = &Buffer{data: []byte("arr0")}
+	arr[1] = &Buffer{data: []byte("arr1")}
+	arr[2] = &Buffer{data: []byte("arr2")}
+	
+	buf := make([]byte, 32)
+	for i := range arr {
+		n, _ := arr[i].Read(buf)
+		expected := fmt.Sprintf("arr%d", i)
+		assert(string(buf[:n]) == expected, "test1: array element "+expected)
+	}
+	
+	fmt.Println("Test 1 PASSED: fixed-size array of interfaces")
+}
+
+// ============================================================================
+// Test 2: Array of interfaces initialization
+// ============================================================================
+func test2() {
+	arr := [3]io.Reader{
+		&Buffer{data: []byte("init0")},
+		&Buffer{data: []byte("init1")},
+		&Buffer{data: []byte("init2")},
+	}
+	
+	buf := make([]byte, 32)
+	n, _ := arr[1].Read(buf)
+	assert(string(buf[:n]) == "init1", "test2: initialized array")
+	
+	fmt.Println("Test 2 PASSED: array of interfaces initialization")
+}
+
+// ============================================================================
+// Test 3: Interface comparison in boolean expression
+// ============================================================================
+func test3() {
+	b1 := &Buffer{data: []byte("cmp1")}
+	b2 := &Buffer{data: []byte("cmp2")}
+	
+	var r1 io.Reader = b1
+	var r2 io.Reader = b1  // same underlying
+	var r3 io.Reader = b2  // different underlying
+	
+	// Boolean AND with interface comparison
+	result := (r1 == r2) && (r1 != r3)
+	assert(result, "test3: compound comparison")
+	
+	// Boolean OR
+	result2 := (r1 == r3) || (r1 == r2)
+	assert(result2, "test3: OR comparison")
+	
+	fmt.Println("Test 3 PASSED: interface comparison in boolean expression")
+}
+
+// ============================================================================
+// Test 4: Interface in short declaration inside if
+// ============================================================================
+func getReader() (io.Reader, bool) {
+	return &Buffer{data: []byte("if_decl")}, true
+}
+
+func test4() {
+	if r, ok := getReader(); ok {
+		buf := make([]byte, 32)
+		n, _ := r.Read(buf)
+		assert(string(buf[:n]) == "if_decl", "test4: if short decl")
+	} else {
+		panic("test4: should have gotten reader")
+	}
+	
+	fmt.Println("Test 4 PASSED: interface in short declaration inside if")
+}
+
+// ============================================================================
+// Test 5: Interface method result used directly
+// ============================================================================
+type Counter struct {
+	value int
+}
+
+func (c *Counter) Read(p []byte) (int, error) {
+	s := fmt.Sprintf("%d", c.value)
+	n := copy(p, s)
+	return n, io.EOF
+}
+
+func (c *Counter) Increment() *Counter {
+	c.value++
+	return c
+}
+
+func test5() {
+	c := &Counter{value: 5}
+	var r io.Reader = c
+	
+	// Use Read result directly in assertion
+	buf := make([]byte, 32)
+	n, err := r.Read(buf)
+	assert(err == io.EOF, "test5: error is EOF")
+	assert(n == 1, "test5: read 1 byte")
+	
+	fmt.Println("Test 5 PASSED: interface method result used directly")
+}
+
+// ============================================================================
+// Test 6: Interface in anonymous struct
+// ============================================================================
+func test6() {
+	s := struct {
+		R    io.Reader
+		Name string
+	}{
+		R:    &Buffer{data: []byte("anon_struct")},
+		Name: "test",
+	}
+	
+	buf := make([]byte, 32)
+	n, _ := s.R.Read(buf)
+	assert(string(buf[:n]) == "anon_struct", "test6: anonymous struct interface")
+	
+	fmt.Println("Test 6 PASSED: interface in anonymous struct")
+}
+
+// ============================================================================
+// Test 7: Interface in nested struct literal
+// ============================================================================
+type Outer struct {
+	Inner struct {
+		R io.Reader
+	}
+}
+
+func test7() {
+	o := Outer{
+		Inner: struct{ R io.Reader }{
+			R: &Buffer{data: []byte("nested")},
+		},
+	}
+	
+	buf := make([]byte, 32)
+	n, _ := o.Inner.R.Read(buf)
+	assert(string(buf[:n]) == "nested", "test7: nested struct interface")
+	
+	fmt.Println("Test 7 PASSED: interface in nested struct literal")
+}
+
+// ============================================================================
+// Test 8: Interface swap
+// ============================================================================
+func test8() {
+	var r1 io.Reader = &Buffer{data: []byte("swap1")}
+	var r2 io.Reader = &Buffer{data: []byte("swap2")}
+	
+	// Swap
+	r1, r2 = r2, r1
+	
+	buf := make([]byte, 32)
+	n, _ := r1.Read(buf)
+	assert(string(buf[:n]) == "swap2", "test8: r1 after swap")
+	
+	n, _ = r2.Read(buf)
+	assert(string(buf[:n]) == "swap1", "test8: r2 after swap")
+	
+	fmt.Println("Test 8 PASSED: interface swap")
+}
+
+// ============================================================================
+// Test 9: Interface in multiple assignment
+// ============================================================================
+func getTwo() (io.Reader, io.Reader) {
+	return &Buffer{data: []byte("first")}, &Buffer{data: []byte("second")}
+}
+
+func test9() {
+	r1, r2 := getTwo()
+	
+	buf := make([]byte, 32)
+	n, _ := r1.Read(buf)
+	assert(string(buf[:n]) == "first", "test9: first")
+	
+	n, _ = r2.Read(buf)
+	assert(string(buf[:n]) == "second", "test9: second")
+	
+	fmt.Println("Test 9 PASSED: interface in multiple assignment")
+}
+
+// ============================================================================
+// Test 10: Interface reassignment in loop
+// ============================================================================
+func test10() {
+	var r io.Reader
+	
+	for i := 0; i < 3; i++ {
+		r = &Buffer{data: []byte(fmt.Sprintf("loop_%d", i))}
+	}
+	
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	assert(string(buf[:n]) == "loop_2", "test10: last assignment")
+	
+	fmt.Println("Test 10 PASSED: interface reassignment in loop")
+}
+
+// ============================================================================
+// Test 11: Interface in conditional assignment
+// ============================================================================
+func test11() {
+	var r io.Reader
+	condition := true
+	
+	if condition {
+		r = &Buffer{data: []byte("cond_true")}
+	} else {
+		r = &Buffer{data: []byte("cond_false")}
+	}
+	
+	buf := make([]byte, 32)
+	n, _ := r.Read(buf)
+	assert(string(buf[:n]) == "cond_true", "test11: conditional true")
+	
+	fmt.Println("Test 11 PASSED: interface in conditional assignment")
+}
+
+// ============================================================================
+// Test 12: Interface slice copy
+// ============================================================================
+func test12() {
+	src := []io.Reader{
+		&Buffer{data: []byte("copy0")},
+		&Buffer{data: []byte("copy1")},
+	}
+	
+	dst := make([]io.Reader, 2)
+	copy(dst, src)
+	
+	buf := make([]byte, 32)
+	n, _ := dst[0].Read(buf)
+	assert(string(buf[:n]) == "copy0", "test12: copied slice 0")
+	
+	n, _ = dst[1].Read(buf)
+	assert(string(buf[:n]) == "copy1", "test12: copied slice 1")
+	
+	fmt.Println("Test 12 PASSED: interface slice copy")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	
+	fmt.Println("")
+	fmt.Println("=== iface_array_assign: ALL 12 TESTS PASSED ===")
+}

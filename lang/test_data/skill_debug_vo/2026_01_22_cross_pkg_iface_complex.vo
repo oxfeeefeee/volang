@@ -1,0 +1,439 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"errors"
+)
+
+// ============================================================================
+// Cross-package Interface Assignment with Complex Function Signatures
+// Tests:
+// 1. io.Reader, io.Writer, io.ReadWriter from stdlib
+// 2. Complex function signatures with interface params/returns
+// 3. Interface to interface assignment across packages
+// ============================================================================
+
+// === Local concrete types implementing io interfaces ===
+
+type MemBuffer struct {
+	data []byte
+	pos  int
+}
+
+func NewMemBuffer(initial string) *MemBuffer {
+	return &MemBuffer{data: []byte(initial), pos: 0}
+}
+
+func (m *MemBuffer) Read(p []byte) (n int, err error) {
+	if m.pos >= len(m.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, m.data[m.pos:])
+	m.pos += n
+	return n, nil
+}
+
+func (m *MemBuffer) Write(p []byte) (n int, err error) {
+	m.data = append(m.data, p...)
+	return len(p), nil
+}
+
+func (m *MemBuffer) Close() error {
+	m.data = nil
+	m.pos = 0
+	return nil
+}
+
+func (m *MemBuffer) String() string {
+	return string(m.data)
+}
+
+// === Another type for variety ===
+
+type StringReader struct {
+	s   string
+	pos int
+}
+
+func NewStringReader(s string) *StringReader {
+	return &StringReader{s: s, pos: 0}
+}
+
+func (sr *StringReader) Read(p []byte) (n int, err error) {
+	if sr.pos >= len(sr.s) {
+		return 0, io.EOF
+	}
+	n = copy(p, sr.s[sr.pos:])
+	sr.pos += n
+	return n, nil
+}
+
+// ============================================================================
+// Test Functions with Complex Signatures
+// ============================================================================
+
+// Complex signature: takes io.Reader (cross-pkg interface), returns ([]byte, error)
+func readAll(r io.Reader) ([]byte, error) {
+	var result []byte
+	buf := make([]byte, 16)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			result = append(result, buf[:n]...)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return result, nil
+			}
+			return result, err
+		}
+	}
+}
+
+// Takes io.Writer, returns (int, error)
+func writeString(w io.Writer, s string) (int, error) {
+	return w.Write([]byte(s))
+}
+
+// Takes io.ReadWriter (combined interface), performs both operations
+func processReadWriter(rw io.ReadWriter, toWrite string) (string, error) {
+	// Write first
+	_, err := rw.Write([]byte(toWrite))
+	if err != nil {
+		return "", err
+	}
+	// Read something
+	buf := make([]byte, 32)
+	n, err := rw.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return string(buf[:n]), nil
+}
+
+// Returns io.Reader (cross-pkg interface return type)
+func createReader(content string) io.Reader {
+	return NewStringReader(content)
+}
+
+// Returns io.ReadWriter (combined interface return type)
+func createReadWriter(content string) io.ReadWriter {
+	return NewMemBuffer(content)
+}
+
+// Takes and returns different interface types
+func wrapAsReader(rw io.ReadWriter) io.Reader {
+	return rw  // ReadWriter -> Reader assignment
+}
+
+// Nested interface conversion in function chain
+func chainConvert(content string) io.Reader {
+	rw := createReadWriter(content)  // returns io.ReadWriter
+	return wrapAsReader(rw)          // converts to io.Reader
+}
+
+// ============================================================================
+// Test: Interface assignment from function return
+// ============================================================================
+func test1() {
+	// io.Reader from function that returns concrete *StringReader
+	var r io.Reader = createReader("hello")
+	
+	data, err := readAll(r)
+	assert(err == nil, "test1: readAll error")
+	assert(string(data) == "hello", "test1: data mismatch")
+	fmt.Println("Test 1 PASSED: io.Reader from createReader")
+}
+
+// ============================================================================
+// Test: io.ReadWriter to io.Reader assignment
+// ============================================================================
+func test2() {
+	var rw io.ReadWriter = createReadWriter("world")
+	var r io.Reader = rw  // ReadWriter -> Reader
+	
+	data, err := readAll(r)
+	assert(err == nil, "test2: readAll error")
+	assert(string(data) == "world", "test2: data mismatch")
+	fmt.Println("Test 2 PASSED: io.ReadWriter -> io.Reader")
+}
+
+// ============================================================================
+// Test: io.ReadWriter to io.Writer assignment
+// ============================================================================
+func test3() {
+	var rw io.ReadWriter = NewMemBuffer("")
+	var w io.Writer = rw  // ReadWriter -> Writer
+	
+	n, err := writeString(w, "test")
+	assert(err == nil, "test3: write error")
+	assert(n == 4, "test3: write count")
+	fmt.Println("Test 3 PASSED: io.ReadWriter -> io.Writer")
+}
+
+// ============================================================================
+// Test: Chained conversion through functions
+// ============================================================================
+func test4() {
+	r := chainConvert("chain")  // Creates ReadWriter, converts to Reader
+	
+	data, err := readAll(r)
+	assert(err == nil, "test4: readAll error")
+	assert(string(data) == "chain", "test4: data mismatch")
+	fmt.Println("Test 4 PASSED: chained interface conversion")
+}
+
+// ============================================================================
+// Test: io.ReadCloser interface
+// ============================================================================
+func test5() {
+	mb := NewMemBuffer("close_test")
+	var rc io.ReadCloser = mb  // *MemBuffer -> io.ReadCloser
+	
+	buf := make([]byte, 16)
+	n, err := rc.Read(buf)
+	assert(err == nil, "test5: read error")
+	assert(string(buf[:n]) == "close_test", "test5: read data")
+	
+	err = rc.Close()
+	assert(err == nil, "test5: close error")
+	fmt.Println("Test 5 PASSED: io.ReadCloser")
+}
+
+// ============================================================================
+// Test: io.WriteCloser interface
+// ============================================================================
+func test6() {
+	mb := NewMemBuffer("")
+	var wc io.WriteCloser = mb  // *MemBuffer -> io.WriteCloser
+	
+	n, err := wc.Write([]byte("write_close"))
+	assert(err == nil, "test6: write error")
+	assert(n == 11, "test6: write count")
+	
+	err = wc.Close()
+	assert(err == nil, "test6: close error")
+	fmt.Println("Test 6 PASSED: io.WriteCloser")
+}
+
+// ============================================================================
+// Test: io.ReadWriteCloser interface
+// ============================================================================
+func test7() {
+	mb := NewMemBuffer("rwc_test")
+	var rwc io.ReadWriteCloser = mb  // *MemBuffer -> io.ReadWriteCloser
+	
+	// Write
+	n, err := rwc.Write([]byte("_appended"))
+	assert(err == nil, "test7: write error")
+	assert(n == 9, "test7: write count")
+	
+	// Read
+	buf := make([]byte, 32)
+	n, err = rwc.Read(buf)
+	assert(err == nil || errors.Is(err, io.EOF), "test7: read error")
+	
+	// Close
+	err = rwc.Close()
+	assert(err == nil, "test7: close error")
+	fmt.Println("Test 7 PASSED: io.ReadWriteCloser")
+}
+
+// ============================================================================
+// Test: Cross-pkg interface in slice
+// ============================================================================
+func test8() {
+	readers := make([]io.Reader, 0)
+	
+	mb1 := NewMemBuffer("first")
+	mb2 := NewMemBuffer("second")
+	sr := NewStringReader("third")
+	
+	// Different concrete types -> same cross-pkg interface
+	readers = append(readers, mb1)
+	readers = append(readers, mb2)
+	readers = append(readers, sr)
+	
+	expected := []string{"first", "second", "third"}
+	for i, r := range readers {
+		data, err := readAll(r)
+		assert(err == nil, "test8: readAll error")
+		assert(string(data) == expected[i], "test8: data mismatch")
+	}
+	fmt.Println("Test 8 PASSED: []io.Reader with different types")
+}
+
+// ============================================================================
+// Test: Cross-pkg interface in map
+// ============================================================================
+func test9() {
+	writers := make(map[string]io.Writer)
+	
+	writers["buf1"] = NewMemBuffer("")
+	writers["buf2"] = NewMemBuffer("")
+	
+	for name, w := range writers {
+		n, err := w.Write([]byte(name))
+		assert(err == nil, "test9: write error")
+		assert(n == len(name), "test9: write count")
+	}
+	fmt.Println("Test 9 PASSED: map[string]io.Writer")
+}
+
+// ============================================================================
+// Test: ReadWriteCloser -> ReadWriter -> Reader (chain)
+// ============================================================================
+func test10() {
+	mb := NewMemBuffer("chain_down")
+	
+	var rwc io.ReadWriteCloser = mb
+	var rw io.ReadWriter = rwc  // ReadWriteCloser -> ReadWriter
+	var r io.Reader = rw        // ReadWriter -> Reader
+	
+	data, err := readAll(r)
+	assert(err == nil, "test10: readAll error")
+	assert(string(data) == "chain_down", "test10: data mismatch")
+	fmt.Println("Test 10 PASSED: io.ReadWriteCloser -> io.ReadWriter -> io.Reader")
+}
+
+// ============================================================================
+// Test: Function parameter with cross-pkg interface, multiple returns
+// ============================================================================
+func complexProcess(r io.Reader, w io.Writer) (bytesRead int, bytesWritten int, err error) {
+	buf := make([]byte, 32)
+	n, err := r.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, 0, err
+	}
+	bytesRead = n
+	
+	nw, err := w.Write(buf[:n])
+	if err != nil {
+		return bytesRead, 0, err
+	}
+	bytesWritten = nw
+	return bytesRead, bytesWritten, nil
+}
+
+func test11() {
+	src := NewStringReader("complex_test")
+	dst := NewMemBuffer("")
+	
+	// Pass different concrete types as cross-pkg interfaces
+	br, bw, err := complexProcess(src, dst)
+	assert(err == nil, "test11: complexProcess error")
+	assert(br == 12, "test11: bytesRead")
+	assert(bw == 12, "test11: bytesWritten")
+	assert(dst.String() == "complex_test", "test11: dst content")
+	fmt.Println("Test 11 PASSED: complexProcess with multiple returns")
+}
+
+// ============================================================================
+// Test: Interface field with cross-pkg type
+// ============================================================================
+type ReaderHolder struct {
+	reader io.Reader
+	name   string
+}
+
+func test12() {
+	holder := ReaderHolder{
+		reader: NewStringReader("holder_data"),
+		name:   "test_holder",
+	}
+	
+	data, err := readAll(holder.reader)
+	assert(err == nil, "test12: readAll error")
+	assert(string(data) == "holder_data", "test12: data mismatch")
+	fmt.Println("Test 12 PASSED: struct field with io.Reader")
+}
+
+// ============================================================================
+// Test: Reassignment of cross-pkg interface with different source types
+// ============================================================================
+func test13() {
+	var r io.Reader
+	
+	// First: StringReader
+	r = NewStringReader("from_sr")
+	data1, _ := readAll(r)
+	assert(string(data1) == "from_sr", "test13: first read")
+	
+	// Second: MemBuffer
+	r = NewMemBuffer("from_mb")
+	data2, _ := readAll(r)
+	assert(string(data2) == "from_mb", "test13: second read")
+	
+	fmt.Println("Test 13 PASSED: reassign io.Reader with different concrete types")
+}
+
+// ============================================================================
+// Test: error interface (also cross-pkg) with complex returns
+// ============================================================================
+func mayFail(succeed bool) (string, int, error) {
+	if !succeed {
+		return "", 0, errors.New("operation failed")
+	}
+	return "success", 42, nil
+}
+
+func test14() {
+	s, n, err := mayFail(true)
+	assert(err == nil, "test14: should succeed")
+	assert(s == "success", "test14: string result")
+	assert(n == 42, "test14: int result")
+	
+	s2, n2, err2 := mayFail(false)
+	assert(err2 != nil, "test14: should fail")
+	assert(s2 == "", "test14: empty string on fail")
+	assert(n2 == 0, "test14: zero int on fail")
+	
+	fmt.Println("Test 14 PASSED: error interface with complex returns")
+}
+
+// ============================================================================
+// Test: io.ReadWriter assigned from function, then to io.Reader
+// ============================================================================
+func getRW() io.ReadWriter {
+	return NewMemBuffer("from_func")
+}
+
+func test15() {
+	rw := getRW()           // io.ReadWriter
+	var r io.Reader = rw    // io.ReadWriter -> io.Reader
+	
+	data, err := readAll(r)
+	assert(err == nil, "test15: readAll error")
+	assert(string(data) == "from_func", "test15: data mismatch")
+	fmt.Println("Test 15 PASSED: function return -> io.Reader conversion")
+}
+
+// ============================================================================
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	test13()
+	test14()
+	test15()
+	
+	fmt.Println("")
+	fmt.Println("=== cross_pkg_iface_complex: ALL 15 TESTS PASSED ===")
+}
