@@ -332,6 +332,34 @@ def command_exists(cmd: str) -> bool:
            subprocess.run(f'command -v {cmd}', shell=True, capture_output=True).returncode == 0
 
 
+def run_vo_file(file: str, mode: str = 'vm', codegen: bool = False):
+    """Run a .vo file using the Vo CLI (lang/cli)."""
+    vo_bin = get_vo_bin(release=False)
+    
+    # Build vo-launcher if needed
+    result = subprocess.run(
+        ['cargo', 'build', '-p', 'vo-launcher'],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        print(f"{Colors.RED}Failed to build vo-launcher:{Colors.NC}")
+        print(result.stderr)
+        sys.exit(1)
+    
+    # Build command: vo --cache CLI_DIR run <file> [--codegen] [--mode=jit]
+    cmd = [str(vo_bin), '--cache', str(CLI_DIR), 'run', file]
+    if codegen:
+        cmd.append('--codegen')
+    elif mode == 'jit':
+        cmd.append('--mode=jit')
+    
+    # Run
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
 # =============================================================================
 # TEST RUNNER
 # =============================================================================
@@ -1346,6 +1374,14 @@ def main():
     play_parser.add_argument('--build-only', action='store_true',
                              help='Only build WASM, do not start dev server')
 
+    # run
+    run_parser = subparsers.add_parser('run', help='Run a .vo file')
+    run_parser.add_argument('file', help='.vo file to run')
+    run_parser.add_argument('--mode', choices=['vm', 'jit'], default='vm',
+                            help='Execution mode (default: vm)')
+    run_parser.add_argument('--codegen', action='store_true',
+                            help='Print bytecode only, do not run')
+
     args = parser.parse_args()
 
     if args.command == 'test':
@@ -1375,6 +1411,9 @@ def main():
 
     elif args.command == 'play':
         run_playground(build_only=args.build_only)
+
+    elif args.command == 'run':
+        run_vo_file(args.file, mode=args.mode, codegen=args.codegen)
 
     else:
         parser.print_help()

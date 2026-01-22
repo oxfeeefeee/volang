@@ -1,3 +1,6 @@
+[build]
+jobs = 1
+
 [alias]
 build32 = "build --target armv7-unknown-linux-gnueabihf"
 test32 = "test --target armv7-unknown-linux-gnueabihf"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { currentRoute, navigate } from '../lib/router';
   import ThemeToggle from './ThemeToggle.svelte';
+  import logo from '../assets/logo.svg';
 
   let menuOpen = $state(false);
 
@@ -12,10 +13,8 @@
 <nav class="navbar">
   <div class="navbar-content">
     <div class="logo" onclick={() => navigate('home')} role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && navigate('home')}>
-      <div class="logo-icon-bg">
-        <span class="logo-icon">V</span>
-      </div>
-      <span class="logo-text">Vo<span class="logo-suffix">Lang</span></span>
+      <img src={logo} alt="VoLang" class="logo-img" />
+      <span class="logo-text"><span class="logo-vo">vo</span>lang</span>
     </div>
     
     <div class="links">

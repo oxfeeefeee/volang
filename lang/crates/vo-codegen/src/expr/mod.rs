@@ -689,51 +689,48 @@ pub fn traverse_indirect_field(
         recv_type
     };
     
-    let base_reg = compile_expr(&sel.expr, ctx, func, info)?;
-    let mut is_ptr = info.is_pointer(recv_type);
-    let mut current_reg = base_reg;
+    // Determine initial state based on storage kind
+    // HeapBoxed/Reference: GcRef slot acts as pointer, skip loading entire struct
+    let base_source = get_expr_source(&sel.expr, ctx, func, info);
+    let (mut current_reg, mut is_ptr, mut accumulated_offset) = match &base_source {
+        ExprSource::Location(crate::func::StorageKind::HeapBoxed { gcref_slot, .. }) |
+        ExprSource::Location(crate::func::StorageKind::Reference { slot: gcref_slot }) => {
+            (*gcref_slot, true, 0u16)
+        }
+        _ => {
+            let base_reg = compile_expr(&sel.expr, ctx, func, info)?;
+            (base_reg, info.is_pointer(recv_type), 0u16)
+        }
+    };
     
     for (i, &idx) in indices.iter().enumerate() {
-        let is_last = i == indices.len() - 1;
         let (field_offset, field_slots, field_type) = info.struct_field_offset_by_index_with_type(current_type, idx);
         
-        if is_last {
+        if i == indices.len() - 1 {
             return Ok(IndirectFieldResult {
                 base_reg: current_reg,
                 is_ptr,
-                offset: field_offset,
+                offset: accumulated_offset + field_offset,
                 slots: field_slots,
             });
         }
         
-        let field_is_ptr = info.is_pointer(field_type);
-        
-        if is_ptr {
-            if field_is_ptr {
-                let tmp = func.alloc_temp_typed(&[vo_runtime::SlotType::GcRef]);
-                func.emit_ptr_get(tmp, current_reg, field_offset, 1);
-                current_reg = tmp;
-                current_type = info.pointer_base(field_type);
-                is_ptr = true;
+        if info.is_pointer(field_type) {
+            // Pointer field: load pointer value, reset offset
+            let tmp = func.alloc_temp_typed(&[vo_runtime::SlotType::GcRef]);
+            if is_ptr {
+                func.emit_ptr_get(tmp, current_reg, accumulated_offset + field_offset, 1);
             } else {
-                let tmp = func.alloc_temp_typed(&info.type_slot_types(field_type));
-                func.emit_ptr_get(tmp, current_reg, field_offset, field_slots);
-                current_reg = tmp;
-                current_type = field_type;
-                is_ptr = false;
+                func.emit_copy(tmp, current_reg + accumulated_offset + field_offset, 1);
             }
+            current_reg = tmp;
+            current_type = info.pointer_base(field_type);
+            accumulated_offset = 0;
+            is_ptr = true;
         } else {
-            if field_is_ptr {
-                let tmp = func.alloc_temp_typed(&[vo_runtime::SlotType::GcRef]);
-                func.emit_copy(tmp, current_reg + field_offset, 1);
-                current_reg = tmp;
-                current_type = info.pointer_base(field_type);
-                is_ptr = true;
-            } else {
-                current_reg = current_reg + field_offset;
-                current_type = field_type;
-                is_ptr = false;
-            }
+            // Value field: accumulate offset
+            accumulated_offset += field_offset;
+            current_type = field_type;
         }
     }
     
@@ -796,7 +793,7 @@ fn compile_method_value(
     match call_info.dispatch {
         crate::embed::MethodDispatch::Static { func_id, expects_ptr_recv } => {
             return compile_method_value_static(
-                sel, recv_type, func_id, expects_ptr_recv, dst, ctx, func, info
+                sel, recv_type, func_id, expects_ptr_recv, &call_info.embed_path, dst, ctx, func, info
             );
         }
         crate::embed::MethodDispatch::EmbeddedInterface { .. } => {
@@ -816,6 +813,7 @@ fn compile_method_value_static(
     recv_type: vo_analysis::objects::TypeKey,
     method_func_id: u32,
     expects_ptr_recv: bool,
+    embed_path: &crate::embed::EmbedPathInfo,
     dst: u16,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
@@ -826,8 +824,18 @@ fn compile_method_value_static(
     
     let expr_is_ptr = info.is_pointer(recv_type);
     
+    // Check if we need to extract receiver through embedding path
+    let has_embedding = !embed_path.steps.is_empty();
+    
     if expects_ptr_recv {
-        let ptr_reg = if expr_is_ptr {
+        let ptr_reg = if has_embedding && embed_path.has_pointer_step {
+            // Embedded pointer field: extract the pointer through the embedding path
+            let base_reg = compile_expr(&sel.expr, ctx, func, info)?;
+            let start = crate::embed::TraverseStart { reg: base_reg, is_pointer: expr_is_ptr };
+            let final_ptr = func.alloc_temp_typed(&[SlotType::GcRef]);
+            crate::embed::emit_embed_path_traversal(func, start, &embed_path.steps, true, 1, final_ptr);
+            final_ptr
+        } else if expr_is_ptr {
             compile_expr(&sel.expr, ctx, func, info)?
         } else {
             compile_addressable_to_ptr(&sel.expr, ctx, func, info)?
