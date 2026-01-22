@@ -402,6 +402,7 @@ fn global_set_n<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
 
 /// Emit conditional panic: if `condition` is true, return panic; otherwise continue.
 /// Optionally calls vo_panic to set panic_flag for defer/recover support.
+/// For runtime panics (nil pointer, bounds check), msg slots are 0 - VM will use default message.
 fn emit_panic_if<'a>(e: &mut impl IrEmitter<'a>, condition: Value, call_vo_panic: bool) {
     let panic_block = e.builder().create_block();
     let ok_block = e.builder().create_block();
@@ -412,8 +413,10 @@ fn emit_panic_if<'a>(e: &mut impl IrEmitter<'a>, condition: Value, call_vo_panic
     if call_vo_panic {
         if let Some(panic_func) = e.helpers().panic {
             let ctx = e.ctx_param();
-            let msg = e.builder().ins().iconst(types::I64, 0);
-            e.builder().ins().call(panic_func, &[ctx, msg]);
+            // Runtime panics pass 0 for both slots - VM will use default "nil pointer dereference" message
+            let msg_slot0 = e.builder().ins().iconst(types::I64, 0);
+            let msg_slot1 = e.builder().ins().iconst(types::I64, 0);
+            e.builder().ins().call(panic_func, &[ctx, msg_slot0, msg_slot1]);
         }
     }
     let panic_ret_val = e.panic_return_value();

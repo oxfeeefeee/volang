@@ -316,8 +316,9 @@ impl JitCompiler {
         
         let panic = module.declare_function("vo_panic", Import, &{
             let mut sig = Signature::new(module.target_config().default_call_conv);
-            sig.params.push(AbiParam::new(ptr));
-            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(ptr));        // ctx
+            sig.params.push(AbiParam::new(types::I64)); // msg_slot0
+            sig.params.push(AbiParam::new(types::I64)); // msg_slot1
             sig
         })?;
         

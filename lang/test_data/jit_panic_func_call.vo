@@ -1,0 +1,55 @@
+// Regression test: JIT panic via function call should be caught by defer/recover
+// Bug: JIT Panic instruction was reading from inst.b instead of inst.a
+package main
+
+func doPanic(msg string) {
+	panic(msg)
+}
+
+func main() {
+	// Test 1: panic via function call in closure
+	recovered1 := ""
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered1 = r.(string)
+			}
+		}()
+		doPanic("test panic 1")
+	}()
+	assert(recovered1 == "test panic 1", "test1: should recover 'test panic 1'")
+
+	// Test 2: nested function call panic
+	recovered2 := ""
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered2 = r.(string)
+			}
+		}()
+		innerPanic()
+	}()
+	assert(recovered2 == "inner panic", "test2: should recover 'inner panic'")
+
+	// Test 3: panic with different value types
+	recovered3 := 0
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered3 = r.(int)
+			}
+		}()
+		panicInt(42)
+	}()
+	assert(recovered3 == 42, "test3: should recover int 42")
+
+	println("All JIT panic function call tests passed!")
+}
+
+func innerPanic() {
+	doPanic("inner panic")
+}
+
+func panicInt(n int) {
+	panic(n)
+}

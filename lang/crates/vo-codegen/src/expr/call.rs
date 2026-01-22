@@ -247,7 +247,17 @@ pub fn emit_receiver(
         // Pointer embedding: need to traverse pointer chain step by step
         // Get the initial receiver pointer
         let initial_ptr = match recv_storage {
-            Some(StorageKind::HeapBoxed { gcref_slot, .. }) => gcref_slot,
+            Some(StorageKind::HeapBoxed { gcref_slot, .. }) => {
+                if recv_is_ptr {
+                    // When a pointer variable (*T) is captured by closure, the box contains
+                    // the pointer value (1 slot). We need to read the pointer from the box first.
+                    let actual_ptr = func.alloc_temp_typed(&[SlotType::GcRef]);
+                    func.emit_ptr_get(actual_ptr, gcref_slot, 0, 1);
+                    actual_ptr
+                } else {
+                    gcref_slot
+                }
+            }
             Some(StorageKind::StackValue { slot, .. }) => {
                 // For stack values, we need to get the address
                 // But if recv_is_ptr, the slot contains the pointer

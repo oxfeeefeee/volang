@@ -274,8 +274,11 @@ impl<'a> FunctionCompiler<'a> {
     fn panic(&mut self, inst: &Instruction) {
         if let Some(panic_func) = self.helpers.panic {
             let ctx = self.builder.block_params(self.entry_block)[0];
-            let msg = self.builder.use_var(self.vars[inst.b as usize]);
-            self.builder.ins().call(panic_func, &[ctx, msg]);
+            // Panic message is an interface (2 slots): slot0=metadata, slot1=data
+            // Note: Panic instruction uses inst.a for the register (not inst.b)
+            let msg_slot0 = self.builder.use_var(self.vars[inst.a as usize]);
+            let msg_slot1 = self.builder.use_var(self.vars[inst.a as usize + 1]);
+            self.builder.ins().call(panic_func, &[ctx, msg_slot0, msg_slot1]);
         }
         let panic_val = self.builder.ins().iconst(types::I32, 1);
         self.builder.ins().return_(&[panic_val]);

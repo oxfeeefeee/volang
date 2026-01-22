@@ -303,9 +303,12 @@ impl<'a> LoopCompiler<'a> {
 
     fn panic(&mut self, inst: &Instruction) {
         if let Some(panic_func) = self.helpers.panic {
-            let msg = self.read_var(inst.b);
             let ctx = self.ctx_ptr;
-            self.builder.ins().call(panic_func, &[ctx, msg]);
+            // Panic message is an interface (2 slots): slot0=metadata, slot1=data
+            // Note: Panic instruction uses inst.a for the register (not inst.b)
+            let msg_slot0 = self.read_var(inst.a);
+            let msg_slot1 = self.read_var(inst.a + 1);
+            self.builder.ins().call(panic_func, &[ctx, msg_slot0, msg_slot1]);
         }
         let panic_val = self.builder.ins().iconst(types::I32, LOOP_RESULT_PANIC as i64);
         self.builder.ins().return_(&[panic_val]);

@@ -65,6 +65,12 @@ pub struct JitContext {
     /// Pointer to panic flag (set by JIT when panic occurs).
     pub panic_flag: *mut bool,
     
+    /// Panic message slot0 (interface metadata, set by vo_panic for user panics).
+    pub panic_msg_slot0: *mut u64,
+    
+    /// Panic message slot1 (interface data, set by vo_panic for user panics).
+    pub panic_msg_slot1: *mut u64,
+    
     /// Opaque pointer to VM instance.
     /// Used by vo_call_vm to execute VM functions.
     /// Cast to `*mut Vm` in trampoline code.
@@ -247,19 +253,24 @@ pub extern "C" fn vo_call_vm(
     call_fn(ctx.vm, ctx.fiber, func_id, args, arg_count, ret, ret_count)
 }
 
-/// Trigger a panic.
-///
+/// Trigger a user panic from JIT code.
+/// The panic message is stored in JitContext for the VM to read later.
+/// 
 /// # Arguments
 /// - `ctx`: JIT context
-/// - `msg`: Panic message (GcRef to string, or 0 for no message)
-///
+/// - `msg_slot0`: Interface slot0 (packed metadata)
+/// - `msg_slot1`: Interface slot1 (data: string GcRef or immediate)
+/// 
 /// # Safety
 /// - `ctx` must be a valid pointer to JitContext
 #[no_mangle]
-pub extern "C" fn vo_panic(ctx: *mut JitContext, _msg: u64) {
+pub extern "C" fn vo_panic(ctx: *mut JitContext, msg_slot0: u64, msg_slot1: u64) {
     unsafe {
         let ctx = &mut *ctx;
         *ctx.panic_flag = true;
+        // Store panic message in JitContext for VM to read
+        *ctx.panic_msg_slot0 = msg_slot0;
+        *ctx.panic_msg_slot1 = msg_slot1;
     }
 }
 
