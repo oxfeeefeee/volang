@@ -61,6 +61,10 @@ impl ByteWriter {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
 
+    fn write_i16(&mut self, v: i16) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+
     fn write_u32(&mut self, v: u32) {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
@@ -334,6 +338,15 @@ impl<'a> ByteReader<'a> {
         Ok(v)
     }
 
+    fn read_i16(&mut self) -> Result<i16, SerializeError> {
+        if self.pos + 2 > self.data.len() {
+            return Err(SerializeError::UnexpectedEof);
+        }
+        let v = i16::from_le_bytes([self.data[self.pos], self.data[self.pos + 1]]);
+        self.pos += 2;
+        Ok(v)
+    }
+
     fn read_u32(&mut self) -> Result<u32, SerializeError> {
         if self.pos + 4 > self.data.len() {
             return Err(SerializeError::UnexpectedEof);
@@ -510,6 +523,7 @@ impl Module {
             w.write_u16(f.heap_ret_gcref_start);
             w.write_vec(&f.heap_ret_slots, |w, s| w.write_u16(*s));
             w.write_u8(f.is_closure as u8);
+            w.write_i16(f.error_ret_slot);
             w.write_vec(&f.slot_types, |w, st| w.write_u8(*st as u8));
             w.write_u32(f.code.len() as u32);
             for inst in &f.code {
@@ -679,6 +693,7 @@ impl Module {
             let heap_ret_gcref_start = r.read_u16()?;
             let heap_ret_slots = r.read_vec(|r| r.read_u16())?;
             let is_closure = r.read_u8()? != 0;
+            let error_ret_slot = r.read_i16()?;
             let slot_types = r.read_vec(|r| Ok(SlotType::from_u8(r.read_u8()?)))?;
             let code_len = r.read_u32()? as usize;
             let mut code = Vec::with_capacity(code_len);
@@ -701,6 +716,7 @@ impl Module {
                 heap_ret_gcref_start,
                 heap_ret_slots,
                 is_closure,
+                error_ret_slot,
                 slot_types,
                 code,
             })
@@ -806,6 +822,7 @@ mod tests {
             heap_ret_gcref_start: 0,
             heap_ret_slots: vec![],
             is_closure: false,
+            error_ret_slot: -1,
             slot_types: vec![SlotType::Value, SlotType::Value],
             code: vec![
                 Instruction::new(Opcode::LoadInt, 0, 0x0001, 0x0000),

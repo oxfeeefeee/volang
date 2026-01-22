@@ -141,6 +141,9 @@ pub struct FuncBuilder {
     scope_stack: Vec<Vec<(Symbol, Option<LocalVar>)>>,
     // True if this is a closure (anonymous function) that expects closure ref in slot 0
     is_closure: bool,
+    // Slot offset of error return value within return slots, or -1 if function doesn't return error.
+    // Used for errdefer runtime check.
+    error_ret_slot: i16,
 }
 
 impl FuncBuilder {
@@ -163,6 +166,7 @@ impl FuncBuilder {
             goto_patches: Vec::new(),
             scope_stack: Vec::new(),
             is_closure: false,
+            error_ret_slot: -1,
         }
     }
 
@@ -1026,8 +1030,14 @@ impl FuncBuilder {
             heap_ret_gcref_start,
             heap_ret_slots,
             is_closure: self.is_closure,
+            error_ret_slot: self.error_ret_slot,
             code: self.code,
             slot_types: self.slot_types,
         }
+    }
+    
+    /// Set error return slot offset. Called after set_return_types with type info.
+    pub fn set_error_ret_slot(&mut self, slot: i16) {
+        self.error_ret_slot = slot;
     }
 }

@@ -68,12 +68,16 @@ pub fn handle_return(
     module: &Module,
     is_error_return: bool,
 ) -> ExecResult {
+    // Compute include_errdefers once at the top for this function (works for both defer and normal returns)
+    // This handles both: (1) explicit fail statement, (2) return with non-nil error value
+    let include_errdefers = compute_include_errdefers(stack, frames, inst, func, is_error_return);
+    
     // Case 1 & 2: Defer just returned
     if at_defer_boundary(frames, unwinding) {
         let state = unwinding.as_ref().unwrap();
         match &state.kind {
             UnwindingKind::Return { .. } => {
-                return handle_return_defer_returned(stack, frames, defer_stack, unwinding, module, is_error_return);
+                return handle_return_defer_returned(stack, frames, defer_stack, unwinding, module, include_errdefers);
             }
             UnwindingKind::Panic { .. } => {
                 // Panic mode defer returns are handled via panic_unwind path
@@ -84,7 +88,32 @@ pub fn handle_return(
     }
     
     // Case 3: Normal return (may start defer execution)
-    handle_initial_return(stack, frames, defer_stack, unwinding, inst, func, module, is_error_return)
+    handle_initial_return(stack, frames, defer_stack, unwinding, inst, func, module, include_errdefers)
+}
+
+/// Compute whether to include errdefers based on error return status.
+/// Returns true if: (1) explicit fail statement, or (2) function returns error and it's non-nil.
+#[inline]
+fn compute_include_errdefers(
+    stack: &[u64],
+    frames: &[CallFrame],
+    inst: &Instruction,
+    func: &FunctionDef,
+    is_error_return: bool,
+) -> bool {
+    if is_error_return {
+        return true;  // fail statement always triggers errdefer
+    }
+    if func.error_ret_slot >= 0 {
+        // Runtime check: is the error return value non-nil?
+        // Error is an interface (2 slots), slot0's low byte is value_kind (0 = Void = nil)
+        let ret_start = inst.a as usize;
+        let current_bp = frames.last().unwrap().bp;
+        let error_slot = current_bp + ret_start + func.error_ret_slot as usize;
+        let error_slot0 = stack[error_slot];
+        return (error_slot0 & 0xFF) != 0;  // value_kind != Void means non-nil error
+    }
+    false  // no error return type
 }
 
 /// Handle initial return (not continuing from defer).
@@ -96,7 +125,7 @@ fn handle_initial_return(
     inst: &Instruction,
     func: &FunctionDef,
     module: &Module,
-    is_error_return: bool,
+    include_errdefers: bool,
 ) -> ExecResult {
     let current_frame_depth = frames.len();
     let heap_returns = (inst.flags & vo_common_core::bytecode::RETURN_FLAG_HEAP_RETURNS) != 0;
@@ -138,7 +167,7 @@ fn handle_initial_return(
         // Read slot counts from FunctionDef (supports mixed sizes)
         let slots_per_ref: Vec<usize> = func.heap_ret_slots.iter().map(|&s| s as usize).collect();
         
-        let pending = collect_defers(defer_stack, current_frame_depth, is_error_return);
+        let pending = collect_defers(defer_stack, current_frame_depth, include_errdefers);
         (PendingReturnKind::Heap { gcrefs, slots_per_ref }, pending)
     } else {
         let ret_start = inst.a as usize;
@@ -154,7 +183,7 @@ fn handle_initial_return(
             .map(|s| s.to_vec())
             .unwrap_or_default();
         
-        let pending = collect_defers(defer_stack, current_frame_depth, is_error_return);
+        let pending = collect_defers(defer_stack, current_frame_depth, include_errdefers);
         (PendingReturnKind::Stack { vals, slot_types }, pending)
     };
 
@@ -198,13 +227,13 @@ fn handle_return_defer_returned(
     defer_stack: &mut Vec<DeferEntry>,
     unwinding: &mut Option<UnwindingState>,
     module: &Module,
-    is_error_return: bool,
+    include_errdefers: bool,
 ) -> ExecResult {
     let state = unwinding.as_mut().unwrap();
     let current_frame_depth = frames.len();
     
     // Collect any defers from the defer function itself
-    collect_and_prepend_nested_defers(defer_stack, &mut state.pending, current_frame_depth, is_error_return);
+    collect_and_prepend_nested_defers(defer_stack, &mut state.pending, current_frame_depth, include_errdefers);
     pop_frame(stack, frames);
     
     if !state.pending.is_empty() {

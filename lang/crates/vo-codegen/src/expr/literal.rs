@@ -466,7 +466,21 @@ pub fn compile_func_lit(
     let return_types: Vec<_> = func_lit.sig.results.iter()
         .map(|r| info.type_expr_type(r.ty.id))
         .collect();
-    closure_builder.set_return_types(return_types);
+    closure_builder.set_return_types(return_types.clone());
+    
+    // Compute error_ret_slot: if last return type is error, calculate its slot offset
+    if let Some(last_type) = return_types.last() {
+        if info.is_error_type(*last_type) {
+            let mut offset: u16 = 0;
+            for (i, result) in func_lit.sig.results.iter().enumerate() {
+                if i == return_types.len() - 1 {
+                    break;
+                }
+                offset += info.type_expr_layout(result.ty.id).0;
+            }
+            closure_builder.set_error_ret_slot(offset as i16);
+        }
+    }
     
     // Compile closure body
     crate::stmt::compile_block(&func_lit.body, ctx, &mut closure_builder, info)?;

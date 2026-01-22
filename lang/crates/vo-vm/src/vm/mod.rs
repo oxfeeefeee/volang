@@ -19,7 +19,7 @@ pub use helpers::{stack_get, stack_set};
 pub use types::{ExecResult, VmError, VmState, ErrorLocation, TIME_SLICE};
 
 use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index, runtime_panic, user_panic,
-    ERR_NIL_POINTER, ERR_NIL_MAP_WRITE, ERR_UNHASHABLE_TYPE, ERR_UNCOMPARABLE_TYPE, ERR_NEGATIVE_SHIFT, ERR_NIL_FUNC_CALL};
+    ERR_NIL_POINTER, ERR_NIL_MAP_WRITE, ERR_UNHASHABLE_TYPE, ERR_UNCOMPARABLE_TYPE, ERR_NEGATIVE_SHIFT, ERR_NIL_FUNC_CALL, ERR_TYPE_ASSERTION};
 #[cfg(feature = "jit")]
 use helpers::panic_unwind;
 
@@ -1282,7 +1282,14 @@ impl Vm {
                     ExecResult::Continue
                 }
                 Opcode::IfaceAssert => {
-                    exec::exec_iface_assert(stack, bp, &inst, &mut self.state.itab_cache, module)
+                    let result = exec::exec_iface_assert(stack, bp, &inst, &mut self.state.itab_cache, module);
+                    if matches!(result, ExecResult::Panic) {
+                        runtime_panic(
+                            &mut self.state.gc, fiber, stack, module, ERR_TYPE_ASSERTION.to_string()
+                        )
+                    } else {
+                        result
+                    }
                 }
                 Opcode::IfaceEq => {
                     let result = exec::exec_iface_eq(stack, bp, &inst, module);

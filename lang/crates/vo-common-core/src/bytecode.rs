@@ -47,6 +47,9 @@ pub struct FunctionDef {
     /// True if this is a closure (anonymous function) that expects closure ref in slot 0.
     /// Named functions wrapped as closures have this set to false.
     pub is_closure: bool,
+    /// Slot offset of error return value within return slots, or -1 if function doesn't return error.
+    /// Used for errdefer runtime check: errdefer runs when returning non-nil error.
+    pub error_ret_slot: i16,
     pub code: Vec<Instruction>,
     pub slot_types: Vec<SlotType>,
 }

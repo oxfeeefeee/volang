@@ -1026,6 +1026,21 @@ fn compile_func_body(
         .collect();
     builder.set_return_types(return_types.clone());
     
+    // Compute error_ret_slot: if last return type is error, calculate its slot offset
+    if let Some(last_type) = return_types.last() {
+        if info.is_error_type(*last_type) {
+            // Sum up all slots before the error return
+            let mut offset: u16 = 0;
+            for (i, result) in func_decl.sig.results.iter().enumerate() {
+                if i == return_types.len() - 1 {
+                    break; // Don't include the error type itself
+                }
+                offset += info.type_expr_layout(result.ty.id).0;
+            }
+            builder.set_error_ret_slot(offset as i16);
+        }
+    }
+    
     // Define named return variables as locals (zero-initialized)
     // Check if they escape (e.g. captured by defer closure)
     // Two-pass approach for escaped returns to ensure contiguous GcRef slots:
