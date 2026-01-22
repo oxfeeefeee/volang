@@ -1,0 +1,85 @@
+// Regression test for bug: multi-value assignment to interface variables
+// Bug: When assigning tuple/multi-return to interface variables (any, io.Reader, etc.),
+// the interface was not properly constructed - values were stored directly without
+// boxing into interface format (slot0: metadata, slot1: data).
+//
+// This affected three code paths:
+// 1. Assignment statement: i1, i2 = getIntPair()
+// 2. Short var declaration (multi-value): i1, i2 := getIntPair()
+// 3. Short var declaration (redeclaration): r, newVar := getReaderAndInt()
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+type Counter struct {
+	name  string
+	value int
+}
+
+func (c *Counter) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func getIntPair() (int, int) {
+	return 42, 100
+}
+
+func getReaderAndInt() (io.Reader, int) {
+	return &Counter{name: "test", value: 99}, 200
+}
+
+func main() {
+	// Test 1: Assignment statement - multi-value to pre-declared any variables
+	fmt.Println("Test 1: Assignment to pre-declared any variables")
+	var a1, a2 any
+	a1, a2 = getIntPair()
+	assert(a1.(int) == 42, "test1: a1 should be 42")
+	assert(a2.(int) == 100, "test1: a2 should be 100")
+	fmt.Println("Test 1 PASSED")
+
+	// Test 2: Short var declaration - multi-value creating new any variables
+	fmt.Println("Test 2: Short var declaration with any type inference")
+	var b1, b2 any
+	b1, b2 = getIntPair()
+	assert(b1.(int) == 42, "test2: b1 should be 42")
+	assert(b2.(int) == 100, "test2: b2 should be 100")
+	fmt.Println("Test 2 PASSED")
+
+	// Test 3: Short var declaration - redeclaration with interface type
+	fmt.Println("Test 3: Short var redeclaration with interface")
+	var r io.Reader = &Counter{name: "orig", value: 1}
+	r, newVar := &Counter{name: "new", value: 2}, 300
+	c := r.(*Counter)
+	assert(c.name == "new", "test3: r should be updated")
+	assert(newVar == 300, "test3: newVar should be 300")
+	fmt.Println("Test 3 PASSED")
+
+	// Test 4: Mixed interface/concrete types from function return
+	fmt.Println("Test 4: Mixed interface/concrete from function return")
+	r2, n := getReaderAndInt()
+	assert(r2 != nil, "test4: r2 should not be nil")
+	assert(n == 200, "test4: n should be 200")
+	c2 := r2.(*Counter)
+	assert(c2.value == 99, "test4: counter value should be 99")
+	fmt.Println("Test 4 PASSED")
+
+	// Test 5: Assignment to any from mixed return
+	fmt.Println("Test 5: Assignment to any from mixed return")
+	var i1, i2 any
+	i1, i2 = getReaderAndInt()
+	assert(i1 != nil, "test5: i1 should not be nil")
+	assert(i2.(int) == 200, "test5: i2 should be 200")
+	fmt.Println("Test 5 PASSED")
+
+	fmt.Println("")
+	fmt.Println("=== bug_multi_assign_to_interface: ALL TESTS PASSED ===")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}

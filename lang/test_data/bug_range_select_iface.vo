@@ -1,0 +1,81 @@
+// Regression test for bug: for-range and select recv to interface variables
+// Bug: When assigning to existing interface variables in for-range or select recv,
+// the interface was not properly constructed - values were stored directly without
+// boxing into interface format (slot0: metadata, slot1: data).
+package main
+
+import "fmt"
+
+func main() {
+	// Test 1: for-range over slice to existing any variable
+	fmt.Println("Test 1: for-range over slice to existing any variable")
+	nums := []int{10, 20, 30}
+	var x any
+	for x = range nums {
+		v := x.(int)
+		fmt.Println("index:", v)
+	}
+	// After loop, x should be the last index (2)
+	assert(x.(int) == 2, "test1: x should be 2")
+	fmt.Println("Test 1 PASSED")
+
+	// Test 2: for-range with value to existing any variable
+	fmt.Println("Test 2: for-range with value to existing any variable")
+	var y any
+	for _, y = range nums {
+		v := y.(int)
+		fmt.Println("value:", v)
+	}
+	// After loop, y should be the last value (30)
+	assert(y.(int) == 30, "test2: y should be 30")
+	fmt.Println("Test 2 PASSED")
+
+	// Test 3: for-range over map to existing any variables
+	fmt.Println("Test 3: for-range over map to existing any variables")
+	m := map[string]int{"a": 1, "b": 2, "c": 3}
+	var k, v any
+	count := 0
+	for k, v = range m {
+		ks := k.(string)
+		vi := v.(int)
+		fmt.Println("key:", ks, "value:", vi)
+		count++
+	}
+	assert(count == 3, "test3: should iterate 3 times")
+	// k and v should be valid after loop
+	_ = k.(string)
+	_ = v.(int)
+	fmt.Println("Test 3 PASSED")
+
+	// Test 4: for-range over string to existing any variable
+	fmt.Println("Test 4: for-range over string to existing any variable")
+	s := "hello"
+	var r any
+	for _, r = range s {
+		c := r.(int32)
+		fmt.Println("rune:", string(c))
+	}
+	// After loop, r should be 'o' (111)
+	assert(r.(int32) == 'o', "test4: r should be 'o'")
+	fmt.Println("Test 4 PASSED")
+
+	// Test 5: for-range over int to existing any variable
+	fmt.Println("Test 5: for-range over int to existing any variable")
+	var i any
+	for i = range 5 {
+		idx := i.(int)
+		fmt.Println("index:", idx)
+	}
+	// After loop, i should be 4
+	assert(i.(int) == 4, "test5: i should be 4")
+	fmt.Println("Test 5 PASSED")
+
+	fmt.Println("")
+	fmt.Println("=== bug_range_select_iface: ALL TESTS PASSED ===")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}

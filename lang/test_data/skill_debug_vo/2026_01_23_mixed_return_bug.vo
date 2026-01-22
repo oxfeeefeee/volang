@@ -1,0 +1,82 @@
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+type Counter struct {
+	name  string
+	value int
+}
+
+func (c *Counter) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+// Returns (interface, concrete)
+func getReaderAndInt() (io.Reader, int) {
+	return &Counter{name: "test", value: 42}, 100
+}
+
+// Returns (concrete, interface)
+func getIntAndReader() (int, io.Reader) {
+	return 200, &Counter{name: "test2", value: 84}
+}
+
+// Returns (interface, interface)
+func getTwoReaders() (io.Reader, io.Reader) {
+	return &Counter{name: "r1", value: 1}, &Counter{name: "r2", value: 2}
+}
+
+// Returns (concrete, concrete)
+func getTwoInts() (int, int) {
+	return 10, 20
+}
+
+func main() {
+	fmt.Println("Test 1: (concrete, concrete)")
+	a, b := getTwoInts()
+	fmt.Println("a:", a, "b:", b)
+	assert(a == 10 && b == 20, "test1 failed")
+	fmt.Println("Test 1 PASSED")
+	
+	fmt.Println("")
+	fmt.Println("Test 2: (interface, interface)")
+	r1, r2 := getTwoReaders()
+	fmt.Println("r1 nil:", r1 == nil, "r2 nil:", r2 == nil)
+	assert(r1 != nil && r2 != nil, "test2 failed: readers are nil")
+	c1 := r1.(*Counter)
+	c2 := r2.(*Counter)
+	assert(c1.value == 1 && c2.value == 2, "test2 values failed")
+	fmt.Println("Test 2 PASSED")
+	
+	fmt.Println("")
+	fmt.Println("Test 3: (interface, concrete)")
+	r3, n3 := getReaderAndInt()
+	fmt.Println("r3 nil:", r3 == nil, "n3:", n3)
+	assert(r3 != nil, "test3 failed: r3 is nil")
+	assert(n3 == 100, "test3 failed: n3 wrong")
+	c3 := r3.(*Counter)
+	assert(c3.value == 42, "test3 values failed")
+	fmt.Println("Test 3 PASSED")
+	
+	fmt.Println("")
+	fmt.Println("Test 4: (concrete, interface)")
+	n4, r4 := getIntAndReader()
+	fmt.Println("n4:", n4, "r4 nil:", r4 == nil)
+	assert(n4 == 200, "test4 failed: n4 wrong")
+	assert(r4 != nil, "test4 failed: r4 is nil")
+	c4 := r4.(*Counter)
+	assert(c4.value == 84, "test4 values failed")
+	fmt.Println("Test 4 PASSED")
+	
+	fmt.Println("")
+	fmt.Println("=== ALL TESTS PASSED ===")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}

@@ -266,6 +266,16 @@ impl<'a> TypeInfoWrapper<'a> {
     pub fn any_type(&self) -> TypeKey {
         self.tc_objs().universe().any_type()
     }
+    
+    /// Get the int type from Universe.
+    pub fn int_type(&self) -> TypeKey {
+        self.tc_objs().universe().lookup_type(vo_analysis::BasicType::Int).expect("int type must exist")
+    }
+    
+    /// Get the rune type from Universe.
+    pub fn rune_type(&self) -> TypeKey {
+        self.tc_objs().universe().rune()
+    }
 
     pub fn expr_type_raw(&self, expr_id: ExprId) -> TypeKey {
         self.type_info().types.get(&expr_id)

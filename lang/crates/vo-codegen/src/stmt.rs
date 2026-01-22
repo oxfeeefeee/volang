@@ -100,6 +100,32 @@ fn compute_iface_assert_params(
     }
 }
 
+/// Store a value to a storage location with proper interface conversion.
+/// If lhs_type is interface and src_type is not, converts the value to interface format.
+/// This is the unified helper for all "store to existing variable" operations.
+fn emit_store_with_iface_convert(
+    storage: StorageKind,
+    src_slot: u16,
+    src_type: TypeKey,
+    lhs_type: TypeKey,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    if info.is_interface(lhs_type) {
+        // Interface assignment: convert value to interface format
+        let iface_tmp = func.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1]);
+        emit_value_convert(iface_tmp, src_slot, src_type, lhs_type, ctx, func, info)?;
+        func.emit_storage_store(storage, iface_tmp, &[vo_runtime::SlotType::Value, vo_runtime::SlotType::Interface1]);
+    } else {
+        // Non-interface: apply truncation and store directly
+        emit_int_trunc(src_slot, src_type, func, info);
+        let slot_types = info.type_slot_types(src_type);
+        func.emit_storage_store(storage, src_slot, &slot_types);
+    }
+    Ok(())
+}
+
 // =============================================================================
 // StmtCompiler - Unified statement compilation context
 // =============================================================================
@@ -435,8 +461,10 @@ struct RangeVarInfo {
     slot: u16,
     /// Storage kind - None for blank identifier or temp, Some for actual variable
     storage: Option<StorageKind>,
-    /// Type of the variable (for emit_storage_store)
-    type_key: TypeKey,
+    /// Source type (element type from the collection being ranged over)
+    src_type: TypeKey,
+    /// LHS variable type (may be interface even if src_type is concrete)
+    lhs_type: TypeKey,
     /// Deferred heap allocation for loop variables (Go 1.22 per-iteration semantics)
     deferred_alloc: Option<DeferredHeapAlloc>,
 }
@@ -460,54 +488,58 @@ fn range_var_info(
                 if is_blank {
                     let slot_types = sc.info.type_slot_types(fallback_type);
                     let slot = sc.func.alloc_temp_typed(&slot_types);
-                    return Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None });
+                    return Ok(RangeVarInfo { slot, storage: None, src_type: fallback_type, lhs_type: fallback_type, deferred_alloc: None });
                 }
                 
                 if define {
                     let obj_key = sc.info.get_def(ident);
-                    let type_key = sc.info.obj_type(obj_key, "range var must have type");
+                    let lhs_type = sc.info.obj_type(obj_key, "range var must have type");
                     let escapes = sc.info.is_escaped(obj_key);
                     
                     // Use centralized define_local - it handles deferred alloc for loop vars
-                    let (storage, deferred_alloc) = sc.define_local(ident.symbol, type_key, escapes, None, Some(obj_key))?;
+                    let (storage, deferred_alloc) = sc.define_local(ident.symbol, lhs_type, escapes, None, Some(obj_key))?;
                     
                     // For HeapBoxed with deferred alloc, we need a temp slot to receive the value
                     let slot = if deferred_alloc.is_some() {
-                        let slot_types = sc.info.type_slot_types(type_key);
+                        let slot_types = sc.info.type_slot_types(lhs_type);
                         sc.func.alloc_temp_typed(&slot_types)
                     } else {
                         storage.slot()
                     };
                     
-                    Ok(RangeVarInfo { slot, storage: Some(storage), type_key, deferred_alloc })
+                    Ok(RangeVarInfo { slot, storage: Some(storage), src_type: fallback_type, lhs_type, deferred_alloc })
                 } else {
                     // Non-define case: lookup existing variable
                     let local = sc.func.lookup_local(ident.symbol)
                         .expect("range variable not found");
                     let storage = local.storage;
-                    let type_key = fallback_type;
-                    let slot = match storage {
-                        StorageKind::HeapBoxed { .. } | StorageKind::HeapArray { .. } => {
-                            let slot_types = sc.info.type_slot_types(type_key);
-                            sc.func.alloc_temp_typed(&slot_types)
-                        }
-                        _ => storage.slot(),
+                    // Get the actual type of the existing variable (may be interface)
+                    let obj_key = sc.info.get_use(ident);
+                    let lhs_type = sc.info.obj_type(obj_key, "range var must have type");
+                    // Need temp slot if: heap storage, or LHS is interface (need conversion)
+                    let needs_temp = matches!(storage, StorageKind::HeapBoxed { .. } | StorageKind::HeapArray { .. })
+                        || sc.info.is_interface(lhs_type);
+                    let slot = if needs_temp {
+                        let slot_types = sc.info.type_slot_types(fallback_type);
+                        sc.func.alloc_temp_typed(&slot_types)
+                    } else {
+                        storage.slot()
                     };
-                    Ok(RangeVarInfo { slot, storage: Some(storage), type_key, deferred_alloc: None })
+                    Ok(RangeVarInfo { slot, storage: Some(storage), src_type: fallback_type, lhs_type, deferred_alloc: None })
                 }
             } else if define {
                 let slot_types = sc.info.type_slot_types(fallback_type);
                 let slot = sc.func.alloc_temp_typed(&slot_types);
-                Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None })
+                Ok(RangeVarInfo { slot, storage: None, src_type: fallback_type, lhs_type: fallback_type, deferred_alloc: None })
             } else {
                 let slot = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
-                Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None })
+                Ok(RangeVarInfo { slot, storage: None, src_type: fallback_type, lhs_type: fallback_type, deferred_alloc: None })
             }
         }
         None => {
             let slot_types = sc.info.type_slot_types(fallback_type);
             let slot = sc.func.alloc_temp_typed(&slot_types);
-            Ok(RangeVarInfo { slot, storage: None, type_key: fallback_type, deferred_alloc: None })
+            Ok(RangeVarInfo { slot, storage: None, src_type: fallback_type, lhs_type: fallback_type, deferred_alloc: None })
         }
     }
 }
@@ -519,14 +551,21 @@ fn emit_range_var_alloc(func: &mut FuncBuilder, info: &RangeVarInfo) {
     }
 }
 
-/// Emit storage store for range variable if needed (for escaped variables)
-fn emit_range_var_store(func: &mut FuncBuilder, info: &RangeVarInfo, slot_types: &[vo_runtime::SlotType]) {
+/// Emit storage store for range variable if needed (for escaped variables).
+/// Handles interface conversion if LHS is interface type and src is concrete.
+fn emit_range_var_store(
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    type_info: &TypeInfoWrapper,
+    info: &RangeVarInfo,
+) -> Result<(), CodegenError> {
     if let Some(storage) = info.storage {
         // Store if: deferred alloc (new heap object), or slot differs (escaped variable)
         if info.deferred_alloc.is_some() || info.slot != storage.slot() {
-            func.emit_storage_store(storage, info.slot, slot_types);
+            emit_store_with_iface_convert(storage, info.slot, info.src_type, info.lhs_type, ctx, func, type_info)?;
         }
     }
+    Ok(())
 }
 
 /// Compile a statement.
@@ -594,16 +633,19 @@ fn compile_stmt_with_label(
                         continue;
                     }
 
-                    // Apply truncation for narrow integer types (Go semantics)
-                    emit_int_trunc(tuple.base + offset, elem_type, sc.func, info);
-
                     if info.is_def(name) {
+                        // New variable definition
+                        // Apply truncation for narrow integer types (Go semantics)
+                        emit_int_trunc(tuple.base + offset, elem_type, sc.func, info);
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
                         sc.define_local_from_slot(name.symbol, elem_type, escapes, tuple.base + offset, Some(obj_key))?;
                     } else if let Some(local) = sc.func.lookup_local(name.symbol) {
-                        let elem_slot_types = info.type_slot_types(elem_type);
-                        sc.store_from_slot(local.storage, tuple.base + offset, &elem_slot_types);
+                        // Redeclaration: existing variable
+                        let storage = local.storage.clone();
+                        let obj_key = info.get_use(name);
+                        let lhs_type = info.obj_type(obj_key, "redeclared var must have type");
+                        emit_store_with_iface_convert(storage, tuple.base + offset, elem_type, lhs_type, sc.ctx, sc.func, info)?;
                     }
                     offset += elem_slots;
                 }
@@ -633,15 +675,18 @@ fn compile_stmt_with_label(
                 // Phase 2: Assign temps to LHS
                 let mut sc = StmtCompiler::new(ctx, func, info);
                 for (i, name) in short_var.names.iter().enumerate() {
-                    let Some((tmp, type_key)) = rhs_temps[i] else { continue };
+                    let Some((tmp, rhs_type)) = rhs_temps[i] else { continue };
                     
                     if info.is_def(name) {
                         let obj_key = info.get_def(name);
                         let escapes = info.is_escaped(obj_key);
-                        sc.define_local_from_slot(name.symbol, type_key, escapes, tmp, Some(obj_key))?;
+                        sc.define_local_from_slot(name.symbol, rhs_type, escapes, tmp, Some(obj_key))?;
                     } else if let Some(local) = sc.func.lookup_local(name.symbol) {
-                        let slot_types = sc.info.type_slot_types(type_key);
-                        sc.func.emit_storage_store(local.storage, tmp, &slot_types);
+                        // Redeclaration: existing variable
+                        let storage = local.storage.clone();
+                        let obj_key = info.get_use(name);
+                        let lhs_type = info.obj_type(obj_key, "redeclared var must have type");
+                        emit_store_with_iface_convert(storage, tmp, rhs_type, lhs_type, sc.ctx, sc.func, info)?;
                     }
                 }
             }
@@ -832,6 +877,7 @@ fn compile_stmt_with_label(
             
             if is_multi_value {
                 // Multi-value assignment: compile expr once, then distribute to variables
+                use crate::lvalue::{resolve_lvalue, emit_lvalue_store};
                 let tuple = crate::expr::CompiledTuple::compile(&assign.rhs[0], ctx, func, info)?;
                 
                 let mut offset = 0u16;
@@ -847,14 +893,24 @@ fn compile_stmt_with_label(
                         }
                     }
                     
-                    // Apply truncation for narrow integer types (Go semantics)
-                    emit_int_trunc(tuple.base + offset, elem_type, func, info);
+                    // Get LHS type to check if interface conversion is needed
+                    let lhs_type = info.expr_type(lhs_expr.id);
                     
-                    // Get lhs location and copy from temp
-                    let lhs_source = crate::expr::get_expr_source(lhs_expr, ctx, func, info);
-                    if let ExprSource::Location(storage) = lhs_source {
-                        let slot_types = info.type_slot_types(elem_type);
-                        func.emit_storage_store(storage, tuple.base + offset, &slot_types);
+                    if info.is_interface(lhs_type) {
+                        // Interface assignment: convert value to interface format
+                        let lv = resolve_lvalue(lhs_expr, ctx, func, info)?;
+                        let iface_tmp = func.alloc_temp_typed(&[SlotType::Interface0, SlotType::Interface1]);
+                        emit_value_convert(iface_tmp, tuple.base + offset, elem_type, lhs_type, ctx, func, info)?;
+                        emit_lvalue_store(&lv, iface_tmp, ctx, func, &[vo_runtime::SlotType::Value, vo_runtime::SlotType::Interface1]);
+                    } else {
+                        // Non-interface: apply truncation and store directly
+                        emit_int_trunc(tuple.base + offset, elem_type, func, info);
+                        
+                        let lhs_source = crate::expr::get_expr_source(lhs_expr, ctx, func, info);
+                        if let ExprSource::Location(storage) = lhs_source {
+                            let slot_types = info.type_slot_types(elem_type);
+                            func.emit_storage_store(storage, tuple.base + offset, &slot_types);
+                        }
                     }
                     offset += elem_slots;
                 }
@@ -1331,8 +1387,12 @@ fn compile_stmt_with_label(
                         sc.func.emit_op(Opcode::LoadInt, ls, len as u16, (len >> 16) as u16);
                         let lp = IndexLoop::begin(sc.func, ls, label);
                         // Emit per-iteration heap allocation for escaped vars (must be inside loop)
+                        emit_range_var_alloc(sc.func, &key_info);
                         emit_range_var_alloc(sc.func, &val_info);
                         lp.emit_key(sc.func, key.as_ref().map(|_| key_info.slot));
+                        if key.is_some() {
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &key_info)?;
+                        }
                         if value.is_some() {
                             // Stack array uses elem_slots, heap array uses elem_bytes
                             if stk {
@@ -1340,9 +1400,7 @@ fn compile_stmt_with_label(
                             } else {
                                 sc.func.emit_array_get(val_info.slot, reg, lp.idx_slot, eb, evk, sc.ctx);
                             }
-                            // Store to escaped variable if needed
-                            let slot_types = info.type_slot_types(val_info.type_key);
-                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &val_info)?;
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
@@ -1358,13 +1416,15 @@ fn compile_stmt_with_label(
                         sc.func.emit_op(Opcode::SliceLen, ls, reg, 0);
                         let lp = IndexLoop::begin(sc.func, ls, label);
                         // Emit per-iteration heap allocation for escaped vars (must be inside loop)
+                        emit_range_var_alloc(sc.func, &key_info);
                         emit_range_var_alloc(sc.func, &val_info);
                         lp.emit_key(sc.func, key.as_ref().map(|_| key_info.slot));
+                        if key.is_some() {
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &key_info)?;
+                        }
                         if value.is_some() {
                             sc.func.emit_slice_get(val_info.slot, reg, lp.idx_slot, eb, evk, sc.ctx);
-                            // Store to escaped variable if needed
-                            let slot_types = info.type_slot_types(val_info.type_key);
-                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &val_info)?;
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
@@ -1372,10 +1432,11 @@ fn compile_stmt_with_label(
                     } else if info.is_string(range_type) {
                         // String: iterate by rune (variable width)
                         // For string range, key is int (byte index), value is rune (int32)
-                        // Use range_type as fallback - actual types are determined from variable definitions
+                        let int_type = info.int_type();
+                        let rune_type = info.rune_type();
                         let reg = crate::expr::compile_expr(expr, sc.ctx, sc.func, sc.info)?;
-                        let key_info = range_var_info(&mut sc, key.as_ref(), range_type, *define)?;
-                        let val_info = range_var_info(&mut sc, value.as_ref(), range_type, *define)?;
+                        let key_info = range_var_info(&mut sc, key.as_ref(), int_type, *define)?;
+                        let val_info = range_var_info(&mut sc, value.as_ref(), rune_type, *define)?;
                         let (pos, len, cmp) = (sc.func.alloc_temp_typed(&[SlotType::Value]), sc.func.alloc_temp_typed(&[SlotType::Value]), sc.func.alloc_temp_typed(&[SlotType::Value]));
                         // StrDecodeRune writes (rune, width) to consecutive slots
                         let rune_width = sc.func.alloc_temp_typed(&[SlotType::Value, SlotType::Value]);
@@ -1395,13 +1456,11 @@ fn compile_stmt_with_label(
                         sc.func.emit_op(Opcode::StrDecodeRune, rune_width, reg, pos);
                         if key.is_some() {
                             sc.func.emit_op(Opcode::Copy, key_info.slot, pos, 0);
-                            let slot_types = info.type_slot_types(key_info.type_key);
-                            emit_range_var_store(sc.func, &key_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &key_info)?;
                         }
                         if value.is_some() {
                             sc.func.emit_op(Opcode::Copy, val_info.slot, rune_width, 0);
-                            let slot_types = info.type_slot_types(val_info.type_key);
-                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &val_info)?;
                         }
                         
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
@@ -1455,8 +1514,7 @@ fn compile_stmt_with_label(
                         
                         // Store key to escaped variable if needed
                         if key.is_some() {
-                            let slot_types = info.type_slot_types(key_info.type_key);
-                            emit_range_var_store(sc.func, &key_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &key_info)?;
                         }
                         
                         // Copy value to val_info.slot if needed (value is written at key_info.slot + kn)
@@ -1465,8 +1523,7 @@ fn compile_stmt_with_label(
                                 if vn == 1 { sc.func.emit_op(Opcode::Copy, val_info.slot, key_info.slot + kn, 0); }
                                 else { sc.func.emit_with_flags(Opcode::CopyN, vn as u8, val_info.slot, key_info.slot + kn, 0); }
                             }
-                            let slot_types = info.type_slot_types(val_info.type_key);
-                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &val_info)?;
                         }
                         
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
@@ -1515,8 +1572,7 @@ fn compile_stmt_with_label(
                         
                         // Store to escaped variable if needed
                         if var_expr.is_some() {
-                            let slot_types = info.type_slot_types(val_info.type_key);
-                            emit_range_var_store(sc.func, &val_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &val_info)?;
                         }
                         
                         // body
@@ -1553,8 +1609,7 @@ fn compile_stmt_with_label(
                         emit_range_var_alloc(sc.func, &key_info);
                         lp.emit_key(sc.func, key.as_ref().map(|_| key_info.slot));
                         if key.is_some() {
-                            let slot_types = info.type_slot_types(key_info.type_key);
-                            emit_range_var_store(sc.func, &key_info, &slot_types);
+                            emit_range_var_store(sc.ctx, sc.func, sc.info, &key_info)?;
                         }
                         compile_block(&for_stmt.body, sc.ctx, sc.func, sc.info)?;
                         lp.end(sc.func);
@@ -2123,7 +2178,7 @@ fn compile_select(
         // Bind recv variables
         if let Some(CommClause::Recv(recv)) = &case.comm {
             if let Some(ref recv_info) = recv_infos[case_idx] {
-                bind_recv_variables(func, info, recv, recv_info);
+                bind_recv_variables(ctx, func, info, recv, recv_info)?;
             }
         }
         
@@ -2149,24 +2204,28 @@ fn compile_select(
 
 /// Bind variables for a recv case (either define new or assign to existing)
 fn bind_recv_variables(
+    ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
     recv: &vo_syntax::ast::RecvStmt,
     recv_info: &RecvCaseInfo,
-) {
+) -> Result<(), CodegenError> {
     if recv.lhs.is_empty() {
-        return;
+        return Ok(());
     }
     
     let elem_type = info.chan_elem_type(recv_info.chan_type);
-    let elem_slot_types = info.type_slot_types(elem_type);
     
     // First variable: received value
     let first = &recv.lhs[0];
     if recv.define {
         func.define_local_at(first.symbol, recv_info.dst_reg, recv_info.elem_slots);
     } else if let Some(local) = func.lookup_local(first.symbol) {
-        func.emit_storage_store(local.storage, recv_info.dst_reg, &elem_slot_types);
+        // Existing variable: need to check for interface conversion
+        let storage = local.storage.clone();
+        let obj_key = info.get_use(first);
+        let lhs_type = info.obj_type(obj_key, "recv var must have type");
+        emit_store_with_iface_convert(storage, recv_info.dst_reg, elem_type, lhs_type, ctx, func, info)?;
     }
     
     // Second variable: ok bool (if present)
@@ -2176,9 +2235,11 @@ fn bind_recv_variables(
         if recv.define {
             func.define_local_at(second.symbol, ok_reg, 1);
         } else if let Some(local) = func.lookup_local(second.symbol) {
+            // ok is always bool, no interface conversion needed
             func.emit_storage_store(local.storage, ok_reg, &[SlotType::Value]);
         }
     }
+    Ok(())
 }
 
 /// Returns the single concrete type if exactly one exists, None otherwise.

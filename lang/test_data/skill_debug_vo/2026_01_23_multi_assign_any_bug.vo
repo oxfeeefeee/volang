@@ -1,0 +1,48 @@
+package main
+
+import (
+	"fmt"
+	"io"
+)
+
+type Counter struct {
+	name  string
+	value int
+}
+
+func (c *Counter) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+// Returns (interface, concrete)
+func getReaderAndInt() (io.Reader, int) {
+	return &Counter{name: "test", value: 42}, 100
+}
+
+func main() {
+	fmt.Println("Test 1: Direct assignment to typed variables")
+	r1, n1 := getReaderAndInt()
+	fmt.Println("r1 nil:", r1 == nil, "n1:", n1)
+	assert(r1 != nil, "test1: r1 is nil")
+	assert(n1 == 100, "test1: n1 wrong")
+	fmt.Println("Test 1 PASSED")
+	
+	fmt.Println("")
+	fmt.Println("Test 2: Assignment to pre-declared any variables")
+	var i1, i2 any
+	i1, i2 = getReaderAndInt()
+	fmt.Println("i1 nil:", i1 == nil, "i2 nil:", i2 == nil)
+	fmt.Println("i2 type int?:", i2 == 100)
+	assert(i1 != nil, "test2: i1 is nil")
+	assert(i2.(int) == 100, "test2: i2 wrong")
+	fmt.Println("Test 2 PASSED")
+	
+	fmt.Println("")
+	fmt.Println("=== ALL TESTS PASSED ===")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
