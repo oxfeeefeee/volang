@@ -463,11 +463,16 @@ pub enum ReceiverValue {
 /// - Nested embedding with pointer chains
 /// - HeapBoxed variables (escaped to heap)
 ///
+/// `need_pointer`: If true, caller needs a pointer to the receiver (for pointer receiver methods).
+/// When the expression is a HeapBoxed variable, this allows returning a Pointer directly
+/// instead of copying the value (which would then be boxed again by caller).
+///
 /// Returns a `ReceiverValue` that can be converted to what the method expects.
 pub fn extract_receiver(
     expr: &vo_syntax::ast::Expr,
     recv_type: TypeKey,
     embed_path: &EmbedPathInfo,
+    need_pointer: bool,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
@@ -477,31 +482,58 @@ pub fn extract_receiver(
     let expr_is_ptr = info.is_pointer(recv_type);
     let has_embedding = !embed_path.steps.is_empty();
     
+    // Case 1: Embedded pointer field - always traverse to get pointer
     if has_embedding && embed_path.has_pointer_step {
-        // Case 1: Embedded pointer field - traverse path to get pointer
         let base_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
         let start = TraverseStart { reg: base_reg, is_pointer: expr_is_ptr };
         let final_ptr = func.alloc_temp_typed(&[SlotType::GcRef]);
         emit_embed_path_traversal(func, start, &embed_path.steps, true, 1, final_ptr);
-        Ok(ReceiverValue::Pointer { 
+        return Ok(ReceiverValue::Pointer { 
             reg: final_ptr, 
             pointee_type: embed_path.final_type 
-        })
-    } else if expr_is_ptr {
-        // Case 2: Simple pointer type
+        });
+    }
+    
+    // Case 2: Simple pointer type - just compile and return
+    if expr_is_ptr {
         let ptr_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
         let base_type = info.pointer_base(recv_type);
-        Ok(ReceiverValue::Pointer { 
+        return Ok(ReceiverValue::Pointer { 
             reg: ptr_reg, 
             pointee_type: base_type 
-        })
-    } else if has_embedding {
-        // Case 3: Embedded value field (no pointer in path)
+        });
+    }
+    
+    // Case 3 & 4: Value type - check HeapBoxed first (unified check)
+    let expr_source = crate::expr::get_expr_source(expr, ctx, func, info);
+    if let ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, stores_pointer, .. }) = expr_source {
+        debug_assert!(!stores_pointer, "HeapBoxed with stores_pointer in non-pointer context");
+        
+        if has_embedding && need_pointer {
+            // HeapBoxed with embed path, need pointer - traverse to get embedded field address
+            let final_ptr = func.alloc_temp_typed(&[SlotType::GcRef]);
+            let start = TraverseStart { reg: gcref_slot, is_pointer: true };
+            emit_embed_path_traversal(func, start, &embed_path.steps, true, 1, final_ptr);
+            return Ok(ReceiverValue::Pointer { 
+                reg: final_ptr, 
+                pointee_type: embed_path.final_type 
+            });
+        }
+        
+        // HeapBoxed without embed path, or don't need pointer - return GcRef directly
+        // Caller will either use as pointer or dereference as needed
+        return Ok(ReceiverValue::Pointer { 
+            reg: gcref_slot, 
+            pointee_type: if has_embedding { embed_path.final_type } else { recv_type }
+        });
+    }
+    
+    // Case 5: Stack value - copy embedded field or whole value
+    if has_embedding {
         let base_reg = crate::expr::compile_expr(expr, ctx, func, info)?;
         let value_slots = info.type_slot_count(embed_path.final_type);
         let value_slot_types = info.type_slot_types(embed_path.final_type);
         let value_reg = func.alloc_temp_typed(&value_slot_types);
-        // Use total_offset since no pointer steps
         func.emit_copy(value_reg, base_reg + embed_path.total_offset, value_slots);
         Ok(ReceiverValue::Value { 
             reg: value_reg, 
@@ -509,31 +541,15 @@ pub fn extract_receiver(
             slots: value_slots,
         })
     } else {
-        // Case 4: Direct value type - check if already on heap (escaped variable)
-        // For HeapBoxed variables, return the GcRef directly as a Pointer
-        // This avoids copying the value and re-boxing it
-        let expr_source = crate::expr::get_expr_source(expr, ctx, func, info);
-        if let ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, stores_pointer, .. }) = expr_source {
-            // stores_pointer should be false here (we already checked expr_is_ptr == false)
-            // If it's true, we have a logic error - let it panic via debug_assert
-            debug_assert!(!stores_pointer, "HeapBoxed with stores_pointer in non-pointer context");
-            // gcref_slot points to [GcHeader][value data] - use it as pointer
-            Ok(ReceiverValue::Pointer { 
-                reg: gcref_slot, 
-                pointee_type: recv_type 
-            })
-        } else {
-            // Not heap-boxed - compile as value
-            let recv_slots = info.type_slot_count(recv_type);
-            let recv_slot_types = info.type_slot_types(recv_type);
-            let recv_reg = func.alloc_temp_typed(&recv_slot_types);
-            crate::expr::compile_expr_to(expr, recv_reg, ctx, func, info)?;
-            Ok(ReceiverValue::Value { 
-                reg: recv_reg, 
-                value_type: recv_type,
-                slots: recv_slots,
-            })
-        }
+        let recv_slots = info.type_slot_count(recv_type);
+        let recv_slot_types = info.type_slot_types(recv_type);
+        let recv_reg = func.alloc_temp_typed(&recv_slot_types);
+        crate::expr::compile_expr_to(expr, recv_reg, ctx, func, info)?;
+        Ok(ReceiverValue::Value { 
+            reg: recv_reg, 
+            value_type: recv_type,
+            slots: recv_slots,
+        })
     }
 }
 

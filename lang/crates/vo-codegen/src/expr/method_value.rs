@@ -85,7 +85,8 @@ fn compile_method_value_static(
         .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
     
     // Step 1: Extract receiver using unified abstraction
-    let recv = crate::embed::extract_receiver(&sel.expr, recv_type, embed_path, ctx, func, info)?;
+    // Pass expects_ptr_recv so extract_receiver can return Pointer for HeapBoxed variables
+    let recv = crate::embed::extract_receiver(&sel.expr, recv_type, embed_path, expects_ptr_recv, ctx, func, info)?;
     
     // Step 2: Prepare capture based on method receiver type
     // 

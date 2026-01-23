@@ -29,7 +29,7 @@ enum MethodValueWrapperKey {
     /// Pointer receiver: captures pointer directly
     Pointer { recv_type: TypeKey, func_id: u32 },
     /// Interface: captures interface (2 slots), uses CallIface
-    Interface { method_idx: u32 },
+    Interface { method_idx: u32, param_slots: u16, ret_slots: u16 },
     /// Embedded interface: captures boxed outer struct, reads iface from offset, uses CallIface
     EmbeddedInterface { embed_offset: u16, method_idx: u32 },
 }
@@ -1095,7 +1095,7 @@ impl CodegenContext {
         ret_slots: u16,
         method_name: &str,
     ) -> Result<u32, crate::error::CodegenError> {
-        let cache_key = MethodValueWrapperKey::Interface { method_idx };
+        let cache_key = MethodValueWrapperKey::Interface { method_idx, param_slots, ret_slots };
         if let Some(&wrapper_id) = self.method_value_wrappers.get(&cache_key) {
             return Ok(wrapper_id);
         }

@@ -790,11 +790,7 @@ tests:
   - file: skill_debug_vo/2026_01_22_type_convert_numeric.vo
   - file: skill_debug_vo/2026_01_23_1920_errdefer_closure_named_ret.vo
   - file: skill_debug_vo/2026_01_23_1921_method_value_iface_embed.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2008_method_expr_embed_deep.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2015_iface_embed_complex.vo
     skip: [vm, jit]
     reason: "pending bug fix"
