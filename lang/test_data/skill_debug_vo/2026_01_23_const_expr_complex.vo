@@ -1,0 +1,197 @@
+// Test: Complex constant expressions
+package main
+
+import "fmt"
+
+// Compile-time constants
+const (
+	A = 10
+	B = A + 5
+	C = B * 2
+	D = C / 3
+	E = D % 7
+)
+
+const (
+	F = 1 << 10
+	G = F >> 3
+	H = F | 0xFF
+	I = H & 0xFFF
+	J = ^uint(0)
+)
+
+const (
+	PI    = 3.14159
+	E_NUM = 2.71828
+	PHI   = (1 + 2.236) / 2
+)
+
+const (
+	S1 = "hello"
+	S2 = S1 + " world"
+	S3 = S2 + "!"
+)
+
+// Test 1: Integer constant folding
+func testIntConstFold() {
+	assert(A == 10, "test1: A")
+	assert(B == 15, "test1: B")
+	assert(C == 30, "test1: C")
+	assert(D == 10, "test1: D")
+	assert(E == 3, "test1: E")
+	
+	fmt.Println("Test 1: PASSED - int const fold")
+}
+
+// Test 2: Bit operation constants
+func testBitConst() {
+	assert(F == 1024, "test2: F")
+	assert(G == 128, "test2: G")
+	assert(H == 1024|255, "test2: H")
+	assert(I == (1024|255)&0xFFF, "test2: I")
+	
+	fmt.Println("Test 2: PASSED - bit const")
+}
+
+// Test 3: Float constant
+func testFloatConst() {
+	assert(PI > 3.14 && PI < 3.15, "test3: PI")
+	assert(E_NUM > 2.71 && E_NUM < 2.72, "test3: E")
+	assert(PHI > 1.6 && PHI < 1.7, "test3: PHI")
+	
+	fmt.Println("Test 3: PASSED - float const")
+}
+
+// Test 4: String constant
+func testStringConst() {
+	assert(S1 == "hello", "test4: S1")
+	assert(S2 == "hello world", "test4: S2")
+	assert(S3 == "hello world!", "test4: S3")
+	assert(len(S3) == 12, "test4: S3 len")
+	
+	fmt.Println("Test 4: PASSED - string const")
+}
+
+// Test 5: Iota patterns
+const (
+	Sun = iota
+	Mon
+	Tue
+	Wed
+	Thu
+	Fri
+	Sat
+)
+
+const (
+	_  = iota
+	KB = 1 << (10 * iota)
+	MB
+	GB
+)
+
+func testIota() {
+	assert(Sun == 0, "test5: Sun")
+	assert(Sat == 6, "test5: Sat")
+	
+	assert(KB == 1024, "test5: KB")
+	assert(MB == 1024*1024, "test5: MB")
+	assert(GB == 1024*1024*1024, "test5: GB")
+	
+	fmt.Println("Test 5: PASSED - iota")
+}
+
+// Test 6: Const in expressions
+func testConstExpr() {
+	x := A + B + C
+	assert(x == 10+15+30, "test6: sum")
+	
+	y := F * 2
+	assert(y == 2048, "test6: mult")
+	
+	// Const as array size
+	arr := [A]int{}
+	assert(len(arr) == 10, "test6: array size")
+	
+	fmt.Println("Test 6: PASSED - const expr")
+}
+
+// Test 7: Type inference in const
+const untyped = 42
+const typedInt int = 42
+const typedFloat float64 = 42.0
+
+func testConstType() {
+	// Untyped can be used in various contexts
+	var i int = untyped
+	var f float64 = untyped
+	assert(i == 42, "test7: untyped int")
+	assert(f == 42.0, "test7: untyped float")
+	
+	// Typed is fixed
+	var i2 int = typedInt
+	assert(i2 == 42, "test7: typed int")
+	
+	fmt.Println("Test 7: PASSED - const type")
+}
+
+// Test 8: Const comparison
+const (
+	LT = 1 < 2
+	GT = 2 > 1
+	EQ = 5 == 5
+	NE = 5 != 6
+)
+
+func testConstCompare() {
+	assert(LT == true, "test8: LT")
+	assert(GT == true, "test8: GT")
+	assert(EQ == true, "test8: EQ")
+	assert(NE == true, "test8: NE")
+	
+	fmt.Println("Test 8: PASSED - const compare")
+}
+
+// Test 9: Complex const expressions
+const (
+	Complex1 = (10 + 20) * 3 / 2
+	Complex2 = ((1 << 4) | (1 << 2)) & 0xFF
+	Complex3 = 100 - 50 + 25 - 12
+)
+
+func testComplexConst() {
+	assert(Complex1 == 45, "test9: Complex1")
+	assert(Complex2 == 20, "test9: Complex2")
+	assert(Complex3 == 63, "test9: Complex3")
+	
+	fmt.Println("Test 9: PASSED - complex const")
+}
+
+// Test 10: Const with len
+const str = "hello"
+const strLen = len(str)
+
+func testConstLen() {
+	assert(strLen == 5, "test10: const len")
+	
+	// Can use in array declaration
+	arr := [strLen]int{1, 2, 3, 4, 5}
+	assert(len(arr) == 5, "test10: array with const len")
+	
+	fmt.Println("Test 10: PASSED - const len")
+}
+
+func main() {
+	testIntConstFold()
+	testBitConst()
+	testFloatConst()
+	testStringConst()
+	testIota()
+	testConstExpr()
+	testConstType()
+	testConstCompare()
+	testComplexConst()
+	testConstLen()
+	
+	fmt.Println("const_expr_complex: ALL PASSED")
+}

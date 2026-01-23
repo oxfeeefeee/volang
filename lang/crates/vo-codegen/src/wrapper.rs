@@ -1,6 +1,7 @@
-//! Interface method wrapper generation.
+//! Wrapper function generation for defer/go and interface method dispatch.
 //!
-//! This module handles generating wrapper functions for interface method dispatch:
+//! This module handles generating wrapper functions:
+//! - Defer wrappers: For deferring extern calls and interface method calls
 //! - `$iface` wrappers: For value receiver methods (unbox GcRef, call original)
 //! - `$promoted` wrappers: For promoted methods through embedding (navigate path, call original)
 
@@ -12,6 +13,10 @@ use crate::context::CodegenContext;
 use crate::error::CodegenError;
 use crate::func::FuncBuilder;
 use crate::type_info::TypeInfoWrapper;
+
+// =============================================================================
+// Helper functions
+// =============================================================================
 
 /// Define forwarded parameters in a wrapper function.
 /// Returns the first parameter slot if any parameters were defined.
@@ -28,7 +33,7 @@ fn define_forwarded_params(builder: &mut FuncBuilder, param_slots: u16) -> Optio
 }
 
 /// Compute total slot count for a tuple type (params or results).
-fn tuple_slot_count(tuple_key: vo_analysis::objects::TypeKey, tc_objs: &vo_analysis::objects::TCObjects) -> u16 {
+fn tuple_slot_count(tuple_key: TypeKey, tc_objs: &vo_analysis::objects::TCObjects) -> u16 {
     tc_objs.types[tuple_key].try_as_tuple()
         .map(|t| t.vars().iter()
             .map(|v| {
@@ -38,6 +43,24 @@ fn tuple_slot_count(tuple_key: vo_analysis::objects::TypeKey, tc_objs: &vo_analy
             .sum())
         .unwrap_or(0)
 }
+
+/// Emit a function call instruction.
+fn emit_call(builder: &mut FuncBuilder, func_id: u32, args_start: u16, arg_slots: u16, ret_slots: u16) {
+    let c = crate::type_info::encode_call_args(arg_slots, ret_slots);
+    let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_id);
+    builder.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
+}
+
+/// Emit call and return - common wrapper epilogue.
+fn emit_call_and_return(builder: &mut FuncBuilder, func_id: u32, args_start: u16, arg_slots: u16, ret_slots: u16) {
+    emit_call(builder, func_id, args_start, arg_slots, ret_slots);
+    builder.set_ret_slots(ret_slots);
+    builder.emit_op(Opcode::Return, args_start, ret_slots, 0);
+}
+
+// =============================================================================
+// Interface value receiver wrapper
+// =============================================================================
 
 /// Generate a wrapper function for value receiver methods.
 /// The wrapper accepts interface data slot (GcRef for struct/array, value for basic types),
@@ -276,22 +299,8 @@ pub fn generate_promoted_wrapper(
 }
 
 // =============================================================================
-// Helper functions
+// Embedded interface wrappers
 // =============================================================================
-
-/// Emit a function call instruction
-fn emit_call(builder: &mut FuncBuilder, func_id: u32, args_start: u16, arg_slots: u16, ret_slots: u16) {
-    let c = crate::type_info::encode_call_args(arg_slots, ret_slots);
-    let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_id);
-    builder.emit_with_flags(Opcode::Call, func_id_high, func_id_low, args_start, c);
-}
-
-/// Emit call and return - common wrapper epilogue
-fn emit_call_and_return(builder: &mut FuncBuilder, func_id: u32, args_start: u16, arg_slots: u16, ret_slots: u16) {
-    emit_call(builder, func_id, args_start, arg_slots, ret_slots);
-    builder.set_ret_slots(ret_slots);
-    builder.emit_op(Opcode::Return, args_start, ret_slots, 0);
-}
 
 /// Receiver type for embedded interface wrapper generation.
 pub enum EmbedIfaceRecvType {
@@ -404,7 +413,6 @@ pub fn generate_method_expr_embedded_iface_wrapper(
 /// Generate wrapper for embedded interface method through interface dispatch.
 pub fn generate_embedded_iface_wrapper(
     ctx: &mut CodegenContext,
-    _outer_type: TypeKey,
     embed_path: &crate::embed::EmbedPathInfo,
     iface_type: TypeKey,
     method_name: &str,
@@ -419,6 +427,37 @@ pub fn generate_embedded_iface_wrapper(
     )
 }
 
+// === Defer Wrappers ===
+
+/// Generate a wrapper for deferring extern calls (e.g., `defer fmt.Println(...)`).
+///
+/// The wrapper takes N interface values as parameters (each 2 slots),
+/// then calls the extern function.
+pub fn generate_defer_extern_wrapper(
+    ctx: &mut CodegenContext,
+    extern_name: &str,
+    arg_count: usize,
+) -> u32 {
+    let wrapper_name = format!("$defer_extern_{}", extern_name);
+    
+    if let Some(id) = ctx.get_defer_extern_wrapper(&wrapper_name) {
+        return id;
+    }
+    
+    let arg_slots = (arg_count * 2) as u16; // each arg is interface (2 slots)
+    
+    let mut wrapper = FuncBuilder::new(&wrapper_name);
+    wrapper.set_param_slots(arg_slots);
+    wrapper.set_ret_slots(0);
+    
+    let extern_id = ctx.get_or_register_extern(extern_name);
+    // CallExtern: flags=arg_count*2, a=dst, b=extern_id, c=args_start
+    wrapper.emit_with_flags(Opcode::CallExtern, arg_slots as u8, 0, extern_id as u16, 0);
+    wrapper.emit_op(Opcode::Return, 0, 0, 0);
+    
+    ctx.register_defer_extern_wrapper(&wrapper_name, wrapper)
+}
+
 /// Generate a wrapper for defer on interface method call.
 /// 
 /// The wrapper takes the interface value as first parameter (2 slots),
@@ -431,7 +470,13 @@ pub fn generate_defer_iface_wrapper(
     param_slots: u16,
     ret_slots: u16,
 ) -> u32 {
-    let wrapper_name = format!("{}$defer_iface", method_name);
+    let wrapper_name = format!("{}$defer_iface_{}", method_name, method_idx);
+    
+    // Check cache first
+    if let Some(id) = ctx.get_defer_iface_wrapper(&wrapper_name) {
+        return id;
+    }
+    
     let mut builder = FuncBuilder::new(&wrapper_name);
     
     // First parameter: interface value (2 slots)
@@ -454,5 +499,7 @@ pub fn generate_defer_iface_wrapper(
     builder.set_ret_slots(ret_slots);
     builder.emit_op(Opcode::Return, args_start, ret_slots, 0);
     
-    ctx.add_function(builder.build())
+    let func_id = ctx.add_function(builder.build());
+    ctx.register_defer_iface_wrapper(&wrapper_name, func_id);
+    func_id
 }

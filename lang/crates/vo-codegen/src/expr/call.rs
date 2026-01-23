@@ -583,7 +583,7 @@ pub fn compile_args_with_types(
 }
 
 /// Get extern name for a package function call
-fn get_extern_name(
+pub fn get_extern_name(
     sel: &vo_syntax::ast::SelectorExpr,
     info: &TypeInfoWrapper,
 ) -> Result<String, CodegenError> {

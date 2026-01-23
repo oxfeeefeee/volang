@@ -1,0 +1,185 @@
+// Test: Closure capture with variable shadowing
+package main
+
+import "fmt"
+
+// Test 1: Shadow captured variable in closure
+func testShadowInClosure() {
+	x := 10
+	
+	f := func() int {
+		x := 20 // shadows outer x
+		return x
+	}
+	
+	assert(f() == 20, "test1: inner x")
+	assert(x == 10, "test1: outer x unchanged")
+	
+	fmt.Println("Test 1: PASSED - shadow in closure")
+}
+
+// Test 2: Capture then shadow
+func testCaptureThenShadow() {
+	x := 10
+	
+	f := func() int {
+		y := x // capture x
+		x := 20 // shadow x
+		return y + x
+	}
+	
+	assert(f() == 30, "test2: capture then shadow")
+	assert(x == 10, "test2: outer unchanged")
+	
+	fmt.Println("Test 2: PASSED - capture then shadow")
+}
+
+// Test 3: Nested closure shadow
+func testNestedClosureShadow() {
+	x := 1
+	
+	f := func() int {
+		x := 2 // shadow
+		g := func() int {
+			x := 3 // shadow again
+			return x
+		}
+		return x + g()
+	}
+	
+	assert(f() == 5, "test3: nested shadow")
+	assert(x == 1, "test3: outer unchanged")
+	
+	fmt.Println("Test 3: PASSED - nested closure shadow")
+}
+
+// Test 4: Loop variable shadow in closure
+func testLoopShadow() {
+	funcs := []func() int{}
+	
+	for i := 0; i < 3; i++ {
+		i := i // shadow loop var (Go idiom for capture)
+		funcs = append(funcs, func() int {
+			return i
+		})
+	}
+	
+	assert(funcs[0]() == 0, "test4: func 0")
+	assert(funcs[1]() == 1, "test4: func 1")
+	assert(funcs[2]() == 2, "test4: func 2")
+	
+	fmt.Println("Test 4: PASSED - loop shadow")
+}
+
+// Test 5: Shadow with different type
+func testShadowDiffType() {
+	x := 10
+	
+	f := func() string {
+		x := "hello" // shadow with different type
+		return x
+	}
+	
+	assert(f() == "hello", "test5: string x")
+	assert(x == 10, "test5: int x unchanged")
+	
+	fmt.Println("Test 5: PASSED - shadow diff type")
+}
+
+// Test 6: Multiple shadows at same level
+func testMultipleShadows() {
+	x := 1
+	y := 2
+	
+	f := func() int {
+		x := 10
+		y := 20
+		return x + y
+	}
+	
+	assert(f() == 30, "test6: shadowed sum")
+	assert(x == 1 && y == 2, "test6: outer unchanged")
+	
+	fmt.Println("Test 6: PASSED - multiple shadows")
+}
+
+// Test 7: Shadow parameter name
+func testShadowParam() {
+	f := func(x int) int {
+		x := x * 2 // shadow param
+		return x
+	}
+	
+	assert(f(5) == 10, "test7: shadow param")
+	
+	fmt.Println("Test 7: PASSED - shadow param")
+}
+
+// Test 8: Shadow in if block
+func testShadowIfBlock() {
+	x := 10
+	result := 0
+	
+	if true {
+		x := 20 // shadow in if
+		result = x
+	}
+	
+	assert(result == 20, "test8: if block value")
+	assert(x == 10, "test8: outer unchanged")
+	
+	fmt.Println("Test 8: PASSED - shadow if block")
+}
+
+// Test 9: Shadow with short declaration
+func testShadowShortDecl() {
+	x, y := 1, 2
+	
+	f := func() (int, int) {
+		x, z := 10, 30 // x shadows, z is new
+		return x, z
+	}
+	
+	a, b := f()
+	assert(a == 10 && b == 30, "test9: short decl shadow")
+	assert(x == 1 && y == 2, "test9: outer unchanged")
+	
+	fmt.Println("Test 9: PASSED - shadow short decl")
+}
+
+// Test 10: Closure modifies outer, shadow modifies local
+func testModifyVsShadow() {
+	x := 10
+	
+	modify := func() {
+		x = 20 // modify outer
+	}
+	
+	shadow := func() int {
+		x := 30 // shadow
+		return x
+	}
+	
+	assert(shadow() == 30, "test10: shadow returns local")
+	assert(x == 10, "test10: outer not yet modified")
+	
+	modify()
+	assert(x == 20, "test10: outer modified")
+	
+	fmt.Println("Test 10: PASSED - modify vs shadow")
+}
+
+func main() {
+	testShadowInClosure()
+	testCaptureThenShadow()
+	testNestedClosureShadow()
+	testLoopShadow()
+	testShadowDiffType()
+	testMultipleShadows()
+	testShadowParam()
+	testShadowIfBlock()
+	testShadowShortDecl()
+	testModifyVsShadow()
+	
+	fmt.Println("closure_capture_shadow: ALL PASSED")
+}

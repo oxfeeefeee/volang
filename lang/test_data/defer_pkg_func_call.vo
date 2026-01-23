@@ -1,0 +1,38 @@
+// Regression test for defer with package-qualified function calls
+// Bug: defer fmt.Println(func()) would crash codegen because fmt.Println
+// was incorrectly treated as a method call instead of a package function call.
+package main
+
+import "fmt"
+
+func getValue() int {
+	return 42
+}
+
+func getString() string {
+	return "hello"
+}
+
+func testDeferPrintlnWithCall() {
+	defer fmt.Println(getValue())
+	fmt.Println("before defer")
+}
+
+func testDeferPrintWithMultiArgs() {
+	defer fmt.Println(getValue(), getString(), 123)
+	fmt.Println("setup")
+}
+
+func testDeferPrintInLoop() {
+	for i := 0; i < 2; i++ {
+		i := i
+		defer fmt.Println("loop", i, getValue())
+	}
+}
+
+func main() {
+	testDeferPrintlnWithCall()
+	testDeferPrintWithMultiArgs()
+	testDeferPrintInLoop()
+	fmt.Println("[VO:OK]")
+}

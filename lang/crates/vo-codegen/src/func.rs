@@ -942,6 +942,12 @@ impl FuncBuilder {
     pub fn set_ret_slots(&mut self, slots: u16) {
         self.ret_slots = slots;
     }
+    
+    /// Set param slots directly (for wrapper functions that don't use define_param)
+    pub fn set_param_slots(&mut self, slots: u16) {
+        self.param_slots = slots;
+        self.next_slot = slots;
+    }
 
     pub fn set_return_types(&mut self, types: Vec<vo_analysis::objects::TypeKey>) {
         self.return_types = types;

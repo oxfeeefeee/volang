@@ -753,7 +753,6 @@ fn collect_promoted_methods(
                         // Method from embedded interface
                         wrapper::generate_embedded_iface_wrapper(
                             ctx,
-                            type_key,
                             &path_info,
                             iface_type,
                             &method_name,

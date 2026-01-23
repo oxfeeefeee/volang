@@ -145,6 +145,12 @@ pub struct CodegenContext {
     
     /// Method value wrappers cache
     method_value_wrappers: HashMap<MethodValueWrapperKey, u32>,
+    
+    /// Defer extern wrappers cache (name -> func_id)
+    defer_extern_wrappers: HashMap<String, u32>,
+    
+    /// Defer iface wrappers cache (name -> func_id)
+    defer_iface_wrappers: HashMap<String, u32>,
 }
 
 impl CodegenContext {
@@ -195,6 +201,8 @@ impl CodegenContext {
             current_func_id: None,
             builtin_protocols: BuiltinProtocols::default(),
             method_value_wrappers: HashMap::new(),
+            defer_extern_wrappers: HashMap::new(),
+            defer_iface_wrappers: HashMap::new(),
         }
     }
     
@@ -1160,6 +1168,33 @@ impl CodegenContext {
         let local_slots = wrapper_param_slots + 1 + iface_slots + param_slots.max(ret_slots);
         let wrapper_id = self.register_wrapper_func(wrapper_name, wrapper_param_slots, ret_slots, local_slots, code, cache_key);
         Ok(wrapper_id)
+    }
+
+    // === Defer extern wrappers ===
+    
+    /// Get a cached defer extern wrapper by name.
+    pub fn get_defer_extern_wrapper(&self, name: &str) -> Option<u32> {
+        self.defer_extern_wrappers.get(name).copied()
+    }
+    
+    /// Register a defer extern wrapper function from FuncBuilder.
+    pub fn register_defer_extern_wrapper(&mut self, name: &str, builder: crate::func::FuncBuilder) -> u32 {
+        let func_id = self.module.functions.len() as u32;
+        self.module.functions.push(builder.build());
+        self.defer_extern_wrappers.insert(name.to_string(), func_id);
+        func_id
+    }
+    
+    // === Defer iface wrappers ===
+    
+    /// Get a cached defer iface wrapper by name.
+    pub fn get_defer_iface_wrapper(&self, name: &str) -> Option<u32> {
+        self.defer_iface_wrappers.get(name).copied()
+    }
+    
+    /// Register a defer iface wrapper function.
+    pub fn register_defer_iface_wrapper(&mut self, name: &str, func_id: u32) {
+        self.defer_iface_wrappers.insert(name.to_string(), func_id);
     }
 
     // === Init functions ===
