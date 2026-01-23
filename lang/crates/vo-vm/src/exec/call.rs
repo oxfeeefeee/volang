@@ -68,7 +68,6 @@ pub fn exec_call_closure(
     let ret_slots = (inst.c & 0xFF) as u16;
 
     let func = &module.functions[func_id as usize];
-    let recv_slots = func.recv_slots as usize;
 
     // New frame's bp is current stack top
     let new_bp = stack.len();
@@ -76,25 +75,21 @@ pub fn exec_call_closure(
     // Extend stack for new frame
     stack.resize(new_bp + func.local_slots as usize, 0);
     
-    let capture_count = closure::capture_count(closure_ref);
+    // Use common closure call layout logic
+    let layout = vo_runtime::objects::closure::call_layout(
+        closure_ref as u64,
+        closure_ref,
+        func.recv_slots as usize,
+        func.is_closure,
+    );
     
-    // Determine slot 0 content and arg offset based on closure type
-    let arg_offset = if recv_slots > 0 && capture_count > 0 {
-        // Method closure: receiver from captures goes to slot 0
-        stack[new_bp] = closure::get_capture(closure_ref, 0);
-        recv_slots
-    } else if capture_count > 0 || func.is_closure {
-        // Closure with captures or anonymous closure: closure ref goes to slot 0
-        stack[new_bp] = closure_ref as u64;
-        1
-    } else {
-        // Named function wrapper (no captures): args start at slot 0
-        0
-    };
+    if let Some(slot0_val) = layout.slot0 {
+        stack[new_bp] = slot0_val;
+    }
     
     // Copy args to new frame
     for i in 0..arg_slots {
-        stack[new_bp + arg_offset + i] = stack[caller_bp + arg_start + i];
+        stack[new_bp + layout.arg_offset + i] = stack[caller_bp + arg_start + i];
     }
     
     // Push frame

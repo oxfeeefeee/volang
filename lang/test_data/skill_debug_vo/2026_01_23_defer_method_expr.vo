@@ -1,0 +1,219 @@
+package main
+
+// Test defer with method expressions
+
+var callOrder []string
+
+type Counter struct {
+	val int
+	tag string
+}
+
+func (c *Counter) Inc() {
+	c.val++
+	callOrder = append(callOrder, c.tag+"-inc-"+string(rune('0'+c.val)))
+}
+
+func (c Counter) Get() int {
+	callOrder = append(callOrder, c.tag+"-get")
+	return c.val
+}
+
+// Test 1: defer with method expression (pointer receiver)
+func testDeferMethodExprPtr() {
+	callOrder = nil
+	c := &Counter{val: 0, tag: "ptr"}
+	inc := (*Counter).Inc
+	defer inc(c)
+	defer inc(c)
+	inc(c)
+}
+
+// Test 2: defer with method expression (value receiver)
+func testDeferMethodExprValue() {
+	callOrder = nil
+	c := Counter{val: 5, tag: "val"}
+	get := Counter.Get
+	defer get(c)
+	c.val = 10
+	get(c)
+}
+
+// Embedded struct for method expression
+type Base struct {
+	name string
+}
+
+func (b *Base) Hello() {
+	callOrder = append(callOrder, "hello-"+b.name)
+}
+
+func (b Base) Greet() {
+	callOrder = append(callOrder, "greet-"+b.name)
+}
+
+type Derived struct {
+	Base
+	id int
+}
+
+// Test 3: defer with method expression on promoted method (pointer receiver)
+func testDeferMethodExprPromotedPtr() {
+	callOrder = nil
+	d := &Derived{Base: Base{name: "alice"}, id: 1}
+	hello := (*Derived).Hello
+	defer hello(d)
+	d.name = "bob"
+	hello(d)
+}
+
+// Test 4: defer with method expression on promoted method (value receiver)
+func testDeferMethodExprPromotedValue() {
+	callOrder = nil
+	d := Derived{Base: Base{name: "charlie"}, id: 2}
+	greet := Derived.Greet
+	defer greet(d)
+	d.name = "diana"
+	greet(d)
+}
+
+// Interface with method expression
+type Printer interface {
+	Print(msg string)
+}
+
+type ConsolePrinter struct {
+	prefix string
+}
+
+func (p *ConsolePrinter) Print(msg string) {
+	callOrder = append(callOrder, p.prefix+": "+msg)
+}
+
+// Test 5: defer with concrete method expression assigned to interface variable
+func testDeferMethodExprConcrete() {
+	callOrder = nil
+	p := &ConsolePrinter{prefix: "console"}
+	printFunc := (*ConsolePrinter).Print
+	defer printFunc(p, "deferred")
+	printFunc(p, "immediate")
+}
+
+// Closure capturing method expression
+func testDeferClosureMethodExpr() {
+	callOrder = nil
+	c := &Counter{val: 0, tag: "closure"}
+	inc := (*Counter).Inc
+	defer func() {
+		inc(c)
+	}()
+	inc(c)
+}
+
+// Method expression with multi-return
+type Parser struct {
+	data string
+	pos  int
+}
+
+func (p *Parser) Next() (byte, bool) {
+	if p.pos >= len(p.data) {
+		callOrder = append(callOrder, "next-eof")
+		return 0, false
+	}
+	ch := p.data[p.pos]
+	p.pos++
+	callOrder = append(callOrder, "next-"+string(ch))
+	return ch, true
+}
+
+// Test 6: defer with method expression returning multiple values
+func testDeferMethodExprMultiReturn() {
+	callOrder = nil
+	p := &Parser{data: "XY", pos: 0}
+	next := (*Parser).Next
+	defer next(p)
+	next(p)
+}
+
+// Chained method expressions through embedding levels
+type Level1 struct {
+	v int
+}
+
+func (l *Level1) Op() {
+	l.v++
+	callOrder = append(callOrder, "op-"+string(rune('0'+l.v)))
+}
+
+type Level2 struct {
+	*Level1
+}
+
+type Level3 struct {
+	Level2
+}
+
+// Test 7: defer with deeply nested method expression
+func testDeferMethodExprDeepNested() {
+	callOrder = nil
+	l3 := Level3{Level2: Level2{Level1: &Level1{v: 0}}}
+	op := (*Level3).Op
+	defer op(&l3)
+	defer op(&l3)
+	op(&l3)
+}
+
+func main() {
+	println("=== testDeferMethodExprPtr ===")
+	testDeferMethodExprPtr()
+	assert(len(callOrder) == 3, "expected 3 calls")
+	assert(callOrder[0] == "ptr-inc-1", "first inc")
+	assert(callOrder[1] == "ptr-inc-2", "second inc (deferred)")
+	assert(callOrder[2] == "ptr-inc-3", "third inc (deferred)")
+
+	println("=== testDeferMethodExprValue ===")
+	testDeferMethodExprValue()
+	assert(len(callOrder) == 2, "expected 2 calls")
+	assert(callOrder[0] == "val-get", "first get with val=10")
+	assert(callOrder[1] == "val-get", "deferred get with val=5 (captured)")
+
+	println("=== testDeferMethodExprPromotedPtr ===")
+	testDeferMethodExprPromotedPtr()
+	assert(len(callOrder) == 2, "expected 2 calls")
+	assert(callOrder[0] == "hello-bob", "first hello after modification")
+	assert(callOrder[1] == "hello-bob", "deferred hello also sees bob (pointer)")
+
+	println("=== testDeferMethodExprPromotedValue ===")
+	testDeferMethodExprPromotedValue()
+	assert(len(callOrder) == 2, "expected 2 calls")
+	assert(callOrder[0] == "greet-diana", "first greet after modification")
+	assert(callOrder[1] == "greet-charlie", "deferred greet sees charlie (value captured)")
+
+	println("=== testDeferMethodExprConcrete ===")
+	testDeferMethodExprConcrete()
+	assert(len(callOrder) == 2, "expected 2 calls")
+	assert(callOrder[0] == "console: immediate", "immediate print")
+	assert(callOrder[1] == "console: deferred", "deferred print")
+
+	println("=== testDeferClosureMethodExpr ===")
+	testDeferClosureMethodExpr()
+	assert(len(callOrder) == 2, "expected 2 calls")
+	assert(callOrder[0] == "closure-inc-1", "first inc")
+	assert(callOrder[1] == "closure-inc-2", "deferred closure inc")
+
+	println("=== testDeferMethodExprMultiReturn ===")
+	testDeferMethodExprMultiReturn()
+	assert(len(callOrder) == 2, "expected 2 calls")
+	assert(callOrder[0] == "next-X", "first next")
+	assert(callOrder[1] == "next-Y", "deferred next")
+
+	println("=== testDeferMethodExprDeepNested ===")
+	testDeferMethodExprDeepNested()
+	assert(len(callOrder) == 3, "expected 3 calls")
+	assert(callOrder[0] == "op-1", "first op")
+	assert(callOrder[1] == "op-2", "second deferred op")
+	assert(callOrder[2] == "op-3", "third deferred op")
+
+	println("PASS")
+}

@@ -335,22 +335,17 @@ pub extern "C" fn vo_call_closure(
     let module = unsafe { &*ctx_ref.module };
     let func_def = &module.functions[func_id as usize];
     let recv_slots = func_def.recv_slots as usize;
-    let capture_count = closure::capture_count(closure_gcref);
     
-    // Build full_args based on closure type (matches VM's exec_call_closure logic)
-    // - Method closure (recv_slots > 0 && capture_count > 0): receiver from captures[0] to slot 0
-    // - Closure with captures or anonymous (is_closure = true): closure ref to slot 0
-    // - Named function wrapper (no captures, is_closure = false): args start at slot 0
-    let slot0 = if recv_slots > 0 && capture_count > 0 {
-        Some(closure::get_capture(closure_gcref, 0))
-    } else if capture_count > 0 || func_def.is_closure {
-        Some(closure_ref)
-    } else {
-        None
-    };
+    // Use common closure call layout logic
+    let layout = closure::call_layout(
+        closure_ref,
+        closure_gcref,
+        recv_slots,
+        func_def.is_closure,
+    );
     
-    let mut full_args = Vec::with_capacity(slot0.is_some() as usize + arg_count as usize);
-    full_args.extend(slot0);
+    let mut full_args = Vec::with_capacity(layout.slot0.is_some() as usize + arg_count as usize);
+    full_args.extend(layout.slot0);
     for i in 0..arg_count {
         full_args.push(unsafe { *args.add(i as usize) });
     }

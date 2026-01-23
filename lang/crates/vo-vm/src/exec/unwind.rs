@@ -587,19 +587,33 @@ fn call_defer_entry(
     let arg_slots = entry.arg_slots as usize;
 
     let args_start = stack.len();
-    stack.resize(args_start + func.local_slots as usize, 0);
-
-    let arg_offset = if entry.is_closure {
-        stack[args_start] = entry.closure as u64;
-        1
+    
+    // Use common closure call layout logic
+    let layout = if entry.is_closure {
+        vo_runtime::objects::closure::call_layout(
+            entry.closure as u64,
+            entry.closure,
+            func.recv_slots as usize,
+            func.is_closure,
+        )
     } else {
-        0
+        vo_runtime::objects::closure::ClosureCallLayout { slot0: None, arg_offset: 0 }
     };
+    
+    // Ensure stack has enough space for both local_slots and arg_offset+args
+    let arg_space = layout.arg_offset + arg_slots;
+    let total_slots = (func.local_slots as usize).max(arg_space);
+    stack.resize(args_start + total_slots, 0);
+
+    // Set slot 0 if needed
+    if let Some(slot0_val) = layout.slot0 {
+        stack[args_start] = slot0_val;
+    }
 
     if !entry.args.is_null() {
         for i in 0..arg_slots {
             let val = unsafe { Gc::read_slot(entry.args, i) };
-            stack[args_start + arg_offset + i] = val;
+            stack[args_start + layout.arg_offset + i] = val;
         }
     }
 

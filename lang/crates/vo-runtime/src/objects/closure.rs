@@ -50,3 +50,48 @@ pub fn get_capture(c: GcRef, idx: usize) -> Slot {
 pub fn set_capture(c: GcRef, idx: usize, val: Slot) {
     unsafe { *captures_ptr(c).add(idx) = val }
 }
+
+/// Closure call layout info: what goes in slot0 and where args start.
+/// 
+/// Three cases:
+/// 1. Method closure (recv_slots > 0 && capture_count > 0): receiver from captures[0]
+/// 2. Closure with captures or anonymous: closure ref
+/// 3. Named function wrapper: no slot0, args at offset 0
+pub struct ClosureCallLayout {
+    /// Value to put in slot0, if any
+    pub slot0: Option<u64>,
+    /// Offset where arguments start (0, 1, or recv_slots)
+    pub arg_offset: usize,
+}
+
+/// Determine closure call layout based on function metadata and closure state.
+/// This is the single source of truth for closure argument placement.
+#[inline]
+pub fn call_layout(
+    closure_ref: u64,
+    closure_gcref: GcRef,
+    recv_slots: usize,
+    is_closure: bool,
+) -> ClosureCallLayout {
+    let cap_count = capture_count(closure_gcref);
+    
+    if recv_slots > 0 && cap_count > 0 {
+        // Method closure: receiver from captures goes to slot 0
+        ClosureCallLayout {
+            slot0: Some(get_capture(closure_gcref, 0)),
+            arg_offset: recv_slots,
+        }
+    } else if cap_count > 0 || is_closure {
+        // Closure with captures or anonymous closure: closure ref goes to slot 0
+        ClosureCallLayout {
+            slot0: Some(closure_ref),
+            arg_offset: 1,
+        }
+    } else {
+        // Named function wrapper (no captures): args start at slot 0
+        ClosureCallLayout {
+            slot0: None,
+            arg_offset: 0,
+        }
+    }
+}

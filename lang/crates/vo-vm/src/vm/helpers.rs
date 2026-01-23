@@ -133,34 +133,29 @@ pub fn user_panic(
 // Closure call helpers
 // =============================================================================
 
-/// Build full args for closure call (prepends receiver/closure_ref if needed).
-/// This matches the logic in VM's exec_call_closure.
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
+// Re-export from vo-runtime for convenience
+pub use vo_runtime::objects::closure::{ClosureCallLayout, call_layout as closure_call_layout};
+
+/// Build full args for closure call (prepends slot0 if needed).
 pub fn build_closure_args(
     closure_ref: u64,
-    closure_gcref: vo_runtime::gc::GcRef,
+    closure_gcref: GcRef,
     func_def: &crate::bytecode::FunctionDef,
     args: *const u64,
     arg_count: u32,
 ) -> Vec<u64> {
-    use vo_runtime::objects::closure;
+    let layout = closure_call_layout(
+        closure_ref,
+        closure_gcref,
+        func_def.recv_slots as usize,
+        func_def.is_closure,
+    );
     
-    let recv_slots = func_def.recv_slots as usize;
-    let capture_count = closure::capture_count(closure_gcref);
-    
-    // Determine slot0 based on closure type
-    let slot0 = if recv_slots > 0 && capture_count > 0 {
-        Some(closure::get_capture(closure_gcref, 0))
-    } else if capture_count > 0 || func_def.is_closure {
-        Some(closure_ref)
-    } else {
-        None
-    };
-    
-    let mut full_args = Vec::with_capacity(slot0.is_some() as usize + arg_count as usize);
-    full_args.extend(slot0);
+    let mut full_args = Vec::with_capacity(layout.slot0.is_some() as usize + arg_count as usize);
+    full_args.extend(layout.slot0);
     for i in 0..arg_count {
         full_args.push(unsafe { *args.add(i as usize) });
     }
