@@ -1,0 +1,149 @@
+// Test: Defer modifying named return values in complex scenarios
+package main
+
+func main() {
+	// Test 1: Simple defer modify named return
+	r1 := simpleDefer()
+	assert(r1 == 20, "simple defer modify")
+	
+	// Test 2: Multiple defers modifying same named return
+	r2 := multiDefer()
+	assert(r2 == 30, "multi defer modify")
+	
+	// Test 3: Defer with closure modifying named return
+	r3 := closureDefer()
+	assert(r3 == 100, "closure defer modify")
+	
+	// Test 4: Defer modifying named return in loop
+	r4 := loopDefer()
+	assert(r4 == 15, "loop defer modify")
+	
+	// Test 5: Named return with interface type
+	r5 := ifaceNamedReturn()
+	assert(r5.(int) == 999, "iface named return")
+	
+	// Test 6: Multiple named returns, defer modifies one
+	a6, b6 := multiNamedReturn()
+	assert(a6 == 10 && b6 == 200, "multi named partial modify")
+	
+	// Test 7: Named return with early return in if
+	r7 := earlyReturn(true)
+	assert(r7 == 50, "early return defer")
+	r7b := earlyReturn(false)
+	assert(r7b == 100, "late return defer")
+	
+	// Test 8: Named return with panic/recover
+	r8 := panicRecover()
+	assert(r8 == 777, "panic recover named return")
+	
+	// Test 9: Defer modifying named return from nested function call
+	r9 := nestedCallDefer()
+	assert(r9 == 42, "nested call defer")
+	
+	// Test 10: Named return with type assertion in defer
+	r10 := typeAssertDefer()
+	assert(r10 == 123, "type assert defer")
+	
+	println("PASSED")
+}
+
+func simpleDefer() (result int) {
+	result = 10
+	defer func() {
+		result = 20
+	}()
+	return
+}
+
+func multiDefer() (result int) {
+	result = 0
+	defer func() { result += 10 }()
+	defer func() { result += 20 }()
+	return
+}
+
+func closureDefer() (result int) {
+	x := 50
+	defer func() {
+		result = x * 2
+	}()
+	result = 10
+	return
+}
+
+func loopDefer() (result int) {
+	result = 0
+	for i := 1; i <= 5; i++ {
+		defer func(v int) {
+			result += v
+		}(i)
+	}
+	return
+}
+
+func ifaceNamedReturn() (result any) {
+	result = 0
+	defer func() {
+		result = 999
+	}()
+	return
+}
+
+func multiNamedReturn() (a, b int) {
+	a = 10
+	b = 100
+	defer func() {
+		b = 200
+	}()
+	return
+}
+
+func earlyReturn(early bool) (result int) {
+	defer func() {
+		result += 50
+	}()
+	if early {
+		result = 0
+		return
+	}
+	result = 50
+	return
+}
+
+func panicRecover() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = 777
+		}
+	}()
+	result = 0
+	panic("test")
+	return
+}
+
+func nestedCallDefer() (result int) {
+	defer func() {
+		result = getFortyTwo()
+	}()
+	result = 0
+	return
+}
+
+func getFortyTwo() int {
+	return 42
+}
+
+func typeAssertDefer() (result int) {
+	var x any = 123
+	defer func() {
+		result = x.(int)
+	}()
+	result = 0
+	return
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

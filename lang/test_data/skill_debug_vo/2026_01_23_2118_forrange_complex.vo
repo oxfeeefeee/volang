@@ -1,0 +1,302 @@
+// Test: For-range complex edge cases
+package main
+
+// Test 1: Range over nil slice
+func testRangeNilSlice() {
+	var s []int
+	count := 0
+	for range s {
+		count++
+	}
+	assert(count == 0, "range nil slice")
+}
+
+// Test 2: Range over nil map
+func testRangeNilMap() {
+	var m map[string]int
+	count := 0
+	for range m {
+		count++
+	}
+	assert(count == 0, "range nil map")
+}
+
+// Test 3: Range over empty string
+func testRangeEmptyString() {
+	s := ""
+	count := 0
+	for range s {
+		count++
+	}
+	assert(count == 0, "range empty string")
+}
+
+// Test 4: Range with only index
+func testRangeOnlyIndex() {
+	arr := []int{10, 20, 30}
+	sum := 0
+	for i := range arr {
+		sum += i
+	}
+	assert(sum == 3, "range only index") // 0+1+2
+}
+
+// Test 5: Range with blank index
+func testRangeBlankIndex() {
+	arr := []int{10, 20, 30}
+	sum := 0
+	for _, v := range arr {
+		sum += v
+	}
+	assert(sum == 60, "range blank index")
+}
+
+// Test 6: Range modifying slice during iteration
+func testRangeModifySlice() {
+	arr := []int{1, 2, 3}
+	result := []int{}
+	for i, v := range arr {
+		result = append(result, v)
+		arr[i] = v * 10 // Modify during iteration
+	}
+	// Original values were captured
+	assert(len(result) == 3, "range modify len")
+	assert(result[0] == 1, "range modify elem 0")
+	assert(result[1] == 2, "range modify elem 1")
+	assert(result[2] == 3, "range modify elem 2")
+	// Array was modified
+	assert(arr[0] == 10, "arr modified 0")
+}
+
+// Test 7: Range over array (not slice)
+func testRangeArray() {
+	arr := [3]int{100, 200, 300}
+	sum := 0
+	for _, v := range arr {
+		sum += v
+	}
+	assert(sum == 600, "range array")
+}
+
+// Test 8: Range over string with unicode
+func testRangeStringUnicode() {
+	s := "你好世界"
+	count := 0
+	runes := []rune{}
+	for _, r := range s {
+		count++
+		runes = append(runes, r)
+	}
+	assert(count == 4, "range unicode count")
+	assert(runes[0] == '你', "range unicode rune 0")
+	assert(runes[1] == '好', "range unicode rune 1")
+}
+
+// Test 9: Range with break in nested loop
+func testRangeNestedBreak() {
+	outer := []int{1, 2, 3}
+	inner := []int{10, 20, 30}
+	sum := 0
+outer:
+	for _, o := range outer {
+		for _, i := range inner {
+			sum += o * i
+			if i == 20 {
+				break outer
+			}
+		}
+	}
+	// 1*10 + 1*20 = 30
+	assert(sum == 30, "range nested break")
+}
+
+// Test 10: Range with continue in nested loop
+func testRangeNestedContinue() {
+	outer := []int{1, 2, 3}
+	inner := []int{10, 20, 30}
+	sum := 0
+outer:
+	for _, o := range outer {
+		for _, i := range inner {
+			if i == 20 {
+				continue outer
+			}
+			sum += o * i
+		}
+	}
+	// Each outer: only 10 is added (20 triggers continue)
+	// 1*10 + 2*10 + 3*10 = 60
+	assert(sum == 60, "range nested continue")
+}
+
+// Test 11: Range over channel
+func testRangeChannel() {
+	ch := make(chan int, 3)
+	ch <- 1
+	ch <- 2
+	ch <- 3
+	close(ch)
+	
+	sum := 0
+	for v := range ch {
+		sum += v
+	}
+	assert(sum == 6, "range channel")
+}
+
+// Test 12: Range over int (Go 1.22+)
+func testRangeInt() {
+	sum := 0
+	for i := range 5 {
+		sum += i
+	}
+	assert(sum == 10, "range int") // 0+1+2+3+4
+}
+
+// Test 13: Range with defer in loop
+func testRangeDefer() {
+	result := ""
+	for _, c := range []string{"A", "B", "C"} {
+		c := c // capture
+		defer func() {
+			result += c
+		}()
+	}
+	// Defers execute in reverse order
+	assert(result == "CBA", "range defer")
+}
+
+// Test 14: Range capturing loop variable in closure
+func testRangeClosure() {
+	funcs := []func() int{}
+	for i := range 3 {
+		i := i // capture
+		funcs = append(funcs, func() int { return i })
+	}
+	
+	assert(funcs[0]() == 0, "range closure 0")
+	assert(funcs[1]() == 1, "range closure 1")
+	assert(funcs[2]() == 2, "range closure 2")
+}
+
+// Test 15: Range over slice from array
+func testRangeSliceFromArray() {
+	arr := [3]int{1, 2, 3}
+	slice := arr[:]
+	sum := 0
+	for _, v := range slice {
+		sum += v
+	}
+	assert(sum == 6, "range slice from array")
+}
+
+// Test 16: Range over map with struct key
+type Point struct {
+	x, y int
+}
+
+func testRangeMapStructKey() {
+	m := map[Point]string{
+		Point{1, 2}: "A",
+		Point{3, 4}: "B",
+	}
+	count := 0
+	for range m {
+		count++
+	}
+	assert(count == 2, "range map struct key")
+}
+
+// Test 17: Range with short variable declaration shadowing
+func testRangeShadowing() {
+	i := 100
+	arr := []int{1, 2, 3}
+	for i, v := range arr {
+		_ = v
+		if i == 2 {
+			assert(i == 2, "range shadow in loop")
+		}
+	}
+	assert(i == 100, "range shadow outer unchanged")
+}
+
+// Test 18: Range over slice of interfaces
+func testRangeInterfaceSlice() {
+	s := []any{1, "hello", true}
+	types := ""
+	for _, v := range s {
+		switch v.(type) {
+		case int:
+			types += "i"
+		case string:
+			types += "s"
+		case bool:
+			types += "b"
+		}
+	}
+	assert(types == "isb", "range interface slice")
+}
+
+func main() {
+	testRangeNilSlice()
+	println("Test 1: PASSED - range nil slice")
+	
+	testRangeNilMap()
+	println("Test 2: PASSED - range nil map")
+	
+	testRangeEmptyString()
+	println("Test 3: PASSED - range empty string")
+	
+	testRangeOnlyIndex()
+	println("Test 4: PASSED - range only index")
+	
+	testRangeBlankIndex()
+	println("Test 5: PASSED - range blank index")
+	
+	testRangeModifySlice()
+	println("Test 6: PASSED - range modify slice")
+	
+	testRangeArray()
+	println("Test 7: PASSED - range array")
+	
+	testRangeStringUnicode()
+	println("Test 8: PASSED - range string unicode")
+	
+	testRangeNestedBreak()
+	println("Test 9: PASSED - range nested break")
+	
+	testRangeNestedContinue()
+	println("Test 10: PASSED - range nested continue")
+	
+	testRangeChannel()
+	println("Test 11: PASSED - range channel")
+	
+	testRangeInt()
+	println("Test 12: PASSED - range int")
+	
+	testRangeDefer()
+	println("Test 13: PASSED - range defer")
+	
+	testRangeClosure()
+	println("Test 14: PASSED - range closure")
+	
+	testRangeSliceFromArray()
+	println("Test 15: PASSED - range slice from array")
+	
+	testRangeMapStructKey()
+	println("Test 16: PASSED - range map struct key")
+	
+	testRangeShadowing()
+	println("Test 17: PASSED - range shadowing")
+	
+	testRangeInterfaceSlice()
+	println("Test 18: PASSED - range interface slice")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

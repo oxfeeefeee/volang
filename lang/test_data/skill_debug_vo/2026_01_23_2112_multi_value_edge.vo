@@ -1,0 +1,272 @@
+// Test: Multi-value return in edge cases
+package main
+
+// Test 1: Multi-value return used directly in if condition
+func divMod(a, b int) (int, int) {
+	return a / b, a % b
+}
+
+func getOK() (int, bool) {
+	return 42, true
+}
+
+func testMultiReturnIfCondition() {
+	// Using second return value in if
+	if v, ok := getOK(); ok {
+		assert(v == 42, "multi return in if condition")
+	} else {
+		panic("should be ok")
+	}
+}
+
+// Test 2: Multi-value return as argument to variadic
+func sum(nums ...int) int {
+	total := 0
+	for _, n := range nums {
+		total += n
+	}
+	return total
+}
+
+func pair() (int, int) {
+	return 3, 4
+}
+
+func testMultiReturnVariadic() {
+	// This should NOT work - multi return can't expand to variadic
+	// result := sum(pair())  // compile error in Go
+	
+	// But this works - explicit expansion
+	a, b := pair()
+	result := sum(a, b)
+	assert(result == 7, "multi return expanded to variadic")
+}
+
+// Test 3: Multi-value return in switch init
+func testMultiReturnSwitchInit() {
+	switch v, ok := getOK(); {
+	case ok && v > 40:
+		// ok
+	default:
+		panic("should match")
+	}
+}
+
+// Test 4: Multi-value return in for init
+func testMultiReturnForInit() {
+	count := 0
+	for v, ok := getOK(); ok; ok = false {
+		count += v
+	}
+	assert(count == 42, "multi return for init")
+}
+
+// Test 5: Multi-value return assigned to blank identifier
+func threeValues() (int, string, bool) {
+	return 1, "two", true
+}
+
+func testMultiReturnBlank() {
+	a, _, c := threeValues()
+	assert(a == 1, "first value")
+	assert(c == true, "third value")
+	
+	_, b, _ := threeValues()
+	assert(b == "two", "second value only")
+	
+	_, _, _ = threeValues() // all blank
+}
+
+// Test 6: Multi-value return in map index
+func testMultiReturnMapIndex() {
+	m := map[string]int{"key": 42}
+	
+	if v, ok := m["key"]; ok {
+		assert(v == 42, "map index ok")
+	}
+	
+	if _, ok := m["missing"]; !ok {
+		// ok
+	} else {
+		panic("should not exist")
+	}
+}
+
+// Test 7: Multi-value return chained
+func addOne(n int) (int, error) {
+	return n + 1, nil
+}
+
+func testMultiReturnChain() {
+	// Chain of multi-value returns
+	v1, _ := addOne(1)
+	v2, _ := addOne(v1)
+	v3, _ := addOne(v2)
+	assert(v3 == 4, "chained multi return")
+}
+
+// Test 8: Multi-value in defer
+func testMultiReturnDefer() {
+	result := 0
+	func() {
+		defer func() {
+			v, ok := getOK()
+			if ok {
+				result = v
+			}
+		}()
+	}()
+	assert(result == 42, "multi return in defer")
+}
+
+// Test 9: Multi-value return used immediately in comparison
+func testMultiReturnComparison() {
+	if v, ok := getOK(); v == 42 && ok {
+		// ok
+	} else {
+		panic("comparison failed")
+	}
+}
+
+// Test 10: Multi-value with type assertion
+func testMultiReturnTypeAssert() {
+	var i any = "hello"
+	
+	if s, ok := i.(string); ok {
+		assert(s == "hello", "type assert ok form")
+	}
+	
+	if _, ok := i.(int); ok {
+		panic("should not match int")
+	}
+}
+
+// Test 11: Multi-value return to interface slice
+func getPair() (any, any) {
+	return 1, "two"
+}
+
+func testMultiReturnToInterface() {
+	a, b := getPair()
+	assert(a.(int) == 1, "first any")
+	assert(b.(string) == "two", "second any")
+}
+
+// Test 12: Multi-value return with named results modified in defer
+func namedMulti() (x int, y string) {
+	defer func() {
+		x = x + 10
+		y = y + "!"
+	}()
+	return 5, "hello"
+}
+
+func testNamedMultiDefer() {
+	a, b := namedMulti()
+	assert(a == 15, "named multi defer int")
+	assert(b == "hello!", "named multi defer string")
+}
+
+// Test 13: Multi-value in range map
+func testMultiValueRange() {
+	m := map[string]int{"a": 1, "b": 2, "c": 3}
+	sum := 0
+	for _, v := range m {
+		sum += v
+	}
+	assert(sum == 6, "range map values")
+	
+	keys := ""
+	for k := range m {
+		keys += k
+	}
+	// Order is not guaranteed, just check length
+	assert(len(keys) == 3, "range map keys")
+}
+
+// Test 14: Channel receive multi-value
+func testChanRecvMulti() {
+	ch := make(chan int, 1)
+	ch <- 42
+	
+	v, ok := <-ch
+	assert(v == 42, "chan recv value")
+	assert(ok == true, "chan recv ok")
+	
+	close(ch)
+	v2, ok2 := <-ch
+	assert(v2 == 0, "closed chan zero value")
+	assert(ok2 == false, "closed chan not ok")
+}
+
+// Test 15: Multi-value in select case
+func testMultiValueSelect() {
+	ch := make(chan int, 1)
+	ch <- 99
+	
+	result := 0
+	select {
+	case v, ok := <-ch:
+		if ok {
+			result = v
+		}
+	default:
+		panic("should receive")
+	}
+	assert(result == 99, "select multi value recv")
+}
+
+func main() {
+	testMultiReturnIfCondition()
+	println("Test 1: PASSED - multi return if condition")
+	
+	testMultiReturnVariadic()
+	println("Test 2: PASSED - multi return variadic")
+	
+	testMultiReturnSwitchInit()
+	println("Test 3: PASSED - multi return switch init")
+	
+	testMultiReturnForInit()
+	println("Test 4: PASSED - multi return for init")
+	
+	testMultiReturnBlank()
+	println("Test 5: PASSED - multi return blank")
+	
+	testMultiReturnMapIndex()
+	println("Test 6: PASSED - multi return map index")
+	
+	testMultiReturnChain()
+	println("Test 7: PASSED - multi return chain")
+	
+	testMultiReturnDefer()
+	println("Test 8: PASSED - multi return defer")
+	
+	testMultiReturnComparison()
+	println("Test 9: PASSED - multi return comparison")
+	
+	testMultiReturnTypeAssert()
+	println("Test 10: PASSED - multi return type assert")
+	
+	testMultiReturnToInterface()
+	println("Test 11: PASSED - multi return to interface")
+	
+	testNamedMultiDefer()
+	println("Test 12: PASSED - named multi defer")
+	
+	testMultiValueRange()
+	println("Test 13: PASSED - multi value range")
+	
+	testChanRecvMulti()
+	println("Test 14: PASSED - chan recv multi")
+	
+	testMultiValueSelect()
+	println("Test 15: PASSED - select multi value")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

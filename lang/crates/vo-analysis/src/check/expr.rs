@@ -1729,7 +1729,7 @@ impl Checker {
         };
         if let Some(m) = msg {
             self.error_code_msg(TypeError::InvalidOp, x.pos(), format!("expression {}", m));
-            // Don't set x.mode to Invalid here - caller handles it
+            x.mode = OperandMode::Invalid;
         }
     }
 

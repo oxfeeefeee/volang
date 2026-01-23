@@ -1,0 +1,279 @@
+// Test: Error handling with ? operator in complex scenarios
+package main
+
+import "errors"
+
+// Test 1: Basic ? operator
+func mayFail(shouldFail bool) (int, error) {
+	if shouldFail {
+		return 0, errors.New("failed")
+	}
+	return 42, nil
+}
+
+func testBasicQuestion() error {
+	v := mayFail(false)?
+	assert(v == 42, "basic question success")
+	return nil
+}
+
+// Test 2: Chained ? operators
+func step1() (int, error) {
+	return 10, nil
+}
+
+func step2(x int) (int, error) {
+	return x * 2, nil
+}
+
+func step3(x int) (string, error) {
+	return "result", nil
+}
+
+func testChainedQuestion() error {
+	v1 := step1()?
+	v2 := step2(v1)?
+	v3 := step3(v2)?
+	assert(v3 == "result", "chained question")
+	return nil
+}
+
+// Test 3: ? in expression
+func getValue() (int, error) {
+	return 5, nil
+}
+
+func testQuestionInExpression() error {
+	result := getValue()? * 2 + 1
+	assert(result == 11, "question in expression")
+	return nil
+}
+
+// Test 4: ? with method call
+type Service struct {
+	value int
+}
+
+func (s *Service) GetValue() (int, error) {
+	return s.value, nil
+}
+
+func testQuestionMethodCall() error {
+	svc := &Service{value: 100}
+	v := svc.GetValue()?
+	assert(v == 100, "question method call")
+	return nil
+}
+
+// Test 5: ? in if condition
+func testQuestionInIf() error {
+	if v := mayFail(false)?; v > 40 {
+		// ok
+	} else {
+		panic("should be > 40")
+	}
+	return nil
+}
+
+// Test 6: ? with type assertion result (not applicable - type assertion doesn't return error)
+// Skip
+
+// Test 7: ? in switch init
+func testQuestionInSwitch() error {
+	switch v := mayFail(false)?; v {
+	case 42:
+		// ok
+	default:
+		panic("should be 42")
+	}
+	return nil
+}
+
+// Test 8: ? with map lookup that returns (value, error)
+func mapLookup(m map[string]int, key string) (int, error) {
+	v, ok := m[key]
+	if !ok {
+		return 0, errors.New("key not found")
+	}
+	return v, nil
+}
+
+func testQuestionMapLookup() error {
+	m := map[string]int{"a": 1, "b": 2}
+	v := mapLookup(m, "a")?
+	assert(v == 1, "question map lookup")
+	return nil
+}
+
+// Test 9: ? propagates error correctly
+func testQuestionPropagates() {
+	f := func() error {
+		_ = mayFail(true)? // This should return error
+		return nil
+	}
+	
+	err := f()
+	assert(err != nil, "question propagates error")
+}
+
+// Test 10: Nested function calls with ?
+func outer() (int, error) {
+	v := inner()?
+	return v, nil
+}
+
+func inner() (int, error) {
+	v := deepest()?
+	return v, nil
+}
+
+func deepest() (int, error) {
+	return 999, nil
+}
+
+func testNestedQuestion() error {
+	v := outer()?
+	assert(v == 999, "nested question")
+	return nil
+}
+
+// Test 11: ? with errdefer
+var errdeferCalled bool
+
+func testQuestionWithErrdefer() {
+	errdeferCalled = false
+	
+	f := func() error {
+		errdefer func() {
+			errdeferCalled = true
+		}()
+		
+		_ = mayFail(true)? // This triggers errdefer
+		return nil
+	}
+	
+	err := f()
+	assert(err != nil, "error returned")
+	assert(errdeferCalled, "errdefer was called")
+}
+
+// Test 12: ? with multiple return values
+func multiReturn() (int, string, error) {
+	return 1, "hello", nil
+}
+
+func testQuestionMultiReturn() error {
+	a, b := multiReturn()?
+	assert(a == 1, "multi return first")
+	assert(b == "hello", "multi return second")
+	return nil
+}
+
+// Test 13: ? in loop
+func testQuestionInLoop() error {
+	sum := 0
+	for i := 0; i < 3; i++ {
+		v := step1()?
+		sum += v
+	}
+	assert(sum == 30, "question in loop")
+	return nil
+}
+
+// Test 14: ? with interface return
+type Reader interface {
+	Read() (int, error)
+}
+
+type MyReader struct{}
+
+func (r MyReader) Read() (int, error) {
+	return 42, nil
+}
+
+func getReader() Reader {
+	return MyReader{}
+}
+
+func testQuestionInterface() error {
+	v := getReader().Read()?
+	assert(v == 42, "question interface")
+	return nil
+}
+
+// Test 15: ? in closure
+func testQuestionInClosure() error {
+	f := func() (int, error) {
+		v := mayFail(false)?
+		return v, nil
+	}
+	
+	v, err := f()
+	assert(err == nil, "closure no error")
+	assert(v == 42, "closure value")
+	return nil
+}
+
+func main() {
+	err := testBasicQuestion()
+	assert(err == nil, "test 1 no error")
+	println("Test 1: PASSED - basic question")
+	
+	err = testChainedQuestion()
+	assert(err == nil, "test 2 no error")
+	println("Test 2: PASSED - chained question")
+	
+	err = testQuestionInExpression()
+	assert(err == nil, "test 3 no error")
+	println("Test 3: PASSED - question in expression")
+	
+	err = testQuestionMethodCall()
+	assert(err == nil, "test 4 no error")
+	println("Test 4: PASSED - question method call")
+	
+	err = testQuestionInIf()
+	assert(err == nil, "test 5 no error")
+	println("Test 5: PASSED - question in if")
+	
+	err = testQuestionInSwitch()
+	assert(err == nil, "test 7 no error")
+	println("Test 7: PASSED - question in switch")
+	
+	err = testQuestionMapLookup()
+	assert(err == nil, "test 8 no error")
+	println("Test 8: PASSED - question map lookup")
+	
+	testQuestionPropagates()
+	println("Test 9: PASSED - question propagates")
+	
+	err = testNestedQuestion()
+	assert(err == nil, "test 10 no error")
+	println("Test 10: PASSED - nested question")
+	
+	testQuestionWithErrdefer()
+	println("Test 11: PASSED - question with errdefer")
+	
+	err = testQuestionMultiReturn()
+	assert(err == nil, "test 12 no error")
+	println("Test 12: PASSED - question multi return")
+	
+	err = testQuestionInLoop()
+	assert(err == nil, "test 13 no error")
+	println("Test 13: PASSED - question in loop")
+	
+	err = testQuestionInterface()
+	assert(err == nil, "test 14 no error")
+	println("Test 14: PASSED - question interface")
+	
+	err = testQuestionInClosure()
+	assert(err == nil, "test 15 no error")
+	println("Test 15: PASSED - question in closure")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}
