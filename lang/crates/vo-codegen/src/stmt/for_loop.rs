@@ -1,0 +1,210 @@
+//! For loop compilation (cond and three-part forms).
+//!
+//! Note: for-range loops are in for_range.rs
+
+use vo_analysis::objects::TypeKey;
+use vo_common::symbol::Symbol;
+use vo_runtime::SlotType;
+use vo_syntax::ast::{Expr, Stmt, StmtKind};
+use vo_vm::instruction::Opcode;
+
+use crate::context::CodegenContext;
+use crate::error::CodegenError;
+use crate::func::{FuncBuilder, StorageKind};
+use crate::type_info::TypeInfoWrapper;
+
+use super::var_def::{DeferredHeapAlloc, LocalDefiner};
+use super::{compile_block, compile_block_no_scope, compile_stmt};
+
+/// Compile for-cond loop: `for cond { }` or `for { }`
+pub(super) fn compile_for_cond(
+    for_stmt: &vo_syntax::ast::ForStmt,
+    cond_opt: Option<&Expr>,
+    label: Option<vo_common::Symbol>,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // while-style: for cond { } or infinite: for { }
+    let loop_start = func.current_pc();
+    let begin_pc = func.enter_loop(loop_start, label);
+
+    let end_jump = if let Some(cond) = cond_opt {
+        let cond_reg = crate::expr::compile_expr(cond, ctx, func, info)?;
+        Some(func.emit_jump(Opcode::JumpIfNot, cond_reg))
+    } else {
+        None
+    };
+
+    compile_block(&for_stmt.body, ctx, func, info)?;
+    
+    // exit_loop emits HINT_LOOP_END and patches flags
+    let exit_info = func.exit_loop();
+    
+    func.emit_jump_to(Opcode::Jump, 0, loop_start);
+
+    let exit_pc = func.current_pc();
+    if let Some(j) = end_jump {
+        func.patch_jump(j, exit_pc);
+    }
+    
+    // Finalize HINT_LOOP_BEGIN: exit_pc=0 for infinite loop, actual exit_pc otherwise
+    let hint_exit_pc = if cond_opt.is_some() { exit_pc } else { 0 };
+    func.finalize_loop_hint(begin_pc, hint_exit_pc);
+    
+    for pc in exit_info.break_patches {
+        func.patch_jump(pc, exit_pc);
+    }
+    
+    // Patch continue jumps to loop_start (re-evaluate condition)
+    for pc in exit_info.continue_patches {
+        func.patch_jump(pc, loop_start);
+    }
+    Ok(())
+}
+
+/// Compile three-part for loop: `for init; cond; post { }`
+pub(super) fn compile_for_three(
+    for_stmt: &vo_syntax::ast::ForStmt,
+    init: Option<&Stmt>,
+    cond: Option<&Expr>,
+    post: Option<&Stmt>,
+    label: Option<vo_common::Symbol>,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    // C-style: for init; cond; post { }
+    // Go 1.22 semantics: each iteration gets a fresh copy of loop variables.
+    //
+    // Implementation: For escaped loop variables, use scope-based isolation:
+    // - Control variable (stack): bound to variable name in outer scope, used by cond/post
+    // - Iteration variable (heap): bound to variable name in body scope, captured by closures
+    //
+    // Flow:
+    // 1. init: allocate stack var, bind name to stack
+    // 2. loop_start: cond uses stack var
+    // 3. enter body scope: create heap object, rebind name to heap, copy stack->heap
+    // 4. body executes (closures capture heap var)
+    // 5. exit body scope: name reverts to stack, copy heap->stack (sync changes)
+    // 6. post: uses stack var
+    // 7. jump to loop_start
+    
+    func.enter_scope();
+    
+    // Track loop vars that need per-iteration heap allocation
+    // (symbol, ctrl_slot, value_slots, meta_idx, type_key)
+    let mut loop_var_info: Vec<(Symbol, u16, u16, u16, TypeKey)> = Vec::new();
+    
+    if let Some(init) = init {
+        if let StmtKind::ShortVar(short_var) = &init.kind {
+            // Single pass: handle all vars, special-case Go 1.22 loop vars
+            let mut sc = LocalDefiner::new(ctx, func, info);
+            for (i, name) in short_var.names.iter().enumerate() {
+                let is_blank = info.project.interner.resolve(name.symbol) == Some("_");
+                if is_blank { continue; }
+                
+                let obj_key = info.get_def(name);
+                let type_key = info.obj_type(obj_key, "short var must have type");
+                let escapes = info.is_escaped(obj_key);
+                let is_loop_var = info.is_loop_var(obj_key);
+                let needs_box = info.needs_boxing(obj_key, type_key);
+                let init_expr = short_var.values.get(i);
+                
+                // Go 1.22: escaped loop var needs stack control var + heap iteration var
+                let needs_go122 = is_loop_var && escapes && needs_box 
+                    && !info.is_reference_type(type_key) && !info.is_array(type_key);
+                
+                if needs_go122 {
+                    let slot_types = sc.info.type_slot_types(type_key);
+                    let value_slots = slot_types.len() as u16;
+                    let ctrl_slot = sc.func.alloc_temp_typed(&slot_types);
+                    
+                    if let Some(expr) = init_expr {
+                        crate::assign::emit_assign(ctrl_slot, crate::assign::AssignSource::Expr(expr), type_key, sc.ctx, sc.func, sc.info)?;
+                    } else {
+                        for j in 0..value_slots {
+                            sc.func.emit_op(Opcode::LoadInt, ctrl_slot + j, 0, 0);
+                        }
+                    }
+                    
+                    let storage = StorageKind::StackValue { slot: ctrl_slot, slots: value_slots };
+                    sc.func.define_local(name.symbol, storage);
+                    
+                    let meta_idx = sc.ctx.get_or_create_value_meta(type_key, sc.info);
+                    loop_var_info.push((name.symbol, ctrl_slot, value_slots, meta_idx, type_key));
+                } else {
+                    sc.define_local(name.symbol, type_key, escapes, init_expr, Some(obj_key))?;
+                }
+            }
+        } else {
+            compile_stmt(init, ctx, func, info)?;
+        }
+    }
+
+    let loop_start = func.current_pc();
+    let begin_pc = func.enter_loop(0, label);
+
+    let end_jump = if let Some(cond) = cond {
+        // Cond uses stack variable (control var)
+        let cond_reg = crate::expr::compile_expr(cond, ctx, func, info)?;
+        Some(func.emit_jump(Opcode::JumpIfNot, cond_reg))
+    } else {
+        None
+    };
+
+    // Enter body scope and rebind loop vars to heap objects
+    func.enter_scope();
+    
+    // Create heap objects and rebind loop vars; collect gcref_slots for sync
+    let gcref_slots: Vec<u16> = loop_var_info.iter().map(|&(sym, ctrl_slot, value_slots, meta_idx, type_key)| {
+        let gcref_slot = func.alloc_gcref();
+        let deferred = DeferredHeapAlloc { gcref_slot, value_slots, meta_idx };
+        deferred.emit_with_copy(func, ctrl_slot);
+        let stores_pointer = info.is_pointer(type_key);
+        func.define_local(sym, StorageKind::HeapBoxed { gcref_slot, value_slots, stores_pointer });
+        gcref_slot
+    }).collect();
+    
+    compile_block_no_scope(&for_stmt.body, ctx, func, info)?;
+    
+    // Sync heap→stack before exiting scope
+    for (i, &(_, ctrl_slot, value_slots, _, _)) in loop_var_info.iter().enumerate() {
+        for j in 0..value_slots {
+            func.emit_op(Opcode::PtrGet, ctrl_slot + j, gcref_slots[i], j);
+        }
+    }
+    
+    func.exit_scope();
+
+    // Post uses stack variable (control var)
+    let post_pc = func.current_pc();
+    if let Some(post) = post {
+        compile_stmt(post, ctx, func, info)?;
+    }
+
+    let exit_info = func.exit_loop();
+    
+    func.emit_jump_to(Opcode::Jump, 0, loop_start);
+
+    let exit_pc = func.current_pc();
+    if let Some(j) = end_jump {
+        func.patch_jump(j, exit_pc);
+    }
+
+    // Finalize HINT_LOOP_BEGIN with exit_pc
+    func.finalize_loop_hint(begin_pc, exit_pc);
+    
+    // Patch break jumps to after loop
+    for pc in exit_info.break_patches {
+        func.patch_jump(pc, exit_pc);
+    }
+    
+    // Patch continue jumps to post_pc
+    for pc in exit_info.continue_patches {
+        func.patch_jump(pc, post_pc);
+    }
+    
+    func.exit_scope();
+    Ok(())
+}
