@@ -616,18 +616,6 @@ fn resolve_elem_bytes<'a>(e: &impl IrEmitter<'a>, flags: u8, eb_reg: u16) -> (us
     }
 }
 
-/// Resolve elem_bytes for SliceAppend/ArrayNew etc.
-/// Returns elem_slots (not elem_bytes).
-fn resolve_elem_slots<'a>(e: &impl IrEmitter<'a>, flags: u8, eb_reg: u16) -> usize {
-    let elem_bytes = match flags {
-        0 => e.get_reg_const(eb_reg).unwrap() as usize,
-        0x81 | 0x82 => 1,
-        0x84 | 0x44 => 1,
-        f => f as usize,
-    };
-    if flags == 0 { (elem_bytes + 7) / 8 } else { elem_bytes }
-}
-
 fn emit_elem_slots_i32<'a>(e: &mut impl IrEmitter<'a>, flags: u8, eb_reg: u16) -> Value {
     if flags == 0 {
         let eb_raw = e.read_var(eb_reg);
@@ -865,12 +853,24 @@ fn slice_append<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let gc_ptr = e.gc_ptr();
     let s = e.read_var(inst.b);
     
-    // flags==0: elem at c+2 (c+1 is elem_bytes); flags!=0: elem at c+1
-    let elem_slots = resolve_elem_slots(e, inst.flags, inst.c + 1);
-    let elem_ptr = e.read_var(inst.c + if inst.flags == 0 { 2 } else { 1 });
-    let elem_slots_val = e.builder().ins().iconst(types::I32, elem_slots as i64);
+    // Instruction format:
+    // - c = elem_meta slot
+    // - flags==0: c+1 = elem_bytes, c+2.. = elem value
+    // - flags!=0: c+1.. = elem value (elem_bytes derived from flags)
     
-    let call = e.builder().ins().call(slice_append_func, &[gc_ptr, s, elem_ptr, elem_slots_val]);
+    // elem_meta from slot c (as i32)
+    let elem_meta_raw = e.read_var(inst.c);
+    let elem_meta = e.builder().ins().ireduce(types::I32, elem_meta_raw);
+    
+    // elem_bytes (as i32)
+    let elem_bytes = emit_elem_bytes_i32(e, inst.flags, inst.c + 1);
+    
+    // val_ptr: pointer to element value in stack
+    let elem_slot = inst.c + if inst.flags == 0 { 2 } else { 1 };
+    let val_ptr = e.var_addr(elem_slot);
+    
+    // vo_slice_append(gc, elem_meta: u32, elem_bytes: u32, s: u64, val_ptr: *const u64) -> u64
+    let call = e.builder().ins().call(slice_append_func, &[gc_ptr, elem_meta, elem_bytes, s, val_ptr]);
     let result = e.builder().inst_results(call)[0];
     e.write_var(inst.a, result);
 }

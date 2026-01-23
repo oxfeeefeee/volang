@@ -1,0 +1,156 @@
+// Test: Variable shadowing in nested scopes
+package main
+
+import "fmt"
+
+// Test 1: Basic shadowing with :=
+func testBasicShadow() {
+	x := 10
+	{
+		x := 20
+		assert(x == 20, "test1: inner x")
+	}
+	assert(x == 10, "test1: outer x unchanged")
+	
+	fmt.Println("Test 1: PASSED - basic shadow")
+}
+
+// Test 2: Shadowing in if statement
+func testIfShadow() {
+	x := 100
+	if x := 200; x > 0 {
+		assert(x == 200, "test2: if init shadow")
+	}
+	assert(x == 100, "test2: outer x unchanged")
+	
+	fmt.Println("Test 2: PASSED - if shadow")
+}
+
+// Test 3: Shadowing in for loop
+func testForShadow() {
+	i := 999
+	for i := 0; i < 3; i++ {
+		assert(i < 3, "test3: loop i")
+	}
+	assert(i == 999, "test3: outer i unchanged")
+	
+	fmt.Println("Test 3: PASSED - for shadow")
+}
+
+// Test 4: Shadowing in switch
+func testSwitchShadow() {
+	x := "outer"
+	switch x := 42; x {
+	case 42:
+		assert(x == 42, "test4: switch init shadow")
+	default:
+		// Should not reach here
+	}
+	assert(x == "outer", "test4: outer x unchanged")
+	
+	fmt.Println("Test 4: PASSED - switch shadow")
+}
+
+// Test 5: Multi-level shadowing
+func testMultiLevelShadow() {
+	x := 1
+	{
+		x := 2
+		{
+			x := 3
+			assert(x == 3, "test5: level 3")
+		}
+		assert(x == 2, "test5: level 2")
+	}
+	assert(x == 1, "test5: level 1")
+	
+	fmt.Println("Test 5: PASSED - multi level shadow")
+}
+
+// Test 6: Shadowing with different types
+func testTypeShadow() {
+	x := 42
+	{
+		x := "hello"
+		assert(x == "hello", "test6: string x")
+	}
+	assert(x == 42, "test6: int x unchanged")
+	
+	fmt.Println("Test 6: PASSED - type shadow")
+}
+
+// Test 7: Shadowing in closure
+func testClosureShadow() {
+	x := 10
+	f := func() int {
+		x := 20
+		return x
+	}
+	assert(f() == 20, "test7: closure returns inner")
+	assert(x == 10, "test7: outer x unchanged")
+	
+	fmt.Println("Test 7: PASSED - closure shadow")
+}
+
+// Test 8: Partial shadowing in multi-assign
+func testPartialShadow() {
+	x := 1
+	y := 2
+	{
+		// x is new, y refers to outer
+		x, y := 10, 20
+		assert(x == 10, "test8: inner x")
+		assert(y == 20, "test8: inner y")
+	}
+	assert(x == 1, "test8: outer x unchanged")
+	assert(y == 2, "test8: outer y unchanged")
+	
+	fmt.Println("Test 8: PASSED - partial shadow")
+}
+
+// Test 9: Shadowing in for-range
+func testForRangeShadow() {
+	i := 999
+	v := 888
+	s := []int{10, 20, 30}
+	for i, v := range s {
+		_ = i
+		_ = v
+	}
+	assert(i == 999, "test9: i unchanged")
+	assert(v == 888, "test9: v unchanged")
+	
+	fmt.Println("Test 9: PASSED - for range shadow")
+}
+
+// Test 10: Shadowing function parameter
+func testParamShadow() {
+	f := func(x int) int {
+		// Shadow in a new block
+		result := 0
+		{
+			x := x + 100
+			result = x
+		}
+		return result
+	}
+	result := f(5)
+	assert(result == 105, "test10: param shadow")
+	
+	fmt.Println("Test 10: PASSED - param shadow")
+}
+
+func main() {
+	testBasicShadow()
+	testIfShadow()
+	testForShadow()
+	testSwitchShadow()
+	testMultiLevelShadow()
+	testTypeShadow()
+	testClosureShadow()
+	testPartialShadow()
+	testForRangeShadow()
+	testParamShadow()
+	
+	fmt.Println("var_shadow_scope: ALL PASSED")
+}
