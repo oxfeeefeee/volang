@@ -1803,8 +1803,9 @@ fn compile_defer_impl(
     }
     
     // Closure call (local variable or generic expression)
+    // Use compile_defer_args_with_types to properly handle interface conversion
     let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
-    let (args_start, total_arg_slots) = compile_defer_args_simple(call_expr, ctx, func, info)?;
+    let (args_start, total_arg_slots) = compile_defer_args_with_types(call_expr, ctx, func, info)?;
     emit_defer_closure(opcode, closure_reg, args_start, total_arg_slots, func);
     Ok(())
 }
@@ -1823,15 +1824,6 @@ fn compile_defer_args_with_types(
     crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start, ctx, func, info)?;
     
     Ok((args_start, total_arg_slots))
-}
-
-fn compile_defer_args_simple(
-    call_expr: &vo_syntax::ast::CallExpr,
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfoWrapper,
-) -> Result<(u16, u16), CodegenError> {
-    crate::expr::call::compile_args_simple(&call_expr.args, ctx, func, info)
 }
 
 #[inline]

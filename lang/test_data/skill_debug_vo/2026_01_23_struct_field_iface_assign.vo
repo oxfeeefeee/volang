@@ -1,0 +1,204 @@
+// Test: Struct field assignment with interface types
+package main
+
+import "fmt"
+
+type Reader interface {
+	Read() string
+}
+
+type Writer interface {
+	Write(s string)
+}
+
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+type MyReader struct {
+	data string
+}
+
+func (r *MyReader) Read() string {
+	return r.data
+}
+
+type MyWriter struct {
+	buf string
+}
+
+func (w *MyWriter) Write(s string) {
+	w.buf = s
+}
+
+type MyReadWriter struct {
+	data string
+	buf  string
+}
+
+func (rw *MyReadWriter) Read() string {
+	return rw.data
+}
+
+func (rw *MyReadWriter) Write(s string) {
+	rw.buf = s
+}
+
+// Struct with interface fields
+type Container struct {
+	R  Reader
+	W  Writer
+	RW ReadWriter
+	A  any
+}
+
+// Test 1: Assign concrete to interface field
+func test1() {
+	c := Container{}
+	c.R = &MyReader{data: "test1"}
+	assert(c.R != nil, "test1: R nil")
+	assert(c.R.Read() == "test1", "test1: R wrong")
+	fmt.Println("Test 1: PASSED")
+}
+
+// Test 2: Assign interface to wider interface field
+func test2() {
+	c := Container{}
+	var r Reader = &MyReader{data: "test2"}
+	c.A = r // Reader -> any
+	assert(c.A != nil, "test2: A nil")
+	fmt.Println("Test 2: PASSED")
+}
+
+// Test 3: Composite literal with interface fields
+func test3() {
+	c := Container{
+		R: &MyReader{data: "test3r"},
+		W: &MyWriter{},
+		A: 42,
+	}
+	assert(c.R.Read() == "test3r", "test3: R wrong")
+	assert(c.A.(int) == 42, "test3: A wrong")
+	fmt.Println("Test 3: PASSED")
+}
+
+// Test 4: Nested struct with interface
+type Outer struct {
+	Inner Container
+}
+
+func test4() {
+	o := Outer{}
+	o.Inner.R = &MyReader{data: "test4"}
+	assert(o.Inner.R.Read() == "test4", "test4: nested wrong")
+	fmt.Println("Test 4: PASSED")
+}
+
+// Test 5: Array of structs with interface fields
+func test5() {
+	arr := [2]Container{}
+	arr[0].R = &MyReader{data: "arr0"}
+	arr[1].R = &MyReader{data: "arr1"}
+	assert(arr[0].R.Read() == "arr0", "test5: arr[0] wrong")
+	assert(arr[1].R.Read() == "arr1", "test5: arr[1] wrong")
+	fmt.Println("Test 5: PASSED")
+}
+
+// Test 6: Slice of structs with interface fields
+func test6() {
+	slice := make([]Container, 2)
+	slice[0].R = &MyReader{data: "slice0"}
+	slice[1].A = "hello"
+	assert(slice[0].R.Read() == "slice0", "test6: slice[0] wrong")
+	assert(slice[1].A.(string) == "hello", "test6: slice[1] wrong")
+	fmt.Println("Test 6: PASSED")
+}
+
+// Test 7: Map value with interface fields
+func test7() {
+	m := make(map[string]Container)
+	m["key"] = Container{R: &MyReader{data: "map"}}
+	c := m["key"]
+	assert(c.R.Read() == "map", "test7: map wrong")
+	fmt.Println("Test 7: PASSED")
+}
+
+// Test 8: Pointer to struct with interface field
+func test8() {
+	c := &Container{}
+	c.R = &MyReader{data: "ptr"}
+	assert(c.R.Read() == "ptr", "test8: ptr wrong")
+	fmt.Println("Test 8: PASSED")
+}
+
+// Test 9: Return struct with interface field
+func makeContainer() Container {
+	return Container{
+		R: &MyReader{data: "returned"},
+		A: 100,
+	}
+}
+
+func test9() {
+	c := makeContainer()
+	assert(c.R.Read() == "returned", "test9: R wrong")
+	assert(c.A.(int) == 100, "test9: A wrong")
+	fmt.Println("Test 9: PASSED")
+}
+
+// Test 10: Interface field reassignment
+func test10() {
+	c := Container{R: &MyReader{data: "first"}}
+	assert(c.R.Read() == "first", "test10: first wrong")
+	c.R = &MyReader{data: "second"}
+	assert(c.R.Read() == "second", "test10: second wrong")
+	c.R = nil
+	assert(c.R == nil, "test10: nil wrong")
+	fmt.Println("Test 10: PASSED")
+}
+
+// Test 11: ReadWriter -> Reader (narrowing)
+func test11() {
+	c := Container{}
+	rw := &MyReadWriter{data: "rw"}
+	c.RW = rw
+	c.R = rw // ReadWriter also implements Reader
+	assert(c.RW.Read() == "rw", "test11: RW wrong")
+	assert(c.R.Read() == "rw", "test11: R wrong")
+	fmt.Println("Test 11: PASSED")
+}
+
+// Test 12: Interface field in loop
+func test12() {
+	containers := make([]Container, 3)
+	for i := 0; i < 3; i++ {
+		containers[i].A = i
+	}
+	for i, c := range containers {
+		assert(c.A.(int) == i, "test12: loop wrong")
+	}
+	fmt.Println("Test 12: PASSED")
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	fmt.Println("=== ALL TESTS PASSED ===")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}

@@ -339,17 +339,23 @@ fn compile_method_call(
     let method_name = info.project.interner.resolve(sel.sel.symbol)
         .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
     
-    // Check if this is a func field call (e.g., h.logic(args) where logic is a func field)
+    // Check if this is a func field call or method expression call
     let selection = info.get_selection(call.func.id);
     if let Some(sel_info) = selection {
-        if *sel_info.kind() == vo_analysis::selection::SelectionKind::FieldVal {
-            // This is a field access, not a method call
-            // Check if the field type is a function
-            let field_type = info.expr_type(call.func.id);
-            if info.is_func_type(field_type) {
-                // Compile as: get field value (closure), then call it
-                let closure_reg = compile_expr(&call.func, ctx, func, info)?;
-                return compile_closure_call_from_reg(expr, call, closure_reg, dst, ctx, func, info);
+        match sel_info.kind() {
+            vo_analysis::selection::SelectionKind::FieldVal |
+            vo_analysis::selection::SelectionKind::MethodExpr => {
+                // FieldVal: struct field of function type
+                // MethodExpr: T.Method(recv, args...) or (*T).Method(recv, args...)
+                // Both compile to closure call
+                let field_type = info.expr_type(call.func.id);
+                if info.is_func_type(field_type) {
+                    let closure_reg = compile_expr(&call.func, ctx, func, info)?;
+                    return compile_closure_call_from_reg(expr, call, closure_reg, dst, ctx, func, info);
+                }
+            }
+            vo_analysis::selection::SelectionKind::MethodVal => {
+                // Method value is handled below via resolve_method_call
             }
         }
     }

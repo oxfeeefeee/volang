@@ -1,0 +1,70 @@
+// Test: Defer with closure variable + interface argument
+// Bug: defer closureVar(42) where closureVar takes 'any' would pass nil instead of 42
+// because compile_defer_impl used compile_defer_args_simple instead of
+// compile_defer_args_with_types for closure calls.
+package main
+
+import "fmt"
+
+func main() {
+	// Test 1: Defer closure variable with any argument
+	var called1 bool
+	takeAny := func(a any) {
+		called1 = true
+		assert(a.(int) == 42, "test1: any arg should be 42")
+	}
+	func() {
+		defer takeAny(42)
+	}()
+	assert(called1, "test1: should have been called")
+	fmt.Println("Test 1: PASSED")
+
+	// Test 2: Defer closure with multiple any arguments
+	var result2 []any
+	takeMulti := func(a, b any) {
+		result2 = append(result2, a, b)
+	}
+	func() {
+		defer takeMulti("hello", 123)
+	}()
+	assert(len(result2) == 2, "test2: should have 2 elements")
+	assert(result2[0].(string) == "hello", "test2: first arg wrong")
+	assert(result2[1].(int) == 123, "test2: second arg wrong")
+	fmt.Println("Test 2: PASSED")
+
+	// Test 3: Defer closure with struct value boxed to any
+	type Data struct {
+		val int
+	}
+	var result3 any
+	takeStruct := func(d any) {
+		result3 = d
+	}
+	func() {
+		defer takeStruct(Data{val: 99})
+	}()
+	assert(result3.(Data).val == 99, "test3: struct value wrong")
+	fmt.Println("Test 3: PASSED")
+
+	// Test 4: Mixed - some args need conversion, some don't
+	var intVal int
+	var anyVal any
+	takeMixed := func(n int, a any) {
+		intVal = n
+		anyVal = a
+	}
+	func() {
+		defer takeMixed(10, "test")
+	}()
+	assert(intVal == 10, "test4: int arg wrong")
+	assert(anyVal.(string) == "test", "test4: any arg wrong")
+	fmt.Println("Test 4: PASSED")
+
+	fmt.Println("bug_defer_closure_iface_arg: ok")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}
