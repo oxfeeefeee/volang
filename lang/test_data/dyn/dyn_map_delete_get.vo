@@ -1,6 +1,6 @@
 // Test dynamic access interaction with map delete
 // Access deleted keys, delete via dynamic, etc.
-// Note: Dynamic map access returns zero value for missing keys (Go semantics)
+// Note: Dynamic map access returns error for missing keys
 package main
 
 
@@ -18,11 +18,10 @@ func main() {
     assert(a.(int) == 1, "a should be 1")
     
     // Test 2: Delete key statically, then access dynamically
-    // Dynamic map access returns zero value for missing keys (no error)
+    // Dynamic map access returns error for missing keys
     delete(m, "a")
-    aDeleted, err := obj~>["a"]
-    assert(err == nil, "map access should not error for missing key")
-    assert(aDeleted.(int) == 0, "deleted key should return zero value")
+    _, err := obj~>["a"]
+    assert(err != nil, "map access should error for missing key")
     
     // Test 3: Access remaining keys
     b := obj~>["b"]?
@@ -30,9 +29,8 @@ func main() {
     
     // Test 4: Delete another key and verify
     delete(m, "b")
-    bDeleted, err2 := obj~>["b"]
-    assert(err2 == nil, "map access should not error")
-    assert(bDeleted.(int) == 0, "deleted b should return zero value")
+    _, err2 := obj~>["b"]
+    assert(err2 != nil, "map access should error for deleted key")
     
     c := obj~>["c"]?
     assert(c.(int) == 3, "c should still be 3")
@@ -54,10 +52,8 @@ func main() {
     assert(x.(int) == 10, "x should be 10")
     
     delete(m2, "x")
-    xDeleted, err4 := obj2~>["x"]
-    assert(err4 == nil, "map access should not error")
-    // For map[any]any, deleted key returns nil (zero value for any)
-    assert(xDeleted == nil, "deleted x should return nil")
+    _, err4 := obj2~>["x"]
+    assert(err4 != nil, "map access should error for deleted key")
     
     fmt.Println("dyn_map_delete_get: ok")
 }

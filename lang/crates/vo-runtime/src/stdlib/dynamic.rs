@@ -554,12 +554,10 @@ fn dyn_get_index(call: &mut ExternCallContext) -> ExternResult {
                 crate::objects::map::get(base_ref, &key_data, Some(call.module()))
             };
             
-            // Get raw slots from map value (or zeros if not found - Go semantics)
-            let raw_slots: Vec<u64> = if let Some(val_slice) = found {
-                val_slice.to_vec()
-            } else {
-                let val_slots = call.get_type_slot_count(val_value_rttid.rttid()) as usize;
-                vec![0u64; val_slots]
+            // Dynamic access: missing key returns error
+            let raw_slots: Vec<u64> = match found {
+                Some(val_slice) => val_slice.to_vec(),
+                None => return dyn_error(call, call.dyn_err().bad_index, "map key not found"),
             };
             
             // Box to interface format

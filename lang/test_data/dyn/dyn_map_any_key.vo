@@ -62,10 +62,9 @@ func main() {
     assert(err == nil, "chained y error")
     assert(y.(int) == 20, "chained y mismatch")
 
-    // Test 5: Non-existent key returns zero value (Go semantics)
-    v6, err := a~>["nonexistent"]
-    assert(err == nil, "nonexistent key should not return error")
-    assert(v6 == nil, "nonexistent key should return nil (zero value for any)")
+    // Test 5: Non-existent key returns error
+    _, err = a~>["nonexistent"]
+    assert(err != nil, "nonexistent key should return error")
 
     // Test 6: map[any]any with struct value
     m["struct"] = struct{ Val int }{Val: 42}

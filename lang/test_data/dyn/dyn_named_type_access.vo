@@ -90,11 +90,10 @@ func main() {
     assert(err != nil, "index 10 should error")
     fmt.Println("Test 8: s[10] error (expected)")
     
-    // Test 9: Named map - missing key returns zero
-    missing, err := mapObj~>["missing"]
-    assert(err == nil, "missing key should not error")
-    assert(missing.(int) == 0, "missing key should return zero")
-    fmt.Println("Test 9: m[missing] =", missing.(int))
+    // Test 9: Named map - missing key returns error
+    _, err = mapObj~>["missing"]
+    assert(err != nil, "missing key should error")
+    fmt.Println("Test 9: m[missing] correctly returned error")
     
     // Test 10: Named slice - modify via slice (slices are reference types)
     sp := IntSlice{1, 2, 3}

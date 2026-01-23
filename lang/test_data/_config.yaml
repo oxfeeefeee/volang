@@ -793,8 +793,6 @@ tests:
   - file: skill_debug_vo/2026_01_23_2008_method_expr_embed_deep.vo
   - file: skill_debug_vo/2026_01_23_2015_iface_embed_complex.vo
   - file: skill_debug_vo/2026_01_23_2016_error_question_errdefer.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2049_errdefer_named_ret_modify.vo
     skip: [vm, jit]
     reason: "pending bug fix"
