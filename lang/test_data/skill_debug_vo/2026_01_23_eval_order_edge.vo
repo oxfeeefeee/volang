@@ -1,0 +1,217 @@
+// Test: Expression evaluation order edge cases
+package main
+
+import "fmt"
+
+var trace []string
+
+func record(s string) string {
+	trace = append(trace, s)
+	return s
+}
+
+func recordInt(s string, v int) int {
+	trace = append(trace, s)
+	return v
+}
+
+// Test 1: Function call argument evaluation order (left to right)
+func threeArgs(a, b, c string) string {
+	return a + b + c
+}
+
+func testFuncArgOrder() {
+	trace = nil
+	result := threeArgs(record("a"), record("b"), record("c"))
+	
+	assert(len(trace) == 3, "test1: three calls")
+	assert(trace[0] == "a" && trace[1] == "b" && trace[2] == "c", "test1: left to right")
+	assert(result == "abc", "test1: result")
+	
+	fmt.Println("Test 1: PASSED - func arg order")
+}
+
+// Test 2: Binary operator evaluation order (left to right)
+func testBinaryOpOrder() {
+	trace = nil
+	result := recordInt("a", 1) + recordInt("b", 2) + recordInt("c", 3)
+	
+	assert(len(trace) == 3, "test2: three calls")
+	assert(trace[0] == "a" && trace[1] == "b" && trace[2] == "c", "test2: left to right")
+	assert(result == 6, "test2: result")
+	
+	fmt.Println("Test 2: PASSED - binary op order")
+}
+
+// Test 3: Index expression evaluation order
+func getSlice(name string) []int {
+	trace = append(trace, name)
+	return []int{1, 2, 3}
+}
+
+func getIndex(name string, i int) int {
+	trace = append(trace, name)
+	return i
+}
+
+func testIndexExprOrder() {
+	trace = nil
+	result := getSlice("slice")[getIndex("index", 1)]
+	
+	assert(len(trace) == 2, "test3: two calls")
+	assert(trace[0] == "slice" && trace[1] == "index", "test3: slice before index")
+	assert(result == 2, "test3: result")
+	
+	fmt.Println("Test 3: PASSED - index expr order")
+}
+
+// Test 4: Multi-value assignment evaluation order
+func testMultiAssignOrder() {
+	trace = nil
+	a, b, c := recordInt("a", 1), recordInt("b", 2), recordInt("c", 3)
+	
+	assert(len(trace) == 3, "test4: three calls")
+	assert(trace[0] == "a" && trace[1] == "b" && trace[2] == "c", "test4: left to right")
+	assert(a == 1 && b == 2 && c == 3, "test4: values")
+	
+	fmt.Println("Test 4: PASSED - multi assign order")
+}
+
+// Test 5: Compound assignment with side effect
+func testCompoundAssignSideEffect() {
+	arr := []int{10, 20, 30}
+	idx := 0
+	
+	getIdx := func() int {
+		result := idx
+		idx++
+		return result
+	}
+	
+	arr[getIdx()] += 5
+	
+	assert(arr[0] == 15, "test5: first element modified")
+	assert(idx == 1, "test5: index incremented once")
+	
+	fmt.Println("Test 5: PASSED - compound assign side effect")
+}
+
+// Test 6: Map access with side effect in key
+func testMapKeySideEffect() {
+	m := map[int]int{1: 10, 2: 20}
+	counter := 0
+	
+	getKey := func() int {
+		counter++
+		return counter
+	}
+	
+	v1 := m[getKey()]
+	v2 := m[getKey()]
+	
+	assert(v1 == 10, "test6: first access")
+	assert(v2 == 20, "test6: second access")
+	assert(counter == 2, "test6: called twice")
+	
+	fmt.Println("Test 6: PASSED - map key side effect")
+}
+
+// Test 7: Short-circuit with side effects
+func testShortCircuitSideEffect() {
+	trace = nil
+	
+	trueFn := func() bool { trace = append(trace, "true"); return true }
+	falseFn := func() bool { trace = append(trace, "false"); return false }
+	
+	// AND short-circuit
+	trace = nil
+	_ = falseFn() && trueFn()
+	assert(len(trace) == 1, "test7: AND short-circuit")
+	assert(trace[0] == "false", "test7: only first called")
+	
+	// OR short-circuit
+	trace = nil
+	_ = trueFn() || falseFn()
+	assert(len(trace) == 1, "test7: OR short-circuit")
+	assert(trace[0] == "true", "test7: only first called")
+	
+	fmt.Println("Test 7: PASSED - short-circuit side effect")
+}
+
+// Test 8: Defer argument evaluation
+func testDeferArgEval() {
+	trace = nil
+	
+	func() {
+		defer func(s string) {
+			trace = append(trace, "defer:"+s)
+		}(record("arg"))
+		
+		trace = append(trace, "body")
+	}()
+	
+	assert(len(trace) == 3, "test8: three entries")
+	assert(trace[0] == "arg", "test8: arg evaluated first")
+	assert(trace[1] == "body", "test8: body second")
+	assert(trace[2] == "defer:arg", "test8: defer executes last")
+	
+	fmt.Println("Test 8: PASSED - defer arg eval")
+}
+
+// Test 9: Slice expression evaluation order
+func testSliceExprOrder() {
+	trace = nil
+	
+	s := []int{0, 1, 2, 3, 4, 5}
+	
+	getLow := func() int { trace = append(trace, "low"); return 1 }
+	getHigh := func() int { trace = append(trace, "high"); return 4 }
+	
+	result := s[getLow():getHigh()]
+	
+	assert(len(trace) == 2, "test9: two calls")
+	assert(trace[0] == "low" && trace[1] == "high", "test9: low before high")
+	assert(len(result) == 3, "test9: slice len")
+	
+	fmt.Println("Test 9: PASSED - slice expr order")
+}
+
+// Test 10: Method receiver evaluation before args
+type Obj struct {
+	name string
+}
+
+func (o *Obj) Call(s string) string {
+	return o.name + ":" + s
+}
+
+func getObj() *Obj {
+	trace = append(trace, "obj")
+	return &Obj{name: "test"}
+}
+
+func testMethodReceiverOrder() {
+	trace = nil
+	result := getObj().Call(record("arg"))
+	
+	assert(len(trace) == 2, "test10: two calls")
+	assert(trace[0] == "obj" && trace[1] == "arg", "test10: receiver before arg")
+	assert(result == "test:arg", "test10: result")
+	
+	fmt.Println("Test 10: PASSED - method receiver order")
+}
+
+func main() {
+	testFuncArgOrder()
+	testBinaryOpOrder()
+	testIndexExprOrder()
+	testMultiAssignOrder()
+	testCompoundAssignSideEffect()
+	testMapKeySideEffect()
+	testShortCircuitSideEffect()
+	testDeferArgEval()
+	testSliceExprOrder()
+	testMethodReceiverOrder()
+	
+	fmt.Println("eval_order_edge: ALL PASSED")
+}

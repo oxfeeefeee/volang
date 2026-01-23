@@ -1,0 +1,199 @@
+// Test: close builtin edge cases
+package main
+
+import "fmt"
+
+// Test 1: Close buffered channel
+func testCloseBuffered() {
+	ch := make(chan int, 3)
+	ch <- 1
+	ch <- 2
+	close(ch)
+	
+	// Can still receive buffered values
+	v1 := <-ch
+	v2 := <-ch
+	assert(v1 == 1 && v2 == 2, "test1: buffered values")
+	
+	// Receive from closed empty channel returns zero value
+	v3, ok := <-ch
+	assert(v3 == 0 && !ok, "test1: closed channel recv")
+	
+	fmt.Println("Test 1: PASSED - close buffered")
+}
+
+// Test 2: Close unbuffered channel
+func testCloseUnbuffered() {
+	ch := make(chan int)
+	close(ch)
+	
+	v, ok := <-ch
+	assert(v == 0 && !ok, "test2: closed unbuffered")
+	
+	fmt.Println("Test 2: PASSED - close unbuffered")
+}
+
+// Test 3: Multiple receives from closed channel
+func testMultipleRecvClosed() {
+	ch := make(chan string, 1)
+	ch <- "hello"
+	close(ch)
+	
+	v1, ok1 := <-ch
+	assert(v1 == "hello" && ok1, "test3: first recv")
+	
+	v2, ok2 := <-ch
+	v3, ok3 := <-ch
+	v4, ok4 := <-ch
+	
+	assert(v2 == "" && !ok2, "test3: second recv")
+	assert(v3 == "" && !ok3, "test3: third recv")
+	assert(v4 == "" && !ok4, "test3: fourth recv")
+	
+	fmt.Println("Test 3: PASSED - multiple recv closed")
+}
+
+// Test 4: Range over closed channel
+func testRangeClosedChannel() {
+	ch := make(chan int, 3)
+	ch <- 1
+	ch <- 2
+	ch <- 3
+	close(ch)
+	
+	sum := 0
+	count := 0
+	for v := range ch {
+		sum += v
+		count++
+	}
+	
+	assert(count == 3, "test4: range count")
+	assert(sum == 6, "test4: range sum")
+	
+	fmt.Println("Test 4: PASSED - range closed channel")
+}
+
+// Test 5: Select on closed channel
+func testSelectClosed() {
+	ch := make(chan int)
+	close(ch)
+	
+	received := false
+	select {
+	case v, ok := <-ch:
+		received = true
+		assert(v == 0 && !ok, "test5: select recv closed")
+	default:
+		received = false // Should not reach here
+	}
+	
+	assert(received, "test5: should receive from closed channel")
+	
+	fmt.Println("Test 5: PASSED - select closed")
+}
+
+// Test 6: Check if channel is closed using comma-ok
+func testCommaOkIdiom() {
+	ch := make(chan int, 1)
+	ch <- 42
+	
+	v1, ok1 := <-ch
+	assert(v1 == 42 && ok1, "test6: before close")
+	
+	close(ch)
+	
+	v2, ok2 := <-ch
+	assert(v2 == 0 && !ok2, "test6: after close")
+	
+	fmt.Println("Test 6: PASSED - comma-ok idiom")
+}
+
+// Test 7: Close channel with struct type
+type Signal struct {
+	code int
+	msg  string
+}
+
+func testCloseStructChannel() {
+	ch := make(chan Signal, 1)
+	ch <- Signal{code: 200, msg: "ok"}
+	close(ch)
+	
+	v1, ok1 := <-ch
+	assert(v1.code == 200 && v1.msg == "ok" && ok1, "test7: buffered struct")
+	
+	v2, ok2 := <-ch
+	assert(v2.code == 0 && v2.msg == "" && !ok2, "test7: zero struct")
+	
+	fmt.Println("Test 7: PASSED - close struct channel")
+}
+
+// Test 8: Close channel with interface type
+func testCloseInterfaceChannel() {
+	ch := make(chan any, 1)
+	ch <- 42
+	close(ch)
+	
+	v1, ok1 := <-ch
+	assert(v1.(int) == 42 && ok1, "test8: buffered interface")
+	
+	v2, ok2 := <-ch
+	assert(v2 == nil && !ok2, "test8: nil interface")
+	
+	fmt.Println("Test 8: PASSED - close interface channel")
+}
+
+// Test 9: Directional channel close (send-only can't close)
+func testDirectionalChannelClose() {
+	ch := make(chan int, 1)
+	
+	// Function that receives a receive-only channel
+	recvOnly := func(c <-chan int) int {
+		return <-c
+	}
+	
+	ch <- 42
+	close(ch)
+	
+	v := recvOnly(ch)
+	assert(v == 42, "test9: directional recv")
+	
+	fmt.Println("Test 9: PASSED - directional channel close")
+}
+
+// Test 10: Len of closed channel
+func testLenClosedChannel() {
+	ch := make(chan int, 5)
+	ch <- 1
+	ch <- 2
+	ch <- 3
+	
+	assert(len(ch) == 3, "test10: before close")
+	
+	close(ch)
+	
+	assert(len(ch) == 3, "test10: after close (still has data)")
+	
+	<-ch
+	<-ch
+	
+	assert(len(ch) == 1, "test10: after partial drain")
+	
+	fmt.Println("Test 10: PASSED - len closed channel")
+}
+
+func main() {
+	testCloseBuffered()
+	testCloseUnbuffered()
+	testMultipleRecvClosed()
+	testRangeClosedChannel()
+	testSelectClosed()
+	testCommaOkIdiom()
+	testCloseStructChannel()
+	testCloseInterfaceChannel()
+	testDirectionalChannelClose()
+	testLenClosedChannel()
+	
+	fmt.Println("close_builtin_edge: ALL PASSED")
+}

@@ -1,0 +1,176 @@
+// Test: Nil pointer dereference panic behavior
+package main
+
+import "fmt"
+
+type Data struct {
+	value int
+}
+
+// Test 1: Nil pointer field access should panic
+func testNilPointerFieldPanic() {
+	recovered := false
+	
+	func() {
+		defer func() {
+			if recover() != nil {
+				recovered = true
+			}
+		}()
+		var p *Data = nil
+		_ = p.value // Should panic
+	}()
+	
+	assert(recovered, "test1: nil deref panicked")
+	fmt.Println("Test 1: PASSED - nil pointer field panic")
+}
+
+// Test 2: Nil pointer method call with nil receiver (should NOT panic if method handles it)
+type NilSafe struct {
+	name string
+}
+
+func (n *NilSafe) GetName() string {
+	if n == nil {
+		return "<nil>"
+	}
+	return n.name
+}
+
+func testNilReceiverMethodCall() {
+	var n *NilSafe = nil
+	result := n.GetName() // Should work because method handles nil
+	assert(result == "<nil>", "test2: nil receiver method")
+	fmt.Println("Test 2: PASSED - nil receiver method")
+}
+
+// Test 3: Chain of nil pointer access
+type Outer struct {
+	inner *Inner
+}
+
+type Inner struct {
+	value int
+}
+
+func testChainedNilPanic() {
+	recovered := false
+	
+	func() {
+		defer func() {
+			if recover() != nil {
+				recovered = true
+			}
+		}()
+		o := &Outer{inner: nil}
+		_ = o.inner.value // Should panic
+	}()
+	
+	assert(recovered, "test3: chained nil panicked")
+	fmt.Println("Test 3: PASSED - chained nil panic")
+}
+
+// Test 4: Nil map access (should NOT panic, returns zero value)
+func testNilMapAccess() {
+	var m map[string]int
+	
+	// Read from nil map returns zero value
+	v := m["key"]
+	assert(v == 0, "test4: nil map read")
+	
+	// Comma-ok on nil map
+	v2, ok := m["key"]
+	assert(v2 == 0 && !ok, "test4: nil map comma-ok")
+	
+	fmt.Println("Test 4: PASSED - nil map access")
+}
+
+// Test 5: Nil map write should panic
+func testNilMapWritePanic() {
+	recovered := false
+	
+	func() {
+		defer func() {
+			if recover() != nil {
+				recovered = true
+			}
+		}()
+		var m map[string]int
+		m["key"] = 1 // Should panic
+	}()
+	
+	assert(recovered, "test5: nil map write panicked")
+	fmt.Println("Test 5: PASSED - nil map write panic")
+}
+
+// Test 6: Nil slice access should panic
+func testNilSliceAccessPanic() {
+	recovered := false
+	
+	func() {
+		defer func() {
+			if recover() != nil {
+				recovered = true
+			}
+		}()
+		var s []int
+		_ = s[0] // Should panic
+	}()
+	
+	assert(recovered, "test6: nil slice access panicked")
+	fmt.Println("Test 6: PASSED - nil slice access panic")
+}
+
+// Test 7: Nil slice len/cap should NOT panic
+func testNilSliceLenCap() {
+	var s []int
+	assert(len(s) == 0, "test7: nil slice len")
+	assert(cap(s) == 0, "test7: nil slice cap")
+	fmt.Println("Test 7: PASSED - nil slice len/cap")
+}
+
+// Test 8: Nil slice append should NOT panic
+func testNilSliceAppend() {
+	var s []int
+	s = append(s, 1, 2, 3)
+	assert(len(s) == 3, "test8: nil slice append")
+	assert(s[0] == 1 && s[2] == 3, "test8: values")
+	fmt.Println("Test 8: PASSED - nil slice append")
+}
+
+// Test 9: Nil slice range should NOT panic (just no iterations)
+func testNilSliceRange() {
+	var s []int
+	count := 0
+	for range s {
+		count++
+	}
+	assert(count == 0, "test9: nil slice range")
+	fmt.Println("Test 9: PASSED - nil slice range")
+}
+
+// Test 10: Nil channel operations
+func testNilChannelOps() {
+	var ch chan int
+	
+	// len/cap on nil channel
+	assert(len(ch) == 0, "test10: nil chan len")
+	assert(cap(ch) == 0, "test10: nil chan cap")
+	
+	fmt.Println("Test 10: PASSED - nil channel ops")
+}
+
+func main() {
+	testNilPointerFieldPanic()
+	testNilReceiverMethodCall()
+	testChainedNilPanic()
+	testNilMapAccess()
+	testNilMapWritePanic()
+	testNilSliceAccessPanic()
+	testNilSliceLenCap()
+	testNilSliceAppend()
+	testNilSliceRange()
+	testNilChannelOps()
+	
+	fmt.Println("nil_deref_panic: ALL PASSED")
+}

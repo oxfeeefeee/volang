@@ -1,0 +1,184 @@
+// Test: Method receiver edge cases
+package main
+
+import "fmt"
+
+type Counter struct {
+	value int
+}
+
+func (c Counter) Get() int {
+	return c.value
+}
+
+func (c *Counter) Inc() {
+	c.value++
+}
+
+func (c *Counter) Add(n int) {
+	c.value += n
+}
+
+// Test 1: Value receiver doesn't modify original
+func testValueReceiverNoModify() {
+	c := Counter{10}
+	v := c.Get()
+	assert(v == 10, "test1: get value")
+	assert(c.value == 10, "test1: original unchanged")
+	fmt.Println("Test 1: PASSED - value receiver")
+}
+
+// Test 2: Pointer receiver modifies original
+func testPointerReceiverModify() {
+	c := Counter{10}
+	c.Inc()
+	assert(c.value == 11, "test2: incremented")
+	c.Add(5)
+	assert(c.value == 16, "test2: added")
+	fmt.Println("Test 2: PASSED - pointer receiver")
+}
+
+// Test 3: Method value with value receiver
+func testMethodValueValue() {
+	c := Counter{42}
+	f := c.Get
+	v := f()
+	assert(v == 42, "test3: method value")
+	
+	// Modifying c doesn't affect the method value's receiver
+	c.value = 100
+	v2 := f()
+	assert(v2 == 42, "test3: method value captured copy")
+	fmt.Println("Test 3: PASSED - method value (value receiver)")
+}
+
+// Test 4: Method value with pointer receiver
+func testMethodValuePointer() {
+	c := Counter{10}
+	f := c.Inc
+	f()
+	assert(c.value == 11, "test4: method value inc")
+	f()
+	assert(c.value == 12, "test4: method value inc again")
+	fmt.Println("Test 4: PASSED - method value (pointer receiver)")
+}
+
+// Test 5: Pointer method on addressable value
+func testPointerMethodOnValue() {
+	c := Counter{5}
+	// Calling pointer method on value - Go allows this
+	c.Inc()
+	assert(c.value == 6, "test5: pointer method on value")
+	fmt.Println("Test 5: PASSED - pointer method on value")
+}
+
+// Test 6: Interface with value receiver
+type Getter interface {
+	Get() int
+}
+
+func testInterfaceValueReceiver() {
+	c := Counter{99}
+	var g Getter = c
+	v := g.Get()
+	assert(v == 99, "test6: interface value")
+	
+	// Modifying c doesn't affect interface value
+	c.value = 200
+	v2 := g.Get()
+	assert(v2 == 99, "test6: interface holds copy")
+	fmt.Println("Test 6: PASSED - interface value receiver")
+}
+
+// Test 7: Interface with pointer receiver
+type Incrementer interface {
+	Inc()
+}
+
+func testInterfacePointerReceiver() {
+	c := Counter{10}
+	var i Incrementer = &c
+	i.Inc()
+	assert(c.value == 11, "test7: interface pointer")
+	i.Inc()
+	assert(c.value == 12, "test7: interface pointer again")
+	fmt.Println("Test 7: PASSED - interface pointer receiver")
+}
+
+// Test 8: Embedded struct method promotion
+type ExtendedCounter struct {
+	Counter
+	name string
+}
+
+func testEmbeddedMethods() {
+	ec := ExtendedCounter{Counter{5}, "test"}
+	
+	// Promoted methods
+	v := ec.Get()
+	assert(v == 5, "test8: promoted Get")
+	
+	ec.Inc()
+	assert(ec.value == 6, "test8: promoted Inc")
+	
+	ec.Add(10)
+	assert(ec.value == 16, "test8: promoted Add")
+	
+	fmt.Println("Test 8: PASSED - embedded method promotion")
+}
+
+// Test 9: Method expression
+func testMethodExpression() {
+	// Value receiver method expression
+	getFunc := Counter.Get
+	c := Counter{77}
+	v := getFunc(c)
+	assert(v == 77, "test9: method expression value")
+	
+	// Pointer receiver method expression
+	incFunc := (*Counter).Inc
+	c2 := Counter{10}
+	incFunc(&c2)
+	assert(c2.value == 11, "test9: method expression pointer")
+	
+	fmt.Println("Test 9: PASSED - method expression")
+}
+
+// Test 10: Nil receiver handling
+type NilHandler struct {
+	data int
+}
+
+func (n *NilHandler) SafeGet() int {
+	if n == nil {
+		return -1
+	}
+	return n.data
+}
+
+func testNilReceiver() {
+	var n *NilHandler
+	v := n.SafeGet()
+	assert(v == -1, "test10: nil receiver")
+	
+	n = &NilHandler{42}
+	v2 := n.SafeGet()
+	assert(v2 == 42, "test10: non-nil receiver")
+	
+	fmt.Println("Test 10: PASSED - nil receiver")
+}
+
+func main() {
+	testValueReceiverNoModify()
+	testPointerReceiverModify()
+	testMethodValueValue()
+	testMethodValuePointer()
+	testPointerMethodOnValue()
+	testInterfaceValueReceiver()
+	testInterfacePointerReceiver()
+	testEmbeddedMethods()
+	testMethodExpression()
+	testNilReceiver()
+	
+	fmt.Println("method_receiver_edge: ALL PASSED")
+}

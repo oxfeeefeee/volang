@@ -1,0 +1,180 @@
+// Test: For-range edge cases
+package main
+
+import "fmt"
+
+// Test 1: Range over nil slice
+func testRangeNilSlice() {
+	var s []int
+	count := 0
+	for range s {
+		count++
+	}
+	assert(count == 0, "test1: nil slice range")
+	fmt.Println("Test 1: PASSED - range nil slice")
+}
+
+// Test 2: Range with index only
+func testRangeIndexOnly() {
+	s := []int{10, 20, 30}
+	sum := 0
+	for i := range s {
+		sum += i
+	}
+	assert(sum == 3, "test2: index only sum") // 0+1+2
+	fmt.Println("Test 2: PASSED - range index only")
+}
+
+// Test 3: Range with blank index
+func testRangeBlankIndex() {
+	s := []int{10, 20, 30}
+	sum := 0
+	for _, v := range s {
+		sum += v
+	}
+	assert(sum == 60, "test3: blank index sum")
+	fmt.Println("Test 3: PASSED - range blank index")
+}
+
+// Test 4: Range modifying slice during iteration
+func testRangeModifySlice() {
+	s := []int{1, 2, 3, 4, 5}
+	for i := range s {
+		s[i] *= 2
+	}
+	assert(s[0] == 2 && s[4] == 10, "test4: modify during range")
+	fmt.Println("Test 4: PASSED - modify during range")
+}
+
+// Test 5: Range over string
+func testRangeString() {
+	s := "abc"
+	indices := []int{}
+	chars := []rune{}
+	for i, c := range s {
+		indices = append(indices, i)
+		chars = append(chars, c)
+	}
+	assert(len(indices) == 3, "test5: string range count")
+	assert(indices[0] == 0 && indices[1] == 1 && indices[2] == 2, "test5: string indices")
+	assert(chars[0] == 'a' && chars[1] == 'b' && chars[2] == 'c', "test5: string chars")
+	fmt.Println("Test 5: PASSED - range string")
+}
+
+// Test 6: Range over map
+func testRangeMap() {
+	m := map[string]int{
+		"a": 1,
+		"b": 2,
+		"c": 3,
+	}
+	
+	sum := 0
+	keys := []string{}
+	for k, v := range m {
+		keys = append(keys, k)
+		sum += v
+	}
+	
+	assert(len(keys) == 3, "test6: map range count")
+	assert(sum == 6, "test6: map value sum")
+	fmt.Println("Test 6: PASSED - range map")
+}
+
+// Test 7: Range over nil map
+func testRangeNilMap() {
+	var m map[string]int
+	count := 0
+	for range m {
+		count++
+	}
+	assert(count == 0, "test7: nil map range")
+	fmt.Println("Test 7: PASSED - range nil map")
+}
+
+// Test 8: Break and continue in range
+func testRangeBreakContinue() {
+	s := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	
+	// Sum only even numbers until we hit 8
+	sum := 0
+	for _, v := range s {
+		if v == 8 {
+			break
+		}
+		if v%2 != 0 {
+			continue
+		}
+		sum += v
+	}
+	// 2 + 4 + 6 = 12
+	assert(sum == 12, "test8: break/continue sum")
+	fmt.Println("Test 8: PASSED - break/continue in range")
+}
+
+// Test 9: Nested range
+func testNestedRange() {
+	matrix := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+	}
+	
+	sum := 0
+	for _, row := range matrix {
+		for _, v := range row {
+			sum += v
+		}
+	}
+	assert(sum == 45, "test9: nested range sum")
+	fmt.Println("Test 9: PASSED - nested range")
+}
+
+// Test 10: Range over integer
+func testRangeInteger() {
+	sum := 0
+	for i := range 5 {
+		sum += i
+	}
+	// 0+1+2+3+4 = 10
+	assert(sum == 10, "test10: range integer")
+	fmt.Println("Test 10: PASSED - range integer")
+}
+
+// Test 11: Range with label break
+func testRangeLabelBreak() {
+	matrix := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+	}
+	
+	found := false
+outer:
+	for _, row := range matrix {
+		for _, v := range row {
+			if v == 5 {
+				found = true
+				break outer
+			}
+		}
+	}
+	assert(found, "test11: label break found")
+	fmt.Println("Test 11: PASSED - range label break")
+}
+
+func main() {
+	testRangeNilSlice()
+	testRangeIndexOnly()
+	testRangeBlankIndex()
+	testRangeModifySlice()
+	testRangeString()
+	testRangeMap()
+	testRangeNilMap()
+	testRangeBreakContinue()
+	testNestedRange()
+	testRangeInteger()
+	testRangeLabelBreak()
+	
+	fmt.Println("for_range_edge: ALL PASSED")
+}

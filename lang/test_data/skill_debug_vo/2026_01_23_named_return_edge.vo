@@ -1,0 +1,193 @@
+// Test: Named return value edge cases
+package main
+
+import "fmt"
+
+// Test 1: Named return modified in defer
+func testNamedReturnDefer() (result int) {
+	result = 10
+	defer func() {
+		result = 20
+	}()
+	return result
+}
+
+func testCase1() {
+	r := testNamedReturnDefer()
+	assert(r == 20, "test1: defer modified named return")
+	fmt.Println("Test 1: PASSED - named return defer")
+}
+
+// Test 2: Named return with explicit return value
+func testNamedReturnExplicit() (result int) {
+	result = 10
+	return 20
+}
+
+func testCase2() {
+	r := testNamedReturnExplicit()
+	assert(r == 20, "test2: explicit return overrides")
+	fmt.Println("Test 2: PASSED - named return explicit")
+}
+
+// Test 3: Named return with explicit value modified in defer
+func testNamedReturnExplicitDefer() (result int) {
+	result = 10
+	defer func() {
+		result = 30
+	}()
+	return 20 // Sets result to 20, then defer changes it to 30
+}
+
+func testCase3() {
+	r := testNamedReturnExplicitDefer()
+	assert(r == 30, "test3: defer modifies after explicit return")
+	fmt.Println("Test 3: PASSED - named return explicit defer")
+}
+
+// Test 4: Multiple named returns
+func testMultipleNamedReturns() (a, b int) {
+	a = 1
+	b = 2
+	defer func() {
+		a = 10
+		b = 20
+	}()
+	return
+}
+
+func testCase4() {
+	a, b := testMultipleNamedReturns()
+	assert(a == 10, "test4: first named return")
+	assert(b == 20, "test4: second named return")
+	fmt.Println("Test 4: PASSED - multiple named returns")
+}
+
+// Test 5: Named return with bare return
+func testNamedReturnBare() (result int) {
+	result = 42
+	return
+}
+
+func testCase5() {
+	r := testNamedReturnBare()
+	assert(r == 42, "test5: bare return uses named")
+	fmt.Println("Test 5: PASSED - named return bare")
+}
+
+// Test 6: Named return shadowed in inner scope
+func testNamedReturnShadow() (result int) {
+	result = 10
+	{
+		result := 20 // shadows
+		_ = result
+	}
+	return
+}
+
+func testCase6() {
+	r := testNamedReturnShadow()
+	assert(r == 10, "test6: shadow doesn't affect named return")
+	fmt.Println("Test 6: PASSED - named return shadow")
+}
+
+// Test 7: Named return with closure capture
+func testNamedReturnClosure() (result int) {
+	result = 0
+	inc := func() {
+		result++
+	}
+	inc()
+	inc()
+	inc()
+	return
+}
+
+func testCase7() {
+	r := testNamedReturnClosure()
+	assert(r == 3, "test7: closure modifies named return")
+	fmt.Println("Test 7: PASSED - named return closure")
+}
+
+// Test 8: Named return with panic/recover
+func testNamedReturnRecover() (result int) {
+	result = 10
+	defer func() {
+		if r := recover(); r != nil {
+			result = 99
+		}
+	}()
+	panic("test panic")
+	return // unreachable but required
+}
+
+func testCase8() {
+	r := testNamedReturnRecover()
+	assert(r == 99, "test8: recover sets named return")
+	fmt.Println("Test 8: PASSED - named return recover")
+}
+
+// Test 9: Named return with interface type
+func testNamedReturnInterface() (result any) {
+	result = 10
+	defer func() {
+		result = "changed"
+	}()
+	return
+}
+
+func testCase9() {
+	r := testNamedReturnInterface()
+	s, ok := r.(string)
+	assert(ok, "test9: result is string")
+	assert(s == "changed", "test9: value is changed")
+	fmt.Println("Test 9: PASSED - named return interface")
+}
+
+// Test 10: Named return with pointer type
+type Data struct {
+	value int
+}
+
+func testNamedReturnPointer() (result *Data) {
+	result = &Data{value: 10}
+	defer func() {
+		result.value = 20
+	}()
+	return
+}
+
+func testCase10() {
+	r := testNamedReturnPointer()
+	assert(r.value == 20, "test10: defer modified pointer data")
+	fmt.Println("Test 10: PASSED - named return pointer")
+}
+
+// Test 11: Named return with error type
+func testNamedReturnError() (result int, err error) {
+	result = 42
+	return
+}
+
+func testCase11() {
+	r, err := testNamedReturnError()
+	assert(r == 42, "test11: result value")
+	assert(err == nil, "test11: error is nil")
+	fmt.Println("Test 11: PASSED - named return error")
+}
+
+func main() {
+	testCase1()
+	testCase2()
+	testCase3()
+	testCase4()
+	testCase5()
+	testCase6()
+	testCase7()
+	testCase8()
+	testCase9()
+	testCase10()
+	testCase11()
+	
+	fmt.Println("named_return_edge: ALL PASSED")
+}

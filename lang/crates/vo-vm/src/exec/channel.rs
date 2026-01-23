@@ -113,14 +113,14 @@ pub fn exec_chan_recv(stack: &mut [u64], bp: usize, fiber_id: u32, inst: &Instru
 #[inline]
 pub fn exec_chan_len(stack: &mut [u64], bp: usize, inst: &Instruction) {
     let ch = stack[bp + inst.b as usize] as GcRef;
-    let len = channel::len(ch);
+    let len = if ch.is_null() { 0 } else { channel::len(ch) };
     stack[bp + inst.a as usize] = len as u64;
 }
 
 #[inline]
 pub fn exec_chan_cap(stack: &mut [u64], bp: usize, inst: &Instruction) {
     let ch = stack[bp + inst.b as usize] as GcRef;
-    let cap = channel::capacity(ch);
+    let cap = if ch.is_null() { 0 } else { channel::capacity(ch) };
     stack[bp + inst.a as usize] = cap as u64;
 }
 

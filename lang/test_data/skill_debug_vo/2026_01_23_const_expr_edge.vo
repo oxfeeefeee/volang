@@ -1,0 +1,184 @@
+// Test: Constant expression edge cases
+package main
+
+import "fmt"
+
+// Test 1: Const with iota in complex expressions
+const (
+	A0 = iota * 10        // 0
+	A1                    // 10
+	A2                    // 20
+	_                     // skip 30
+	A4 = iota * 10        // 40
+)
+
+func testIotaComplex() {
+	assert(A0 == 0, "test1: A0")
+	assert(A1 == 10, "test1: A1")
+	assert(A2 == 20, "test1: A2")
+	assert(A4 == 40, "test1: A4")
+	
+	fmt.Println("Test 1: PASSED - iota complex")
+}
+
+// Test 2: Const with bit operations
+const (
+	Flag1 = 1 << iota  // 1
+	Flag2              // 2
+	Flag3              // 4
+	Flag4              // 8
+	AllFlags = Flag1 | Flag2 | Flag3 | Flag4
+)
+
+func testConstBitOps() {
+	assert(Flag1 == 1, "test2: Flag1")
+	assert(Flag2 == 2, "test2: Flag2")
+	assert(Flag3 == 4, "test2: Flag3")
+	assert(Flag4 == 8, "test2: Flag4")
+	assert(AllFlags == 15, "test2: AllFlags")
+	
+	fmt.Println("Test 2: PASSED - const bit ops")
+}
+
+// Test 3: Const with untyped arithmetic
+const (
+	BigInt = 1 << 62
+	NegBig = -BigInt
+	MaxInt64 = 1<<63 - 1
+	MinInt64 = -1 << 63
+)
+
+func testConstBigNumbers() {
+	assert(BigInt > 0, "test3: BigInt positive")
+	assert(NegBig < 0, "test3: NegBig negative")
+	assert(MaxInt64 == 9223372036854775807, "test3: MaxInt64")
+	assert(MinInt64 == -9223372036854775808, "test3: MinInt64")
+	
+	fmt.Println("Test 3: PASSED - const big numbers")
+}
+
+// Test 4: Const string operations
+const (
+	Hello = "Hello"
+	World = "World"
+	HelloWorld = Hello + ", " + World + "!"
+)
+
+func testConstStrings() {
+	assert(Hello == "Hello", "test4: Hello")
+	assert(HelloWorld == "Hello, World!", "test4: HelloWorld")
+	assert(len(HelloWorld) == 13, "test4: len")
+	
+	fmt.Println("Test 4: PASSED - const strings")
+}
+
+// Test 5: Const comparison
+const (
+	IsTrue = 1 == 1
+	IsFalse = 1 == 2
+	IsLess = 1 < 2
+	IsGreater = 2 > 1
+)
+
+func testConstComparison() {
+	assert(IsTrue, "test5: IsTrue")
+	assert(!IsFalse, "test5: IsFalse")
+	assert(IsLess, "test5: IsLess")
+	assert(IsGreater, "test5: IsGreater")
+	
+	fmt.Println("Test 5: PASSED - const comparison")
+}
+
+// Test 6: Const with parentheses
+const (
+	P1 = (1 + 2) * 3      // 9
+	P2 = 1 + (2 * 3)      // 7
+	P3 = ((1 + 2) * (3 + 4))  // 21
+)
+
+func testConstParens() {
+	assert(P1 == 9, "test6: P1")
+	assert(P2 == 7, "test6: P2")
+	assert(P3 == 21, "test6: P3")
+	
+	fmt.Println("Test 6: PASSED - const parens")
+}
+
+// Test 7: Const with float
+const (
+	Pi = 3.14159265358979323846
+	E = 2.71828182845904523536
+	PiTimesE = Pi * E
+)
+
+func testConstFloat() {
+	assert(Pi > 3.14 && Pi < 3.15, "test7: Pi range")
+	assert(E > 2.71 && E < 2.72, "test7: E range")
+	assert(PiTimesE > 8.5 && PiTimesE < 8.6, "test7: PiTimesE range")
+	
+	fmt.Println("Test 7: PASSED - const float")
+}
+
+// Test 8: Const with rune
+const (
+	CharA = 'A'
+	CharZ = 'Z'
+	NumChars = CharZ - CharA + 1
+	Chinese = '中'
+)
+
+func testConstRune() {
+	assert(CharA == 65, "test8: CharA")
+	assert(CharZ == 90, "test8: CharZ")
+	assert(NumChars == 26, "test8: NumChars")
+	assert(Chinese == 0x4E2D, "test8: Chinese")
+	
+	fmt.Println("Test 8: PASSED - const rune")
+}
+
+// Test 9: Const in different blocks
+const X = 10
+
+func testConstScopes() {
+	const X = 20  // shadows outer X
+	assert(X == 20, "test9: inner X")
+	
+	{
+		const X = 30  // shadows again
+		assert(X == 30, "test9: innermost X")
+	}
+	
+	assert(X == 20, "test9: back to inner")
+	
+	fmt.Println("Test 9: PASSED - const scopes")
+}
+
+// Test 10: Const used in array size
+const ArraySize = 5
+
+func testConstArraySize() {
+	var arr [ArraySize]int
+	for i := 0; i < ArraySize; i++ {
+		arr[i] = i * 2
+	}
+	
+	assert(len(arr) == 5, "test10: array len")
+	assert(arr[4] == 8, "test10: array element")
+	
+	fmt.Println("Test 10: PASSED - const array size")
+}
+
+func main() {
+	testIotaComplex()
+	testConstBitOps()
+	testConstBigNumbers()
+	testConstStrings()
+	testConstComparison()
+	testConstParens()
+	testConstFloat()
+	testConstRune()
+	testConstScopes()
+	testConstArraySize()
+	
+	fmt.Println("const_expr_edge: ALL PASSED")
+}

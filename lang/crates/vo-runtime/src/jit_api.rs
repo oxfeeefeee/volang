@@ -680,14 +680,18 @@ pub extern "C" fn vo_chan_new(gc: *mut Gc, elem_meta: u32, elem_slots: u32, cap:
 #[no_mangle]
 pub extern "C" fn vo_chan_len(ch: u64) -> u64 {
     use crate::objects::channel;
-    channel::len(ch as crate::gc::GcRef) as u64
+    use crate::gc::GcRef;
+    let ch = ch as GcRef;
+    if ch.is_null() { 0 } else { channel::len(ch) as u64 }
 }
 
 /// Get channel capacity.
 #[no_mangle]
 pub extern "C" fn vo_chan_cap(ch: u64) -> u64 {
     use crate::objects::channel;
-    channel::capacity(ch as crate::gc::GcRef) as u64
+    use crate::gc::GcRef;
+    let ch = ch as GcRef;
+    if ch.is_null() { 0 } else { channel::capacity(ch) as u64 }
 }
 
 // =============================================================================

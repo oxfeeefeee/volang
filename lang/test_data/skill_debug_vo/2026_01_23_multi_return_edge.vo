@@ -1,0 +1,217 @@
+// Test: Multi-return value edge cases
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+// Test 1: Multi-return as function argument
+func pair() (int, int) {
+	return 1, 2
+}
+
+func sum(a, b int) int {
+	return a + b
+}
+
+func test1() {
+	// Direct use of multi-return as arguments
+	result := sum(pair())
+	assert(result == 3, "test1: multi-return as args")
+	fmt.Println("Test 1: PASSED - multi-return as args")
+}
+
+// Test 2: Multi-return in short declaration
+func test2() {
+	a, b := pair()
+	assert(a == 1 && b == 2, "test2: short decl")
+	
+	// Reassign
+	a, b = pair()
+	assert(a == 1 && b == 2, "test2: reassign")
+	
+	fmt.Println("Test 2: PASSED - short decl")
+}
+
+// Test 3: Discard some return values
+func triple() (int, string, bool) {
+	return 42, "hello", true
+}
+
+func test3() {
+	a, _, c := triple()
+	assert(a == 42 && c, "test3: discard middle")
+	
+	_, b, _ := triple()
+	assert(b == "hello", "test3: keep middle only")
+	
+	// Discard all
+	_, _, _ = triple()
+	
+	fmt.Println("Test 3: PASSED - discard returns")
+}
+
+// Test 4: Multi-return with named results
+func namedPair() (x int, y int) {
+	x = 10
+	y = 20
+	return
+}
+
+func test4() {
+	a, b := namedPair()
+	assert(a == 10 && b == 20, "test4: named returns")
+	fmt.Println("Test 4: PASSED - named returns")
+}
+
+// Test 5: Multi-return with interface
+func anyPair() (any, any) {
+	return 123, "text"
+}
+
+func test5() {
+	a, b := anyPair()
+	
+	n, ok := a.(int)
+	assert(ok && n == 123, "test5: first is int")
+	
+	s, ok := b.(string)
+	assert(ok && s == "text", "test5: second is string")
+	
+	fmt.Println("Test 5: PASSED - interface returns")
+}
+
+// Test 6: Multi-return from method
+type Calculator struct {
+	value int
+}
+
+func (c *Calculator) AddAndMul(x int) (sum int, product int) {
+	sum = c.value + x
+	product = c.value * x
+	return
+}
+
+func test6() {
+	calc := &Calculator{value: 5}
+	s, p := calc.AddAndMul(3)
+	assert(s == 8 && p == 15, "test6: method multi-return")
+	fmt.Println("Test 6: PASSED - method multi-return")
+}
+
+// Test 7: Multi-return in defer
+func deferMulti() (a int, b int) {
+	defer func() {
+		a *= 2
+		b *= 2
+	}()
+	a = 5
+	b = 10
+	return
+}
+
+func test7() {
+	a, b := deferMulti()
+	assert(a == 10 && b == 20, "test7: defer modifies multi-return")
+	fmt.Println("Test 7: PASSED - defer multi-return")
+}
+
+// Test 8: Chain of multi-return
+func double(x, y int) (int, int) {
+	return x * 2, y * 2
+}
+
+func test8() {
+	a, b := double(double(1, 2))
+	assert(a == 4 && b == 8, "test8: chained multi-return")
+	fmt.Println("Test 8: PASSED - chained multi-return")
+}
+
+// Test 9: Multi-return with error pattern
+func mayFail(shouldFail bool) (int, error) {
+	if shouldFail {
+		return 0, errors.New("failed")
+	}
+	return 42, nil
+}
+
+func test9() {
+	v, err := mayFail(false)
+	assert(err == nil && v == 42, "test9: no error")
+	
+	v, err = mayFail(true)
+	assert(err != nil && v == 0, "test9: with error")
+	
+	fmt.Println("Test 9: PASSED - error pattern")
+}
+
+// Test 10: Multi-return as map value
+func test10() {
+	// Can't directly use multi-return as map value, but can use after assignment
+	a, b := pair()
+	m := map[string]int{
+		"a": a,
+		"b": b,
+	}
+	assert(m["a"] == 1 && m["b"] == 2, "test10: map from multi-return")
+	fmt.Println("Test 10: PASSED - map from multi-return")
+}
+
+// Test 11: Multi-return in select
+func chanPair(ch chan int) (int, bool) {
+	select {
+	case v := <-ch:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+func test11() {
+	ch := make(chan int, 1)
+	ch <- 99
+	
+	v, ok := chanPair(ch)
+	assert(ok && v == 99, "test11: chan has value")
+	
+	v, ok = chanPair(ch)
+	assert(!ok && v == 0, "test11: chan empty")
+	
+	fmt.Println("Test 11: PASSED - multi-return in select")
+}
+
+// Test 12: Variadic with multi-return
+func variadicPair(nums ...int) (int, int) {
+	if len(nums) >= 2 {
+		return nums[0], nums[1]
+	}
+	return 0, 0
+}
+
+func test12() {
+	a, b := variadicPair(5, 10, 15)
+	assert(a == 5 && b == 10, "test12: variadic multi-return")
+	
+	a, b = variadicPair()
+	assert(a == 0 && b == 0, "test12: empty variadic")
+	
+	fmt.Println("Test 12: PASSED - variadic multi-return")
+}
+
+func main() {
+	test1()
+	test2()
+	test3()
+	test4()
+	test5()
+	test6()
+	test7()
+	test8()
+	test9()
+	test10()
+	test11()
+	test12()
+	
+	fmt.Println("multi_return_edge: ALL PASSED")
+}

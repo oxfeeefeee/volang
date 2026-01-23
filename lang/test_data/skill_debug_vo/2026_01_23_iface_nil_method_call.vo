@@ -1,0 +1,102 @@
+// Test: Calling methods on nil interface with nil concrete value
+package main
+
+import "fmt"
+
+type Stringer interface {
+	String() string
+}
+
+// NilSafe has nil-safe method
+type NilSafe struct {
+	value string
+}
+
+func (n *NilSafe) String() string {
+	if n == nil {
+		return "<nil>"
+	}
+	return n.value
+}
+
+// Test 1: nil pointer receiver through interface
+func testNilReceiverThroughInterface() {
+	var ns *NilSafe = nil
+	var s Stringer = ns // typed nil interface
+	
+	// s is NOT nil (typed nil)
+	assert(s != nil, "test1: typed nil is not nil interface")
+	
+	// But calling method should work with nil receiver
+	result := s.String()
+	assert(result == "<nil>", "test1: nil receiver method")
+	
+	fmt.Println("Test 1: PASSED - nil receiver through interface")
+}
+
+// Test 2: nil interface vs typed nil
+func testNilInterfaceVsTypedNil() {
+	var s1 Stringer     // nil interface
+	var ns *NilSafe = nil
+	var s2 Stringer = ns // typed nil
+	
+	assert(s1 == nil, "test2: nil interface is nil")
+	assert(s2 != nil, "test2: typed nil is not nil")
+	
+	// Comparison between them
+	assert(s1 != s2, "test2: nil vs typed nil")
+	
+	fmt.Println("Test 2: PASSED - nil interface vs typed nil")
+}
+
+// Test 3: Type assertion on typed nil
+func testTypeAssertionOnTypedNil() {
+	var ns *NilSafe = nil
+	var s Stringer = ns
+	
+	// Type assertion should succeed
+	ptr, ok := s.(*NilSafe)
+	assert(ok, "test3: type assertion ok")
+	assert(ptr == nil, "test3: result is nil pointer")
+	
+	fmt.Println("Test 3: PASSED - type assertion on typed nil")
+}
+
+// Test 4: Method call chain on typed nil
+func testMethodChainOnTypedNil() {
+	var ns *NilSafe = nil
+	var s Stringer = ns
+	
+	// Get string length from nil receiver
+	result := s.String()
+	length := len(result)
+	assert(length == 5, "test4: method chain length") // "<nil>" is 5 chars
+	
+	fmt.Println("Test 4: PASSED - method chain on typed nil")
+}
+
+// Test 5: Multiple typed nil in slice
+func testMultipleTypedNil() {
+	var ns1 *NilSafe = nil
+	var ns2 *NilSafe = nil
+	
+	stringers := []Stringer{ns1, ns2}
+	
+	for i, s := range stringers {
+		assert(s != nil, fmt.Sprintf("test5: element %d not nil", i))
+		result := s.String()
+		assert(result == "<nil>", fmt.Sprintf("test5: element %d result", i))
+	}
+	
+	fmt.Println("Test 5: PASSED - multiple typed nil")
+}
+
+func main() {
+	testNilReceiverThroughInterface()
+	testNilInterfaceVsTypedNil()
+	testTypeAssertionOnTypedNil()
+	testMethodChainOnTypedNil()
+	testMultipleTypedNil()
+	
+	fmt.Println("iface_nil_method_call: ALL PASSED")
+}
