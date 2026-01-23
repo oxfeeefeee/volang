@@ -163,14 +163,14 @@ fn compile_defer_method_call(
         MethodDispatch::Interface { method_idx } => {
             // Direct interface dispatch - generate wrapper
             compile_defer_iface_call(
-                call_expr, sel, opcode, recv_type, recv_type, *method_idx, method_name,
+                call_expr, sel, opcode, recv_type, *method_idx, method_name,
                 &call_info.embed_path.steps, false, ctx, func, info
             )?;
         }
-        MethodDispatch::EmbeddedInterface { iface_type, method_idx } => {
+        MethodDispatch::EmbeddedInterface { method_idx, .. } => {
             // Embedded interface dispatch - extract interface first
             compile_defer_iface_call(
-                call_expr, sel, opcode, recv_type, *iface_type, *method_idx, method_name,
+                call_expr, sel, opcode, recv_type, *method_idx, method_name,
                 &call_info.embed_path.steps, true, ctx, func, info
             )?;
         }
@@ -185,7 +185,6 @@ fn compile_defer_iface_call(
     sel: &vo_syntax::ast::SelectorExpr,
     opcode: Opcode,
     recv_type: vo_analysis::objects::TypeKey,
-    iface_type: vo_analysis::objects::TypeKey,
     method_idx: u32,
     method_name: &str,
     embed_steps: &[crate::embed::EmbedStep],
@@ -200,7 +199,7 @@ fn compile_defer_iface_call(
     let arg_slots = crate::expr::call::calc_method_arg_slots(call_expr, &param_types, is_variadic, info);
     
     let wrapper_id = crate::wrapper::generate_defer_iface_wrapper(
-        ctx, iface_type, method_name, method_idx as usize, arg_slots, 0
+        ctx, method_name, method_idx as usize, arg_slots, 0
     );
     
     let total_arg_slots = 2 + arg_slots;

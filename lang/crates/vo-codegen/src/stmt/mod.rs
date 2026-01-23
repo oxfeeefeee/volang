@@ -12,7 +12,7 @@ mod dyn_assign;
 mod assign_stmt;
 mod return_stmt;
 
-pub use var_def::{DeferredHeapAlloc, LocalDefiner};
+pub use var_def::LocalDefiner;
 pub use dyn_assign::{IFACE_ASSERT_WITH_OK, PROTOCOL_METHOD_IDX};
 
 use vo_runtime::SlotType;

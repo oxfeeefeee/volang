@@ -426,7 +426,6 @@ pub fn generate_embedded_iface_wrapper(
 /// This allows `defer c.Close()` to work correctly with interface values.
 pub fn generate_defer_iface_wrapper(
     ctx: &mut CodegenContext,
-    iface_type: TypeKey,
     method_name: &str,
     method_idx: usize,
     param_slots: u16,

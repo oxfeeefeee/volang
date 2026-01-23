@@ -4,7 +4,6 @@
 
 use vo_analysis::objects::TypeKey;
 use vo_common::symbol::Symbol;
-use vo_runtime::SlotType;
 use vo_syntax::ast::{Expr, Stmt, StmtKind};
 use vo_vm::instruction::Opcode;
 

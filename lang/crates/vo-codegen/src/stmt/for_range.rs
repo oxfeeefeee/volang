@@ -198,8 +198,6 @@ pub(crate) fn compile_for_range(
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<(), CodegenError> {
-    use crate::type_info::encode_i32;
-    
     // Enter scope for key/value variable shadowing (Go semantics)
     func.enter_scope();
     

@@ -447,7 +447,6 @@ fn emit_final_receiver(
 use crate::type_info::TypeInfoWrapper;
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
-use vo_vm::instruction::Opcode;
 
 /// Result of extracting a method receiver - unified representation
 #[derive(Debug, Clone, Copy)]
@@ -518,60 +517,6 @@ pub fn extract_receiver(
             slots: recv_slots,
         })
     }
-}
-
-/// Convert ReceiverValue to what the method expects (pointer or value).
-/// Returns (register, actual_type) where register contains the prepared receiver.
-pub fn prepare_for_method(
-    recv: ReceiverValue,
-    expects_ptr_recv: bool,
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfoWrapper,
-) -> (u16, TypeKey) {
-    match (recv, expects_ptr_recv) {
-        // Value -> Value: use directly
-        (ReceiverValue::Value { reg, value_type, .. }, false) => {
-            (reg, value_type)
-        }
-        // Value -> Pointer: box the value
-        (ReceiverValue::Value { reg, value_type, slots }, true) => {
-            let meta_idx = ctx.get_or_create_value_meta(value_type, info);
-            let meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
-            func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-            let boxed_reg = func.alloc_temp_typed(&[SlotType::GcRef]);
-            func.emit_with_flags(Opcode::PtrNew, slots as u8, boxed_reg, meta_reg, 0);
-            func.emit_ptr_set(boxed_reg, 0, reg, slots);
-            (boxed_reg, value_type)
-        }
-        // Pointer -> Value: dereference
-        (ReceiverValue::Pointer { reg, pointee_type }, false) => {
-            let slots = info.type_slot_count(pointee_type);
-            let slot_types = info.type_slot_types(pointee_type);
-            let value_reg = func.alloc_temp_typed(&slot_types);
-            func.emit_ptr_get(value_reg, reg, 0, slots);
-            (value_reg, pointee_type)
-        }
-        // Pointer -> Pointer: use directly
-        (ReceiverValue::Pointer { reg, pointee_type }, true) => {
-            (reg, pointee_type)
-        }
-    }
-}
-
-/// High-level API: Extract receiver and prepare it for method call/value.
-/// Combines `extract_receiver` and `prepare_for_method` into one call.
-pub fn get_method_receiver(
-    expr: &vo_syntax::ast::Expr,
-    recv_type: TypeKey,
-    embed_path: &EmbedPathInfo,
-    expects_ptr_recv: bool,
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfoWrapper,
-) -> Result<(u16, TypeKey), CodegenError> {
-    let recv = extract_receiver(expr, recv_type, embed_path, ctx, func, info)?;
-    Ok(prepare_for_method(recv, expects_ptr_recv, ctx, func, info))
 }
 
 #[cfg(test)]

@@ -531,25 +531,6 @@ pub fn compile_extern_call(
 // Argument Compilation Helpers
 // =============================================================================
 
-/// Compile arguments without type conversion, return (args_start, total_slots).
-/// Used by non-variadic calls and defer.
-pub fn compile_args_simple(
-    args: &[vo_syntax::ast::Expr],
-    ctx: &mut CodegenContext,
-    func: &mut FuncBuilder,
-    info: &TypeInfoWrapper,
-) -> Result<(u16, u16), CodegenError> {
-    let total_slots: u16 = args.iter().map(|arg| info.expr_slots(arg.id)).sum();
-    let args_start = func.alloc_args(total_slots);
-    let mut offset = 0u16;
-    for arg in args {
-        let slots = info.expr_slots(arg.id);
-        compile_expr_to(arg, args_start + offset, ctx, func, info)?;
-        offset += slots;
-    }
-    Ok((args_start, total_slots))
-}
-
 /// Compile arguments with parameter types for automatic interface conversion.
 /// Used by method calls and defer with known param types.
 /// Handles multi-value function calls: f(g()) where g() returns multiple values.
@@ -682,25 +663,6 @@ pub fn calc_method_arg_slots(
         fixed_slots + 1  // +1 for packed slice
     } else {
         param_types.iter().map(|&t| info.type_slot_count(t)).sum()
-    }
-}
-
-/// Calculate arg slots for non-variadic calls (defer, go).
-/// Handles tuple expansion (f(g()) where g() returns multiple values).
-pub fn calc_arg_slots(
-    args: &[vo_syntax::ast::Expr],
-    param_types: &[TypeKey],
-    info: &TypeInfoWrapper,
-) -> u16 {
-    let arg_info = info.get_call_arg_info(args, param_types);
-    if arg_info.tuple_expand.is_some() {
-        // Tuple expansion: slots = sum of all param types
-        param_types.iter().map(|&t| info.type_slot_count(t)).sum()
-    } else {
-        // Normal case: one arg per param
-        args.iter().enumerate()
-            .map(|(i, arg)| param_types.get(i).map(|&pt| info.type_slot_count(pt)).unwrap_or_else(|| info.expr_slots(arg.id)))
-            .sum()
     }
 }
 
