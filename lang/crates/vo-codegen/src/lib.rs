@@ -784,11 +784,14 @@ fn collect_promoted_methods(
                         })
                         .unwrap_or(0);
                     
+                    // Check if original method has pointer receiver
+                    let is_pointer_receiver = tc_objs.lobjs[obj_key].entity_type().func_has_ptr_recv();
+                    
                     ctx.update_named_type_method_if_absent(
                         named_type_id,
                         method_name,
                         func_id,
-                        false,
+                        is_pointer_receiver,
                         sig_rttid,
                     );
                 }

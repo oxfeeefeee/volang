@@ -24,6 +24,7 @@ use crate::gc::{Gc, GcRef};
 use crate::slot::slots_for_bytes;
 use crate::itab::ItabCache;
 use crate::objects::interface::InterfaceSlot;
+use crate::ValueKind;
 use vo_common_core::bytecode::Module;
 
 // =============================================================================
@@ -870,38 +871,6 @@ fn extract_named_type_id(rt: &crate::RuntimeType, runtime_types: &[crate::Runtim
     }
 }
 
-/// Check if src type satisfies target interface.
-fn check_interface_satisfaction(
-    src_rttid: u32,
-    target_id: u32,
-    module: &Module,
-) -> bool {
-    let iface_meta = match module.interface_metas.get(target_id as usize) {
-        Some(m) => m,
-        None => return false,
-    };
-    
-    if iface_meta.methods.is_empty() {
-        return true; // empty interface always satisfied
-    }
-    
-    // Look up RuntimeType to find named_type_id for method lookup
-    if let Some(named_type_id) = module.runtime_types.get(src_rttid as usize)
-        .and_then(|rt| extract_named_type_id(rt, &module.runtime_types))
-    {
-        if let Some(named_type) = module.named_type_metas.get(named_type_id as usize) {
-            // Check each interface method: name must exist AND signature_rttid must match
-            return iface_meta.methods.iter().all(|iface_method| {
-                if let Some(concrete_method) = named_type.methods.get(&iface_method.name) {
-                    iface_method.signature_rttid == concrete_method.signature_rttid
-                } else {
-                    false
-                }
-            });
-        }
-    }
-    false // non-named types can't implement interfaces with methods
-}
 
 /// Interface to interface assignment with runtime itab lookup.
 /// src_slot0/slot1: source interface (2 slots)
@@ -926,9 +895,12 @@ pub extern "C" fn vo_iface_to_iface(
         .and_then(|rt| extract_named_type_id(rt, &module.runtime_types));
     
     let new_itab_id = if let Some(named_type_id) = named_type_id_opt {
+        // Value types (non-pointer) cannot use pointer receiver methods
+        let src_is_pointer = src_vk == ValueKind::Pointer;
         itab_cache.get_or_create(
             named_type_id,
             iface_meta_id,
+            src_is_pointer,
             &module.named_type_metas,
             &module.interface_metas,
         )
@@ -989,8 +961,8 @@ pub extern "C" fn vo_iface_assert(
         // Type comparison: check rttid
         src_rttid == target_id
     } else {
-        // Interface method check - direct implementation
-        check_interface_satisfaction(src_rttid, target_id, module)
+        // Interface method check - use shared function from itab module
+        crate::itab::check_interface_satisfaction(src_rttid, src_vk, target_id, module)
     };
     
     unsafe {
@@ -1043,9 +1015,12 @@ unsafe fn write_iface_assert_success(
         let named_type_id = module.runtime_types.get(src_rttid as usize)
             .and_then(|rt| extract_named_type_id(rt, &module.runtime_types))
             .unwrap_or(0);
+        // Value types (non-pointer) cannot use pointer receiver methods
+        let src_is_pointer = src_vk == ValueKind::Pointer;
         let new_itab_id = itab_cache.get_or_create(
             named_type_id,
             target_id,
+            src_is_pointer,
             &module.named_type_metas,
             &module.interface_metas,
         );

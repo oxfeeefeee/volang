@@ -406,11 +406,15 @@ impl<'a> ExternCallContext<'a> {
         &self.well_known.dyn_error_codes
     }
 
+    /// Get or create itab for a named type implementing an interface.
+    /// `src_is_pointer`: true if source is pointer type (*T), false if value type (T).
+    /// Value types cannot use pointer receiver methods.
     #[inline]
-    pub fn get_or_create_itab(&mut self, named_type_id: u32, iface_meta_id: u32) -> u32 {
+    pub fn get_or_create_itab(&mut self, named_type_id: u32, iface_meta_id: u32, src_is_pointer: bool) -> u32 {
         self.itab_cache.get_or_create(
             named_type_id,
             iface_meta_id,
+            src_is_pointer,
             self.named_type_metas,
             self.interface_metas,
         )
@@ -418,11 +422,14 @@ impl<'a> ExternCallContext<'a> {
 
     /// Try to get or create itab. Returns None if named type doesn't implement the interface.
     /// Use this for dynamic access where type mismatch should return error, not panic.
+    /// `src_is_pointer`: true if source is pointer type (*T), false if value type (T).
+    /// Value types cannot use pointer receiver methods.
     #[inline]
-    pub fn try_get_or_create_itab(&mut self, named_type_id: u32, iface_meta_id: u32) -> Option<u32> {
+    pub fn try_get_or_create_itab(&mut self, named_type_id: u32, iface_meta_id: u32, src_is_pointer: bool) -> Option<u32> {
         self.itab_cache.try_get_or_create(
             named_type_id,
             iface_meta_id,
+            src_is_pointer,
             self.named_type_metas,
             self.interface_metas,
         )

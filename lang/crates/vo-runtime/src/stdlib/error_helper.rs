@@ -40,7 +40,7 @@ pub fn write_error_to(call: &mut ExternCallContext, ret_slot: u16, code: isize, 
         Gc::write_slot(err_obj, field_offsets[3] as usize + 1, 0);  // data slot1
     }
 
-    let itab_id = call.get_or_create_itab(named_type_id, error_iface_meta_id);
+    let itab_id = call.get_or_create_itab(named_type_id, error_iface_meta_id, true);
     let err_slot0 = interface::pack_slot0(itab_id, error_ptr_rttid, ValueKind::Pointer);
     call.ret_u64(ret_slot, err_slot0);
     call.ret_ref(ret_slot + 1, err_obj);

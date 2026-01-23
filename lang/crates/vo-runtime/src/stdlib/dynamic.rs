@@ -154,7 +154,9 @@ fn prepare_interface_value(
     
     let named_type_id = call.get_named_type_id_from_rttid(val_rttid, true)
         .ok_or("value does not have methods")?;
-    let itab_id = call.try_get_or_create_itab(named_type_id, target_iface_meta_id)
+    // Value types (non-pointer) cannot use pointer receiver methods
+    let src_is_pointer = val_vk == ValueKind::Pointer;
+    let itab_id = call.try_get_or_create_itab(named_type_id, target_iface_meta_id, src_is_pointer)
         .ok_or("value does not implement the interface")?;
     let stored_slot0 = interface::pack_slot0(itab_id, val_rttid, val_vk);
     Ok((stored_slot0, val_slot1))
