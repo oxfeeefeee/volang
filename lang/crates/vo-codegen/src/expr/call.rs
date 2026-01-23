@@ -50,11 +50,9 @@ pub fn compile_call(
     
     // Check if builtin or type conversion
     if let ExprKind::Ident(ident) = &call.func.kind {
-        let name = info.project.interner.resolve(ident.symbol);
-        if let Some(name) = name {
-            if super::builtin::is_builtin(name) {
-                return super::builtin::compile_builtin_call(expr, name, call, dst, ctx, func, info);
-            }
+        // Use analysis phase info for builtin detection - correctly handles variable shadowing
+        if let Some(builtin_id) = info.expr_builtin(call.func.id) {
+            return super::builtin::compile_builtin_call_by_id(expr, builtin_id, call, dst, ctx, func, info);
         }
         
         // Check if this is a type conversion (ident refers to a type, not a function)

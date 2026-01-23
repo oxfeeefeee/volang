@@ -1,0 +1,223 @@
+// Test: Short-circuit evaluation with side effects
+package main
+
+var callCount int
+
+func sideEffect(name string, result bool) bool {
+	callCount++
+	return result
+}
+
+func getSideEffect(name string, result int) int {
+	callCount++
+	return result
+}
+
+// Test 1: && short-circuit - second should not be called
+func testAndShortCircuit() {
+	callCount = 0
+	_ = sideEffect("first", false) && sideEffect("second", true)
+	assert(callCount == 1, "and short-circuit should call only first")
+}
+
+// Test 2: || short-circuit - second should not be called
+func testOrShortCircuit() {
+	callCount = 0
+	_ = sideEffect("first", true) || sideEffect("second", false)
+	assert(callCount == 1, "or short-circuit should call only first")
+}
+
+// Test 3: && no short-circuit - both called
+func testAndNoShortCircuit() {
+	callCount = 0
+	_ = sideEffect("first", true) && sideEffect("second", true)
+	assert(callCount == 2, "and no short-circuit should call both")
+}
+
+// Test 4: || no short-circuit - both called
+func testOrNoShortCircuit() {
+	callCount = 0
+	_ = sideEffect("first", false) || sideEffect("second", true)
+	assert(callCount == 2, "or no short-circuit should call both")
+}
+
+// Test 5: Complex && chain
+func testComplexAndChain() {
+	callCount = 0
+	_ = sideEffect("a", true) && sideEffect("b", true) && sideEffect("c", false) && sideEffect("d", true)
+	assert(callCount == 3, "complex and chain should stop at c")
+}
+
+// Test 6: Complex || chain
+func testComplexOrChain() {
+	callCount = 0
+	_ = sideEffect("a", false) || sideEffect("b", false) || sideEffect("c", true) || sideEffect("d", false)
+	assert(callCount == 3, "complex or chain should stop at c")
+}
+
+// Test 7: Mixed && and ||
+func testMixedAndOr() {
+	callCount = 0
+	// (false && X) || true => calls 1 for first false, short-circuits &&, then calls || true
+	_ = (sideEffect("a", false) && sideEffect("b", true)) || sideEffect("c", true)
+	assert(callCount == 2, "mixed and-or should call a and c")
+}
+
+// Test 8: Side effect in if condition
+func testSideEffectInIf() {
+	callCount = 0
+	if sideEffect("cond", true) && sideEffect("cond2", false) {
+		panic("should not enter")
+	}
+	assert(callCount == 2, "side effect in if")
+}
+
+// Test 9: Side effect in for condition
+func testSideEffectInFor() {
+	callCount = 0
+	iterations := 0
+	for sideEffect("loop", iterations < 3) {
+		iterations++
+	}
+	assert(iterations == 3, "for loop iterations")
+	assert(callCount == 4, "for loop condition calls (4 times: true, true, true, false)")
+}
+
+// Test 10: Side effect in type assertion with ok form
+func testSideEffectTypeAssertOk() {
+	callCount = 0
+	var a any = 42
+	
+	if getSideEffect("check", 1) > 0 {
+		if _, ok := a.(int); ok {
+			// ok
+		}
+	}
+	assert(callCount == 1, "side effect before type assert")
+}
+
+// Test 11: Short-circuit with nil check
+type StringHolder struct {
+	value string
+}
+
+func testShortCircuitNilCheck() {
+	callCount = 0
+	var s *StringHolder = nil
+	
+	// This should short-circuit at s != nil
+	if s != nil && sideEffect("after nil check", true) {
+		panic("should not enter")
+	}
+	assert(callCount == 0, "nil check short-circuit")
+}
+
+// Test 12: Short-circuit with map lookup
+func testShortCircuitMapLookup() {
+	callCount = 0
+	m := map[string]int{"key": 42}
+	
+	if v, ok := m["key"]; ok && sideEffect("after map ok", true) {
+		assert(v == 42, "map value")
+	}
+	assert(callCount == 1, "map lookup short-circuit")
+	
+	callCount = 0
+	if v, ok := m["missing"]; ok && sideEffect("after missing ok", true) {
+		_ = v
+		panic("should not enter")
+	}
+	assert(callCount == 0, "missing map short-circuit")
+}
+
+// Test 13: Short-circuit in switch case
+func testShortCircuitSwitchCase() {
+	callCount = 0
+	
+	switch {
+	case sideEffect("case1", false) || sideEffect("case1b", true):
+		assert(callCount == 2, "switch case1 both called")
+	case sideEffect("case2", true):
+		panic("should not reach case2")
+	default:
+	}
+}
+
+// Test 14: Short-circuit with channel receive (simulated)
+func testShortCircuitChanRecv() {
+	ch := make(chan int, 1)
+	ch <- 42
+	
+	callCount = 0
+	if v, ok := <-ch; ok && sideEffect("after chan recv", true) {
+		assert(v == 42, "chan recv value")
+	}
+	assert(callCount == 1, "chan recv short-circuit called")
+}
+
+// Test 15: Nested short-circuit
+func testNestedShortCircuit() {
+	callCount = 0
+	a := true
+	b := false
+	c := true
+	
+	// (a && (b || c)) should be: a=true, b=false, c=true => true
+	result := a && (b || c)
+	assert(result == true, "nested short-circuit result")
+}
+
+func main() {
+	testAndShortCircuit()
+	println("Test 1: PASSED - and short-circuit")
+	
+	testOrShortCircuit()
+	println("Test 2: PASSED - or short-circuit")
+	
+	testAndNoShortCircuit()
+	println("Test 3: PASSED - and no short-circuit")
+	
+	testOrNoShortCircuit()
+	println("Test 4: PASSED - or no short-circuit")
+	
+	testComplexAndChain()
+	println("Test 5: PASSED - complex and chain")
+	
+	testComplexOrChain()
+	println("Test 6: PASSED - complex or chain")
+	
+	testMixedAndOr()
+	println("Test 7: PASSED - mixed and-or")
+	
+	testSideEffectInIf()
+	println("Test 8: PASSED - side effect in if")
+	
+	testSideEffectInFor()
+	println("Test 9: PASSED - side effect in for")
+	
+	testSideEffectTypeAssertOk()
+	println("Test 10: PASSED - side effect type assert ok")
+	
+	testShortCircuitNilCheck()
+	println("Test 11: PASSED - nil check short-circuit")
+	
+	testShortCircuitMapLookup()
+	println("Test 12: PASSED - map lookup short-circuit")
+	
+	testShortCircuitSwitchCase()
+	println("Test 13: PASSED - switch case short-circuit")
+	
+	testShortCircuitChanRecv()
+	println("Test 14: PASSED - chan recv short-circuit")
+	
+	testNestedShortCircuit()
+	println("Test 15: PASSED - nested short-circuit")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

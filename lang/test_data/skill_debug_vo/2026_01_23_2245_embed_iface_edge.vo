@@ -1,0 +1,320 @@
+// Test: Embedding with interface satisfaction edge cases
+package main
+
+// Interfaces
+type Reader interface {
+	Read() string
+}
+
+type Writer interface {
+	Write(s string)
+}
+
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+type Closer interface {
+	Close()
+}
+
+type ReadWriteCloser interface {
+	ReadWriter
+	Closer
+}
+
+// Base types
+type BaseReader struct {
+	data string
+}
+
+func (b BaseReader) Read() string {
+	return b.data
+}
+
+type BaseWriter struct {
+	buffer string
+}
+
+func (b *BaseWriter) Write(s string) {
+	b.buffer += s
+}
+
+type BaseCloser struct {
+	closed bool
+}
+
+func (b *BaseCloser) Close() {
+	b.closed = true
+}
+
+// Test 1: Embed value to satisfy interface
+type SimpleReader struct {
+	BaseReader
+}
+
+func testEmbedValueSatisfy() {
+	var r Reader = SimpleReader{BaseReader{data: "hello"}}
+	assert(r.Read() == "hello", "embed value satisfy")
+}
+
+// Test 2: Embed pointer to satisfy interface with pointer receiver
+type SimpleWriter struct {
+	*BaseWriter
+}
+
+func testEmbedPointerSatisfy() {
+	sw := &SimpleWriter{BaseWriter: &BaseWriter{}}
+	var w Writer = sw
+	w.Write("test")
+	assert(sw.buffer == "test", "embed pointer satisfy")
+}
+
+// Test 3: Multiple embeds to satisfy composite interface
+type MultiEmbed struct {
+	BaseReader
+	*BaseWriter
+}
+
+func testMultiEmbedSatisfy() {
+	me := &MultiEmbed{
+		BaseReader:  BaseReader{data: "read"},
+		BaseWriter: &BaseWriter{},
+	}
+	
+	var rw ReadWriter = me
+	assert(rw.Read() == "read", "multi embed read")
+	rw.Write("write")
+	assert(me.buffer == "write", "multi embed write")
+}
+
+// Test 4: Deep embedding chain
+type Level1 struct {
+	BaseReader
+}
+
+type Level2 struct {
+	Level1
+}
+
+type Level3 struct {
+	Level2
+}
+
+func testDeepEmbedChain() {
+	l3 := Level3{Level2{Level1{BaseReader{data: "deep"}}}}
+	var r Reader = l3
+	assert(r.Read() == "deep", "deep embed chain")
+}
+
+// Test 5: Embedding with method shadowing
+type ShadowReader struct {
+	BaseReader
+}
+
+func (s ShadowReader) Read() string {
+	return "shadowed: " + s.BaseReader.Read()
+}
+
+func testEmbedShadow() {
+	sr := ShadowReader{BaseReader{data: "original"}}
+	var r Reader = sr
+	assert(r.Read() == "shadowed: original", "embed shadow")
+}
+
+// Test 6: Interface embedded in struct
+type InterfaceHolder struct {
+	Reader
+	extra int
+}
+
+func testInterfaceEmbedded() {
+	ih := InterfaceHolder{
+		Reader: BaseReader{data: "interface embed"},
+		extra:  42,
+	}
+	
+	assert(ih.Read() == "interface embed", "interface embedded")
+	assert(ih.extra == 42, "interface embedded extra")
+}
+
+// Test 7: Nil interface embedded
+func testNilInterfaceEmbedded() {
+	ih := InterfaceHolder{
+		Reader: nil,
+		extra:  10,
+	}
+	
+	assert(ih.Reader == nil, "nil interface embedded")
+	assert(ih.extra == 10, "nil interface embedded extra")
+}
+
+// Test 8: Replace embedded interface
+func testReplaceEmbeddedInterface() {
+	ih := InterfaceHolder{
+		Reader: BaseReader{data: "first"},
+		extra:  1,
+	}
+	
+	assert(ih.Read() == "first", "replace embedded before")
+	
+	ih.Reader = BaseReader{data: "second"}
+	assert(ih.Read() == "second", "replace embedded after")
+}
+
+// Test 9: Type assertion on embedded interface
+func testTypeAssertEmbedded() {
+	ih := InterfaceHolder{
+		Reader: BaseReader{data: "assert me"},
+	}
+	
+	if br, ok := ih.Reader.(BaseReader); ok {
+		assert(br.data == "assert me", "type assert embedded")
+	} else {
+		panic("should be BaseReader")
+	}
+}
+
+// Test 10: Embed with same method name from different paths
+type PathA struct{}
+
+func (PathA) Name() string { return "A" }
+
+type PathB struct{}
+
+func (PathB) Name() string { return "B" }
+
+type Diamond struct {
+	PathA
+	PathB
+}
+
+// Diamond should have ambiguous Name() - accessing it should be error
+// Let's test accessing the specific path
+func testDiamondAccess() {
+	d := Diamond{}
+	assert(d.PathA.Name() == "A", "diamond path A")
+	assert(d.PathB.Name() == "B", "diamond path B")
+}
+
+// Test 11: Pointer to struct with embedded interface
+func testPointerToEmbedded() {
+	ih := &InterfaceHolder{
+		Reader: BaseReader{data: "pointer access"},
+	}
+	
+	assert(ih.Read() == "pointer access", "pointer to embedded")
+}
+
+// Test 12: Slice of struct with embedded interface
+func testSliceOfEmbedded() {
+	items := []InterfaceHolder{
+		{Reader: BaseReader{data: "one"}},
+		{Reader: BaseReader{data: "two"}},
+	}
+	
+	assert(items[0].Read() == "one", "slice embedded [0]")
+	assert(items[1].Read() == "two", "slice embedded [1]")
+}
+
+// Test 13: Map of struct with embedded interface
+func testMapOfEmbedded() {
+	m := map[string]InterfaceHolder{
+		"a": {Reader: BaseReader{data: "alpha"}},
+		"b": {Reader: BaseReader{data: "beta"}},
+	}
+	
+	assert(m["a"].Read() == "alpha", "map embedded a")
+	assert(m["b"].Read() == "beta", "map embedded b")
+}
+
+// Test 14: Channel of struct with embedded interface
+func testChannelOfEmbedded() {
+	ch := make(chan InterfaceHolder, 1)
+	ch <- InterfaceHolder{Reader: BaseReader{data: "channel"}}
+	
+	ih := <-ch
+	assert(ih.Read() == "channel", "channel of embedded")
+}
+
+// Test 15: Embedded interface method with receiver modification
+type MutableReader struct {
+	count int
+	data  string
+}
+
+func (m *MutableReader) Read() string {
+	m.count++
+	return m.data
+}
+
+type CountingHolder struct {
+	Reader
+}
+
+func testEmbeddedMutableReceiver() {
+	mr := &MutableReader{data: "mutable"}
+	ch := CountingHolder{Reader: mr}
+	
+	ch.Read()
+	ch.Read()
+	ch.Read()
+	
+	assert(mr.count == 3, "embedded mutable receiver count")
+}
+
+func main() {
+	testEmbedValueSatisfy()
+	println("Test 1: PASSED - embed value satisfy")
+	
+	testEmbedPointerSatisfy()
+	println("Test 2: PASSED - embed pointer satisfy")
+	
+	testMultiEmbedSatisfy()
+	println("Test 3: PASSED - multi embed satisfy")
+	
+	testDeepEmbedChain()
+	println("Test 4: PASSED - deep embed chain")
+	
+	testEmbedShadow()
+	println("Test 5: PASSED - embed shadow")
+	
+	testInterfaceEmbedded()
+	println("Test 6: PASSED - interface embedded")
+	
+	testNilInterfaceEmbedded()
+	println("Test 7: PASSED - nil interface embedded")
+	
+	testReplaceEmbeddedInterface()
+	println("Test 8: PASSED - replace embedded interface")
+	
+	testTypeAssertEmbedded()
+	println("Test 9: PASSED - type assert embedded")
+	
+	testDiamondAccess()
+	println("Test 10: PASSED - diamond access")
+	
+	testPointerToEmbedded()
+	println("Test 11: PASSED - pointer to embedded")
+	
+	testSliceOfEmbedded()
+	println("Test 12: PASSED - slice of embedded")
+	
+	testMapOfEmbedded()
+	println("Test 13: PASSED - map of embedded")
+	
+	testChannelOfEmbedded()
+	println("Test 14: PASSED - channel of embedded")
+	
+	testEmbeddedMutableReceiver()
+	println("Test 15: PASSED - embedded mutable receiver")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

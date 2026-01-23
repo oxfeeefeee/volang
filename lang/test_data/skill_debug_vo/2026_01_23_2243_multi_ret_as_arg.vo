@@ -1,0 +1,230 @@
+// Test: Multi-value return used directly as function arguments
+package main
+
+// Helper functions returning multiple values
+func twoInts() (int, int) {
+	return 10, 20
+}
+
+func threeInts() (int, int, int) {
+	return 1, 2, 3
+}
+
+func intAndString() (int, string) {
+	return 42, "hello"
+}
+
+func intAndError() (int, error) {
+	return 100, nil
+}
+
+// Test 1: Multi-value return as args to function expecting same types
+func sumTwo(a, b int) int {
+	return a + b
+}
+
+func testMultiRetAsExactArgs() {
+	result := sumTwo(twoInts())
+	assert(result == 30, "multi ret as exact args")
+}
+
+// Test 2: Multi-value return as args to function with more params
+func sumThree(a, b, c int) int {
+	return a + b + c
+}
+
+func testMultiRetAsThreeArgs() {
+	result := sumThree(threeInts())
+	assert(result == 6, "multi ret as three args")
+}
+
+// Test 3: Multi-value return to function with different types
+func concatIntStr(n int, s string) string {
+	return s + ":" + string(rune('0'+n%10))
+}
+
+func testMultiRetDiffTypes() {
+	// Note: This requires unpacking manually in Vo/Go
+	n, s := intAndString()
+	result := concatIntStr(n, s)
+	assert(result == "hello:2", "multi ret diff types")
+}
+
+// Test 4: Chain multi-value returns
+func doubleTwo(a, b int) (int, int) {
+	return a * 2, b * 2
+}
+
+func testChainMultiRet() {
+	a, b := doubleTwo(twoInts())
+	assert(a == 20, "chain multi ret a")
+	assert(b == 40, "chain multi ret b")
+}
+
+// Test 5: Multi-value in println (variadic)
+func testMultiRetPrintln() {
+	// println accepts variadic any
+	// In Go, you can't directly use multi-return as variadic
+	// But we can unpack first
+	a, b := twoInts()
+	println("Values:", a, b)
+}
+
+// Test 6: Multi-value as method receiver context
+type Pair struct {
+	a, b int
+}
+
+func makePair(a, b int) Pair {
+	return Pair{a: a, b: b}
+}
+
+func (p Pair) Sum() int {
+	return p.a + p.b
+}
+
+func testMultiRetAsPairArgs() {
+	p := makePair(twoInts())
+	assert(p.Sum() == 30, "multi ret as pair args")
+}
+
+// Test 7: Multi-value in map assignment
+func testMultiRetMapAssign() {
+	m := make(map[int]int)
+	
+	a, b := twoInts()
+	m[a] = b
+	
+	assert(m[10] == 20, "multi ret map assign")
+}
+
+// Test 8: Multi-value in slice literal
+func testMultiRetSliceLiteral() {
+	a, b, c := threeInts()
+	s := []int{a, b, c}
+	
+	assert(len(s) == 3, "multi ret slice len")
+	assert(s[0]+s[1]+s[2] == 6, "multi ret slice sum")
+}
+
+// Test 9: Multi-value with blank identifier
+func testMultiRetBlank() {
+	a, _ := twoInts()
+	assert(a == 10, "multi ret blank first")
+	
+	_, b := twoInts()
+	assert(b == 20, "multi ret blank second")
+}
+
+// Test 10: Multi-value in struct field assignment
+type Container struct {
+	first  int
+	second int
+}
+
+func testMultiRetStructField() {
+	c := Container{}
+	c.first, c.second = twoInts()
+	
+	assert(c.first == 10, "multi ret struct first")
+	assert(c.second == 20, "multi ret struct second")
+}
+
+// Test 11: Multi-value in array assignment
+func testMultiRetArrayAssign() {
+	var arr [2]int
+	arr[0], arr[1] = twoInts()
+	
+	assert(arr[0] == 10, "multi ret array [0]")
+	assert(arr[1] == 20, "multi ret array [1]")
+}
+
+// Test 12: Multi-value with swap
+func testMultiRetSwap() {
+	a, b := twoInts()
+	b, a = a, b
+	
+	assert(a == 20, "multi ret swap a")
+	assert(b == 10, "multi ret swap b")
+}
+
+// Test 13: Multi-value as closure args
+func testMultiRetClosureArgs() {
+	add := func(a, b int) int { return a + b }
+	
+	result := add(twoInts())
+	assert(result == 30, "multi ret closure args")
+}
+
+// Test 14: Multi-value in for loop init
+func testMultiRetForInit() {
+	sum := 0
+	for a, b := twoInts(); a > 0; a-- {
+		sum += b
+	}
+	assert(sum == 200, "multi ret for init 20*10=200")
+}
+
+// Test 15: Multi-value in if init
+func testMultiRetIfInit() {
+	if a, b := twoInts(); a < b {
+		assert(true, "multi ret if init")
+	} else {
+		panic("should be a < b")
+	}
+}
+
+func main() {
+	testMultiRetAsExactArgs()
+	println("Test 1: PASSED - multi ret as exact args")
+	
+	testMultiRetAsThreeArgs()
+	println("Test 2: PASSED - multi ret as three args")
+	
+	testMultiRetDiffTypes()
+	println("Test 3: PASSED - multi ret diff types")
+	
+	testChainMultiRet()
+	println("Test 4: PASSED - chain multi ret")
+	
+	testMultiRetPrintln()
+	println("Test 5: PASSED - multi ret println")
+	
+	testMultiRetAsPairArgs()
+	println("Test 6: PASSED - multi ret as pair args")
+	
+	testMultiRetMapAssign()
+	println("Test 7: PASSED - multi ret map assign")
+	
+	testMultiRetSliceLiteral()
+	println("Test 8: PASSED - multi ret slice literal")
+	
+	testMultiRetBlank()
+	println("Test 9: PASSED - multi ret blank")
+	
+	testMultiRetStructField()
+	println("Test 10: PASSED - multi ret struct field")
+	
+	testMultiRetArrayAssign()
+	println("Test 11: PASSED - multi ret array assign")
+	
+	testMultiRetSwap()
+	println("Test 12: PASSED - multi ret swap")
+	
+	testMultiRetClosureArgs()
+	println("Test 13: PASSED - multi ret closure args")
+	
+	testMultiRetForInit()
+	println("Test 14: PASSED - multi ret for init")
+	
+	testMultiRetIfInit()
+	println("Test 15: PASSED - multi ret if init")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

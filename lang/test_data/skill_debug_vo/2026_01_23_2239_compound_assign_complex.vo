@@ -1,0 +1,231 @@
+// Test: Compound assignment in complex scenarios
+package main
+
+// Test 1: Compound assign to map element
+func testCompoundAssignMap() {
+	m := map[string]int{"a": 10, "b": 20}
+	m["a"] += 5
+	assert(m["a"] == 15, "compound assign map +=")
+	
+	m["b"] *= 2
+	assert(m["b"] == 40, "compound assign map *=")
+	
+	m["a"] -= 3
+	assert(m["a"] == 12, "compound assign map -=")
+}
+
+// Test 2: Compound assign to slice element
+func testCompoundAssignSlice() {
+	s := []int{1, 2, 3, 4, 5}
+	s[0] += 10
+	assert(s[0] == 11, "compound assign slice +=")
+	
+	s[4] *= 3
+	assert(s[4] == 15, "compound assign slice *=")
+}
+
+// Test 3: Compound assign to struct field
+type Counter struct {
+	value int
+	name  string
+}
+
+func testCompoundAssignStructField() {
+	c := Counter{value: 100, name: "test"}
+	c.value += 50
+	assert(c.value == 150, "compound assign struct field")
+	
+	c.name += "!"
+	assert(c.name == "test!", "compound assign struct string field")
+}
+
+// Test 4: Compound assign to pointer field
+func testCompoundAssignPointerField() {
+	c := &Counter{value: 200, name: "ptr"}
+	c.value -= 50
+	assert(c.value == 150, "compound assign pointer field")
+}
+
+// Test 5: Compound assign with index expression having side effect
+var indexCallCount int
+
+func getIndex() int {
+	indexCallCount++
+	return 1
+}
+
+func testCompoundAssignSideEffectIndex() {
+	arr := []int{10, 20, 30}
+	indexCallCount = 0
+	
+	arr[getIndex()] += 5
+	assert(arr[1] == 25, "compound assign side effect index value")
+	assert(indexCallCount == 1, "index should be called once")
+}
+
+// Test 6: Compound assign with map key expression having side effect
+var keyCallCount int
+
+func getKey() string {
+	keyCallCount++
+	return "key"
+}
+
+func testCompoundAssignSideEffectKey() {
+	m := map[string]int{"key": 100}
+	keyCallCount = 0
+	
+	m[getKey()] += 25
+	assert(m["key"] == 125, "compound assign side effect key value")
+	assert(keyCallCount == 1, "key should be called once")
+}
+
+// Test 7: Compound assign to nested struct field
+type Outer struct {
+	inner Counter
+}
+
+func testCompoundAssignNested() {
+	o := Outer{inner: Counter{value: 50, name: "nested"}}
+	o.inner.value += 25
+	assert(o.inner.value == 75, "compound assign nested struct")
+}
+
+// Test 8: Compound assign to slice of struct element field
+func testCompoundAssignSliceStructField() {
+	counters := []Counter{{value: 10}, {value: 20}, {value: 30}}
+	counters[1].value += 5
+	assert(counters[1].value == 25, "compound assign slice struct field")
+}
+
+// Test 9: Compound assign to map of struct element field
+func testCompoundAssignMapStructField() {
+	m := map[string]Counter{"a": {value: 100}}
+	// In Go, this is not allowed because map elements are not addressable
+	// But Vo may behave differently - let's test what happens
+	c := m["a"]
+	c.value += 50
+	m["a"] = c
+	assert(m["a"].value == 150, "compound assign map struct field via temp")
+}
+
+// Test 10: Compound assign bitwise operations
+func testCompoundAssignBitwise() {
+	x := 0b1100
+	x |= 0b0011
+	assert(x == 0b1111, "compound assign |=")
+	
+	y := 0b1111
+	y &= 0b1010
+	assert(y == 0b1010, "compound assign &=")
+	
+	z := 0b1010
+	z ^= 0b0110
+	assert(z == 0b1100, "compound assign ^=")
+}
+
+// Test 11: Compound assign shift operations
+func testCompoundAssignShift() {
+	x := 4
+	x <<= 2
+	assert(x == 16, "compound assign <<=")
+	
+	y := 64
+	y >>= 3
+	assert(y == 8, "compound assign >>=")
+}
+
+// Test 12: Compound assign in loop
+func testCompoundAssignLoop() {
+	sum := 0
+	for i := 1; i <= 5; i++ {
+		sum += i
+	}
+	assert(sum == 15, "compound assign in loop")
+}
+
+// Test 13: Compound assign to array element (stack array)
+func testCompoundAssignArray() {
+	arr := [5]int{1, 2, 3, 4, 5}
+	arr[2] += 10
+	assert(arr[2] == 13, "compound assign array element")
+}
+
+// Test 14: Compound assign to pointer-to-struct field through method
+type Accumulator struct {
+	total int
+}
+
+func (a *Accumulator) Add(n int) {
+	a.total += n
+}
+
+func testCompoundAssignInMethod() {
+	acc := &Accumulator{total: 0}
+	acc.Add(10)
+	acc.Add(20)
+	acc.Add(30)
+	assert(acc.total == 60, "compound assign in method")
+}
+
+// Test 15: Compound assign with modulo
+func testCompoundAssignModulo() {
+	x := 17
+	x %= 5
+	assert(x == 2, "compound assign %=")
+}
+
+func main() {
+	testCompoundAssignMap()
+	println("Test 1: PASSED - compound assign map")
+	
+	testCompoundAssignSlice()
+	println("Test 2: PASSED - compound assign slice")
+	
+	testCompoundAssignStructField()
+	println("Test 3: PASSED - compound assign struct field")
+	
+	testCompoundAssignPointerField()
+	println("Test 4: PASSED - compound assign pointer field")
+	
+	testCompoundAssignSideEffectIndex()
+	println("Test 5: PASSED - compound assign side effect index")
+	
+	testCompoundAssignSideEffectKey()
+	println("Test 6: PASSED - compound assign side effect key")
+	
+	testCompoundAssignNested()
+	println("Test 7: PASSED - compound assign nested")
+	
+	testCompoundAssignSliceStructField()
+	println("Test 8: PASSED - compound assign slice struct field")
+	
+	testCompoundAssignMapStructField()
+	println("Test 9: PASSED - compound assign map struct field")
+	
+	testCompoundAssignBitwise()
+	println("Test 10: PASSED - compound assign bitwise")
+	
+	testCompoundAssignShift()
+	println("Test 11: PASSED - compound assign shift")
+	
+	testCompoundAssignLoop()
+	println("Test 12: PASSED - compound assign loop")
+	
+	testCompoundAssignArray()
+	println("Test 13: PASSED - compound assign array")
+	
+	testCompoundAssignInMethod()
+	println("Test 14: PASSED - compound assign in method")
+	
+	testCompoundAssignModulo()
+	println("Test 15: PASSED - compound assign modulo")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

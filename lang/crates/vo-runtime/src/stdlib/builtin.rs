@@ -50,9 +50,11 @@ fn builtin_println(call: &mut ExternCallContext) -> ExternResult {
 }
 
 /// vo_assert - assert condition with optional message
-/// Args: (cond bool, [(value, kind), ...])
+/// Args are passed as interfaces (2 slots each): (cond_iface[0:1], msg_iface[2:3], ...)
+/// cond_iface: slot 0 = metadata, slot 1 = bool data
 fn builtin_assert(call: &mut ExternCallContext) -> ExternResult {
-    let cond = call.arg_bool(0);
+    // Read bool from interface data slot (slot 1), not metadata slot (slot 0)
+    let cond = call.arg_bool(1);
     if !cond {
         let msg_part = format_args(call, 2);
         let msg = if msg_part.is_empty() {

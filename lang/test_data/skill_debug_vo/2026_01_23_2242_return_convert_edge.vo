@@ -1,0 +1,326 @@
+// Test: Return value conversion edge cases
+package main
+
+import "errors"
+
+// Test 1: Return int where any is expected
+func getInt() int {
+	return 42
+}
+
+func returnIntAsAny() any {
+	return getInt()
+}
+
+func testReturnIntAsAny() {
+	v := returnIntAsAny()
+	assert(v.(int) == 42, "return int as any")
+}
+
+// Test 2: Return struct where interface is expected
+type Stringer interface {
+	String() string
+}
+
+type MyStr struct {
+	s string
+}
+
+func (m MyStr) String() string {
+	return m.s
+}
+
+func getMyStr() MyStr {
+	return MyStr{s: "hello"}
+}
+
+func returnStructAsInterface() Stringer {
+	return getMyStr()
+}
+
+func testReturnStructAsInterface() {
+	v := returnStructAsInterface()
+	assert(v.String() == "hello", "return struct as interface")
+}
+
+// Test 3: Return (T, error) directly where (any, error) is expected
+func getIntError() (int, error) {
+	return 100, nil
+}
+
+func returnIntErrorAsAnyError() (any, error) {
+	n, err := getIntError()
+	return n, err
+}
+
+func testReturnIntErrorAsAnyError() {
+	v, err := returnIntErrorAsAnyError()
+	assert(err == nil, "return int error as any error - no err")
+	assert(v.(int) == 100, "return int error as any error - value")
+}
+
+// Test 4: Return pointer where interface is expected
+func getMyStrPtr() *MyStr {
+	return &MyStr{s: "world"}
+}
+
+func returnPtrAsInterface() Stringer {
+	return getMyStrPtr()
+}
+
+func testReturnPtrAsInterface() {
+	v := returnPtrAsInterface()
+	assert(v.String() == "world", "return ptr as interface")
+}
+
+// Test 5: Chain of return conversions
+func level1() int {
+	return 50
+}
+
+func level2() any {
+	return level1()
+}
+
+func level3() (any, error) {
+	return level2(), nil
+}
+
+func testChainReturnConvert() {
+	v, err := level3()
+	assert(err == nil, "chain return err")
+	assert(v.(int) == 50, "chain return value")
+}
+
+// Test 6: Return nil where interface is expected
+func maybeNil(returnNil bool) Stringer {
+	if returnNil {
+		return nil
+	}
+	return MyStr{s: "not nil"}
+}
+
+func testReturnNilAsInterface() {
+	v1 := maybeNil(true)
+	assert(v1 == nil, "return nil as interface")
+	
+	v2 := maybeNil(false)
+	assert(v2 != nil, "return not nil as interface")
+	assert(v2.String() == "not nil", "return not nil value")
+}
+
+// Test 7: Return from switch with different types
+func switchReturn(n int) any {
+	switch n {
+	case 1:
+		return "one"
+	case 2:
+		return 2
+	case 3:
+		return true
+	default:
+		return nil
+	}
+}
+
+func testSwitchReturn() {
+	v1 := switchReturn(1)
+	assert(v1.(string) == "one", "switch return 1")
+	
+	v2 := switchReturn(2)
+	assert(v2.(int) == 2, "switch return 2")
+	
+	v3 := switchReturn(3)
+	assert(v3.(bool) == true, "switch return 3")
+	
+	v4 := switchReturn(99)
+	assert(v4 == nil, "switch return default")
+}
+
+// Test 8: Return from if-else with conversion
+func ifElseReturn(cond bool) any {
+	if cond {
+		return "true branch"
+	} else {
+		return 123
+	}
+}
+
+func testIfElseReturn() {
+	v1 := ifElseReturn(true)
+	assert(v1.(string) == "true branch", "if-else true")
+	
+	v2 := ifElseReturn(false)
+	assert(v2.(int) == 123, "if-else false")
+}
+
+// Test 9: Return slice where any is expected
+func getSlice() []int {
+	return []int{1, 2, 3}
+}
+
+func returnSliceAsAny() any {
+	return getSlice()
+}
+
+func testReturnSliceAsAny() {
+	v := returnSliceAsAny()
+	s := v.([]int)
+	assert(len(s) == 3, "return slice as any len")
+	assert(s[0] == 1, "return slice as any [0]")
+}
+
+// Test 10: Return map where any is expected
+func getMap() map[string]int {
+	return map[string]int{"a": 1, "b": 2}
+}
+
+func returnMapAsAny() any {
+	return getMap()
+}
+
+func testReturnMapAsAny() {
+	v := returnMapAsAny()
+	m := v.(map[string]int)
+	assert(len(m) == 2, "return map as any len")
+	assert(m["a"] == 1, "return map as any a")
+}
+
+// Test 11: Return closure where any is expected
+func getClosure() func(int) int {
+	return func(n int) int { return n * 2 }
+}
+
+func returnClosureAsAny() any {
+	return getClosure()
+}
+
+func testReturnClosureAsAny() {
+	v := returnClosureAsAny()
+	f := v.(func(int) int)
+	assert(f(5) == 10, "return closure as any")
+}
+
+// Test 12: Return with defer modifying interface return
+func deferModifyInterface() (result Stringer) {
+	defer func() {
+		if result != nil {
+			result = MyStr{s: result.String() + "!"}
+		}
+	}()
+	return MyStr{s: "hello"}
+}
+
+func testDeferModifyInterface() {
+	v := deferModifyInterface()
+	assert(v.String() == "hello!", "defer modify interface")
+}
+
+// Test 13: Return error as interface
+func getError() error {
+	return errors.New("test error")
+}
+
+func returnErrorAsAny() any {
+	return getError()
+}
+
+func testReturnErrorAsAny() {
+	v := returnErrorAsAny()
+	err := v.(error)
+	assert(err.Error() == "test error", "return error as any")
+}
+
+// Test 14: Return embedded struct as interface
+type Base struct {
+	value int
+}
+
+func (b Base) String() string {
+	return "base"
+}
+
+type Derived struct {
+	Base
+	extra int
+}
+
+func getDerived() Derived {
+	return Derived{Base: Base{value: 10}, extra: 20}
+}
+
+func returnDerivedAsInterface() Stringer {
+	return getDerived()
+}
+
+func testReturnDerivedAsInterface() {
+	v := returnDerivedAsInterface()
+	assert(v.String() == "base", "return derived as interface")
+}
+
+// Test 15: Return in goroutine context
+func returnInGoroutine() {
+	ch := make(chan any, 1)
+	
+	go func() {
+		ch <- getInt()
+	}()
+	
+	v := <-ch
+	assert(v.(int) == 42, "return in goroutine")
+}
+
+func main() {
+	testReturnIntAsAny()
+	println("Test 1: PASSED - return int as any")
+	
+	testReturnStructAsInterface()
+	println("Test 2: PASSED - return struct as interface")
+	
+	testReturnIntErrorAsAnyError()
+	println("Test 3: PASSED - return int error as any error")
+	
+	testReturnPtrAsInterface()
+	println("Test 4: PASSED - return ptr as interface")
+	
+	testChainReturnConvert()
+	println("Test 5: PASSED - chain return convert")
+	
+	testReturnNilAsInterface()
+	println("Test 6: PASSED - return nil as interface")
+	
+	testSwitchReturn()
+	println("Test 7: PASSED - switch return")
+	
+	testIfElseReturn()
+	println("Test 8: PASSED - if-else return")
+	
+	testReturnSliceAsAny()
+	println("Test 9: PASSED - return slice as any")
+	
+	testReturnMapAsAny()
+	println("Test 10: PASSED - return map as any")
+	
+	testReturnClosureAsAny()
+	println("Test 11: PASSED - return closure as any")
+	
+	testDeferModifyInterface()
+	println("Test 12: PASSED - defer modify interface")
+	
+	testReturnErrorAsAny()
+	println("Test 13: PASSED - return error as any")
+	
+	testReturnDerivedAsInterface()
+	println("Test 14: PASSED - return derived as interface")
+	
+	returnInGoroutine()
+	println("Test 15: PASSED - return in goroutine")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

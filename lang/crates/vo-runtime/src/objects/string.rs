@@ -137,12 +137,15 @@ pub fn new_from_string(gc: &mut Gc, s: String) -> GcRef {
     create(gc, s.as_bytes())
 }
 
-/// Create string from a byte slice object. Shares the underlying array.
+/// Create string from a byte slice object. Copies the data (strings are immutable).
 pub fn from_slice(gc: &mut Gc, slice_ref: GcRef) -> GcRef {
     if slice_ref.is_null() { return core::ptr::null_mut(); }
     let len = slice::len(slice_ref);
     if len == 0 { return core::ptr::null_mut(); }
-    alloc_string(gc, slice::array_ref(slice_ref), slice::data_ptr(slice_ref), len)
+    // Must copy data - strings are immutable, but the source slice may be mutated later
+    let src_ptr = slice::data_ptr(slice_ref);
+    let bytes = unsafe { core::slice::from_raw_parts(src_ptr, len) };
+    create(gc, bytes)
 }
 
 /// Convert string to []byte slice object. Returns slice GcRef.

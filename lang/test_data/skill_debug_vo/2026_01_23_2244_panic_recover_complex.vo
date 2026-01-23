@@ -1,0 +1,349 @@
+// Test: Panic/recover in complex scenarios
+package main
+
+// Test 1: Recover returns nil when no panic
+func testRecoverNoPanic() {
+	result := func() any {
+		defer func() {
+			r := recover()
+			if r != nil {
+				panic("should not recover anything")
+			}
+		}()
+		return "no panic"
+	}()
+	assert(result == "no panic", "recover no panic")
+}
+
+// Test 2: Recover returns panic value
+func testRecoverWithPanic() {
+	result := func() any {
+		defer func() {
+			if r := recover(); r != nil {
+				// recovered
+			}
+		}()
+		panic("test panic")
+		return nil
+	}()
+	assert(result == nil, "recover with panic")
+}
+
+// Test 3: Nested panic - inner recovered
+func testNestedPanicInnerRecovered() {
+	outer := 0
+	
+	func() {
+		defer func() {
+			outer = 1
+		}()
+		
+		func() {
+			defer func() {
+				recover()
+			}()
+			panic("inner panic")
+		}()
+		
+		outer = 2
+	}()
+	
+	assert(outer == 2, "nested panic inner recovered")
+}
+
+// Test 4: Panic with struct value
+type PanicData struct {
+	code    int
+	message string
+}
+
+func testPanicStructValue() {
+	var recovered PanicData
+	
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered = r.(PanicData)
+			}
+		}()
+		panic(PanicData{code: 42, message: "error"})
+	}()
+	
+	assert(recovered.code == 42, "panic struct code")
+	assert(recovered.message == "error", "panic struct message")
+}
+
+// Test 5: Multiple defers with one recovering
+func testMultipleDeferOneRecover() {
+	order := ""
+	
+	func() {
+		defer func() {
+			order += "1"
+		}()
+		defer func() {
+			if r := recover(); r != nil {
+				order += "R"
+			}
+		}()
+		defer func() {
+			order += "2"
+		}()
+		panic("test")
+	}()
+	
+	assert(order == "2R1", "multiple defer one recover order")
+}
+
+// Test 6: Recover in nested defer
+func testRecoverNestedDefer() {
+	recovered := false
+	
+	func() {
+		defer func() {
+			defer func() {
+				if r := recover(); r != nil {
+					recovered = true
+				}
+			}()
+		}()
+		panic("test")
+	}()
+	
+	// In Go, this would NOT recover because recover must be in the immediate defer
+	// Let's verify Vo's behavior matches Go
+	assert(recovered == false, "recover nested defer should not work")
+}
+
+// Test 7: Panic after partial work
+var workDone []int
+
+func doWork(n int) {
+	workDone = append(workDone, n)
+	if n == 3 {
+		panic("work failed at 3")
+	}
+}
+
+func testPanicAfterPartialWork() {
+	workDone = nil
+	
+	func() {
+		defer func() {
+			recover()
+		}()
+		for i := 1; i <= 5; i++ {
+			doWork(i)
+		}
+	}()
+	
+	assert(len(workDone) == 3, "panic after partial work len")
+	assert(workDone[2] == 3, "panic after partial work last")
+}
+
+// Test 8: Re-panic in defer
+func testRepanic() {
+	var finalValue any
+	
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				finalValue = r
+			}
+		}()
+		
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					panic("repanic: " + r.(string))
+				}
+			}()
+			panic("original")
+		}()
+	}()
+	
+	assert(finalValue.(string) == "repanic: original", "repanic value")
+}
+
+// Test 9: Panic in goroutine (should crash if not recovered)
+func testPanicInGoroutine() {
+	done := make(chan bool, 1)
+	
+	go func() {
+		defer func() {
+			recover()
+			done <- true
+		}()
+		panic("goroutine panic")
+	}()
+	
+	<-done
+}
+
+// Test 10: Named return modified by defer after panic
+func panicWithNamedReturn() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = 100
+		}
+	}()
+	result = 50
+	panic("test")
+	return result
+}
+
+func testPanicNamedReturn() {
+	r := panicWithNamedReturn()
+	assert(r == 100, "panic named return")
+}
+
+// Test 11: Panic with nil value
+func testPanicNil() {
+	var recovered any
+	recovered = "not nil"
+	
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		panic(nil)
+	}()
+	
+	// panic(nil) is valid and recover() returns nil
+	assert(recovered == nil, "panic nil")
+}
+
+// Test 12: Panic in loop with defer
+func testPanicLoopDefer() {
+	count := 0
+	
+	func() {
+		defer func() {
+			recover()
+		}()
+		
+		for i := 0; i < 10; i++ {
+			defer func() {
+				count++
+			}()
+			if i == 5 {
+				panic("loop panic")
+			}
+		}
+	}()
+	
+	// Defers from iterations 0-5 should run
+	assert(count == 6, "panic loop defer count")
+}
+
+// Test 13: Type assertion in recover
+func testRecoverTypeAssert() {
+	var msg string
+	
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if s, ok := r.(string); ok {
+					msg = s
+				}
+			}
+		}()
+		panic("string panic")
+	}()
+	
+	assert(msg == "string panic", "recover type assert")
+}
+
+// Test 14: Panic during panic handling (before recover)
+func testPanicDuringDefer() {
+	var final any
+	
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				final = r
+			}
+		}()
+		
+		func() {
+			defer func() {
+				panic("defer panic")
+			}()
+			panic("original panic")
+		}()
+	}()
+	
+	// The "defer panic" should override "original panic"
+	assert(final.(string) == "defer panic", "panic during defer")
+}
+
+// Test 15: Recover called twice
+func testRecoverTwice() {
+	var first, second any
+	
+	func() {
+		defer func() {
+			first = recover()
+			second = recover()
+		}()
+		panic("test")
+	}()
+	
+	assert(first.(string) == "test", "recover first")
+	assert(second == nil, "recover second nil")
+}
+
+func main() {
+	testRecoverNoPanic()
+	println("Test 1: PASSED - recover no panic")
+	
+	testRecoverWithPanic()
+	println("Test 2: PASSED - recover with panic")
+	
+	testNestedPanicInnerRecovered()
+	println("Test 3: PASSED - nested panic inner recovered")
+	
+	testPanicStructValue()
+	println("Test 4: PASSED - panic struct value")
+	
+	testMultipleDeferOneRecover()
+	println("Test 5: PASSED - multiple defer one recover")
+	
+	testRecoverNestedDefer()
+	println("Test 6: PASSED - recover nested defer")
+	
+	testPanicAfterPartialWork()
+	println("Test 7: PASSED - panic after partial work")
+	
+	testRepanic()
+	println("Test 8: PASSED - repanic")
+	
+	testPanicInGoroutine()
+	println("Test 9: PASSED - panic in goroutine")
+	
+	testPanicNamedReturn()
+	println("Test 10: PASSED - panic named return")
+	
+	testPanicNil()
+	println("Test 11: PASSED - panic nil")
+	
+	testPanicLoopDefer()
+	println("Test 12: PASSED - panic loop defer")
+	
+	testRecoverTypeAssert()
+	println("Test 13: PASSED - recover type assert")
+	
+	testPanicDuringDefer()
+	println("Test 14: PASSED - panic during defer")
+	
+	testRecoverTwice()
+	println("Test 15: PASSED - recover twice")
+	
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

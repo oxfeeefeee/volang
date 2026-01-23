@@ -1,0 +1,213 @@
+// Test: Bare return with interface type named returns
+package main
+
+type Stringer interface {
+	String() string
+}
+
+type MyInt int
+
+func (m MyInt) String() string {
+	if m < 0 {
+		return "negative"
+	}
+	return "non-negative"
+}
+
+// Test 1: Bare return with single interface named return
+func getStringer(n int) (s Stringer) {
+	if n > 0 {
+		s = MyInt(n)
+		return
+	}
+	s = MyInt(0)
+	return
+}
+
+// Test 2: Bare return with (any, error) named returns
+func getAnyValue(ok bool) (v any, err error) {
+	if ok {
+		v = 42
+		return
+	}
+	v = "default"
+	return
+}
+
+// Test 3: Bare return with (interface, interface) named returns
+func getTwoIfaces(n int) (a Stringer, b any) {
+	a = MyInt(n)
+	b = n * 2
+	return
+}
+
+// Test 4: Bare return with conditional assignment to interface
+func conditionalIface(cond bool) (result any) {
+	if cond {
+		result = "true branch"
+	} else {
+		result = 123
+	}
+	return
+}
+
+// Test 5: Bare return with loop modifying interface
+func loopIface(n int) (acc any) {
+	acc = 0
+	for i := 0; i < n; i++ {
+		acc = acc.(int) + i
+	}
+	return
+}
+
+// Test 6: Bare return with struct containing interface
+type Container struct {
+	value any
+}
+
+func getContainer(v int) (c Container) {
+	c.value = v
+	return
+}
+
+// Test 7: Bare return with slice of interface
+func getIfaceSlice(n int) (s []any) {
+	s = make([]any, n)
+	for i := 0; i < n; i++ {
+		s[i] = i
+	}
+	return
+}
+
+// Test 8: Bare return with map of interface
+func getIfaceMap(keys []string) (m map[string]any) {
+	m = make(map[string]any)
+	for i, k := range keys {
+		m[k] = i
+	}
+	return
+}
+
+// Test 9: Bare return with defer modifying interface
+func deferModifyIface() (result any) {
+	defer func() {
+		if result.(int) < 10 {
+			result = result.(int) * 10
+		}
+	}()
+	result = 5
+	return
+}
+
+// Test 10: Bare return with panic/recover and interface
+func recoverIface() (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = r
+		}
+	}()
+	result = "initial"
+	panic("test panic")
+	return
+}
+
+// Test 11: Bare return with embedded interface
+type Reader interface {
+	Read() string
+}
+
+type ReadStringer interface {
+	Reader
+	Stringer
+}
+
+type MyReadInt int
+
+func (m MyReadInt) Read() string {
+	return "reading"
+}
+
+func (m MyReadInt) String() string {
+	return "string"
+}
+
+func getReadStringer(n int) (rs ReadStringer) {
+	rs = MyReadInt(n)
+	return
+}
+
+func main() {
+	// Test 1
+	s1 := getStringer(5)
+	assert(s1.String() == "non-negative", "bare return single iface positive")
+	s2 := getStringer(-5)
+	assert(s2.String() == "negative", "bare return single iface negative")
+	println("Test 1: PASSED - bare return single interface")
+
+	// Test 2
+	v1, _ := getAnyValue(true)
+	assert(v1.(int) == 42, "bare return any ok")
+	v2, _ := getAnyValue(false)
+	assert(v2.(string) == "default", "bare return any not ok")
+	println("Test 2: PASSED - bare return (any, error)")
+
+	// Test 3
+	a3, b3 := getTwoIfaces(7)
+	assert(a3.String() == "non-negative", "bare return two ifaces first")
+	assert(b3.(int) == 14, "bare return two ifaces second")
+	println("Test 3: PASSED - bare return (interface, interface)")
+
+	// Test 4
+	r4a := conditionalIface(true)
+	assert(r4a.(string) == "true branch", "conditional iface true")
+	r4b := conditionalIface(false)
+	assert(r4b.(int) == 123, "conditional iface false")
+	println("Test 4: PASSED - conditional interface")
+
+	// Test 5
+	r5 := loopIface(5)
+	assert(r5.(int) == 10, "loop iface sum 0+1+2+3+4=10")
+	println("Test 5: PASSED - loop interface")
+
+	// Test 6
+	c6 := getContainer(99)
+	assert(c6.value.(int) == 99, "container value")
+	println("Test 6: PASSED - struct with interface")
+
+	// Test 7
+	s7 := getIfaceSlice(3)
+	assert(len(s7) == 3, "iface slice len")
+	assert(s7[0].(int) == 0, "iface slice [0]")
+	assert(s7[2].(int) == 2, "iface slice [2]")
+	println("Test 7: PASSED - slice of interface")
+
+	// Test 8
+	m8 := getIfaceMap([]string{"a", "b"})
+	assert(m8["a"].(int) == 0, "iface map a")
+	assert(m8["b"].(int) == 1, "iface map b")
+	println("Test 8: PASSED - map of interface")
+
+	// Test 9
+	r9 := deferModifyIface()
+	assert(r9.(int) == 50, "defer modify iface 5*10=50")
+	println("Test 9: PASSED - defer modify interface")
+
+	// Test 10
+	r10 := recoverIface()
+	assert(r10.(string) == "test panic", "recover iface")
+	println("Test 10: PASSED - recover interface")
+
+	// Test 11
+	rs11 := getReadStringer(42)
+	assert(rs11.Read() == "reading", "embedded read")
+	assert(rs11.String() == "string", "embedded string")
+	println("Test 11: PASSED - embedded interface")
+
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}

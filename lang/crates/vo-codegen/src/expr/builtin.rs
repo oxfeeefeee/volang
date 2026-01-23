@@ -74,11 +74,21 @@ fn compile_args_as_interfaces(
     Ok((args_start, total_args))
 }
 
-pub fn is_builtin(name: &str) -> bool {
-    matches!(name, "len" | "cap" | "make" | "new" | "append" | "copy" | "delete" | "panic" | "recover" | "print" | "println" | "close" | "assert")
+/// Compile builtin call using Builtin enum from analysis phase.
+/// This is the preferred entry point - uses type-safe enum instead of string matching.
+pub fn compile_builtin_call_by_id(
+    expr: &vo_syntax::ast::Expr,
+    id: vo_analysis::Builtin,
+    call: &vo_syntax::ast::CallExpr,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    compile_builtin_call_impl(expr, id.name(), call, dst, ctx, func, info)
 }
 
-pub fn compile_builtin_call(
+fn compile_builtin_call_impl(
     expr: &vo_syntax::ast::Expr,
     name: &str,
     call: &vo_syntax::ast::CallExpr,

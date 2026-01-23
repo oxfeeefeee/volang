@@ -156,6 +156,20 @@ impl<'a> TypeInfoWrapper<'a> {
         typ::identical(type_key, universe.error_type(), self.tc_objs())
     }
     
+    /// Check if a call expression's callee is a builtin function.
+    /// Returns Some(Builtin) if the callee expression is a builtin, None otherwise.
+    /// This uses the OperandMode recorded during type checking, which correctly handles
+    /// variable shadowing (a local variable named 'copy' won't be treated as builtin).
+    pub fn expr_builtin(&self, expr_id: ExprId) -> Option<vo_analysis::Builtin> {
+        self.type_info().types.get(&expr_id).and_then(|tv| {
+            if let vo_analysis::OperandMode::Builtin(id) = tv.mode {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    }
+    
     /// Convert TypeKey to RuntimeType.
     /// This is the unified entry point for type conversion in codegen.
     pub fn type_to_runtime_type(&self, type_key: TypeKey, ctx: &mut crate::context::CodegenContext) -> vo_runtime::RuntimeType {
