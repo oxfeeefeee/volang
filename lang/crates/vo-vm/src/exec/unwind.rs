@@ -102,18 +102,25 @@ fn compute_include_errdefers(
     is_error_return: bool,
 ) -> bool {
     if is_error_return {
-        return true;  // fail statement always triggers errdefer
+        return true;
     }
-    if func.error_ret_slot >= 0 {
-        // Runtime check: is the error return value non-nil?
-        // Error is an interface (2 slots), slot0's low byte is value_kind (0 = Void = nil)
-        let ret_start = inst.a as usize;
-        let current_bp = frames.last().unwrap().bp;
-        let error_slot = current_bp + ret_start + func.error_ret_slot as usize;
-        let error_slot0 = stack[error_slot];
-        return (error_slot0 & 0xFF) != 0;  // value_kind != Void means non-nil error
+    if func.error_ret_slot < 0 {
+        return false;
     }
-    false  // no error return type
+    
+    // Runtime check: is the error return value non-nil?
+    // Error is an interface (2 slots), slot0's low byte is value_kind (0 = Void = nil)
+    let bp = frames.last().unwrap().bp;
+    let slot = bp + inst.a as usize + func.error_ret_slot as usize;
+    
+    let error_slot0 = if (inst.flags & vo_common_core::bytecode::RETURN_FLAG_HEAP_RETURNS) != 0 {
+        // heap_returns: slot contains GcRef, dereference to get interface slot0
+        unsafe { *(stack[slot] as GcRef) }
+    } else {
+        stack[slot]
+    };
+    
+    (error_slot0 & 0xFF) != 0
 }
 
 /// Handle initial return (not continuing from defer).
