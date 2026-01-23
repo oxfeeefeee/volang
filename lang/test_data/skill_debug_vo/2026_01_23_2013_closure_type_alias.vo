@@ -1,0 +1,164 @@
+package main
+
+// Test: Closures with type aliases
+
+type MyInt = int
+type MyFunc = func(int) int
+type MySlice = []int
+
+// Test 1: Closure capturing type alias variable
+func testClosureCaptureAlias() {
+	var x MyInt = 10
+	f := func() MyInt {
+		return x * 2
+	}
+	assert(f() == 20)
+	
+	x = 15
+	assert(f() == 30)
+}
+
+// Test 2: Closure with type alias parameter
+func testClosureAliasParam() {
+	f := func(x MyInt) MyInt {
+		return x + 1
+	}
+	assert(f(5) == 6)
+}
+
+// Test 3: Type alias function assigned to closure
+func double(x int) int {
+	return x * 2
+}
+
+func testFuncAliasAssignment() {
+	var f MyFunc = double
+	assert(f(5) == 10)
+	
+	// Assign closure
+	f = func(x int) int {
+		return x * 3
+	}
+	assert(f(5) == 15)
+}
+
+// Test 4: Closure returning type alias
+func makeAdder(n MyInt) MyFunc {
+	return func(x int) int {
+		return x + int(n)
+	}
+}
+
+func testClosureReturnAlias() {
+	add5 := makeAdder(5)
+	assert(add5(10) == 15)
+}
+
+// Test 5: Closure modifying type alias slice
+func testClosureModifyAliasSlice() {
+	var s MySlice = []int{1, 2, 3}
+	
+	f := func() {
+		s = append(s, 4)
+	}
+	f()
+	assert(len(s) == 4)
+	assert(s[3] == 4)
+}
+
+// Test 6: Nested closures with type alias
+func testNestedClosureAlias() {
+	var x MyInt = 1
+	
+	outer := func() func() MyInt {
+		return func() MyInt {
+			x++
+			return x
+		}
+	}
+	
+	inner := outer()
+	assert(inner() == 2)
+	assert(inner() == 3)
+}
+
+// Test 7: Closure in loop with type alias
+func testClosureLoopAlias() {
+	var funcs []func() MyInt
+	
+	for i := MyInt(0); i < 3; i++ {
+		i := i // capture loop variable
+		funcs = append(funcs, func() MyInt {
+			return i
+		})
+	}
+	
+	assert(funcs[0]() == 0)
+	assert(funcs[1]() == 1)
+	assert(funcs[2]() == 2)
+}
+
+// Test 8: Interface with closure using type alias
+type Processor interface {
+	Process(MyInt) MyInt
+}
+
+type FuncProcessor struct {
+	fn MyFunc
+}
+
+func (f FuncProcessor) Process(x MyInt) MyInt {
+	return MyInt(f.fn(int(x)))
+}
+
+func testInterfaceClosureAlias() {
+	var p Processor = FuncProcessor{
+		fn: func(x int) int { return x * 2 },
+	}
+	
+	assert(p.Process(5) == 10)
+}
+
+// Test 9: Closure with multiple type alias captures
+type MyString = string
+
+func testMultipleAliasClosure() {
+	var n MyInt = 10
+	var s MyString = "hello"
+	
+	f := func() (MyInt, MyString) {
+		return n, s
+	}
+	
+	rn, rs := f()
+	assert(rn == 10)
+	assert(rs == "hello")
+}
+
+// Test 10: Type alias in defer closure
+func testDeferClosureAlias() {
+	var result MyInt = 0
+	
+	func() {
+		defer func() {
+			result = 42
+		}()
+	}()
+	
+	assert(result == 42)
+}
+
+func main() {
+	testClosureCaptureAlias()
+	testClosureAliasParam()
+	testFuncAliasAssignment()
+	testClosureReturnAlias()
+	testClosureModifyAliasSlice()
+	testNestedClosureAlias()
+	testClosureLoopAlias()
+	testInterfaceClosureAlias()
+	testMultipleAliasClosure()
+	testDeferClosureAlias()
+	
+	println("All closure type alias tests passed!")
+}

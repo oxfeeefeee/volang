@@ -207,6 +207,8 @@ pub struct ConstSpec {
 pub struct TypeDecl {
     /// The type name.
     pub name: Ident,
+    /// Whether this is a type alias (`type X = Y`) vs a new type (`type X Y`).
+    pub is_alias: bool,
     /// The underlying type.
     pub ty: TypeExpr,
     /// The span of the declaration.

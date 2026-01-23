@@ -120,14 +120,17 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a type declaration.
+    /// Supports both `type X Y` (new type) and `type X = Y` (type alias).
     pub fn parse_type_decl(&mut self) -> ParseResult<TypeDecl> {
         let start = self.current.span.start;
         self.expect(TokenKind::Type)?;
         let name = self.parse_ident()?;
+        let is_alias = self.eat(TokenKind::Eq);
         let ty = self.parse_type()?;
         self.expect_semi();
         Ok(TypeDecl {
             name,
+            is_alias,
             ty,
             span: Span::new(start, self.current.span.start),
         })

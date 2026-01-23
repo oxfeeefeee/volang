@@ -188,9 +188,10 @@ impl<'a> AstPrinter<'a> {
     fn write_type_decl(&mut self, t: &TypeDecl) {
         self.write_indent();
         let name = self.resolve_symbol(t.name.symbol);
+        let alias_str = if t.is_alias { ", alias: true" } else { "" };
         write!(self.output, "Type {{ name: \"{}\", type: ", name).unwrap();
         self.write_type_inline(&t.ty);
-        writeln!(self.output, " }},").unwrap();
+        writeln!(self.output, "{} }},", alias_str).unwrap();
     }
 
     fn write_func_decl(&mut self, f: &FuncDecl) {

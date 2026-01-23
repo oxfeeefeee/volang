@@ -1,0 +1,232 @@
+package main
+
+import "errors"
+
+// Test: Error handling with ? operator and errdefer
+
+var callOrder []string
+
+func recordCall(name string) {
+	callOrder = append(callOrder, name)
+}
+
+func clearOrder() {
+	callOrder = nil
+}
+
+func succeed() error {
+	recordCall("succeed")
+	return nil
+}
+
+func doFail() error {
+	recordCall("doFail")
+	return errors.New("failed")
+}
+
+func succeedValue() (int, error) {
+	recordCall("succeedValue")
+	return 42, nil
+}
+
+func failValue() (int, error) {
+	recordCall("failValue")
+	return 0, errors.New("failed")
+}
+
+// Test 1: Basic ? operator success
+func testQuestionSuccess() error {
+	clearOrder()
+	succeed()?
+	recordCall("after")
+	assert(len(callOrder) == 2)
+	assert(callOrder[0] == "succeed")
+	assert(callOrder[1] == "after")
+	return nil
+}
+
+// Test 2: Basic ? operator failure
+func testQuestionFailure() {
+	clearOrder()
+	err := func() error {
+		succeed()?
+		doFail()?  // Should return here
+		recordCall("unreachable")
+		return nil
+	}()
+	
+	assert(err != nil)
+	assert(len(callOrder) == 2)
+	assert(callOrder[0] == "succeed")
+	assert(callOrder[1] == "doFail")
+}
+
+// Test 3: ? with value return
+func testQuestionValue() error {
+	clearOrder()
+	v := succeedValue()?
+	assert(v == 42)
+	recordCall("after")
+	assert(callOrder[0] == "succeedValue")
+	assert(callOrder[1] == "after")
+	return nil
+}
+
+// Test 4: errdefer runs on error
+func testErrdeferOnError() {
+	clearOrder()
+	_ = func() error {
+		errdefer recordCall("errdefer")
+		recordCall("before")
+		doFail()?
+		recordCall("unreachable")
+		return nil
+	}()
+	
+	assert(len(callOrder) == 3)
+	assert(callOrder[0] == "before")
+	assert(callOrder[1] == "doFail")
+	assert(callOrder[2] == "errdefer")
+}
+
+// Test 5: errdefer does NOT run on success
+func testErrdeferOnSuccess() {
+	clearOrder()
+	_ = func() error {
+		errdefer recordCall("errdefer")
+		recordCall("before")
+		succeed()?
+		recordCall("after")
+		return nil
+	}()
+	
+	assert(len(callOrder) == 3)
+	assert(callOrder[0] == "before")
+	assert(callOrder[1] == "succeed")
+	assert(callOrder[2] == "after")
+	// errdefer should NOT have run
+}
+
+// Test 6: Multiple errdefers
+func testMultipleErrdefers() {
+	clearOrder()
+	_ = func() error {
+		errdefer recordCall("errdefer1")
+		recordCall("step1")
+		errdefer recordCall("errdefer2")
+		recordCall("step2")
+		doFail()?
+		return nil
+	}()
+	
+	// errdefers run in LIFO order
+	assert(len(callOrder) == 5)
+	assert(callOrder[0] == "step1")
+	assert(callOrder[1] == "step2")
+	assert(callOrder[2] == "doFail")
+	assert(callOrder[3] == "errdefer2")
+	assert(callOrder[4] == "errdefer1")
+}
+
+// Test 7: errdefer with closure capture
+func testErrdeferClosureCapture() {
+	clearOrder()
+	_ = func() error {
+		x := 1
+		errdefer func() {
+			recordCall("errdefer")
+			assert(x == 2)  // Should see updated value
+		}()
+		x = 2
+		doFail()?
+		return nil
+	}()
+	
+	assert(len(callOrder) == 2)
+	assert(callOrder[0] == "doFail")
+	assert(callOrder[1] == "errdefer")
+}
+
+// Test 8: Nested function with ?
+func outer() error {
+	recordCall("outer-start")
+	inner()?
+	recordCall("outer-end")
+	return nil
+}
+
+func inner() error {
+	recordCall("inner")
+	return errors.New("inner error")
+}
+
+func testNestedQuestion() {
+	clearOrder()
+	err := outer()
+	
+	assert(err != nil)
+	assert(len(callOrder) == 2)
+	assert(callOrder[0] == "outer-start")
+	assert(callOrder[1] == "inner")
+}
+
+// Test 9: ? in loop
+func testQuestionInLoop() {
+	clearOrder()
+	err := func() error {
+		for i := 0; i < 3; i++ {
+			if i == 2 {
+				doFail()?
+			}
+			recordCall("loop")
+		}
+		return nil
+	}()
+	
+	assert(err != nil)
+	assert(len(callOrder) == 3)
+	assert(callOrder[0] == "loop")
+	assert(callOrder[1] == "loop")
+	assert(callOrder[2] == "doFail")
+}
+
+// Test 10: errdefer with named return
+func testErrdeferNamedReturn() (result int, err error) {
+	clearOrder()
+	errdefer func() {
+		recordCall("errdefer")
+		result = 100  // Modify named return
+	}()
+	
+	recordCall("before")
+	doFail()?
+	recordCall("unreachable")
+	return 0, nil
+}
+
+func testErrdeferNamedReturnWrapper() {
+	clearOrder()
+	result, err := testErrdeferNamedReturn()
+	
+	assert(err != nil)
+	assert(result == 100)  // errdefer modified it
+	assert(len(callOrder) == 3)
+	assert(callOrder[0] == "before")
+	assert(callOrder[1] == "doFail")
+	assert(callOrder[2] == "errdefer")
+}
+
+func main() {
+	testQuestionSuccess()
+	testQuestionFailure()
+	testQuestionValue()
+	testErrdeferOnError()
+	testErrdeferOnSuccess()
+	testMultipleErrdefers()
+	testErrdeferClosureCapture()
+	testNestedQuestion()
+	testQuestionInLoop()
+	testErrdeferNamedReturnWrapper()
+	
+	println("All error/errdefer tests passed!")
+}

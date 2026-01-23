@@ -443,7 +443,7 @@ impl Checker {
                 let di = self.tc_objs.decls.insert(DeclInfo::new_type(
                     file_scope,
                     type_decl.ty.clone(),
-                    false, // Vo doesn't have type aliases with =
+                    type_decl.is_alias,
                 ));
 
                 self.declare_pkg_obj(&type_decl.name, okey, di);

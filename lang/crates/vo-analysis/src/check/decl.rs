@@ -615,8 +615,7 @@ impl Checker {
                 // Mark gray and type-check
                 let idx = self.push_obj_path(okey);
                 self.lobj_mut(okey).set_color(ObjColor::Gray(idx));
-                // Vo doesn't have type aliases in the same way as Go
-                self.type_decl(okey, &tdecl.ty, None, false);
+                self.type_decl(okey, &tdecl.ty, None, tdecl.is_alias);
                 let popped = self.pop_obj_path();
                 self.lobj_mut(popped).set_color(ObjColor::Black);
             }

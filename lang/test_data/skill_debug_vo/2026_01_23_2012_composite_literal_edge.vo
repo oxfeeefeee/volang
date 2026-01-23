@@ -1,0 +1,185 @@
+package main
+
+// Test: Composite literal edge cases
+
+type Inner struct {
+	value int
+}
+
+type Outer struct {
+	inner Inner
+	ptr   *Inner
+}
+
+type Nested struct {
+	outer Outer
+	arr   [3]Inner
+	slice []Inner
+	m     map[string]Inner
+}
+
+// Test 1: Nested composite literal with all fields
+func testNestedCompositeLiteral() {
+	n := Nested{
+		outer: Outer{
+			inner: Inner{value: 1},
+			ptr:   &Inner{value: 2},
+		},
+		arr: [3]Inner{{value: 3}, {value: 4}, {value: 5}},
+		slice: []Inner{{value: 6}, {value: 7}},
+		m: map[string]Inner{
+			"a": {value: 8},
+			"b": {value: 9},
+		},
+	}
+	
+	assert(n.outer.inner.value == 1)
+	assert(n.outer.ptr.value == 2)
+	assert(n.arr[0].value == 3)
+	assert(n.arr[2].value == 5)
+	assert(n.slice[0].value == 6)
+	assert(n.m["a"].value == 8)
+}
+
+// Test 2: Composite literal as function argument
+func takeOuter(o Outer) int {
+	return o.inner.value + o.ptr.value
+}
+
+func testCompositeLiteralAsArg() {
+	result := takeOuter(Outer{
+		inner: Inner{value: 10},
+		ptr:   &Inner{value: 20},
+	})
+	assert(result == 30)
+}
+
+// Test 3: Composite literal in return statement
+func returnNested() Nested {
+	return Nested{
+		outer: Outer{inner: Inner{value: 100}},
+	}
+}
+
+func testCompositeLiteralReturn() {
+	n := returnNested()
+	assert(n.outer.inner.value == 100)
+}
+
+// Test 4: Composite literal with method call
+func (i Inner) Double() int {
+	return i.value * 2
+}
+
+func testCompositeLiteralMethodCall() {
+	result := Inner{value: 25}.Double()
+	assert(result == 50)
+}
+
+// Test 5: Composite literal address and method call
+func (i *Inner) Triple() int {
+	return i.value * 3
+}
+
+func testCompositeLiteralAddrMethodCall() {
+	result := (&Inner{value: 10}).Triple()
+	assert(result == 30)
+}
+
+// Test 6: Composite literal in slice append
+func testCompositeLiteralAppend() {
+	s := []Inner{{value: 1}}
+	s = append(s, Inner{value: 2}, Inner{value: 3})
+	assert(len(s) == 3)
+	assert(s[2].value == 3)
+}
+
+// Test 7: Composite literal with type inference in slice
+func testCompositeLiteralTypeInference() {
+	// Type inferred from slice element type
+	s := []Inner{{value: 1}, {2}, {3}}
+	assert(s[0].value == 1)
+	assert(s[1].value == 2)
+	assert(s[2].value == 3)
+}
+
+// Test 8: Composite literal as map value
+func testCompositeLiteralMapValue() {
+	m := map[int]Inner{
+		1: {value: 10},
+		2: {value: 20},
+	}
+	assert(m[1].value == 10)
+	assert(m[2].value == 20)
+}
+
+// Test 9: Composite literal with embedded struct
+type Base struct {
+	id int
+}
+
+type Derived struct {
+	Base
+	name string
+}
+
+func testCompositeLiteralEmbedded() {
+	d := Derived{
+		Base: Base{id: 42},
+		name: "test",
+	}
+	assert(d.id == 42)
+	assert(d.name == "test")
+}
+
+// Test 10: Composite literal with interface field
+type Container struct {
+	value any
+}
+
+func testCompositeLiteralInterfaceField() {
+	c := Container{value: Inner{value: 100}}
+	inner := c.value.(Inner)
+	assert(inner.value == 100)
+}
+
+// Test 11: Array of pointers composite literal
+func testArrayOfPointersLiteral() {
+	arr := [3]*Inner{
+		&Inner{value: 1},
+		&Inner{value: 2},
+		nil,
+	}
+	assert(arr[0].value == 1)
+	assert(arr[1].value == 2)
+	assert(arr[2] == nil)
+}
+
+// Test 12: Composite literal in conditional expression
+func testCompositeLiteralConditional() {
+	cond := true
+	var result Inner
+	if cond {
+		result = Inner{value: 1}
+	} else {
+		result = Inner{value: 2}
+	}
+	assert(result.value == 1)
+}
+
+func main() {
+	testNestedCompositeLiteral()
+	testCompositeLiteralAsArg()
+	testCompositeLiteralReturn()
+	testCompositeLiteralMethodCall()
+	testCompositeLiteralAddrMethodCall()
+	testCompositeLiteralAppend()
+	testCompositeLiteralTypeInference()
+	testCompositeLiteralMapValue()
+	testCompositeLiteralEmbedded()
+	testCompositeLiteralInterfaceField()
+	testArrayOfPointersLiteral()
+	testCompositeLiteralConditional()
+	
+	println("All composite literal tests passed!")
+}

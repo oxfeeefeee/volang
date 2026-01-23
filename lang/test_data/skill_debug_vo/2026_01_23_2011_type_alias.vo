@@ -1,0 +1,143 @@
+package main
+
+// Test: Type alias syntax (type X = Y)
+
+// Basic type alias
+type MyInt = int
+type MyString = string
+
+// Alias to struct
+type Point struct {
+	x, y int
+}
+type PointAlias = Point
+
+// Alias to slice
+type IntSlice = []int
+
+// Alias to map
+type StringMap = map[string]int
+
+// Alias to function type
+type Handler = func(int) int
+
+// Alias to channel
+type IntChan = chan int
+
+// Alias to interface
+type Stringer interface {
+	String() string
+}
+type StringerAlias = Stringer
+
+// Test 1: Basic type alias usage
+func testBasicAlias() {
+	var a MyInt = 42
+	var b int = a  // Should work - same type
+	assert(b == 42)
+	
+	var s MyString = "hello"
+	var s2 string = s
+	assert(s2 == "hello")
+}
+
+// Test 2: Struct alias
+func testStructAlias() {
+	p1 := Point{x: 1, y: 2}
+	var p2 PointAlias = p1  // Same type
+	assert(p2.x == 1)
+	assert(p2.y == 2)
+	
+	// Can use either type interchangeably
+	var p3 Point = p2
+	assert(p3.x == 1)
+}
+
+// Test 3: Slice alias
+func testSliceAlias() {
+	var s IntSlice = []int{1, 2, 3}
+	var s2 []int = s
+	assert(len(s2) == 3)
+	assert(s2[0] == 1)
+}
+
+// Test 4: Map alias
+func testMapAlias() {
+	var m StringMap = map[string]int{"a": 1, "b": 2}
+	var m2 map[string]int = m
+	assert(m2["a"] == 1)
+}
+
+// Test 5: Function type alias
+func double(x int) int {
+	return x * 2
+}
+
+func testFuncAlias() {
+	var h Handler = double
+	var h2 func(int) int = h
+	assert(h2(5) == 10)
+}
+
+// Test 6: Channel alias
+func testChanAlias() {
+	var c IntChan = make(chan int, 1)
+	var c2 chan int = c
+	c2 <- 42
+	v := <-c
+	assert(v == 42)
+}
+
+// Test 7: Interface alias
+type MyStringer struct {
+	value string
+}
+
+func (m MyStringer) String() string {
+	return m.value
+}
+
+func testInterfaceAlias() {
+	var s Stringer = MyStringer{value: "test"}
+	var s2 StringerAlias = s  // Same interface type
+	assert(s2.String() == "test")
+}
+
+// Test 8: Alias in function parameter
+func takeMyInt(v MyInt) int {
+	return int(v) * 2
+}
+
+func testAliasInParam() {
+	var x int = 10
+	// Should be able to pass int to MyInt parameter
+	result := takeMyInt(MyInt(x))
+	assert(result == 20)
+}
+
+// Test 9: Alias chain
+type A = int
+type B = A
+type C = B
+
+func testAliasChain() {
+	var a A = 1
+	var b B = a
+	var c C = b
+	var i int = c
+	assert(i == 1)
+}
+
+func main() {
+	testBasicAlias()
+	testStructAlias()
+	testSliceAlias()
+	testMapAlias()
+	testFuncAlias()
+	testChanAlias()
+	testInterfaceAlias()
+	testAliasInParam()
+	testAliasChain()
+	
+	println("All type alias tests passed!")
+}
