@@ -126,12 +126,6 @@ pub enum JitResult {
 // Runtime Helper Functions
 // =============================================================================
 
-// NOTE: These functions are declared but not yet implemented.
-// They will be implemented when we integrate JIT with the VM.
-//
-// The JIT compiler registers these symbols with Cranelift's JITBuilder,
-// so JIT-generated code can call them directly.
-
 /// Allocate a new GC object.
 ///
 /// # Arguments

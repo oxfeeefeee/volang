@@ -1344,7 +1344,6 @@ fn iface_assign<'a>(e: &mut impl IrEmitter<'a>, inst: &Instruction) {
     let (slot0, slot1) = if vk == 16 {
         // Interface source: preserve rttid/vk from source, update itab_id
         // For interface->any (iface_meta_id=0), itab_id must be 0
-        // For interface->other interface, would need runtime itab lookup (not implemented)
         let const_idx = inst.c as usize;
         let iface_meta_id = if let Constant::Int(packed) = &e.vo_module().constants[const_idx] {
             (*packed & 0xFFFFFFFF) as u32
