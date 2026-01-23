@@ -365,9 +365,10 @@ def run_vo_file(file: str, mode: str = 'vm', codegen: bool = False):
 # =============================================================================
 
 class TestRunner:
-    def __init__(self, verbose: bool = False, arch: str = '64'):
+    def __init__(self, verbose: bool = False, arch: str = '64', direct: bool = False):
         self.verbose = verbose
         self.arch = arch
+        self.direct = direct
         self.vo_bin = get_vo_bin(release=False, arch=arch)
         self.config = self._load_config()
         self.vm_passed = 0
@@ -656,6 +657,11 @@ class TestRunner:
         if self.arch == '32':
             env['QEMU_LD_PREFIX'] = QEMU_ARM_LD_PREFIX
 
+        # Direct mode: compile with launcher, run with vo-embed (bypass CLI)
+        if self.direct:
+            self._run_single_file_direct(path, mode, env)
+            return
+
         # Determine which modes to run
         run_vm = mode in ('vm', 'both')
         run_jit = mode in ('jit', 'both') and self.arch != '32'
@@ -679,6 +685,62 @@ class TestRunner:
                 sys.exit(code)
 
         sys.exit(0)
+
+    def _run_single_file_direct(self, path: Path, mode: str, env: dict):
+        """Run single file directly with launcher (bypass CLI).
+        
+        This compiles the .vo file with vo --compile-only and runs
+        with vo-embed, useful for debugging when CLI itself crashes.
+        """
+        import tempfile
+        
+        # Create temp bytecode file
+        with tempfile.NamedTemporaryFile(suffix='.vob', delete=False) as f:
+            bytecode_path = Path(f.name)
+        
+        try:
+            # Step 1: Compile to bytecode
+            print(f"Compiling [direct]: {path}")
+            compile_cmd = [str(self.vo_bin), f'--compile-only={bytecode_path}', str(path)]
+            code, stdout, stderr = run_cmd(compile_cmd, env=env, capture=False)
+            if code != 0:
+                sys.exit(code)
+            
+            # Step 2: Run with vo-embed
+            vo_embed = get_vo_embed_bin()
+            if not vo_embed.exists():
+                print(f"{Colors.DIM}Building vo-embed...{Colors.NC}")
+                build_cmd = ['cargo', 'build', '-q', '-p', 'vo-embed']
+                build_code, _, build_stderr = run_cmd(build_cmd)
+                if build_code != 0:
+                    print(f"{Colors.RED}vo-embed build failed:{Colors.NC}\n{build_stderr}")
+                    sys.exit(1)
+            
+            run_vm = mode in ('vm', 'both')
+            run_jit = mode in ('jit', 'both') and self.arch != '32'
+            
+            if run_vm:
+                print(f"Running [vm, direct]: {path}")
+                run_cmd_list = [str(vo_embed), str(bytecode_path)]
+                code, stdout, stderr = run_cmd(run_cmd_list, env=env, capture=False)
+                if code != 0:
+                    sys.exit(code)
+            
+            if run_jit:
+                print(f"Running [jit, direct]: {path}")
+                jit_env = env.copy()
+                jit_env['VO_JIT_CALL_THRESHOLD'] = '1'
+                jit_env['VO_JIT_MODE'] = '1'
+                run_cmd_list = [str(vo_embed), str(bytecode_path)]
+                code, stdout, stderr = run_cmd(run_cmd_list, env=jit_env, capture=False)
+                if code != 0:
+                    sys.exit(code)
+            
+            sys.exit(0)
+        finally:
+            # Cleanup temp file
+            if bytecode_path.exists():
+                bytecode_path.unlink()
 
     def _run_should_fail_test(self, file: str):
         """Run a test that must fail at compile/type-check stage."""
@@ -1348,6 +1410,8 @@ def main():
     test_parser.add_argument('file', nargs='?', help='Single test file')
     test_parser.add_argument('--arch', choices=['32', '64'], default='64',
                              help='Target architecture (default: 64)')
+    test_parser.add_argument('--direct', action='store_true',
+                             help='Run single file directly with launcher (bypass CLI)')
 
     # bench
     bench_parser = subparsers.add_parser('bench', help='Run benchmarks')
@@ -1394,7 +1458,8 @@ def main():
             file_arg = args.mode
             mode = 'both'
 
-        runner = TestRunner(verbose=args.verbose, arch=args.arch)
+        direct = getattr(args, 'direct', False)
+        runner = TestRunner(verbose=args.verbose, arch=args.arch, direct=direct)
         runner.run(mode, single_file=file_arg)
 
     elif args.command == 'bench':
