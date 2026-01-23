@@ -1818,10 +1818,13 @@ fn compile_defer_args_with_types(
 ) -> Result<(u16, u16), CodegenError> {
     let func_type = info.expr_type(call_expr.func.id);
     let param_types = info.func_param_types(func_type);
+    let is_variadic = info.is_variadic(func_type);
     
-    let total_arg_slots = crate::expr::call::calc_arg_slots(&call_expr.args, &param_types, info);
+    // Use calc_method_arg_slots to handle variadic packing (returns 1 slot for packed slice)
+    let total_arg_slots = crate::expr::call::calc_method_arg_slots(call_expr, &param_types, is_variadic, info);
     let args_start = func.alloc_args(total_arg_slots);
-    crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start, ctx, func, info)?;
+    // Use compile_method_args to handle variadic packing
+    crate::expr::call::compile_method_args(call_expr, &param_types, is_variadic, args_start, ctx, func, info)?;
     
     Ok((args_start, total_arg_slots))
 }
@@ -1879,9 +1882,10 @@ fn compile_defer_method_call(
             
             let method_type = info.expr_type(call_expr.func.id);
             let param_types = info.func_param_types(method_type);
+            let is_variadic = info.is_variadic(method_type);
             
             let recv_slots = if *expects_ptr_recv { 1 } else { info.type_slot_count(actual_recv_type) };
-            let other_arg_slots = crate::expr::call::calc_arg_slots(&call_expr.args, &param_types, info);
+            let other_arg_slots = crate::expr::call::calc_method_arg_slots(call_expr, &param_types, is_variadic, info);
             let total_arg_slots = recv_slots + other_arg_slots;
             let args_start = func.alloc_args(total_arg_slots);
             
@@ -1890,7 +1894,7 @@ fn compile_defer_method_call(
                 &call_info, actual_recv_type, ctx, func, info
             )?;
             
-            crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start + recv_slots, ctx, func, info)?;
+            crate::expr::call::compile_method_args(call_expr, &param_types, is_variadic, args_start + recv_slots, ctx, func, info)?;
             
             emit_defer_func(opcode, *func_id, args_start, total_arg_slots, func);
         }
@@ -1930,7 +1934,8 @@ fn compile_defer_iface_call(
 ) -> Result<(), CodegenError> {
     let method_type = info.expr_type(call_expr.func.id);
     let param_types = info.func_param_types(method_type);
-    let arg_slots = crate::expr::call::calc_arg_slots(&call_expr.args, &param_types, info);
+    let is_variadic = info.is_variadic(method_type);
+    let arg_slots = crate::expr::call::calc_method_arg_slots(call_expr, &param_types, is_variadic, info);
     
     let wrapper_id = crate::wrapper::generate_defer_iface_wrapper(
         ctx, iface_type, method_name, method_idx as usize, arg_slots, 0
@@ -1950,7 +1955,7 @@ fn compile_defer_iface_call(
     }
     
     // Compile other args
-    crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start + 2, ctx, func, info)?;
+    crate::expr::call::compile_method_args(call_expr, &param_types, is_variadic, args_start + 2, ctx, func, info)?;
     
     emit_defer_func(opcode, wrapper_id, args_start, total_arg_slots, func);
     Ok(())
@@ -1966,67 +1971,50 @@ fn compile_go(
 ) -> Result<(), CodegenError> {
     use vo_syntax::ast::ExprKind;
     
-    if let ExprKind::Call(call_expr) = &call.kind {
-        // Compute total arg slots (handles tuple expansion)
-        let func_type = info.expr_type(call_expr.func.id);
-        let param_types = info.func_param_types(func_type);
-        let total_arg_slots = crate::expr::call::calc_arg_slots(&call_expr.args, &param_types, info);
-        
-        // Check if it's a regular function call
-        if let ExprKind::Ident(ident) = &call_expr.func.kind {
-            // Use ObjKey for consistency
-            let obj_key = info.get_use(ident);
-            if let Some(func_idx) = ctx.get_func_by_objkey(obj_key) {
-                // Regular function - compile args
-                let args_start = if total_arg_slots > 0 {
-                    func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots as usize])
-                } else {
-                    0
-                };
-                
-                crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start, ctx, func, info)?;
-                
-                // GoStart: a=func_id_low, b=args_start, c=arg_slots, flags=func_id_high<<1
-                let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
-                let flags = func_id_high << 1;  // bit 0 = 0 (not closure)
-                func.emit_with_flags(Opcode::GoStart, flags, func_id_low, args_start, total_arg_slots);
-                return Ok(());
-            }
-            
-            // Check if it's a local variable (closure)
-            if func.lookup_local(ident.symbol).is_some() || func.lookup_capture(ident.symbol).is_some() {
-                let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
-                
-                let args_start = if total_arg_slots > 0 {
-                    func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots as usize])
-                } else {
-                    0
-                };
-                
-                crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start, ctx, func, info)?;
-                
-                // GoStart: a=closure_reg, b=args_start, c=arg_slots, flags=1 (is_closure)
-                func.emit_with_flags(Opcode::GoStart, 1, closure_reg, args_start, total_arg_slots);
-                return Ok(());
-            }
-        }
-        
-        // Generic case: expression returning a closure (e.g., method value: go w.Process(10))
-        let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
-        
+    let ExprKind::Call(call_expr) = &call.kind else {
+        return Err(CodegenError::UnsupportedStmt("go requires a call expression".to_string()));
+    };
+    
+    // Get function signature info
+    let func_type = info.expr_type(call_expr.func.id);
+    let param_types = info.func_param_types(func_type);
+    let is_variadic = info.is_variadic(func_type);
+    let total_arg_slots = crate::expr::call::calc_method_arg_slots(call_expr, &param_types, is_variadic, info);
+    
+    // Helper to compile args and emit GoStart for closure
+    let emit_go_closure = |closure_reg: u16, func: &mut FuncBuilder, ctx: &mut CodegenContext| -> Result<(), CodegenError> {
         let args_start = if total_arg_slots > 0 {
             func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots as usize])
-        } else {
-            0
-        };
-        
-        crate::expr::call::compile_args_with_types(&call_expr.args, &param_types, args_start, ctx, func, info)?;
-        
+        } else { 0 };
+        crate::expr::call::compile_method_args(call_expr, &param_types, is_variadic, args_start, ctx, func, info)?;
         func.emit_with_flags(Opcode::GoStart, 1, closure_reg, args_start, total_arg_slots);
-        return Ok(());
+        Ok(())
+    };
+    
+    // Check if it's a regular function call
+    if let ExprKind::Ident(ident) = &call_expr.func.kind {
+        let obj_key = info.get_use(ident);
+        if let Some(func_idx) = ctx.get_func_by_objkey(obj_key) {
+            // Regular function
+            let args_start = if total_arg_slots > 0 {
+                func.alloc_temp_typed(&vec![SlotType::Value; total_arg_slots as usize])
+            } else { 0 };
+            crate::expr::call::compile_method_args(call_expr, &param_types, is_variadic, args_start, ctx, func, info)?;
+            let (func_id_low, func_id_high) = crate::type_info::encode_func_id(func_idx);
+            func.emit_with_flags(Opcode::GoStart, func_id_high << 1, func_id_low, args_start, total_arg_slots);
+            return Ok(());
+        }
+        
+        // Local variable (closure)
+        if func.lookup_local(ident.symbol).is_some() || func.lookup_capture(ident.symbol).is_some() {
+            let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+            return emit_go_closure(closure_reg, func, ctx);
+        }
     }
     
-    Err(CodegenError::UnsupportedStmt("go requires a call expression".to_string()))
+    // Generic case: expression returning a closure
+    let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+    emit_go_closure(closure_reg, func, ctx)
 }
 
 /// Info for recv case variable binding
