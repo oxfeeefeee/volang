@@ -600,36 +600,21 @@ impl Checker {
 
             StmtKind::ErrDefer(eds) => {
                 // Vo extension: errdefer runs only on error return
-                // Check that function has error return value
-                if let Some(sig_key) = self.octx.sig {
-                    let sig = self.otype(sig_key).try_as_signature().unwrap();
-                    let results = self.otype(sig.results()).try_as_tuple().unwrap();
-                    let vars = results.vars();
-                    let error_type = self.universe().error_type();
-                    let has_error_return = if let Some(last_var) = vars.last() {
-                        let last_type = self.lobj(*last_var).typ().unwrap_or(self.invalid_type());
-                        // Check if last return type is assignable to error interface
-                        crate::typ::identical(last_type, error_type, self.objs())
-                            || crate::lookup::missing_method(last_type, error_type, true, self).is_none()
-                    } else {
-                        false
-                    };
-                    if !has_error_return {
-                        self.error_code_msg(
-                            TypeError::ErrDeferNoErrorReturn,
-                            eds.call.span,
-                            "errdefer requires function with error return value".to_string(),
-                        );
-                    }
+                if !self.has_error_return() {
+                    self.error_code(TypeError::ErrDeferNoErrorReturn, eds.call.span);
                 }
                 self.suspended_call("errdefer", &eds.call);
             }
 
             StmtKind::Fail(fs) => {
                 // Vo extension: fail returns error from fallible function
+                if !self.has_error_return() {
+                    self.error_code(TypeError::FailNoErrorReturn, fs.error.span);
+                    return;
+                }
+
                 let x = &mut Operand::new();
                 self.expr(x, &fs.error);
-                // Check that the expression is assignable to error type
                 if !x.invalid() {
                     let error_type = self.universe().error_type();
                     self.assignment(x, Some(error_type), "fail statement");
@@ -1228,6 +1213,24 @@ impl Checker {
     // =========================================================================
     // Helper functions
     // =========================================================================
+
+    /// Checks if the current function has error as its last return value.
+    /// Returns true if the function signature ends with error type.
+    fn has_error_return(&mut self) -> bool {
+        let Some(sig_key) = self.octx.sig else {
+            return false;
+        };
+        let sig = self.otype(sig_key).try_as_signature().unwrap();
+        let results = self.otype(sig.results()).try_as_tuple().unwrap();
+        let vars = results.vars();
+        let Some(last_var) = vars.last() else {
+            return false;
+        };
+        let last_type = self.lobj(*last_var).typ().unwrap_or(self.invalid_type());
+        let error_type = self.universe().error_type();
+        crate::typ::identical(last_type, error_type, self.objs())
+            || crate::lookup::missing_method(last_type, error_type, true, self).is_none()
+    }
 
     /// Converts an AssignOp to the corresponding BinaryOp for compound assignments.
     fn assign_op_to_binary(op: AssignOp) -> Option<vo_syntax::ast::BinaryOp> {

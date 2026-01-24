@@ -1,0 +1,36 @@
+// Regression test: fail statement requires function with error return
+// Bug: fail in non-error returning function compiled successfully and caused garbage values
+// Fix: Added check in vo-analysis/src/check/stmt.rs to verify function has error return
+package main
+
+import "errors"
+
+// This function correctly returns error - fail should work
+func validFail() error {
+	fail errors.New("error")
+	return nil
+}
+
+// Test that valid fail compiles and works
+func testValidFail() {
+	err := validFail()
+	assert(err != nil, "valid fail should return error")
+	println("Valid fail test passed")
+}
+
+// The following would be compile error (comment to test):
+// func invalidFail() int {
+//     fail errors.New("error")  // ERROR: fail requires function with error return value
+//     return 0
+// }
+
+func main() {
+	testValidFail()
+	println("ALL PASSED")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic("assertion failed: " + msg)
+	}
+}
