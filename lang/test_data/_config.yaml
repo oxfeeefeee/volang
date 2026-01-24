@@ -797,23 +797,11 @@ tests:
   - file: skill_debug_vo/2026_01_23_2059_dyn_access_edge.vo
   - file: skill_debug_vo/2026_01_23_2112_multi_value_edge.vo
   - file: skill_debug_vo/2026_01_23_2118_forrange_complex.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2204_multi_ret_any_chain.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2207_dyn_access_method_chain.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2208_for_range_complex_expr.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2235_bare_return_iface.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2243_multi_ret_as_arg.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_2244_panic_recover_complex.vo
     skip: [vm, jit]
     reason: "pending bug fix"
@@ -830,14 +818,8 @@ tests:
     skip: [jit]
     reason: "pending bug fix (jit only)"
   - file: skill_debug_vo/2026_01_23_iface_composite_edge.vo
-    skip: [jit]
-    reason: "pending bug fix (jit only)"
   - file: skill_debug_vo/2026_01_23_iface_type_alias.vo
-    skip: [jit]
-    reason: "pending bug fix (jit only)"
   - file: skill_debug_vo/2026_01_23_iface_variadic_multi.vo
-    skip: [jit]
-    reason: "pending bug fix (jit only)"
   - file: skill_debug_vo/2026_01_23_int_overflow.vo
     skip: [vm, jit]
     reason: "pending bug fix"

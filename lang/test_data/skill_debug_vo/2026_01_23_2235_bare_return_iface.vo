@@ -20,7 +20,7 @@ func getStringer(n int) (s Stringer) {
 		s = MyInt(n)
 		return
 	}
-	s = MyInt(0)
+	s = MyInt(n)  // Use n, not 0, to preserve negative value
 	return
 }
 

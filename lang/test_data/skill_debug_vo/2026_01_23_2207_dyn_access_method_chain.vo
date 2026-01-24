@@ -62,9 +62,9 @@ func main() {
 	ws := workers.([]*Person)
 	assert(len(ws) == 2, "dyn slice len")
 	
-	// Test 5: Dynamic method call with argument
+	// Test 5: Dynamic method call with argument (void return)
 	var anyP2 any = &Person{Name: "Frank", Age: 40}
-	_, err5 := anyP2~>SetAge(50)
+	err5 := anyP2~>SetAge(50)
 	assert(err5 == nil, "dyn method with arg err")
 	age, _ := anyP2~>Age
 	assert(age.(int) == 50, "dyn method modified value")

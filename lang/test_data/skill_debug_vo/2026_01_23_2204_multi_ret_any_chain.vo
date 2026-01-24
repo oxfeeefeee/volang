@@ -89,13 +89,12 @@ func chainedCall() (any, any) {
 	return getTwoAny(10, 20)
 }
 
-func testDeferMultiReturn() int {
-	result := 0
+func testDeferMultiReturn() (result int) {
 	a, b := getTwoAny(50, 50)
 	defer func() {
 		result = a.(int) + b.(int)
 	}()
-	return result
+	return
 }
 
 func assert(cond bool, msg string) {

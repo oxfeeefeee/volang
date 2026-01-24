@@ -122,14 +122,13 @@ func getSlice() []int {
 	return []int{1, 2, 3, 4, 5}
 }
 
-func testRangeDefer() int {
-	result := 0
+func testRangeDefer() (result int) {
 	for i := range 3 {
 		defer func(v int) {
 			result += v
 		}(i + 1)
 	}
-	return result
+	return
 }
 
 func assert(cond bool, msg string) {

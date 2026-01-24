@@ -9,8 +9,8 @@ use vo_vm::instruction::Opcode;
 
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
-use crate::expr::{compile_expr_to, emit_int_trunc, get_expr_source};
-use crate::func::{ExprSource, FuncBuilder, StorageKind};
+use crate::expr::{compile_expr_to, emit_int_trunc};
+use crate::func::{FuncBuilder, StorageKind};
 use crate::type_info::TypeInfoWrapper;
 
 use super::var_def::LocalDefiner;
@@ -193,14 +193,13 @@ fn compile_multi_value_assign(
             crate::assign::emit_assign(iface_tmp, crate::assign::AssignSource::Slot { slot: tuple.base + offset, type_key: elem_type }, lhs_type, ctx, func, info)?;
             emit_lvalue_store(&lv, iface_tmp, ctx, func, &[vo_runtime::SlotType::Value, vo_runtime::SlotType::Interface1]);
         } else {
-            // Non-interface: apply truncation and store directly
+            // Non-interface: apply truncation and store via LValue
             emit_int_trunc(tuple.base + offset, elem_type, func, info);
             
-            let lhs_source = get_expr_source(lhs_expr, ctx, func, info);
-            if let ExprSource::Location(storage) = lhs_source {
-                let slot_types = info.type_slot_types(elem_type);
-                func.emit_storage_store(storage, tuple.base + offset, &slot_types);
-            }
+            let lv = resolve_lvalue(lhs_expr, ctx, func, info)?;
+            let slot_types: Vec<vo_runtime::SlotType> = info.type_slot_types(elem_type)
+                .iter().map(|s| (*s).into()).collect();
+            emit_lvalue_store(&lv, tuple.base + offset, ctx, func, &slot_types);
         }
         offset += elem_slots;
     }

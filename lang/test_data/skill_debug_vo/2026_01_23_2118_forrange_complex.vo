@@ -153,17 +153,21 @@ func testRangeInt() {
 	assert(sum == 10, "range int") // 0+1+2+3+4
 }
 
-// Test 13: Range with defer in loop
-func testRangeDefer() {
-	result := ""
+// Test 13: Range with defer in loop (must use named return for defer to modify result)
+func testRangeDefer() (result string) {
 	for _, c := range []string{"A", "B", "C"} {
 		c := c // capture
 		defer func() {
 			result += c
 		}()
 	}
+	return
+}
+
+func testRangeDeferWrapper() {
+	r := testRangeDefer()
 	// Defers execute in reverse order
-	assert(result == "CBA", "range defer")
+	assert(r == "CBA", "range defer")
 }
 
 // Test 14: Range capturing loop variable in closure
@@ -274,7 +278,7 @@ func main() {
 	testRangeInt()
 	println("Test 12: PASSED - range int")
 	
-	testRangeDefer()
+	testRangeDeferWrapper()
 	println("Test 13: PASSED - range defer")
 	
 	testRangeClosure()
