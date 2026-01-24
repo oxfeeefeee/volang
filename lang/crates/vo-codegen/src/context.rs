@@ -146,11 +146,9 @@ pub struct CodegenContext {
     /// Method value wrappers cache
     method_value_wrappers: HashMap<MethodValueWrapperKey, u32>,
     
-    /// Defer extern wrappers cache (name -> func_id)
-    defer_extern_wrappers: HashMap<String, u32>,
-    
-    /// Defer iface wrappers cache (name -> func_id)
-    defer_iface_wrappers: HashMap<String, u32>,
+    /// Unified wrapper cache (name -> func_id)
+    /// Used for: defer_extern, defer_iface, method_expr_iface, etc.
+    wrapper_cache: HashMap<String, u32>,
 }
 
 impl CodegenContext {
@@ -201,8 +199,7 @@ impl CodegenContext {
             current_func_id: None,
             builtin_protocols: BuiltinProtocols::default(),
             method_value_wrappers: HashMap::new(),
-            defer_extern_wrappers: HashMap::new(),
-            defer_iface_wrappers: HashMap::new(),
+            wrapper_cache: HashMap::new(),
         }
     }
     
@@ -1170,31 +1167,18 @@ impl CodegenContext {
         Ok(wrapper_id)
     }
 
-    // === Defer extern wrappers ===
+    // === Wrapper cache ===
     
-    /// Get a cached defer extern wrapper by name.
-    pub fn get_defer_extern_wrapper(&self, name: &str) -> Option<u32> {
-        self.defer_extern_wrappers.get(name).copied()
+    /// Get a cached wrapper by name.
+    pub fn get_wrapper(&self, name: &str) -> Option<u32> {
+        self.wrapper_cache.get(name).copied()
     }
     
-    /// Register a defer extern wrapper function from FuncBuilder.
-    pub fn register_defer_extern_wrapper(&mut self, name: &str, builder: crate::func::FuncBuilder) -> u32 {
-        let func_id = self.module.functions.len() as u32;
-        self.module.functions.push(builder.build());
-        self.defer_extern_wrappers.insert(name.to_string(), func_id);
+    /// Build wrapper from FuncBuilder, register in cache, return func_id.
+    pub fn register_wrapper_from_builder(&mut self, name: &str, builder: crate::func::FuncBuilder) -> u32 {
+        let func_id = self.add_function(builder.build());
+        self.wrapper_cache.insert(name.to_string(), func_id);
         func_id
-    }
-    
-    // === Defer iface wrappers ===
-    
-    /// Get a cached defer iface wrapper by name.
-    pub fn get_defer_iface_wrapper(&self, name: &str) -> Option<u32> {
-        self.defer_iface_wrappers.get(name).copied()
-    }
-    
-    /// Register a defer iface wrapper function.
-    pub fn register_defer_iface_wrapper(&mut self, name: &str, func_id: u32) {
-        self.defer_iface_wrappers.insert(name.to_string(), func_id);
     }
 
     // === Init functions ===

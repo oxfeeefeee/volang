@@ -242,6 +242,12 @@ pub fn compile_method_expr(
     let method_name = info.project.interner.resolve(sel.sel.symbol)
         .ok_or_else(|| CodegenError::Internal("cannot resolve method name".to_string()))?;
     
+    // Handle method expression on interface type (e.g., Reader.Read)
+    // This is valid Go syntax: returns func(Reader) ReturnType
+    if info.is_interface(recv_type) {
+        return compile_interface_method_expr(recv_type, method_name, dst, ctx, func, info);
+    }
+    
     let call_info = crate::embed::resolve_method_call(
         recv_type,
         method_name,
@@ -306,11 +312,39 @@ pub fn compile_method_expr(
             )
         }
         crate::embed::MethodDispatch::Interface { .. } => {
-            return Err(CodegenError::Internal("method expression on interface type not supported".to_string()));
+            // This shouldn't happen as we handle interface recv_type above
+            return Err(CodegenError::Internal("unexpected interface dispatch in method expression".to_string()));
         }
     };
     
     func.emit_closure_new(dst, final_func_id, 0);
+    Ok(())
+}
+
+/// Compile method expression on interface type (e.g., Reader.Read).
+/// Returns a function that takes the interface as first parameter and does CallIface.
+fn compile_interface_method_expr(
+    iface_type: vo_analysis::objects::TypeKey,
+    method_name: &str,
+    dst: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<(), CodegenError> {
+    let method_idx = ctx.get_interface_method_index(
+        iface_type, method_name, &info.project.tc_objs, &info.project.interner
+    );
+    
+    let (param_slots, ret_slots) = info.get_interface_method_slots(iface_type, method_name)
+        .ok_or_else(|| CodegenError::Internal(format!(
+            "method {} not found on interface {:?}", method_name, iface_type
+        )))?;
+    
+    let wrapper_id = crate::wrapper::generate_method_expr_iface_wrapper(
+        ctx, method_idx, param_slots, ret_slots, method_name,
+    );
+    
+    func.emit_closure_new(dst, wrapper_id, 0);
     Ok(())
 }
 

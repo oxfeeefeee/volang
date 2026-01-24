@@ -1,0 +1,85 @@
+package main
+
+func testSwitchInsideRangeWithLabel() {
+outer:
+	for i := range 5 {
+		switch i {
+		case 2:
+			break outer
+		case 1:
+			continue outer
+		}
+	}
+}
+
+func testRangeInsideSwitchWithLabel() {
+	x := 1
+	reached := false
+outer:
+	switch x {
+	case 1:
+		for i := range 3 {
+			if i == 1 {
+				break outer
+			}
+		}
+		reached = true
+	default:
+		reached = true
+	}
+	assert(!reached, "should break before reaching end of case")
+}
+
+func testNestedLabels() {
+	sum := 0
+outer:
+	for i := range 3 {
+	inner:
+		for j := range 3 {
+			if i == 1 && j == 1 {
+				continue outer
+			}
+			if i == 2 {
+				break outer
+			}
+			sum++
+			if j == 2 {
+				break inner
+			}
+		}
+	}
+	assert(sum == 4, "nested labels sum")
+}
+
+func testSwitchLabelWithDefer() int {
+	result := 0
+	reachedEnd := false
+	defer func() { result += 10 }()
+outer:
+	switch 1 {
+	case 1:
+		for i := range 3 {
+			if i == 1 {
+				break outer
+			}
+			result++
+		}
+		reachedEnd = true
+	}
+	assert(!reachedEnd, "should break before reaching end")
+	assert(result == 1, "result before defer")
+	return result
+}
+
+func verifyDeferResult() {
+	r := testSwitchLabelWithDefer()
+	assert(r == 1, "return value should be 1 (defer modifies after return)")
+}
+
+func main() {
+	testSwitchInsideRangeWithLabel()
+	testRangeInsideSwitchWithLabel()
+	testNestedLabels()
+	testSwitchLabelWithDefer()
+	println("PASS")
+}

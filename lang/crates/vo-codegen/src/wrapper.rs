@@ -391,6 +391,60 @@ fn generate_embedded_iface_wrapper_impl(
     ctx.add_function(builder.build())
 }
 
+/// Generate wrapper that takes interface as first param and calls via CallIface.
+/// Shared implementation for method expression and defer wrappers.
+fn generate_iface_call_wrapper(
+    ctx: &mut CodegenContext,
+    method_idx: u32,
+    param_slots: u16,
+    ret_slots: u16,
+    wrapper_name: &str,
+    set_recv_slots: bool,
+) -> u32 {
+    if let Some(id) = ctx.get_wrapper(wrapper_name) {
+        return id;
+    }
+    
+    let mut builder = FuncBuilder::new(wrapper_name);
+    
+    // First parameter: interface value (2 slots)
+    if set_recv_slots {
+        builder.set_recv_slots(2);
+    }
+    let iface_slot = builder.define_param(None, 2, &[SlotType::Interface0, SlotType::Interface1]);
+    
+    // Forward other parameters
+    let first_param_slot = define_forwarded_params(&mut builder, param_slots);
+    
+    // Allocate args buffer
+    let args_start = builder.alloc_temp_typed(&vec![vo_runtime::SlotType::Value; param_slots.max(ret_slots).max(1) as usize]);
+    if let Some(first_param) = first_param_slot {
+        builder.emit_copy(args_start, first_param, param_slots);
+    }
+    
+    // CallIface
+    let c = crate::type_info::encode_call_args(param_slots, ret_slots);
+    builder.emit_with_flags(Opcode::CallIface, method_idx as u8, iface_slot, args_start, c);
+    
+    // Return
+    builder.set_ret_slots(ret_slots);
+    builder.emit_op(Opcode::Return, args_start, ret_slots, 0);
+    
+    ctx.register_wrapper_from_builder(wrapper_name, builder)
+}
+
+/// Generate wrapper for method expression on interface type (e.g., Reader.Read).
+pub fn generate_method_expr_iface_wrapper(
+    ctx: &mut CodegenContext,
+    method_idx: u32,
+    param_slots: u16,
+    ret_slots: u16,
+    method_name: &str,
+) -> u32 {
+    let wrapper_name = format!("{}$mexpr_iface_{}", method_name, method_idx);
+    generate_iface_call_wrapper(ctx, method_idx, param_slots, ret_slots, &wrapper_name, true)
+}
+
 /// Generate wrapper for method expression on embedded interface.
 pub fn generate_method_expr_embedded_iface_wrapper(
     ctx: &mut CodegenContext,
@@ -440,29 +494,26 @@ pub fn generate_defer_extern_wrapper(
 ) -> u32 {
     let wrapper_name = format!("$defer_extern_{}", extern_name);
     
-    if let Some(id) = ctx.get_defer_extern_wrapper(&wrapper_name) {
+    if let Some(id) = ctx.get_wrapper(&wrapper_name) {
         return id;
     }
     
     let arg_slots = (arg_count * 2) as u16; // each arg is interface (2 slots)
     
-    let mut wrapper = FuncBuilder::new(&wrapper_name);
-    wrapper.set_param_slots(arg_slots);
-    wrapper.set_ret_slots(0);
+    let mut builder = FuncBuilder::new(&wrapper_name);
+    builder.set_param_slots(arg_slots);
+    builder.set_ret_slots(0);
     
     let extern_id = ctx.get_or_register_extern(extern_name);
     // CallExtern: flags=arg_count*2, a=dst, b=extern_id, c=args_start
-    wrapper.emit_with_flags(Opcode::CallExtern, arg_slots as u8, 0, extern_id as u16, 0);
-    wrapper.emit_op(Opcode::Return, 0, 0, 0);
+    builder.emit_with_flags(Opcode::CallExtern, arg_slots as u8, 0, extern_id as u16, 0);
+    builder.emit_op(Opcode::Return, 0, 0, 0);
     
-    ctx.register_defer_extern_wrapper(&wrapper_name, wrapper)
+    ctx.register_wrapper_from_builder(&wrapper_name, builder)
 }
 
 /// Generate a wrapper for defer on interface method call.
-/// 
-/// The wrapper takes the interface value as first parameter (2 slots),
-/// followed by method arguments, then calls the method via CallIface.
-/// This allows `defer c.Close()` to work correctly with interface values.
+/// Uses shared generate_iface_call_wrapper implementation.
 pub fn generate_defer_iface_wrapper(
     ctx: &mut CodegenContext,
     method_name: &str,
@@ -471,35 +522,5 @@ pub fn generate_defer_iface_wrapper(
     ret_slots: u16,
 ) -> u32 {
     let wrapper_name = format!("{}$defer_iface_{}", method_name, method_idx);
-    
-    // Check cache first
-    if let Some(id) = ctx.get_defer_iface_wrapper(&wrapper_name) {
-        return id;
-    }
-    
-    let mut builder = FuncBuilder::new(&wrapper_name);
-    
-    // First parameter: interface value (2 slots)
-    let iface_slot = builder.define_param(None, 2, &[SlotType::Interface0, SlotType::Interface1]);
-    
-    // Forward other parameters
-    let first_param_slot = define_forwarded_params(&mut builder, param_slots);
-    
-    // Allocate args buffer
-    let args_start = builder.alloc_temp_typed(&vec![vo_runtime::SlotType::Value; param_slots.max(ret_slots).max(1) as usize]);
-    if let Some(first_param) = first_param_slot {
-        builder.emit_copy(args_start, first_param, param_slots);
-    }
-    
-    // CallIface: flags=method_idx, a=iface_slot, b=args_start, c=(arg_slots<<8)|ret_slots
-    let c = crate::type_info::encode_call_args(param_slots, ret_slots);
-    builder.emit_with_flags(Opcode::CallIface, method_idx as u8, iface_slot, args_start, c);
-    
-    // Return (defer wrappers typically don't use return values, but emit for completeness)
-    builder.set_ret_slots(ret_slots);
-    builder.emit_op(Opcode::Return, args_start, ret_slots, 0);
-    
-    let func_id = ctx.add_function(builder.build());
-    ctx.register_defer_iface_wrapper(&wrapper_name, func_id);
-    func_id
+    generate_iface_call_wrapper(ctx, method_idx as u32, param_slots, ret_slots, &wrapper_name, false)
 }

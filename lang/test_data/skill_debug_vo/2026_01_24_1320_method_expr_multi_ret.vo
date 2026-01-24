@@ -1,0 +1,34 @@
+package main
+
+import "errors"
+
+type Parser interface {
+	Parse(s string) (int, error)
+}
+
+type SimpleParser struct{}
+
+func (p *SimpleParser) Parse(s string) (int, error) {
+	if s == "" {
+		return 0, errors.New("empty string")
+	}
+	return len(s), nil
+}
+
+func testMethodExprMultiReturn() {
+	f := Parser.Parse
+	
+	var p Parser = &SimpleParser{}
+	val, err := f(p, "hello")
+	assert(err == nil, "no error")
+	assert(val == 5, "correct length")
+	
+	val2, err2 := f(p, "")
+	assert(err2 != nil, "should have error")
+	assert(val2 == 0, "zero on error")
+}
+
+func main() {
+	testMethodExprMultiReturn()
+	println("PASS")
+}

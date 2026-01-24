@@ -817,11 +817,7 @@ tests:
   - file: skill_debug_vo/2026_01_23_int_overflow.vo
   - file: skill_debug_vo/2026_01_23_struct_embed_method.vo
   - file: skill_debug_vo/2026_01_23_type_conv_boundary.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_value_ptr_receiver_mix.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
 
 # ============================================================
 # no_std mode skips - std-only modules
