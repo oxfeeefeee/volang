@@ -1,0 +1,319 @@
+package main
+
+// Test struct embedding and method edge cases
+
+type Base struct {
+	value int
+}
+
+func (b *Base) GetValue() int {
+	return b.value
+}
+
+func (b *Base) SetValue(v int) {
+	b.value = v
+}
+
+type Middle struct {
+	Base
+	extra int
+}
+
+func (m *Middle) GetExtra() int {
+	return m.extra
+}
+
+type Top struct {
+	Middle
+	name string
+}
+
+func (t *Top) GetName() string {
+	return t.name
+}
+
+// Test 1: Multi-level embedded method access
+func multiLevelEmbed() int {
+	t := Top{
+		Middle: Middle{
+			Base:  Base{value: 42},
+			extra: 10,
+		},
+		name: "test",
+	}
+	return t.GetValue()  // Promoted from Base through Middle
+}
+
+func testMultiLevelEmbed() {
+	r := multiLevelEmbed()
+	assert(r == 42, "multi level embed")
+}
+
+// Test 2: Method expression on embedded type
+func methodExprEmbedded() int {
+	t := &Top{
+		Middle: Middle{
+			Base:  Base{value: 100},
+			extra: 20,
+		},
+		name: "expr",
+	}
+	
+	// Method expression on the embedding type
+	getValue := (*Top).GetValue
+	return getValue(t)
+}
+
+func testMethodExprEmbedded() {
+	r := methodExprEmbedded()
+	assert(r == 100, "method expr embedded")
+}
+
+// Test 3: Method value on embedded type
+func methodValueEmbedded() int {
+	t := &Top{
+		Middle: Middle{
+			Base:  Base{value: 200},
+			extra: 30,
+		},
+		name: "value",
+	}
+	
+	getValue := t.GetValue  // Method value
+	return getValue()
+}
+
+func testMethodValueEmbedded() {
+	r := methodValueEmbedded()
+	assert(r == 200, "method value embedded")
+}
+
+// Test 4: Modify through embedded method
+func modifyEmbedded() int {
+	t := &Top{
+		Middle: Middle{
+			Base:  Base{value: 0},
+			extra: 0,
+		},
+		name: "",
+	}
+	
+	t.SetValue(999)  // Promoted method
+	return t.GetValue()
+}
+
+func testModifyEmbedded() {
+	r := modifyEmbedded()
+	assert(r == 999, "modify embedded")
+}
+
+// Test 5: Embedded interface
+type Getter interface {
+	GetValue() int
+}
+
+func useGetter(g Getter) int {
+	return g.GetValue()
+}
+
+func embeddedInterface() int {
+	t := &Top{
+		Middle: Middle{
+			Base:  Base{value: 777},
+			extra: 0,
+		},
+		name: "",
+	}
+	return useGetter(t)  // Top satisfies Getter through Base
+}
+
+func testEmbeddedInterface() {
+	r := embeddedInterface()
+	assert(r == 777, "embedded interface")
+}
+
+// Test 6: Shadow method in embedding type
+type ShadowBase struct {
+	value int
+}
+
+func (s *ShadowBase) Get() int {
+	return s.value
+}
+
+type ShadowOuter struct {
+	ShadowBase
+}
+
+func (s *ShadowOuter) Get() int {
+	return s.value * 2  // Shadows ShadowBase.Get
+}
+
+func shadowMethod() int {
+	o := &ShadowOuter{ShadowBase: ShadowBase{value: 50}}
+	return o.Get()
+}
+
+func testShadowMethod() {
+	r := shadowMethod()
+	assert(r == 100, "shadow method")
+}
+
+// Test 7: Access shadowed method
+func accessShadowedMethod() int {
+	o := &ShadowOuter{ShadowBase: ShadowBase{value: 50}}
+	return o.ShadowBase.Get()  // Access shadowed method explicitly
+}
+
+func testAccessShadowedMethod() {
+	r := accessShadowedMethod()
+	assert(r == 50, "access shadowed method")
+}
+
+// Test 8: Pointer embedding
+type PtrEmbed struct {
+	*Base
+}
+
+func ptrEmbedMethod() int {
+	b := &Base{value: 333}
+	p := PtrEmbed{Base: b}
+	return p.GetValue()
+}
+
+func testPtrEmbedMethod() {
+	r := ptrEmbedMethod()
+	assert(r == 333, "ptr embed method")
+}
+
+// Test 9: Nil pointer embed
+func nilPtrEmbedPanic() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = "recovered"
+		}
+	}()
+	
+	p := PtrEmbed{Base: nil}
+	_ = p.GetValue()  // Should panic - nil pointer dereference
+	result = "no panic"
+	return
+}
+
+func testNilPtrEmbedPanic() {
+	r := nilPtrEmbedPanic()
+	assert(r == "recovered", "nil ptr embed panic")
+}
+
+// Test 10: Multiple embeddings at same level
+type Multi1 struct {
+	val1 int
+}
+
+func (m *Multi1) Get1() int {
+	return m.val1
+}
+
+type Multi2 struct {
+	val2 int
+}
+
+func (m *Multi2) Get2() int {
+	return m.val2
+}
+
+type MultiEmbed struct {
+	Multi1
+	Multi2
+}
+
+func multiEmbedMethods() (int, int) {
+	m := &MultiEmbed{
+		Multi1: Multi1{val1: 111},
+		Multi2: Multi2{val2: 222},
+	}
+	return m.Get1(), m.Get2()
+}
+
+func testMultiEmbedMethods() {
+	a, b := multiEmbedMethods()
+	assert(a == 111, "multi embed methods a")
+	assert(b == 222, "multi embed methods b")
+}
+
+// Test 11: Embedded field access
+func embeddedFieldAccess() int {
+	t := Top{
+		Middle: Middle{
+			Base:  Base{value: 555},
+			extra: 666,
+		},
+		name: "field",
+	}
+	// Direct field access through embedding
+	return t.value + t.extra
+}
+
+func testEmbeddedFieldAccess() {
+	r := embeddedFieldAccess()
+	assert(r == 1221, "embedded field access")
+}
+
+// Test 12: Method chain on embedded type
+func methodChainEmbedded() int {
+	t := &Top{
+		Middle: Middle{
+			Base:  Base{value: 10},
+			extra: 0,
+		},
+		name: "",
+	}
+	
+	t.SetValue(t.GetValue() * 10)
+	return t.GetValue()
+}
+
+func testMethodChainEmbedded() {
+	r := methodChainEmbedded()
+	assert(r == 100, "method chain embedded")
+}
+
+func main() {
+	testMultiLevelEmbed()
+	println("Test 1: PASSED - multi level embed")
+	
+	testMethodExprEmbedded()
+	println("Test 2: PASSED - method expr embedded")
+	
+	testMethodValueEmbedded()
+	println("Test 3: PASSED - method value embedded")
+	
+	testModifyEmbedded()
+	println("Test 4: PASSED - modify embedded")
+	
+	testEmbeddedInterface()
+	println("Test 5: PASSED - embedded interface")
+	
+	testShadowMethod()
+	println("Test 6: PASSED - shadow method")
+	
+	testAccessShadowedMethod()
+	println("Test 7: PASSED - access shadowed method")
+	
+	testPtrEmbedMethod()
+	println("Test 8: PASSED - ptr embed method")
+	
+	testNilPtrEmbedPanic()
+	println("Test 9: PASSED - nil ptr embed panic")
+	
+	testMultiEmbedMethods()
+	println("Test 10: PASSED - multi embed methods")
+	
+	testEmbeddedFieldAccess()
+	println("Test 11: PASSED - embedded field access")
+	
+	testMethodChainEmbedded()
+	println("Test 12: PASSED - method chain embedded")
+	
+	println("ALL PASSED")
+}

@@ -1,0 +1,251 @@
+package main
+
+import "errors"
+
+// Test dynamic access (~>) edge cases
+
+type Person struct {
+	Name string
+	Age  int
+}
+
+func (p *Person) Greet() string {
+	return "Hello, " + p.Name
+}
+
+func (p *Person) Add(n int) int {
+	return p.Age + n
+}
+
+// Test 1: Dynamic field access on struct
+func testDynFieldAccess() {
+	p := &Person{Name: "Alice", Age: 30}
+	var a any = p
+	
+	name, err := a~>Name
+	assert(err == nil, "dyn field access err")
+	assert(name.(string) == "Alice", "dyn field access value")
+}
+
+// Test 2: Dynamic method call
+func testDynMethodCall() {
+	p := &Person{Name: "Bob", Age: 25}
+	var a any = p
+	
+	result, err := a~>Greet()
+	assert(err == nil, "dyn method call err")
+	assert(result.(string) == "Hello, Bob", "dyn method call value")
+}
+
+// Test 3: Dynamic method call with argument
+func testDynMethodCallArg() {
+	p := &Person{Name: "Charlie", Age: 20}
+	var a any = p
+	
+	result, err := a~>Add(10)
+	assert(err == nil, "dyn method call arg err")
+	assert(result.(int) == 30, "dyn method call arg value")
+}
+
+// Test 4: Dynamic access on nil - should error
+func testDynAccessNil() {
+	var a any = nil
+	_, err := a~>Name
+	assert(err != nil, "dyn access nil should error")
+}
+
+// Test 5: Dynamic access non-existent field - should error
+func testDynAccessNonExistent() {
+	p := &Person{Name: "Dave", Age: 40}
+	var a any = p
+	
+	_, err := a~>NonExistent
+	assert(err != nil, "dyn access non-existent should error")
+}
+
+// Test 6: Dynamic index access on slice
+func testDynIndexSlice() {
+	s := []int{10, 20, 30}
+	var a any = s
+	
+	val, err := a~>[1]
+	assert(err == nil, "dyn index slice err")
+	assert(val.(int) == 20, "dyn index slice value")
+}
+
+// Test 7: Dynamic index access on map
+func testDynIndexMap() {
+	m := map[string]int{"key": 42}
+	var a any = m
+	
+	val, err := a~>["key"]
+	assert(err == nil, "dyn index map err")
+	assert(val.(int) == 42, "dyn index map value")
+}
+
+// Test 8: Dynamic access with question operator
+func testDynAccessQuestion() (result string, err error) {
+	p := &Person{Name: "Eve", Age: 35}
+	var a any = p
+	
+	var name string
+	name = a~>Name?
+	result = name
+	return
+}
+
+func testDynAccessQuestionCall() {
+	r, err := testDynAccessQuestion()
+	assert(err == nil, "dyn access question err")
+	assert(r == "Eve", "dyn access question value")
+}
+
+// Test 9: Dynamic access chain
+func testDynAccessChain() {
+	type Outer struct {
+		Inner *Person
+	}
+	
+	o := &Outer{Inner: &Person{Name: "Frank", Age: 50}}
+	var a any = o
+	
+	inner, err := a~>Inner
+	assert(err == nil, "dyn chain step 1 err")
+	
+	name, err2 := inner~>Name
+	assert(err2 == nil, "dyn chain step 2 err")
+	assert(name.(string) == "Frank", "dyn chain value")
+}
+
+// Test 10: Dynamic method call returning multiple values
+type Calculator struct {
+	value int
+}
+
+func (c *Calculator) DivMod(divisor int) (int, int) {
+	return c.value / divisor, c.value % divisor
+}
+
+func testDynMethodMultiRet() {
+	c := &Calculator{value: 17}
+	var a any = c
+	
+	// Dynamic call with multiple return values
+	quot, rem, err := a~>DivMod(5)
+	assert(err == nil, "dyn multi ret err")
+	assert(quot.(int) == 3, "dyn multi ret quot")
+	assert(rem.(int) == 2, "dyn multi ret rem")
+}
+
+// Test 11: Dynamic access on primitive types - should work for methods
+func testDynAccessPrimitive() {
+	var a any = 42
+	// Primitives don't have fields, but let's test the error
+	_, err := a~>something
+	assert(err != nil, "dyn access primitive field should error")
+}
+
+// Test 12: Dynamic access with type that has both field and method
+type Ambiguous struct {
+	Value int
+}
+
+func (a *Ambiguous) Value2() int {
+	return a.Value * 2
+}
+
+func testDynAccessAmbiguous() {
+	amb := &Ambiguous{Value: 10}
+	var a any = amb
+	
+	// Field access
+	val, err := a~>Value
+	assert(err == nil, "dyn ambiguous field err")
+	assert(val.(int) == 10, "dyn ambiguous field value")
+	
+	// Method call
+	val2, err2 := a~>Value2()
+	assert(err2 == nil, "dyn ambiguous method err")
+	assert(val2.(int) == 20, "dyn ambiguous method value")
+}
+
+// Test 13: Dynamic access on string (index)
+func testDynAccessString() {
+	var a any = "hello"
+	
+	// String indexing should work
+	val, err := a~>[1]
+	assert(err == nil, "dyn string index err")
+	// Returns byte as int
+	assert(val.(uint8) == 'e', "dyn string index value")
+}
+
+// Test 14: Dynamic access out of bounds - should error
+func testDynAccessOutOfBounds() {
+	s := []int{1, 2, 3}
+	var a any = s
+	
+	_, err := a~>[10]
+	assert(err != nil, "dyn out of bounds should error")
+}
+
+// Test 15: Dynamic method call with correct argument
+func testDynMethodCorrectArg() {
+	c := &Calculator{value: 10}
+	var a any = c
+	
+	// This should work since we pass an int - need to handle multi-return
+	quot, rem, err := a~>DivMod(2)
+	assert(err == nil, "dyn method correct arg should work")
+	assert(quot.(int) == 5, "dyn method quot")
+	assert(rem.(int) == 0, "dyn method rem")
+}
+
+func main() {
+	testDynFieldAccess()
+	println("Test 1: PASSED")
+	
+	testDynMethodCall()
+	println("Test 2: PASSED")
+	
+	testDynMethodCallArg()
+	println("Test 3: PASSED")
+	
+	testDynAccessNil()
+	println("Test 4: PASSED")
+	
+	testDynAccessNonExistent()
+	println("Test 5: PASSED")
+	
+	testDynIndexSlice()
+	println("Test 6: PASSED")
+	
+	testDynIndexMap()
+	println("Test 7: PASSED")
+	
+	testDynAccessQuestionCall()
+	println("Test 8: PASSED")
+	
+	testDynAccessChain()
+	println("Test 9: PASSED")
+	
+	testDynMethodMultiRet()
+	println("Test 10: PASSED")
+	
+	testDynAccessPrimitive()
+	println("Test 11: PASSED")
+	
+	testDynAccessAmbiguous()
+	println("Test 12: PASSED")
+	
+	testDynAccessString()
+	println("Test 13: PASSED")
+	
+	testDynAccessOutOfBounds()
+	println("Test 14: PASSED")
+	
+	testDynMethodCorrectArg()
+	println("Test 15: PASSED")
+	
+	println("ALL PASSED")
+}

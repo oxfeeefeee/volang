@@ -1,0 +1,248 @@
+package main
+
+// Test bare return with defer and named returns - edge cases
+
+// Test 1: bare return after defer modifies named return
+func bareReturnDeferModify() (result int) {
+	result = 10
+	
+	defer func() {
+		result = 100
+	}()
+	
+	result = 50
+	return  // bare return, should use result=50, then defer makes it 100
+}
+
+func testBareReturnDeferModify() {
+	r := bareReturnDeferModify()
+	assert(r == 100, "bare return defer modify: expected 100")
+}
+
+// Test 2: bare return vs explicit return with defer
+func explicitReturnDeferModify() (result int) {
+	result = 10
+	
+	defer func() {
+		result = 100
+	}()
+	
+	result = 50
+	return result  // explicit return, same as bare return here
+}
+
+func testExplicitReturnDeferModify() {
+	r := explicitReturnDeferModify()
+	assert(r == 100, "explicit return defer modify: expected 100")
+}
+
+// Test 3: bare return with multiple named returns
+func bareReturnMulti() (a int, b string, c bool) {
+	a = 1
+	b = "hello"
+	c = true
+	
+	defer func() {
+		a = 999
+		b = "modified"
+		// c stays true
+	}()
+	
+	a = 42
+	b = "world"
+	c = false
+	return
+}
+
+func testBareReturnMulti() {
+	a, b, c := bareReturnMulti()
+	assert(a == 999, "bare return multi a: expected 999")
+	assert(b == "modified", "bare return multi b: expected modified")
+	assert(c == false, "bare return multi c: expected false")
+}
+
+// Test 4: bare return in nested if
+func bareReturnNestedIf(x int) (result int) {
+	result = 0
+	
+	defer func() {
+		result += 1000
+	}()
+	
+	if x > 0 {
+		result = 10
+		if x > 5 {
+			result = 50
+			return  // bare return here
+		}
+		result = 20
+		return
+	}
+	result = -1
+	return
+}
+
+func testBareReturnNestedIf() {
+	r1 := bareReturnNestedIf(10)
+	assert(r1 == 1050, "bare return nested if (10): expected 1050")
+	
+	r2 := bareReturnNestedIf(3)
+	assert(r2 == 1020, "bare return nested if (3): expected 1020")
+	
+	r3 := bareReturnNestedIf(-1)
+	assert(r3 == 999, "bare return nested if (-1): expected 999")
+}
+
+// Test 5: bare return with closure that captures named return
+func bareReturnClosureCapture() (result int) {
+	result = 0
+	
+	modify := func() {
+		result = 42
+	}
+	
+	defer func() {
+		result += 100
+	}()
+	
+	modify()
+	return
+}
+
+func testBareReturnClosureCapture() {
+	r := bareReturnClosureCapture()
+	assert(r == 142, "bare return closure capture: expected 142")
+}
+
+// Test 6: bare return inside defer
+func bareReturnInsideDefer() (result int) {
+	result = 0
+	
+	defer func() {
+		result = 999
+	}()
+	
+	defer func() {
+		result = 100
+	}()
+	
+	return  // LIFO: first defer sets 100, second sets 999
+}
+
+func testBareReturnInsideDefer() {
+	r := bareReturnInsideDefer()
+	assert(r == 999, "bare return inside defer: expected 999")
+}
+
+// Test 7: bare return with pointer named return
+type Point struct {
+	X, Y int
+}
+
+func bareReturnPointer() (p *Point) {
+	p = &Point{1, 2}
+	
+	defer func() {
+		p.X = 100
+	}()
+	
+	p = &Point{10, 20}
+	return
+}
+
+func testBareReturnPointer() {
+	p := bareReturnPointer()
+	assert(p.X == 100, "bare return pointer X: expected 100")
+	assert(p.Y == 20, "bare return pointer Y: expected 20")
+}
+
+// Test 8: bare return with slice named return
+func bareReturnSlice() (s []int) {
+	s = []int{1, 2, 3}
+	
+	defer func() {
+		s = append(s, 4)
+	}()
+	
+	return
+}
+
+func testBareReturnSlice() {
+	s := bareReturnSlice()
+	assert(len(s) == 4, "bare return slice len: expected 4")
+	assert(s[3] == 4, "bare return slice last: expected 4")
+}
+
+// Test 9: bare return in loop with break
+func bareReturnLoopBreak() (result int) {
+	result = 0
+	
+	defer func() {
+		result += 1000
+	}()
+	
+	for i := 0; i < 10; i++ {
+		result = i
+		if i == 5 {
+			return
+		}
+	}
+	return
+}
+
+func testBareReturnLoopBreak() {
+	r := bareReturnLoopBreak()
+	assert(r == 1005, "bare return loop break: expected 1005")
+}
+
+// Test 10: bare return with interface named return
+func bareReturnInterface() (v any) {
+	v = 42
+	
+	defer func() {
+		v = "changed"
+	}()
+	
+	return
+}
+
+func testBareReturnInterface() {
+	v := bareReturnInterface()
+	s, ok := v.(string)
+	assert(ok, "bare return interface should be string")
+	assert(s == "changed", "bare return interface: expected changed")
+}
+
+func main() {
+	testBareReturnDeferModify()
+	println("Test 1: PASSED - bare return defer modify")
+	
+	testExplicitReturnDeferModify()
+	println("Test 2: PASSED - explicit return defer modify")
+	
+	testBareReturnMulti()
+	println("Test 3: PASSED - bare return multi")
+	
+	testBareReturnNestedIf()
+	println("Test 4: PASSED - bare return nested if")
+	
+	testBareReturnClosureCapture()
+	println("Test 5: PASSED - bare return closure capture")
+	
+	testBareReturnInsideDefer()
+	println("Test 6: PASSED - bare return inside defer")
+	
+	testBareReturnPointer()
+	println("Test 7: PASSED - bare return pointer")
+	
+	testBareReturnSlice()
+	println("Test 8: PASSED - bare return slice")
+	
+	testBareReturnLoopBreak()
+	println("Test 9: PASSED - bare return loop break")
+	
+	testBareReturnInterface()
+	println("Test 10: PASSED - bare return interface")
+	
+	println("ALL PASSED")
+}

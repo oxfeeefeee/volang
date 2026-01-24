@@ -1,0 +1,313 @@
+package main
+
+// Test switch and const expression edge cases
+
+// Test 1: Switch with multiple values in case
+func switchMultiCase(x int) string {
+	switch x {
+	case 1, 2, 3:
+		return "low"
+	case 4, 5:
+		return "mid"
+	case 6, 7, 8, 9:
+		return "high"
+	default:
+		return "other"
+	}
+}
+
+func testSwitchMultiCase() {
+	assert(switchMultiCase(1) == "low", "switch multi case 1")
+	assert(switchMultiCase(3) == "low", "switch multi case 3")
+	assert(switchMultiCase(5) == "mid", "switch multi case 5")
+	assert(switchMultiCase(8) == "high", "switch multi case 8")
+	assert(switchMultiCase(10) == "other", "switch multi case 10")
+}
+
+// Test 2: Switch with fallthrough
+func switchFallthrough(x int) int {
+	result := 0
+	switch x {
+	case 1:
+		result += 1
+		fallthrough
+	case 2:
+		result += 10
+		fallthrough
+	case 3:
+		result += 100
+	case 4:
+		result += 1000
+	}
+	return result
+}
+
+func testSwitchFallthrough() {
+	assert(switchFallthrough(1) == 111, "switch fallthrough 1")
+	assert(switchFallthrough(2) == 110, "switch fallthrough 2")
+	assert(switchFallthrough(3) == 100, "switch fallthrough 3")
+	assert(switchFallthrough(4) == 1000, "switch fallthrough 4")
+}
+
+// Test 3: Switch with init statement
+func switchWithInit() int {
+	switch x := 10; x {
+	case 10:
+		return x * 2
+	default:
+		return x
+	}
+}
+
+func testSwitchWithInit() {
+	r := switchWithInit()
+	assert(r == 20, "switch with init")
+}
+
+// Test 4: Tagless switch (boolean switch)
+func taglessSwitch(x int) string {
+	switch {
+	case x < 0:
+		return "negative"
+	case x == 0:
+		return "zero"
+	case x < 10:
+		return "small"
+	default:
+		return "large"
+	}
+}
+
+func testTaglessSwitch() {
+	assert(taglessSwitch(-5) == "negative", "tagless switch -5")
+	assert(taglessSwitch(0) == "zero", "tagless switch 0")
+	assert(taglessSwitch(5) == "small", "tagless switch 5")
+	assert(taglessSwitch(100) == "large", "tagless switch 100")
+}
+
+// Test 5: Const expression with iota
+const (
+	A = iota      // 0
+	B             // 1
+	C = iota + 10 // 12
+	D             // 13
+)
+
+func testConstIota() {
+	assert(A == 0, "const iota A")
+	assert(B == 1, "const iota B")
+	assert(C == 12, "const iota C")
+	assert(D == 13, "const iota D")
+}
+
+// Test 6: Const expression with bitwise
+const (
+	Flag1 = 1 << iota // 1
+	Flag2             // 2
+	Flag3             // 4
+	Flag4             // 8
+)
+
+func testConstBitwise() {
+	assert(Flag1 == 1, "const bitwise 1")
+	assert(Flag2 == 2, "const bitwise 2")
+	assert(Flag3 == 4, "const bitwise 3")
+	assert(Flag4 == 8, "const bitwise 4")
+}
+
+// Test 7: Switch with string
+func switchString(s string) int {
+	switch s {
+	case "hello":
+		return 1
+	case "world":
+		return 2
+	case "foo", "bar":
+		return 3
+	default:
+		return 0
+	}
+}
+
+func testSwitchString() {
+	assert(switchString("hello") == 1, "switch string hello")
+	assert(switchString("world") == 2, "switch string world")
+	assert(switchString("foo") == 3, "switch string foo")
+	assert(switchString("bar") == 3, "switch string bar")
+	assert(switchString("other") == 0, "switch string other")
+}
+
+// Test 8: Const with type
+const TypedConst int32 = 42
+
+func testTypedConst() {
+	var x int32 = TypedConst
+	assert(x == 42, "typed const")
+}
+
+// Test 9: Switch with expression in case
+func switchExprCase(x int) int {
+	y := 5
+	switch x {
+	case y:
+		return 1
+	case y * 2:
+		return 2
+	case y + 10:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func testSwitchExprCase() {
+	assert(switchExprCase(5) == 1, "switch expr case 5")
+	assert(switchExprCase(10) == 2, "switch expr case 10")
+	assert(switchExprCase(15) == 3, "switch expr case 15")
+	assert(switchExprCase(20) == 0, "switch expr case 20")
+}
+
+// Test 10: Nested switch
+func nestedSwitch(x, y int) string {
+	switch x {
+	case 1:
+		switch y {
+		case 1:
+			return "1-1"
+		case 2:
+			return "1-2"
+		}
+	case 2:
+		switch y {
+		case 1:
+			return "2-1"
+		default:
+			return "2-other"
+		}
+	}
+	return "other"
+}
+
+func testNestedSwitch() {
+	assert(nestedSwitch(1, 1) == "1-1", "nested switch 1-1")
+	assert(nestedSwitch(1, 2) == "1-2", "nested switch 1-2")
+	assert(nestedSwitch(2, 1) == "2-1", "nested switch 2-1")
+	assert(nestedSwitch(2, 99) == "2-other", "nested switch 2-other")
+	assert(nestedSwitch(3, 1) == "other", "nested switch 3-1")
+}
+
+// Test 11: Const with complex expression
+const (
+	X = 1 + 2*3      // 7
+	Y = (1 + 2) * 3  // 9
+	Z = X + Y        // 16
+)
+
+func testConstExpr() {
+	assert(X == 7, "const expr X")
+	assert(Y == 9, "const expr Y")
+	assert(Z == 16, "const expr Z")
+}
+
+// Test 12: Switch with break
+func switchBreak(x int) int {
+	result := 0
+	switch x {
+	case 1:
+		result = 1
+		if true {
+			break
+		}
+		result = 999  // Not reached
+	case 2:
+		result = 2
+	}
+	return result
+}
+
+func testSwitchBreak() {
+	assert(switchBreak(1) == 1, "switch break 1")
+	assert(switchBreak(2) == 2, "switch break 2")
+}
+
+// Test 13: Default first in switch
+func switchDefaultFirst(x int) int {
+	switch x {
+	default:
+		return 0
+	case 1:
+		return 1
+	case 2:
+		return 2
+	}
+}
+
+func testSwitchDefaultFirst() {
+	assert(switchDefaultFirst(1) == 1, "switch default first 1")
+	assert(switchDefaultFirst(2) == 2, "switch default first 2")
+	assert(switchDefaultFirst(99) == 0, "switch default first 99")
+}
+
+// Test 14: Fallthrough to default
+func switchFallthroughDefault(x int) int {
+	result := 0
+	switch x {
+	case 1:
+		result = 1
+		fallthrough
+	default:
+		result += 100
+	}
+	return result
+}
+
+func testSwitchFallthroughDefault() {
+	assert(switchFallthroughDefault(1) == 101, "switch fallthrough default 1")
+	assert(switchFallthroughDefault(99) == 100, "switch fallthrough default 99")
+}
+
+func main() {
+	testSwitchMultiCase()
+	println("Test 1: PASSED - switch multi case")
+	
+	testSwitchFallthrough()
+	println("Test 2: PASSED - switch fallthrough")
+	
+	testSwitchWithInit()
+	println("Test 3: PASSED - switch with init")
+	
+	testTaglessSwitch()
+	println("Test 4: PASSED - tagless switch")
+	
+	testConstIota()
+	println("Test 5: PASSED - const iota")
+	
+	testConstBitwise()
+	println("Test 6: PASSED - const bitwise")
+	
+	testSwitchString()
+	println("Test 7: PASSED - switch string")
+	
+	testTypedConst()
+	println("Test 8: PASSED - typed const")
+	
+	testSwitchExprCase()
+	println("Test 9: PASSED - switch expr case")
+	
+	testNestedSwitch()
+	println("Test 10: PASSED - nested switch")
+	
+	testConstExpr()
+	println("Test 11: PASSED - const expr")
+	
+	testSwitchBreak()
+	println("Test 12: PASSED - switch break")
+	
+	testSwitchDefaultFirst()
+	println("Test 13: PASSED - switch default first")
+	
+	testSwitchFallthroughDefault()
+	println("Test 14: PASSED - switch fallthrough default")
+	
+	println("ALL PASSED")
+}

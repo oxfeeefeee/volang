@@ -1,0 +1,224 @@
+package main
+
+// Test compound assignments with method calls and interface interactions
+
+type Counter struct {
+	value int
+}
+
+func (c *Counter) Get() int {
+	return c.value
+}
+
+func (c *Counter) Add(n int) int {
+	c.value += n
+	return c.value
+}
+
+// Test 1: Compound assign with method call result
+func testMethodResultCompound() {
+	c := &Counter{value: 10}
+	x := 5
+	x += c.Get()
+	assert(x == 15, "compound with method result")
+}
+
+// Test 2: Compound assign to struct field via pointer
+func testStructFieldCompound() {
+	c := &Counter{value: 10}
+	c.value += 5
+	assert(c.value == 15, "compound to struct field")
+}
+
+// Test 3: Compound assign with chained method calls
+func testChainedMethodCompound() {
+	c := &Counter{value: 10}
+	x := 0
+	x += c.Add(5)  // c.value becomes 15, returns 15
+	x += c.Add(3)  // c.value becomes 18, returns 18
+	assert(x == 33, "compound with chained methods")
+	assert(c.value == 18, "counter final value")
+}
+
+// Test 4: Compound assign with interface method
+type Adder interface {
+	Add(n int) int
+}
+
+func testInterfaceMethodCompound() {
+	var a Adder = &Counter{value: 10}
+	x := 0
+	x += a.Add(5)
+	assert(x == 15, "compound with interface method")
+}
+
+// Test 5: Compound assign in map value
+func testMapValueCompound() {
+	m := map[string]int{"a": 10}
+	m["a"] += 5
+	assert(m["a"] == 15, "compound to map value")
+}
+
+// Test 6: Compound assign in slice element
+func testSliceElementCompound() {
+	s := []int{10, 20, 30}
+	s[1] += 5
+	assert(s[1] == 25, "compound to slice element")
+}
+
+// Test 7: Compound assign with index expression side effect
+var indexCallCount int
+
+func getIndex() int {
+	indexCallCount++
+	return 1
+}
+
+func testIndexSideEffect() {
+	indexCallCount = 0
+	s := []int{10, 20, 30}
+	s[getIndex()] += 5
+	assert(s[1] == 25, "compound with index side effect - value")
+	assert(indexCallCount == 1, "index should be evaluated once")
+}
+
+// Test 8: Compound assign with map key side effect
+var keyCallCount int
+
+func getKey() string {
+	keyCallCount++
+	return "key"
+}
+
+func testMapKeySideEffect() {
+	keyCallCount = 0
+	m := map[string]int{"key": 10}
+	m[getKey()] += 5
+	assert(m["key"] == 15, "compound with map key side effect - value")
+	assert(keyCallCount == 1, "key should be evaluated once")
+}
+
+// Test 9: Compound assign with pointer dereference (struct only in Vo)
+type IntWrapper struct {
+	val int
+}
+
+func testPointerDerefCompound() {
+	w := &IntWrapper{val: 10}
+	w.val += 5
+	assert(w.val == 15, "compound via pointer deref")
+}
+
+// Test 10: Compound bitwise operations
+func testBitwiseCompound() {
+	x := 0b1100
+	x |= 0b0011
+	assert(x == 0b1111, "compound bitwise OR")
+	
+	y := 0b1111
+	y &= 0b1100
+	assert(y == 0b1100, "compound bitwise AND")
+	
+	z := 0b1010
+	z ^= 0b1100
+	assert(z == 0b0110, "compound bitwise XOR")
+}
+
+// Test 11: Compound shift operations
+func testShiftCompound() {
+	x := 1
+	x <<= 3
+	assert(x == 8, "compound left shift")
+	
+	y := 16
+	y >>= 2
+	assert(y == 4, "compound right shift")
+}
+
+// Test 12: Compound with type conversion in expression
+func testTypeConversionCompound() {
+	x := 10
+	f := 3.5
+	x += int(f)  // truncates to 3
+	assert(x == 13, "compound with type conversion")
+}
+
+// Test 13: Nested struct field compound
+type Outer struct {
+	Inner *Counter
+}
+
+func testNestedFieldCompound() {
+	o := &Outer{Inner: &Counter{value: 10}}
+	o.Inner.value += 5
+	assert(o.Inner.value == 15, "nested field compound")
+}
+
+// Test 14: Compound with method value
+func testMethodValueCompound() {
+	c := &Counter{value: 10}
+	add := c.Add
+	x := 0
+	x += add(5)
+	assert(x == 15, "compound with method value")
+}
+
+// Test 15: Compound in closure capturing outer variable
+func testClosureCaptureCompound() {
+	x := 10
+	f := func(n int) {
+		x += n
+	}
+	f(5)
+	f(3)
+	assert(x == 18, "compound in closure capture")
+}
+
+func main() {
+	testMethodResultCompound()
+	println("Test 1: PASSED")
+	
+	testStructFieldCompound()
+	println("Test 2: PASSED")
+	
+	testChainedMethodCompound()
+	println("Test 3: PASSED")
+	
+	testInterfaceMethodCompound()
+	println("Test 4: PASSED")
+	
+	testMapValueCompound()
+	println("Test 5: PASSED")
+	
+	testSliceElementCompound()
+	println("Test 6: PASSED")
+	
+	testIndexSideEffect()
+	println("Test 7: PASSED")
+	
+	testMapKeySideEffect()
+	println("Test 8: PASSED")
+	
+	testPointerDerefCompound()
+	println("Test 9: PASSED")
+	
+	testBitwiseCompound()
+	println("Test 10: PASSED")
+	
+	testShiftCompound()
+	println("Test 11: PASSED")
+	
+	testTypeConversionCompound()
+	println("Test 12: PASSED")
+	
+	testNestedFieldCompound()
+	println("Test 13: PASSED")
+	
+	testMethodValueCompound()
+	println("Test 14: PASSED")
+	
+	testClosureCaptureCompound()
+	println("Test 15: PASSED")
+	
+	println("ALL PASSED")
+}

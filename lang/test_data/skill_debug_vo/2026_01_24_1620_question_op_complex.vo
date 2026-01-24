@@ -1,0 +1,316 @@
+package main
+
+import "errors"
+
+// Test ? operator with complex scenarios
+
+// Helper functions
+func mayFail(shouldFail bool) (int, error) {
+	if shouldFail {
+		return 0, errors.New("failed")
+	}
+	return 42, nil
+}
+
+func mayFailMulti(shouldFail bool) (int, string, error) {
+	if shouldFail {
+		return 0, "", errors.New("multi failed")
+	}
+	return 100, "ok", nil
+}
+
+// Test 1: Basic question operator
+func testBasicQuestion() (result int, err error) {
+	result = mayFail(false)?
+	return
+}
+
+func testBasicQuestionCall() {
+	r, err := testBasicQuestion()
+	assert(err == nil, "basic question err")
+	assert(r == 42, "basic question value")
+}
+
+// Test 2: Question operator propagates error
+func testQuestionPropagate() (result int, err error) {
+	result = mayFail(true)?
+	result = 999  // should not reach
+	return
+}
+
+func testQuestionPropagateCall() {
+	r, err := testQuestionPropagate()
+	assert(err != nil, "question propagate should error")
+	assert(r == 0, "question propagate value should be 0")
+}
+
+// Test 3: Multiple question operators in sequence
+func testMultipleQuestion() (result int, err error) {
+	a := mayFail(false)?
+	b := mayFail(false)?
+	result = a + b
+	return
+}
+
+func testMultipleQuestionCall() {
+	r, err := testMultipleQuestion()
+	assert(err == nil, "multiple question err")
+	assert(r == 84, "multiple question value")
+}
+
+// Test 4: Question operator with multi-return
+func testQuestionMultiRet() (r1 int, r2 string, err error) {
+	r1, r2 = mayFailMulti(false)?
+	return
+}
+
+func testQuestionMultiRetCall() {
+	r1, r2, err := testQuestionMultiRet()
+	assert(err == nil, "question multi ret err")
+	assert(r1 == 100, "question multi ret r1")
+	assert(r2 == "ok", "question multi ret r2")
+}
+
+// Test 5: Question operator in expression
+func testQuestionInExpr() (result int, err error) {
+	result = mayFail(false)? * 2 + mayFail(false)?
+	return
+}
+
+func testQuestionInExprCall() {
+	r, err := testQuestionInExpr()
+	assert(err == nil, "question in expr err")
+	assert(r == 126, "question in expr value")  // 42*2 + 42 = 126
+}
+
+// Test 6: Question operator with errdefer
+func testQuestionErrdefer() (result int, err error) {
+	result = 10
+	
+	errdefer func() {
+		result = 999
+	}()
+	
+	result = mayFail(true)?  // fails, triggers errdefer
+	return
+}
+
+func testQuestionErrdeferCall() {
+	r, err := testQuestionErrdefer()
+	assert(err != nil, "question errdefer err")
+	assert(r == 999, "question errdefer value")
+}
+
+// Test 7: Question operator with defer
+func testQuestionDefer() (result int, err error) {
+	defer func() {
+		result = result * 2
+	}()
+	
+	result = mayFail(false)?
+	return
+}
+
+func testQuestionDeferCall() {
+	r, err := testQuestionDefer()
+	assert(err == nil, "question defer err")
+	assert(r == 84, "question defer value")  // 42 * 2
+}
+
+// Test 8: Question operator in closure
+func testQuestionClosure() (result int, err error) {
+	f := func() (int, error) {
+		return mayFail(false)?+ 10, nil
+	}
+	
+	result = f()?
+	return
+}
+
+func testQuestionClosureCall() {
+	r, err := testQuestionClosure()
+	assert(err == nil, "question closure err")
+	assert(r == 52, "question closure value")  // 42 + 10
+}
+
+// Test 9: Question operator with method call
+type Wrapper struct {
+	val int
+}
+
+func (w *Wrapper) GetVal() (int, error) {
+	if w.val < 0 {
+		return 0, errors.New("negative")
+	}
+	return w.val, nil
+}
+
+func testQuestionMethod() (result int, err error) {
+	w := &Wrapper{val: 50}
+	result = w.GetVal()?
+	return
+}
+
+func testQuestionMethodCall() {
+	r, err := testQuestionMethod()
+	assert(err == nil, "question method err")
+	assert(r == 50, "question method value")
+}
+
+// Test 10: Question operator early return preserves named return
+func testQuestionPreserveNamed() (result int, err error) {
+	result = 100
+	_ = mayFail(true)?  // fails
+	result = 999  // should not reach
+	return
+}
+
+func testQuestionPreserveNamedCall() {
+	r, err := testQuestionPreserveNamed()
+	assert(err != nil, "question preserve named err")
+	assert(r == 100, "question preserve named value")
+}
+
+// Test 11: Question operator in loop
+func testQuestionLoop() (result int, err error) {
+	for i := range 5 {
+		v := mayFail(false)?
+		result += v
+	}
+	return
+}
+
+func testQuestionLoopCall() {
+	r, err := testQuestionLoop()
+	assert(err == nil, "question loop err")
+	assert(r == 210, "question loop value")  // 42 * 5
+}
+
+// Test 12: Question operator with interface return
+func mayFailIface(shouldFail bool) (any, error) {
+	if shouldFail {
+		return nil, errors.New("iface failed")
+	}
+	return "interface value", nil
+}
+
+func testQuestionIface() (result any, err error) {
+	result = mayFailIface(false)?
+	return
+}
+
+func testQuestionIfaceCall() {
+	r, err := testQuestionIface()
+	assert(err == nil, "question iface err")
+	assert(r.(string) == "interface value", "question iface value")
+}
+
+// Test 13: Question operator chain with different functions
+func add10(v int) (int, error) {
+	return v + 10, nil
+}
+
+func mul2(v int) (int, error) {
+	return v * 2, nil
+}
+
+func testQuestionChain() (result int, err error) {
+	v := mayFail(false)?
+	v = add10(v)?
+	v = mul2(v)?
+	result = v
+	return
+}
+
+func testQuestionChainCall() {
+	r, err := testQuestionChain()
+	assert(err == nil, "question chain err")
+	assert(r == 104, "question chain value")  // (42 + 10) * 2 = 104
+}
+
+// Test 14: Question operator in conditional
+func testQuestionConditional() (result int, err error) {
+	if v := mayFail(false)?; v > 40 {
+		result = v
+	} else {
+		result = 0
+	}
+	return
+}
+
+func testQuestionConditionalCall() {
+	r, err := testQuestionConditional()
+	assert(err == nil, "question conditional err")
+	assert(r == 42, "question conditional value")
+}
+
+// Test 15: Nested question operators
+func outerFail(inner func() (int, error)) (int, error) {
+	v, err := inner()
+	if err != nil {
+		return 0, errors.Wrap(err, "outer")
+	}
+	return v + 100, nil
+}
+
+func testQuestionNested() (result int, err error) {
+	result = outerFail(func() (int, error) {
+		return mayFail(false)?, nil
+	})?
+	return
+}
+
+func testQuestionNestedCall() {
+	r, err := testQuestionNested()
+	assert(err == nil, "question nested err")
+	assert(r == 142, "question nested value")  // 42 + 100
+}
+
+func main() {
+	testBasicQuestionCall()
+	println("Test 1: PASSED")
+	
+	testQuestionPropagateCall()
+	println("Test 2: PASSED")
+	
+	testMultipleQuestionCall()
+	println("Test 3: PASSED")
+	
+	testQuestionMultiRetCall()
+	println("Test 4: PASSED")
+	
+	testQuestionInExprCall()
+	println("Test 5: PASSED")
+	
+	testQuestionErrdeferCall()
+	println("Test 6: PASSED")
+	
+	testQuestionDeferCall()
+	println("Test 7: PASSED")
+	
+	testQuestionClosureCall()
+	println("Test 8: PASSED")
+	
+	testQuestionMethodCall()
+	println("Test 9: PASSED")
+	
+	testQuestionPreserveNamedCall()
+	println("Test 10: PASSED")
+	
+	testQuestionLoopCall()
+	println("Test 11: PASSED")
+	
+	testQuestionIfaceCall()
+	println("Test 12: PASSED")
+	
+	testQuestionChainCall()
+	println("Test 13: PASSED")
+	
+	testQuestionConditionalCall()
+	println("Test 14: PASSED")
+	
+	testQuestionNestedCall()
+	println("Test 15: PASSED")
+	
+	println("ALL PASSED")
+}

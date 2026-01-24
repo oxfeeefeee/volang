@@ -1,0 +1,252 @@
+package main
+
+// Test multi-value return and type conversion edge cases
+
+// Test 1: Multi-return as function argument
+func pair() (int, int) {
+	return 10, 20
+}
+
+func sum(a, b int) int {
+	return a + b
+}
+
+func multiRetAsArg() int {
+	return sum(pair())
+}
+
+func testMultiRetAsArg() {
+	r := multiRetAsArg()
+	assert(r == 30, "multi ret as arg")
+}
+
+// Test 2: Multi-return in variadic
+func triple() (int, int, int) {
+	return 1, 2, 3
+}
+
+func variadicSum(nums ...int) int {
+	s := 0
+	for _, n := range nums {
+		s += n
+	}
+	return s
+}
+
+func multiRetVariadic() int {
+	// Can't spread multi-return to variadic in Go
+	// But can use them as regular args
+	a, b, c := triple()
+	return variadicSum(a, b, c)
+}
+
+func testMultiRetVariadic() {
+	r := multiRetVariadic()
+	assert(r == 6, "multi ret variadic")
+}
+
+// Test 3: Type conversion int to float
+func intToFloat() float64 {
+	i := 42
+	return float64(i)
+}
+
+func testIntToFloat() {
+	r := intToFloat()
+	assert(r == 42.0, "int to float")
+}
+
+// Test 4: Type conversion float to int (truncation)
+func floatToInt() int {
+	f := 3.9
+	return int(f)
+}
+
+func testFloatToInt() {
+	r := floatToInt()
+	assert(r == 3, "float to int")  // Truncates, not rounds
+}
+
+// Test 5: Type conversion negative float to int
+func negFloatToInt() int {
+	f := -3.9
+	return int(f)
+}
+
+func testNegFloatToInt() {
+	r := negFloatToInt()
+	assert(r == -3, "neg float to int")  // Truncates toward zero
+}
+
+// Test 6: Rune to int conversion
+func runeToInt() int {
+	r := 'A'
+	return int(r)
+}
+
+func testRuneToInt() {
+	r := runeToInt()
+	assert(r == 65, "rune to int")
+}
+
+// Test 7: Int to rune conversion
+func intToRune() rune {
+	i := 65
+	return rune(i)
+}
+
+func testIntToRune() {
+	r := intToRune()
+	assert(r == 'A', "int to rune")
+}
+
+// Test 8: String to rune slice
+func stringToRunes() []rune {
+	s := "hello"
+	return []rune(s)
+}
+
+func testStringToRunes() {
+	r := stringToRunes()
+	assert(len(r) == 5, "string to runes len")
+	assert(r[0] == 'h', "string to runes 0")
+}
+
+// Test 9: Rune slice to string
+func runesToString() string {
+	r := []rune{'w', 'o', 'r', 'l', 'd'}
+	return string(r)
+}
+
+func testRunesToString() {
+	r := runesToString()
+	assert(r == "world", "runes to string")
+}
+
+// Test 10: Multi-return in map assignment
+func kvPair() (string, int) {
+	return "key", 42
+}
+
+func multiRetMapAssign() int {
+	m := make(map[string]int)
+	k, v := kvPair()
+	m[k] = v
+	return m["key"]
+}
+
+func testMultiRetMapAssign() {
+	r := multiRetMapAssign()
+	assert(r == 42, "multi ret map assign")
+}
+
+// Test 11: Type conversion between int sizes
+func intSizeConv() (int8, int16, int32, int64) {
+	var i64 int64 = 127
+	var i32 int32 = int32(i64)
+	var i16 int16 = int16(i32)
+	var i8 int8 = int8(i16)
+	return i8, i16, i32, i64
+}
+
+func testIntSizeConv() {
+	a, b, c, d := intSizeConv()
+	assert(a == 127, "int size conv a")
+	assert(b == 127, "int size conv b")
+	assert(c == 127, "int size conv c")
+	assert(d == 127, "int size conv d")
+}
+
+// Test 12: Multi-return with blank identifier
+func threeValues() (int, int, int) {
+	return 1, 2, 3
+}
+
+func multiRetBlank() int {
+	a, _, c := threeValues()
+	return a + c
+}
+
+func testMultiRetBlank() {
+	r := multiRetBlank()
+	assert(r == 4, "multi ret blank")
+}
+
+// Test 13: Type conversion with named type
+type MyInt int
+
+func namedTypeConv() int {
+	var m MyInt = 42
+	return int(m)
+}
+
+func testNamedTypeConv() {
+	r := namedTypeConv()
+	assert(r == 42, "named type conv")
+}
+
+// Test 14: Multi-return in struct initialization
+type Point struct {
+	X, Y int
+}
+
+func coords() (int, int) {
+	return 10, 20
+}
+
+func multiRetStruct() Point {
+	x, y := coords()
+	return Point{X: x, Y: y}
+}
+
+func testMultiRetStruct() {
+	p := multiRetStruct()
+	assert(p.X == 10, "multi ret struct x")
+	assert(p.Y == 20, "multi ret struct y")
+}
+
+func main() {
+	testMultiRetAsArg()
+	println("Test 1: PASSED - multi ret as arg")
+	
+	testMultiRetVariadic()
+	println("Test 2: PASSED - multi ret variadic")
+	
+	testIntToFloat()
+	println("Test 3: PASSED - int to float")
+	
+	testFloatToInt()
+	println("Test 4: PASSED - float to int")
+	
+	testNegFloatToInt()
+	println("Test 5: PASSED - neg float to int")
+	
+	testRuneToInt()
+	println("Test 6: PASSED - rune to int")
+	
+	testIntToRune()
+	println("Test 7: PASSED - int to rune")
+	
+	testStringToRunes()
+	println("Test 8: PASSED - string to runes")
+	
+	testRunesToString()
+	println("Test 9: PASSED - runes to string")
+	
+	testMultiRetMapAssign()
+	println("Test 10: PASSED - multi ret map assign")
+	
+	testIntSizeConv()
+	println("Test 11: PASSED - int size conv")
+	
+	testMultiRetBlank()
+	println("Test 12: PASSED - multi ret blank")
+	
+	testNamedTypeConv()
+	println("Test 13: PASSED - named type conv")
+	
+	testMultiRetStruct()
+	println("Test 14: PASSED - multi ret struct")
+	
+	println("ALL PASSED")
+}

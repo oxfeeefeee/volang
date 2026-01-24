@@ -1,0 +1,257 @@
+package main
+
+// Test panic/recover with various value types
+
+type MyError struct {
+	Code    int
+	Message string
+}
+
+func (e MyError) Error() string {
+	return e.Message
+}
+
+// Test 1: Panic with struct value
+func panicWithStruct() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if e, ok := r.(MyError); ok {
+				result = e.Message
+			}
+		}
+	}()
+	panic(MyError{Code: 42, Message: "struct panic"})
+}
+
+func testPanicWithStruct() {
+	r := panicWithStruct()
+	assert(r == "struct panic", "panic with struct")
+}
+
+// Test 2: Panic with slice
+func panicWithSlice() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			if s, ok := r.([]int); ok {
+				result = len(s)
+			}
+		}
+	}()
+	panic([]int{1, 2, 3, 4, 5})
+}
+
+func testPanicWithSlice() {
+	r := panicWithSlice()
+	assert(r == 5, "panic with slice len")
+}
+
+// Test 3: Panic with map
+func panicWithMap() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			if m, ok := r.(map[string]int); ok {
+				result = m["key"]
+			}
+		}
+	}()
+	m := map[string]int{"key": 999}
+	panic(m)
+}
+
+func testPanicWithMap() {
+	r := panicWithMap()
+	assert(r == 999, "panic with map")
+}
+
+// Test 4: Panic with channel (reference type)
+func panicWithChannel() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			if ch, ok := r.(chan int); ok {
+				ch <- 42
+				result = <-ch
+			}
+		}
+	}()
+	ch := make(chan int, 1)
+	panic(ch)
+}
+
+func testPanicWithChannel() {
+	r := panicWithChannel()
+	assert(r == 42, "panic with channel")
+}
+
+// Test 5: Panic with pointer to struct
+func panicWithPointer() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			if p, ok := r.(*MyError); ok {
+				result = p.Code
+			}
+		}
+	}()
+	e := MyError{Code: 777, Message: "ptr"}
+	panic(&e)
+}
+
+func testPanicWithPointer() {
+	r := panicWithPointer()
+	assert(r == 777, "panic with pointer")
+}
+
+// Test 6: Panic with func type
+func panicWithFunc() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			if f, ok := r.(func() int); ok {
+				result = f()
+			}
+		}
+	}()
+	f := func() int { return 123 }
+	panic(f)
+}
+
+func testPanicWithFunc() {
+	r := panicWithFunc()
+	assert(r == 123, "panic with func")
+}
+
+// Test 7: Type switch in recover
+func typeSwitchRecover() (result string) {
+	defer func() {
+		r := recover()
+		switch v := r.(type) {
+		case nil:
+			result = "nil"
+		case int:
+			result = "int"
+		case string:
+			result = "string:" + v
+		case MyError:
+			result = "MyError:" + v.Message
+		default:
+			result = "unknown"
+		}
+	}()
+	panic("hello")
+}
+
+func testTypeSwitchRecover() {
+	r := typeSwitchRecover()
+	assert(r == "string:hello", "type switch recover string")
+}
+
+// Test 8: Type switch with nil panic
+func typeSwitchNilPanic() (result string) {
+	defer func() {
+		r := recover()
+		switch r.(type) {
+		case nil:
+			result = "nil case"
+		default:
+			result = "not nil"
+		}
+	}()
+	panic(nil)
+}
+
+func testTypeSwitchNilPanic() {
+	r := typeSwitchNilPanic()
+	assert(r == "nil case", "type switch nil panic")
+}
+
+// Test 9: Recover inside type switch
+func recoverInsideTypeSwitch() (result int) {
+	defer func() {
+		switch r := recover().(type) {
+		case int:
+			result = r * 2
+		case string:
+			result = len(r)
+		}
+	}()
+	panic(21)
+}
+
+func testRecoverInsideTypeSwitch() {
+	r := recoverInsideTypeSwitch()
+	assert(r == 42, "recover inside type switch")
+}
+
+// Test 10: Panic with interface containing struct
+func panicWithInterfaceStruct() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			// r is any, containing MyError
+			if e, ok := r.(MyError); ok {
+				result = e.Code
+			}
+		}
+	}()
+	var e any = MyError{Code: 888, Message: "test"}
+	panic(e)
+}
+
+func testPanicWithInterfaceStruct() {
+	r := panicWithInterfaceStruct()
+	assert(r == 888, "panic with interface struct")
+}
+
+// Test 11: Nested type assertion after recover
+func nestedTypeAssertRecover() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if outer, ok := r.(map[string]any); ok {
+				if inner, ok := outer["data"].(string); ok {
+					result = inner
+				}
+			}
+		}
+	}()
+	m := map[string]any{"data": "nested value"}
+	panic(m)
+}
+
+func testNestedTypeAssertRecover() {
+	r := nestedTypeAssertRecover()
+	assert(r == "nested value", "nested type assert recover")
+}
+
+func main() {
+	testPanicWithStruct()
+	println("Test 1: PASSED - panic with struct")
+	
+	testPanicWithSlice()
+	println("Test 2: PASSED - panic with slice")
+	
+	testPanicWithMap()
+	println("Test 3: PASSED - panic with map")
+	
+	testPanicWithChannel()
+	println("Test 4: PASSED - panic with channel")
+	
+	testPanicWithPointer()
+	println("Test 5: PASSED - panic with pointer")
+	
+	testPanicWithFunc()
+	println("Test 6: PASSED - panic with func")
+	
+	testTypeSwitchRecover()
+	println("Test 7: PASSED - type switch recover")
+	
+	testTypeSwitchNilPanic()
+	println("Test 8: PASSED - type switch nil panic")
+	
+	testRecoverInsideTypeSwitch()
+	println("Test 9: PASSED - recover inside type switch")
+	
+	testPanicWithInterfaceStruct()
+	println("Test 10: PASSED - panic with interface struct")
+	
+	testNestedTypeAssertRecover()
+	println("Test 11: PASSED - nested type assert recover")
+	
+	println("ALL PASSED")
+}

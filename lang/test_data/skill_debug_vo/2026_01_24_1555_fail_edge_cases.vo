@@ -1,0 +1,234 @@
+package main
+
+import "errors"
+
+// Test edge cases around fail statement that might reveal bugs
+
+// Test 1: fail with multiple named returns of different types
+func failMultiNamed() (a int, b string, c bool, err error) {
+	a = 42
+	b = "hello"
+	c = true
+	fail errors.New("multi named error")
+}
+
+func testFailMultiNamed() {
+	a, b, c, err := failMultiNamed()
+	assert(err != nil, "should have error")
+	assert(a == 42, "fail should preserve int named return")
+	assert(b == "hello", "fail should preserve string named return")
+	assert(c == true, "fail should preserve bool named return")
+}
+
+// Test 2: fail inside closure that captures named return
+func failInClosure() (result int, err error) {
+	result = 100
+	
+	f := func() error {
+		result = 200  // modify captured named return
+		return errors.New("closure error")
+	}
+	
+	fail f()
+}
+
+func testFailInClosure() {
+	r, err := failInClosure()
+	assert(err != nil, "should have error")
+	// closure modifies result before fail
+	assert(r == 200, "fail in closure: expected 200")
+}
+
+// Test 3: fail after defer modifies named return
+func failAfterDefer() (result int, err error) {
+	result = 10
+	
+	defer func() {
+		result = 999
+	}()
+	
+	result = 50
+	fail errors.New("after defer setup")
+}
+
+func testFailAfterDefer() {
+	r, err := failAfterDefer()
+	assert(err != nil, "should have error")
+	// defer runs after fail, modifies result
+	assert(r == 999, "fail after defer: expected 999")
+}
+
+// Test 4: errdefer that modifies error
+func errdeferModifiesError() (result int, err error) {
+	result = 100
+	
+	errdefer func() {
+		result = 888
+		err = errors.New("modified by errdefer")
+	}()
+	
+	fail errors.New("original error")
+}
+
+func testErrdeferModifiesError() {
+	r, err := errdeferModifiesError()
+	// errdefer runs and modifies both result and error
+	assert(err != nil, "should have error")
+	assert(err.Error() == "modified by errdefer", "error should be modified")
+	assert(r == 888, "result should be modified by errdefer")
+}
+
+// Test 5: fail with slice named return
+func failWithSlice() (result []int, err error) {
+	result = []int{1, 2, 3}
+	fail errors.New("slice error")
+}
+
+func testFailWithSlice() {
+	r, err := failWithSlice()
+	assert(err != nil, "should have error")
+	assert(len(r) == 3, "fail should preserve slice")
+	assert(r[0] == 1 && r[1] == 2 && r[2] == 3, "slice contents preserved")
+}
+
+// Test 6: fail with map named return
+func failWithMap() (result map[string]int, err error) {
+	result = make(map[string]int)
+	result["key"] = 42
+	fail errors.New("map error")
+}
+
+func testFailWithMap() {
+	r, err := failWithMap()
+	assert(err != nil, "should have error")
+	assert(r != nil, "map should not be nil")
+	assert(r["key"] == 42, "map value preserved")
+}
+
+// Test 7: fail with interface named return
+func failWithInterface() (result any, err error) {
+	result = "interface value"
+	fail errors.New("interface error")
+}
+
+func testFailWithInterface() {
+	r, err := failWithInterface()
+	assert(err != nil, "should have error")
+	s, ok := r.(string)
+	assert(ok, "result should be string")
+	assert(s == "interface value", "interface value preserved")
+}
+
+// Test 8: fail with struct named return
+type MyStruct struct {
+	X int
+	Y string
+}
+
+func failWithStruct() (result MyStruct, err error) {
+	result = MyStruct{X: 42, Y: "test"}
+	fail errors.New("struct error")
+}
+
+func testFailWithStruct() {
+	r, err := failWithStruct()
+	assert(err != nil, "should have error")
+	assert(r.X == 42, "struct X preserved")
+	assert(r.Y == "test", "struct Y preserved")
+}
+
+// Test 9: fail with pointer named return
+func failWithPointer() (result *MyStruct, err error) {
+	result = &MyStruct{X: 100, Y: "ptr"}
+	fail errors.New("pointer error")
+}
+
+func testFailWithPointer() {
+	r, err := failWithPointer()
+	assert(err != nil, "should have error")
+	assert(r != nil, "pointer should not be nil")
+	assert(r.X == 100, "pointer struct X preserved")
+	assert(r.Y == "ptr", "pointer struct Y preserved")
+}
+
+// Test 10: fail in nested closure
+func failNestedClosure() (result int, err error) {
+	result = 1
+	
+	outer := func() error {
+		result = 2
+		inner := func() error {
+			result = 3
+			return errors.New("inner error")
+		}
+		return inner()
+	}
+	
+	fail outer()
+}
+
+func testFailNestedClosure() {
+	r, err := failNestedClosure()
+	assert(err != nil, "should have error")
+	assert(r == 3, "nested closure should set result to 3")
+}
+
+// Test 11: question operator chain with fail
+func mayFail(shouldFail bool) (int, error) {
+	if shouldFail {
+		return 0, errors.New("failed")
+	}
+	return 42, nil
+}
+
+func questionChainFail() (result int, err error) {
+	result = 100
+	v := mayFail(false)?
+	result = v
+	_ = mayFail(true)?  // this should trigger fail
+	result = 999  // should not reach
+	return
+}
+
+func testQuestionChainFail() {
+	r, err := questionChainFail()
+	assert(err != nil, "should have error from question chain")
+	assert(r == 42, "result should be 42 from first successful call")
+}
+
+func main() {
+	testFailMultiNamed()
+	println("Test 1: PASSED - fail multi named")
+	
+	testFailInClosure()
+	println("Test 2: PASSED - fail in closure")
+	
+	testFailAfterDefer()
+	println("Test 3: PASSED - fail after defer")
+	
+	testErrdeferModifiesError()
+	println("Test 4: PASSED - errdefer modifies error")
+	
+	testFailWithSlice()
+	println("Test 5: PASSED - fail with slice")
+	
+	testFailWithMap()
+	println("Test 6: PASSED - fail with map")
+	
+	testFailWithInterface()
+	println("Test 7: PASSED - fail with interface")
+	
+	testFailWithStruct()
+	println("Test 8: PASSED - fail with struct")
+	
+	testFailWithPointer()
+	println("Test 9: PASSED - fail with pointer")
+	
+	testFailNestedClosure()
+	println("Test 10: PASSED - fail nested closure")
+	
+	testQuestionChainFail()
+	println("Test 11: PASSED - question chain fail")
+	
+	println("ALL PASSED")
+}

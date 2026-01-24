@@ -1,0 +1,259 @@
+package main
+
+import "errors"
+
+// Test dynamic access (~>) edge cases
+
+type Person struct {
+	Name string
+	Age  int
+}
+
+func (p *Person) Greet() string {
+	return "Hello, " + p.Name
+}
+
+func (p *Person) GetAge() int {
+	return p.Age
+}
+
+// Test 1: Dynamic field access
+func dynFieldAccess() (string, error) {
+	var v any = Person{Name: "Alice", Age: 30}
+	name, err := v~>Name
+	if err != nil {
+		return "", err
+	}
+	s, ok := name.(string)
+	if !ok {
+		return "", errors.New("type error")
+	}
+	return s, nil
+}
+
+func testDynFieldAccess() {
+	r, err := dynFieldAccess()
+	assert(err == nil, "dyn field access err")
+	assert(r == "Alice", "dyn field access")
+}
+
+// Test 2: Dynamic method call
+func dynMethodCall() (string, error) {
+	p := &Person{Name: "Bob", Age: 25}
+	var v any = p
+	result, err := v~>Greet()
+	if err != nil {
+		return "", err
+	}
+	s, ok := result.(string)
+	if !ok {
+		return "", errors.New("type error")
+	}
+	return s, nil
+}
+
+func testDynMethodCall() {
+	r, err := dynMethodCall()
+	assert(err == nil, "dyn method call err")
+	assert(r == "Hello, Bob", "dyn method call")
+}
+
+// Test 3: Dynamic access with question operator
+func dynWithQuestion() (result string, err error) {
+	p := &Person{Name: "Charlie", Age: 35}
+	var v any = p
+	name := v~>Name?
+	s, ok := name.(string)
+	if !ok {
+		return "", errors.New("type error")
+	}
+	return s, nil
+}
+
+func testDynWithQuestion() {
+	r, err := dynWithQuestion()
+	assert(err == nil, "dyn with question err")
+	assert(r == "Charlie", "dyn with question")
+}
+
+// Test 4: Dynamic access on nil
+func dynOnNil() error {
+	var v any = nil
+	_, err := v~>Name
+	return err
+}
+
+func testDynOnNil() {
+	err := dynOnNil()
+	assert(err != nil, "dyn on nil should error")
+}
+
+// Test 5: Dynamic access non-existent field
+func dynNonExistent() error {
+	var v any = Person{Name: "Dave", Age: 40}
+	_, err := v~>NonExistent
+	return err
+}
+
+func testDynNonExistent() {
+	err := dynNonExistent()
+	assert(err != nil, "dyn non existent should error")
+}
+
+// Test 6: Dynamic index access on slice
+func dynSliceIndex() (any, error) {
+	var v any = []int{10, 20, 30}
+	return v~>[1]
+}
+
+func testDynSliceIndex() {
+	r, err := dynSliceIndex()
+	assert(err == nil, "dyn slice index err")
+	n, ok := r.(int)
+	assert(ok, "dyn slice index type")
+	assert(n == 20, "dyn slice index value")
+}
+
+// Test 7: Dynamic index access on map
+func dynMapIndex() (any, error) {
+	var v any = map[string]int{"key": 42}
+	return v~>["key"]
+}
+
+func testDynMapIndex() {
+	r, err := dynMapIndex()
+	assert(err == nil, "dyn map index err")
+	n, ok := r.(int)
+	assert(ok, "dyn map index type")
+	assert(n == 42, "dyn map index value")
+}
+
+// Test 8: Chained dynamic access
+func dynChained() (any, error) {
+	type Inner struct {
+		Value int
+	}
+	type Outer struct {
+		Inner Inner
+	}
+	var v any = Outer{Inner: Inner{Value: 999}}
+	inner, err := v~>Inner
+	if err != nil {
+		return nil, err
+	}
+	return inner~>Value
+}
+
+func testDynChained() {
+	r, err := dynChained()
+	assert(err == nil, "dyn chained err")
+	n, ok := r.(int)
+	assert(ok, "dyn chained type")
+	assert(n == 999, "dyn chained value")
+}
+
+// Test 9: Dynamic method with return value
+func dynMethodReturn() (int, error) {
+	p := &Person{Name: "Eve", Age: 45}
+	var v any = p
+	result, err := v~>GetAge()
+	if err != nil {
+		return 0, err
+	}
+	n, ok := result.(int)
+	if !ok {
+		return 0, errors.New("type error")
+	}
+	return n, nil
+}
+
+func testDynMethodReturn() {
+	r, err := dynMethodReturn()
+	assert(err == nil, "dyn method return err")
+	assert(r == 45, "dyn method return")
+}
+
+// Test 10: Dynamic access on primitive (should error)
+func dynOnPrimitive() error {
+	var v any = 42
+	_, err := v~>Something
+	return err
+}
+
+func testDynOnPrimitive() {
+	err := dynOnPrimitive()
+	assert(err != nil, "dyn on primitive should error")
+}
+
+// Test 11: Dynamic slice index out of bounds
+func dynSliceOutOfBounds() error {
+	var v any = []int{1, 2, 3}
+	_, err := v~>[10]
+	return err
+}
+
+func testDynSliceOutOfBounds() {
+	err := dynSliceOutOfBounds()
+	assert(err != nil, "dyn slice out of bounds should error")
+}
+
+// Test 12: Dynamic map key not found
+func dynMapKeyNotFound() (any, error) {
+	var v any = map[string]int{"key": 42}
+	return v~>["nonexistent"]
+}
+
+func testDynMapKeyNotFound() {
+	r, err := dynMapKeyNotFound()
+	// Dynamic map access may return error for missing key (Vo-specific)
+	// or return zero value like Go - test the actual behavior
+	if err != nil {
+		// Vo returns error for missing key in dynamic access
+		println("  (dyn map key not found returns error - OK)")
+	} else {
+		// Or returns zero value
+		n, ok := r.(int)
+		assert(ok, "dyn map key not found type")
+		assert(n == 0, "dyn map key not found value")
+	}
+}
+
+func main() {
+	testDynFieldAccess()
+	println("Test 1: PASSED - dyn field access")
+	
+	testDynMethodCall()
+	println("Test 2: PASSED - dyn method call")
+	
+	testDynWithQuestion()
+	println("Test 3: PASSED - dyn with question")
+	
+	testDynOnNil()
+	println("Test 4: PASSED - dyn on nil")
+	
+	testDynNonExistent()
+	println("Test 5: PASSED - dyn non existent")
+	
+	testDynSliceIndex()
+	println("Test 6: PASSED - dyn slice index")
+	
+	testDynMapIndex()
+	println("Test 7: PASSED - dyn map index")
+	
+	testDynChained()
+	println("Test 8: PASSED - dyn chained")
+	
+	testDynMethodReturn()
+	println("Test 9: PASSED - dyn method return")
+	
+	testDynOnPrimitive()
+	println("Test 10: PASSED - dyn on primitive")
+	
+	testDynSliceOutOfBounds()
+	println("Test 11: PASSED - dyn slice out of bounds")
+	
+	testDynMapKeyNotFound()
+	println("Test 12: PASSED - dyn map key not found")
+	
+	println("ALL PASSED")
+}

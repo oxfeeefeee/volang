@@ -1,0 +1,382 @@
+package main
+
+// Test type switch with complex scenarios
+
+type Reader interface {
+	Read() string
+}
+
+type Writer interface {
+	Write(s string)
+}
+
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+type MyReader struct {
+	data string
+}
+
+func (r *MyReader) Read() string {
+	return r.data
+}
+
+type MyWriter struct {
+	buf string
+}
+
+func (w *MyWriter) Write(s string) {
+	w.buf += s
+}
+
+type MyReadWriter struct {
+	data string
+	buf  string
+}
+
+func (rw *MyReadWriter) Read() string {
+	return rw.data
+}
+
+func (rw *MyReadWriter) Write(s string) {
+	rw.buf += s
+}
+
+// Test 1: Type switch with interface cases
+func testTypeSwitchInterface() {
+	rw := &MyReadWriter{data: "test", buf: ""}
+	var a any = rw
+	
+	result := ""
+	switch v := a.(type) {
+	case Reader:
+		result = "reader: " + v.Read()
+	default:
+		result = "unknown"
+	}
+	assert(result == "reader: test", "type switch interface")
+}
+
+// Test 2: Type switch with multiple interface cases
+func testTypeSwitchMultiInterface() {
+	rw := &MyReadWriter{data: "hello", buf: ""}
+	var a any = rw
+	
+	result := ""
+	switch v := a.(type) {
+	case ReadWriter:
+		result = "readwriter"
+		_ = v.Read()
+	case Reader:
+		result = "reader"
+	case Writer:
+		result = "writer"
+	default:
+		result = "unknown"
+	}
+	// Should match ReadWriter first (most specific)
+	assert(result == "readwriter", "type switch multi interface")
+}
+
+// Test 3: Type switch with nil
+func testTypeSwitchNil() {
+	var a any = nil
+	
+	result := ""
+	switch a.(type) {
+	case nil:
+		result = "nil"
+	case int:
+		result = "int"
+	default:
+		result = "unknown"
+	}
+	assert(result == "nil", "type switch nil")
+}
+
+// Test 4: Type switch with typed nil
+func testTypeSwitchTypedNil() {
+	var r *MyReader = nil
+	var a any = r
+	
+	result := ""
+	switch v := a.(type) {
+	case nil:
+		result = "nil"
+	case *MyReader:
+		if v == nil {
+			result = "typed nil reader"
+		} else {
+			result = "reader"
+		}
+	default:
+		result = "unknown"
+	}
+	// Typed nil matches the type, not nil case
+	assert(result == "typed nil reader", "type switch typed nil")
+}
+
+// Test 5: Type switch with fallthrough-like behavior (multiple types)
+func testTypeSwitchMultiType() {
+	var a any = int64(42)
+	
+	result := ""
+	switch a.(type) {
+	case int, int8, int16, int32, int64:
+		result = "integer"
+	case float32, float64:
+		result = "float"
+	default:
+		result = "unknown"
+	}
+	assert(result == "integer", "type switch multi type")
+}
+
+// Test 6: Type switch in loop
+func testTypeSwitchLoop() {
+	values := []any{1, "hello", 3.14, true}
+	results := make([]string, 4)
+	
+	for i, v := range values {
+		switch v.(type) {
+		case int:
+			results[i] = "int"
+		case string:
+			results[i] = "string"
+		case float64:
+			results[i] = "float"
+		case bool:
+			results[i] = "bool"
+		}
+	}
+	
+	assert(results[0] == "int", "loop int")
+	assert(results[1] == "string", "loop string")
+	assert(results[2] == "float", "loop float")
+	assert(results[3] == "bool", "loop bool")
+}
+
+// Test 7: Type switch with struct value vs pointer
+func testTypeSwitchValueVsPtr() {
+	type Data struct{ x int }
+	
+	var a any = Data{x: 10}
+	var b any = &Data{x: 20}
+	
+	resultA := ""
+	switch a.(type) {
+	case Data:
+		resultA = "value"
+	case *Data:
+		resultA = "pointer"
+	}
+	
+	resultB := ""
+	switch b.(type) {
+	case Data:
+		resultB = "value"
+	case *Data:
+		resultB = "pointer"
+	}
+	
+	assert(resultA == "value", "type switch value")
+	assert(resultB == "pointer", "type switch pointer")
+}
+
+// Test 8: Type switch with shadowed variable
+func testTypeSwitchShadow() {
+	x := "outer"
+	var a any = 42
+	
+	switch x := a.(type) {
+	case int:
+		assert(x == 42, "shadowed x is int")
+	default:
+		x := "default"  // further shadow
+		_ = x
+	}
+	
+	assert(x == "outer", "outer x unchanged")
+}
+
+// Test 9: Type switch default in middle
+func testTypeSwitchDefaultMiddle() {
+	var a any = 3.14
+	
+	result := ""
+	switch a.(type) {
+	case int:
+		result = "int"
+	default:
+		result = "default"
+	case string:
+		result = "string"
+	}
+	assert(result == "default", "default in middle")
+}
+
+// Test 10: Type switch with break
+func testTypeSwitchBreak() {
+	var a any = 42
+	
+	result := 0
+	switch a.(type) {
+	case int:
+		result = 1
+		if true {
+			break
+		}
+		result = 2  // should not reach
+	}
+	assert(result == 1, "type switch break")
+}
+
+// Test 11: Type switch with defer
+func testTypeSwitchDefer() (result string) {
+	var a any = "test"
+	
+	defer func() {
+		result = result + " deferred"
+	}()
+	
+	switch v := a.(type) {
+	case string:
+		result = v
+		return
+	}
+	result = "no match"
+	return
+}
+
+func testTypeSwitchDeferCall() {
+	r := testTypeSwitchDefer()
+	assert(r == "test deferred", "type switch defer")
+}
+
+// Test 12: Nested type switch
+func testNestedTypeSwitch() {
+	type Pair struct {
+		first  any
+		second any
+	}
+	
+	p := Pair{first: 1, second: "hello"}
+	
+	result := ""
+	switch f := p.first.(type) {
+	case int:
+		switch s := p.second.(type) {
+		case string:
+			result = "int-string"
+			_ = f
+			_ = s
+		default:
+			result = "int-other"
+		}
+	default:
+		result = "other"
+	}
+	assert(result == "int-string", "nested type switch")
+}
+
+// Test 13: Type switch with method call in case
+func testTypeSwitchMethodCall() {
+	r := &MyReader{data: "content"}
+	var a any = r
+	
+	result := ""
+	switch v := a.(type) {
+	case Reader:
+		result = v.Read()
+	}
+	assert(result == "content", "type switch method call")
+}
+
+// Test 14: Type switch with empty interface in case
+func testTypeSwitchEmptyInterface() {
+	var a any = 42
+	
+	result := ""
+	switch a.(type) {
+	case any:
+		result = "any"
+	}
+	// any matches everything
+	assert(result == "any", "type switch empty interface")
+}
+
+// Test 15: Type switch with slice types
+func testTypeSwitchSlice() {
+	var a any = []int{1, 2, 3}
+	var b any = []string{"a", "b"}
+	
+	resultA := ""
+	switch a.(type) {
+	case []int:
+		resultA = "int slice"
+	case []string:
+		resultA = "string slice"
+	}
+	
+	resultB := ""
+	switch b.(type) {
+	case []int:
+		resultB = "int slice"
+	case []string:
+		resultB = "string slice"
+	}
+	
+	assert(resultA == "int slice", "type switch int slice")
+	assert(resultB == "string slice", "type switch string slice")
+}
+
+func main() {
+	testTypeSwitchInterface()
+	println("Test 1: PASSED")
+	
+	testTypeSwitchMultiInterface()
+	println("Test 2: PASSED")
+	
+	testTypeSwitchNil()
+	println("Test 3: PASSED")
+	
+	testTypeSwitchTypedNil()
+	println("Test 4: PASSED")
+	
+	testTypeSwitchMultiType()
+	println("Test 5: PASSED")
+	
+	testTypeSwitchLoop()
+	println("Test 6: PASSED")
+	
+	testTypeSwitchValueVsPtr()
+	println("Test 7: PASSED")
+	
+	testTypeSwitchShadow()
+	println("Test 8: PASSED")
+	
+	testTypeSwitchDefaultMiddle()
+	println("Test 9: PASSED")
+	
+	testTypeSwitchBreak()
+	println("Test 10: PASSED")
+	
+	testTypeSwitchDeferCall()
+	println("Test 11: PASSED")
+	
+	testNestedTypeSwitch()
+	println("Test 12: PASSED")
+	
+	testTypeSwitchMethodCall()
+	println("Test 13: PASSED")
+	
+	testTypeSwitchEmptyInterface()
+	println("Test 14: PASSED")
+	
+	testTypeSwitchSlice()
+	println("Test 15: PASSED")
+	
+	println("ALL PASSED")
+}

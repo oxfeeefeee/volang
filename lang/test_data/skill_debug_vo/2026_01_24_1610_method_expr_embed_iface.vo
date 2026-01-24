@@ -1,0 +1,248 @@
+package main
+
+// Test method expressions with embedding and interface interactions
+
+type Base struct {
+	value int
+}
+
+func (b *Base) GetValue() int {
+	return b.value
+}
+
+func (b *Base) SetValue(v int) {
+	b.value = v
+}
+
+type Derived struct {
+	*Base
+	extra string
+}
+
+func (d *Derived) GetExtra() string {
+	return d.extra
+}
+
+// Interface that Base satisfies
+type Getter interface {
+	GetValue() int
+}
+
+// Interface that Derived satisfies
+type FullGetter interface {
+	GetValue() int
+	GetExtra() string
+}
+
+// Test 1: Method expression on embedded pointer type
+func testMethodExprEmbedPtr() {
+	getValue := (*Derived).GetValue
+	d := &Derived{Base: &Base{value: 42}, extra: "test"}
+	result := getValue(d)
+	assert(result == 42, "method expr embed ptr")
+}
+
+// Test 2: Method expression on embedded type's method
+func testMethodExprEmbedMethod() {
+	setValue := (*Derived).SetValue
+	d := &Derived{Base: &Base{value: 0}, extra: "test"}
+	setValue(d, 100)
+	assert(d.value == 100, "method expr embed method")
+}
+
+// Test 3: Method value from embedded type
+func testMethodValueEmbed() {
+	d := &Derived{Base: &Base{value: 42}, extra: "test"}
+	getValue := d.GetValue
+	result := getValue()
+	assert(result == 42, "method value embed")
+}
+
+// Test 4: Interface satisfied by embedded type
+func testInterfaceEmbed() {
+	d := &Derived{Base: &Base{value: 42}, extra: "test"}
+	var g Getter = d
+	assert(g.GetValue() == 42, "interface embed")
+}
+
+// Test 5: Type assertion from interface to derived
+func testTypeAssertDerived() {
+	d := &Derived{Base: &Base{value: 42}, extra: "test"}
+	var g Getter = d
+	derived, ok := g.(*Derived)
+	assert(ok, "type assert derived ok")
+	assert(derived.extra == "test", "type assert derived extra")
+}
+
+// Test 6: Method expression with interface receiver (not supported, use method call)
+func testInterfaceMethodCall() {
+	d := &Derived{Base: &Base{value: 42}, extra: "test"}
+	var g Getter = d
+	result := g.GetValue()
+	assert(result == 42, "interface method call")
+}
+
+// Test 7: Chain of method expressions
+func testMethodExprChain() {
+	type Chain struct {
+		*Base
+	}
+	
+	c := &Chain{Base: &Base{value: 10}}
+	
+	// Get method expression
+	getValue := (*Chain).GetValue
+	setValue := (*Chain).SetValue
+	
+	// Use them
+	setValue(c, getValue(c) * 2)
+	assert(c.value == 20, "method expr chain")
+}
+
+// Test 8: Method expression with nil receiver check
+func testMethodExprNilCheck() {
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+			}
+		}()
+		
+		getValue := (*Base).GetValue
+		var b *Base = nil
+		_ = getValue(b)  // Should panic
+	}()
+	assert(panicked, "should have panicked")
+}
+
+// Test 9: Method value from interface
+func testMethodValueFromInterface() {
+	d := &Derived{Base: &Base{value: 42}, extra: "test"}
+	var g Getter = d
+	getValue := g.GetValue
+	assert(getValue() == 42, "method value from interface")
+}
+
+// Test 10: Multi-level embedding method expression
+type Level1 struct {
+	*Base
+}
+
+type Level2 struct {
+	*Level1
+}
+
+func testMultiLevelEmbed() {
+	l2 := &Level2{Level1: &Level1{Base: &Base{value: 99}}}
+	getValue := (*Level2).GetValue
+	assert(getValue(l2) == 99, "multi level embed")
+}
+
+// Test 11: Interface conversion with method expression
+func testInterfaceConvMethodExpr() {
+	d := &Derived{Base: &Base{value: 50}, extra: "x"}
+	
+	// As FullGetter
+	var fg FullGetter = d
+	assert(fg.GetValue() == 50, "full getter value")
+	assert(fg.GetExtra() == "x", "full getter extra")
+	
+	// Convert to Getter (subset)
+	var g Getter = fg
+	assert(g.GetValue() == 50, "getter from full getter")
+}
+
+// Test 12: Method expression in closure
+func testMethodExprClosure() {
+	getValue := (*Base).GetValue
+	
+	b := &Base{value: 10}
+	f := func() int {
+		return getValue(b)
+	}
+	
+	assert(f() == 10, "method expr closure initial")
+	b.value = 20
+	assert(f() == 20, "method expr closure modified")
+}
+
+// Test 13: Method expression as function argument
+func applyGetter(f func(*Base) int, b *Base) int {
+	return f(b)
+}
+
+func testMethodExprAsArg() {
+	b := &Base{value: 77}
+	result := applyGetter((*Base).GetValue, b)
+	assert(result == 77, "method expr as arg")
+}
+
+// Test 14: Method expression stored in struct
+type MethodHolder struct {
+	getter func(*Base) int
+}
+
+func testMethodExprInStruct() {
+	h := MethodHolder{getter: (*Base).GetValue}
+	b := &Base{value: 33}
+	assert(h.getter(b) == 33, "method expr in struct")
+}
+
+// Test 15: Method expression with return value modification
+func testMethodExprReturnMod() {
+	d := &Derived{Base: &Base{value: 5}, extra: "test"}
+	getValue := (*Derived).GetValue
+	
+	result := getValue(d) * 10 + getValue(d)
+	assert(result == 55, "method expr return mod")
+}
+
+func main() {
+	testMethodExprEmbedPtr()
+	println("Test 1: PASSED")
+	
+	testMethodExprEmbedMethod()
+	println("Test 2: PASSED")
+	
+	testMethodValueEmbed()
+	println("Test 3: PASSED")
+	
+	testInterfaceEmbed()
+	println("Test 4: PASSED")
+	
+	testTypeAssertDerived()
+	println("Test 5: PASSED")
+	
+	testInterfaceMethodCall()
+	println("Test 6: PASSED")
+	
+	testMethodExprChain()
+	println("Test 7: PASSED")
+	
+	testMethodExprNilCheck()
+	println("Test 8: PASSED")
+	
+	testMethodValueFromInterface()
+	println("Test 9: PASSED")
+	
+	testMultiLevelEmbed()
+	println("Test 10: PASSED")
+	
+	testInterfaceConvMethodExpr()
+	println("Test 11: PASSED")
+	
+	testMethodExprClosure()
+	println("Test 12: PASSED")
+	
+	testMethodExprAsArg()
+	println("Test 13: PASSED")
+	
+	testMethodExprInStruct()
+	println("Test 14: PASSED")
+	
+	testMethodExprReturnMod()
+	println("Test 15: PASSED")
+	
+	println("ALL PASSED")
+}

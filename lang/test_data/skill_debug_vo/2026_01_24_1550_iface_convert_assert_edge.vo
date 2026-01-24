@@ -1,0 +1,264 @@
+package main
+
+// Test interface conversion and type assertion edge cases
+
+type Reader interface {
+	Read() int
+}
+
+type Writer interface {
+	Write(int)
+}
+
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+type Buffer struct {
+	data int
+}
+
+func (b *Buffer) Read() int {
+	return b.data
+}
+
+func (b *Buffer) Write(v int) {
+	b.data = v
+}
+
+// Test 1: Interface to interface conversion (subset)
+func ifaceToIfaceSubset() int {
+	var rw ReadWriter = &Buffer{data: 42}
+	var r Reader = rw  // ReadWriter -> Reader
+	return r.Read()
+}
+
+func testIfaceToIfaceSubset() {
+	r := ifaceToIfaceSubset()
+	assert(r == 42, "iface to iface subset")
+}
+
+// Test 2: Type assertion from interface to interface
+func ifaceAssertToIface() int {
+	var rw ReadWriter = &Buffer{data: 100}
+	var a any = rw
+	
+	// Assert any to ReadWriter
+	rw2, ok := a.(ReadWriter)
+	if !ok {
+		return -1
+	}
+	return rw2.Read()
+}
+
+func testIfaceAssertToIface() {
+	r := ifaceAssertToIface()
+	assert(r == 100, "iface assert to iface")
+}
+
+// Test 3: Type assertion chain
+func typeAssertChain() int {
+	var b any = &Buffer{data: 50}
+	
+	// any -> Reader -> ReadWriter (should fail)
+	r, ok := b.(Reader)
+	if !ok {
+		return -1
+	}
+	
+	rw, ok := r.(ReadWriter)
+	if !ok {
+		return -2
+	}
+	
+	return rw.Read()
+}
+
+func testTypeAssertChain() {
+	r := typeAssertChain()
+	assert(r == 50, "type assert chain")
+}
+
+// Test 4: Type assertion in defer with panic
+func typeAssertDeferPanic() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			if b, ok := r.(*Buffer); ok {
+				result = b.data
+			}
+		}
+	}()
+	
+	panic(&Buffer{data: 999})
+}
+
+func testTypeAssertDeferPanic() {
+	r := typeAssertDeferPanic()
+	assert(r == 999, "type assert defer panic")
+}
+
+// Test 5: Interface comparison with different underlying types
+func ifaceCompareTypes() bool {
+	var a any = 42
+	var b any = "42"
+	return a == b  // Different types, should be false
+}
+
+func testIfaceCompareTypes() {
+	r := ifaceCompareTypes()
+	assert(r == false, "iface compare types")
+}
+
+// Test 6: Interface comparison with same underlying type
+func ifaceCompareSame() bool {
+	var a any = 42
+	var b any = 42
+	return a == b
+}
+
+func testIfaceCompareSame() {
+	r := ifaceCompareSame()
+	assert(r == true, "iface compare same")
+}
+
+// Test 7: nil interface comparison
+func ifaceNilCompare() (bool, bool, bool) {
+	var a any = nil
+	var b any
+	var c any = (*Buffer)(nil)  // typed nil
+	
+	return a == nil, b == nil, c == nil
+}
+
+func testIfaceNilCompare() {
+	a, b, c := ifaceNilCompare()
+	assert(a == true, "nil interface a == nil")
+	assert(b == true, "nil interface b == nil")
+	assert(c == false, "typed nil c != nil")  // Go semantics: typed nil is not nil
+}
+
+// Test 8: Interface method call on concrete value
+func ifaceMethodOnConcrete() int {
+	b := Buffer{data: 77}
+	var r Reader = &b
+	result := r.Read()
+	b.data = 88  // modify after getting interface
+	return result
+}
+
+func testIfaceMethodOnConcrete() {
+	r := ifaceMethodOnConcrete()
+	assert(r == 77, "iface method on concrete")
+}
+
+// Test 9: Type switch with interface case
+func typeSwitchIfaceCase(v any) string {
+	switch v.(type) {
+	case Reader:
+		return "reader"
+	case Writer:
+		return "writer"
+	case ReadWriter:
+		return "readwriter"  // unreachable if Reader matched first
+	default:
+		return "unknown"
+	}
+}
+
+func testTypeSwitchIfaceCase() {
+	b := &Buffer{data: 1}
+	// Buffer implements ReadWriter, but Reader is checked first
+	r := typeSwitchIfaceCase(b)
+	assert(r == "reader", "type switch iface case")
+}
+
+// Test 10: Interface holding interface
+func ifaceHoldingIface() int {
+	var r Reader = &Buffer{data: 55}
+	var a any = r  // any holds Reader
+	
+	// Extract Reader from any
+	r2, ok := a.(Reader)
+	if !ok {
+		return -1
+	}
+	return r2.Read()
+}
+
+func testIfaceHoldingIface() {
+	r := ifaceHoldingIface()
+	assert(r == 55, "iface holding iface")
+}
+
+// Test 11: Type assertion on nil interface (should panic)
+func typeAssertNilPanic() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = "recovered"
+		}
+	}()
+	
+	var a any = nil
+	_ = a.(int)  // panic
+	result = "no panic"
+	return
+}
+
+func testTypeAssertNilPanic() {
+	r := typeAssertNilPanic()
+	assert(r == "recovered", "type assert nil panic")
+}
+
+// Test 12: Type assertion with comma-ok on nil interface
+func typeAssertNilOk() (int, bool) {
+	var a any = nil
+	v, ok := a.(int)
+	return v, ok
+}
+
+func testTypeAssertNilOk() {
+	v, ok := typeAssertNilOk()
+	assert(v == 0, "type assert nil ok: v should be 0")
+	assert(ok == false, "type assert nil ok: ok should be false")
+}
+
+func main() {
+	testIfaceToIfaceSubset()
+	println("Test 1: PASSED - iface to iface subset")
+	
+	testIfaceAssertToIface()
+	println("Test 2: PASSED - iface assert to iface")
+	
+	testTypeAssertChain()
+	println("Test 3: PASSED - type assert chain")
+	
+	testTypeAssertDeferPanic()
+	println("Test 4: PASSED - type assert defer panic")
+	
+	testIfaceCompareTypes()
+	println("Test 5: PASSED - iface compare types")
+	
+	testIfaceCompareSame()
+	println("Test 6: PASSED - iface compare same")
+	
+	testIfaceNilCompare()
+	println("Test 7: PASSED - iface nil compare")
+	
+	testIfaceMethodOnConcrete()
+	println("Test 8: PASSED - iface method on concrete")
+	
+	testTypeSwitchIfaceCase()
+	println("Test 9: PASSED - type switch iface case")
+	
+	testIfaceHoldingIface()
+	println("Test 10: PASSED - iface holding iface")
+	
+	testTypeAssertNilPanic()
+	println("Test 11: PASSED - type assert nil panic")
+	
+	testTypeAssertNilOk()
+	println("Test 12: PASSED - type assert nil ok")
+	
+	println("ALL PASSED")
+}

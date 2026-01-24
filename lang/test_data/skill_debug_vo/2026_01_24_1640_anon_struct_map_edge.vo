@@ -1,0 +1,265 @@
+package main
+
+// Test anonymous struct and map edge cases
+
+// Test 1: Anonymous struct literal
+func anonStructLiteral() int {
+	s := struct {
+		X int
+		Y string
+	}{X: 42, Y: "hello"}
+	return s.X
+}
+
+func testAnonStructLiteral() {
+	r := anonStructLiteral()
+	assert(r == 42, "anon struct literal")
+}
+
+// Test 2: Anonymous struct as map value
+func anonStructMapValue() string {
+	m := make(map[string]struct{ Name string; Age int })
+	m["alice"] = struct{ Name string; Age int }{Name: "Alice", Age: 30}
+	return m["alice"].Name
+}
+
+func testAnonStructMapValue() {
+	r := anonStructMapValue()
+	assert(r == "Alice", "anon struct map value")
+}
+
+// Test 3: Nested anonymous struct
+func nestedAnonStruct() int {
+	s := struct {
+		Outer int
+		Inner struct {
+			Value int
+		}
+	}{
+		Outer: 10,
+		Inner: struct{ Value int }{Value: 20},
+	}
+	return s.Outer + s.Inner.Value
+}
+
+func testNestedAnonStruct() {
+	r := nestedAnonStruct()
+	assert(r == 30, "nested anon struct")
+}
+
+// Test 4: Map with struct key
+type Key struct {
+	A int
+	B string
+}
+
+func mapStructKey() int {
+	m := make(map[Key]int)
+	m[Key{A: 1, B: "x"}] = 100
+	m[Key{A: 2, B: "y"}] = 200
+	return m[Key{A: 1, B: "x"}]
+}
+
+func testMapStructKey() {
+	r := mapStructKey()
+	assert(r == 100, "map struct key")
+}
+
+// Test 5: Map with array key
+func mapArrayKey() int {
+	m := make(map[[3]int]string)
+	m[[3]int{1, 2, 3}] = "hello"
+	m[[3]int{4, 5, 6}] = "world"
+	if m[[3]int{1, 2, 3}] == "hello" {
+		return 1
+	}
+	return 0
+}
+
+func testMapArrayKey() {
+	r := mapArrayKey()
+	assert(r == 1, "map array key")
+}
+
+// Test 6: Map delete and len
+func mapDeleteLen() int {
+	m := map[string]int{"a": 1, "b": 2, "c": 3}
+	delete(m, "b")
+	return len(m)
+}
+
+func testMapDeleteLen() {
+	r := mapDeleteLen()
+	assert(r == 2, "map delete len")
+}
+
+// Test 7: Map with nil check
+func mapNilCheck() bool {
+	var m map[string]int
+	return m == nil
+}
+
+func testMapNilCheck() {
+	r := mapNilCheck()
+	assert(r == true, "map nil check")
+}
+
+// Test 8: Map iteration
+func mapIteration() int {
+	m := map[string]int{"a": 1, "b": 2, "c": 3}
+	sum := 0
+	for _, v := range m {
+		sum += v
+	}
+	return sum
+}
+
+func testMapIteration() {
+	r := mapIteration()
+	assert(r == 6, "map iteration")
+}
+
+// Test 9: Anonymous struct comparison
+func anonStructCompare() bool {
+	a := struct{ X int }{X: 42}
+	b := struct{ X int }{X: 42}
+	c := struct{ X int }{X: 43}
+	return a == b && a != c
+}
+
+func testAnonStructCompare() {
+	r := anonStructCompare()
+	assert(r == true, "anon struct compare")
+}
+
+// Test 10: Map in struct
+type Container struct {
+	Data map[string]int
+}
+
+func mapInStruct() int {
+	c := Container{Data: map[string]int{"key": 42}}
+	return c.Data["key"]
+}
+
+func testMapInStruct() {
+	r := mapInStruct()
+	assert(r == 42, "map in struct")
+}
+
+// Test 11: Anonymous struct slice
+func anonStructSlice() int {
+	s := []struct{ V int }{
+		{V: 1},
+		{V: 2},
+		{V: 3},
+	}
+	sum := 0
+	for _, item := range s {
+		sum += item.V
+	}
+	return sum
+}
+
+func testAnonStructSlice() {
+	r := anonStructSlice()
+	assert(r == 6, "anon struct slice")
+}
+
+// Test 12: Map with interface value
+func mapIfaceValue() string {
+	m := make(map[string]any)
+	m["int"] = 42
+	m["string"] = "hello"
+	m["bool"] = true
+	
+	s, ok := m["string"].(string)
+	if !ok {
+		return "type error"
+	}
+	return s
+}
+
+func testMapIfaceValue() {
+	r := mapIfaceValue()
+	assert(r == "hello", "map iface value")
+}
+
+// Test 13: Struct with embedded anonymous struct
+type WithEmbed struct {
+	struct {
+		Inner int
+	}
+	Outer int
+}
+
+func embeddedAnon() int {
+	w := WithEmbed{Outer: 10}
+	w.Inner = 20
+	return w.Inner + w.Outer
+}
+
+func testEmbeddedAnon() {
+	r := embeddedAnon()
+	assert(r == 30, "embedded anon")
+}
+
+// Test 14: Map clear via range delete
+func mapClearRange() int {
+	m := map[string]int{"a": 1, "b": 2, "c": 3}
+	for k := range m {
+		delete(m, k)
+	}
+	return len(m)
+}
+
+func testMapClearRange() {
+	r := mapClearRange()
+	assert(r == 0, "map clear range")
+}
+
+func main() {
+	testAnonStructLiteral()
+	println("Test 1: PASSED - anon struct literal")
+	
+	testAnonStructMapValue()
+	println("Test 2: PASSED - anon struct map value")
+	
+	testNestedAnonStruct()
+	println("Test 3: PASSED - nested anon struct")
+	
+	testMapStructKey()
+	println("Test 4: PASSED - map struct key")
+	
+	testMapArrayKey()
+	println("Test 5: PASSED - map array key")
+	
+	testMapDeleteLen()
+	println("Test 6: PASSED - map delete len")
+	
+	testMapNilCheck()
+	println("Test 7: PASSED - map nil check")
+	
+	testMapIteration()
+	println("Test 8: PASSED - map iteration")
+	
+	testAnonStructCompare()
+	println("Test 9: PASSED - anon struct compare")
+	
+	testMapInStruct()
+	println("Test 10: PASSED - map in struct")
+	
+	testAnonStructSlice()
+	println("Test 11: PASSED - anon struct slice")
+	
+	testMapIfaceValue()
+	println("Test 12: PASSED - map iface value")
+	
+	testEmbeddedAnon()
+	println("Test 13: PASSED - embedded anon")
+	
+	testMapClearRange()
+	println("Test 14: PASSED - map clear range")
+	
+	println("ALL PASSED")
+}

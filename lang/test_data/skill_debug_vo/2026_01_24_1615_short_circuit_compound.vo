@@ -1,0 +1,265 @@
+package main
+
+// Test short-circuit evaluation and compound assignment edge cases
+
+var sideEffectCounter int
+
+func sideEffect(n int) bool {
+	sideEffectCounter += n
+	return n > 0
+}
+
+func resetCounter() {
+	sideEffectCounter = 0
+}
+
+// Test 1: Short-circuit AND - second not evaluated
+func shortCircuitAnd() int {
+	resetCounter()
+	_ = sideEffect(-1) && sideEffect(100)  // -1 is false, 100 not evaluated
+	return sideEffectCounter
+}
+
+func testShortCircuitAnd() {
+	r := shortCircuitAnd()
+	assert(r == -1, "short circuit and")
+}
+
+// Test 2: Short-circuit OR - second not evaluated
+func shortCircuitOr() int {
+	resetCounter()
+	_ = sideEffect(1) || sideEffect(100)  // 1 is true, 100 not evaluated
+	return sideEffectCounter
+}
+
+func testShortCircuitOr() {
+	r := shortCircuitOr()
+	assert(r == 1, "short circuit or")
+}
+
+// Test 3: Short-circuit AND - both evaluated
+func shortCircuitAndBoth() int {
+	resetCounter()
+	_ = sideEffect(1) && sideEffect(2)  // Both evaluated
+	return sideEffectCounter
+}
+
+func testShortCircuitAndBoth() {
+	r := shortCircuitAndBoth()
+	assert(r == 3, "short circuit and both")
+}
+
+// Test 4: Short-circuit OR - both evaluated
+func shortCircuitOrBoth() int {
+	resetCounter()
+	_ = sideEffect(-1) || sideEffect(2)  // Both evaluated
+	return sideEffectCounter
+}
+
+func testShortCircuitOrBoth() {
+	r := shortCircuitOrBoth()
+	assert(r == 1, "short circuit or both")
+}
+
+// Test 5: Compound assignment on slice element
+func compoundSlice() []int {
+	s := []int{10, 20, 30}
+	s[1] += 5
+	s[2] *= 2
+	return s
+}
+
+func testCompoundSlice() {
+	r := compoundSlice()
+	assert(r[0] == 10, "compound slice 0")
+	assert(r[1] == 25, "compound slice 1")
+	assert(r[2] == 60, "compound slice 2")
+}
+
+// Test 6: Compound assignment on map element
+func compoundMap() map[string]int {
+	m := map[string]int{"a": 10, "b": 20}
+	m["a"] += 5
+	m["b"] *= 3
+	m["c"] += 100  // New key, zero + 100
+	return m
+}
+
+func testCompoundMap() {
+	r := compoundMap()
+	assert(r["a"] == 15, "compound map a")
+	assert(r["b"] == 60, "compound map b")
+	assert(r["c"] == 100, "compound map c")
+}
+
+// Test 7: Compound assignment on struct field
+type Counter struct {
+	value int
+}
+
+func compoundStruct() int {
+	c := Counter{value: 10}
+	c.value += 5
+	c.value *= 2
+	return c.value
+}
+
+func testCompoundStruct() {
+	r := compoundStruct()
+	assert(r == 30, "compound struct")
+}
+
+// Test 8: Compound assignment on pointer field
+func compoundPointerField() int {
+	c := &Counter{value: 100}
+	c.value += 50
+	c.value /= 2
+	return c.value
+}
+
+func testCompoundPointerField() {
+	r := compoundPointerField()
+	assert(r == 75, "compound pointer field")
+}
+
+// Test 9: Short-circuit with function call returning bool
+func returnsTrue() bool {
+	sideEffectCounter += 10
+	return true
+}
+
+func returnsFalse() bool {
+	sideEffectCounter += 20
+	return false
+}
+
+func shortCircuitFuncCall() int {
+	resetCounter()
+	_ = returnsFalse() && returnsTrue()  // false, true not called
+	return sideEffectCounter
+}
+
+func testShortCircuitFuncCall() {
+	r := shortCircuitFuncCall()
+	assert(r == 20, "short circuit func call")
+}
+
+// Test 10: Compound with complex LHS
+func compoundComplexLHS() int {
+	type Nested struct {
+		arr []int
+	}
+	n := Nested{arr: []int{1, 2, 3}}
+	n.arr[1] += 100
+	return n.arr[1]
+}
+
+func testCompoundComplexLHS() {
+	r := compoundComplexLHS()
+	assert(r == 102, "compound complex lhs")
+}
+
+// Test 11: Nested short-circuit
+func nestedShortCircuit() int {
+	resetCounter()
+	// (true || X) && (false || Y)
+	// true || X = true (X not evaluated)
+	// false || Y = Y (Y evaluated)
+	_ = (sideEffect(1) || sideEffect(100)) && (sideEffect(-1) || sideEffect(2))
+	return sideEffectCounter
+}
+
+func testNestedShortCircuit() {
+	r := nestedShortCircuit()
+	// sideEffect(1) = true, skip 100: counter = 1
+	// sideEffect(-1) = false: counter = 0
+	// sideEffect(2) = true: counter = 2
+	assert(r == 2, "nested short circuit")
+}
+
+// Test 12: Compound bitwise operators
+func compoundBitwise() int {
+	x := 0b1100  // 12
+	x |= 0b0011  // 12 | 3 = 15
+	x &= 0b1110  // 15 & 14 = 14
+	x ^= 0b0001  // 14 ^ 1 = 15
+	return x
+}
+
+func testCompoundBitwise() {
+	r := compoundBitwise()
+	assert(r == 15, "compound bitwise")
+}
+
+// Test 13: Compound shift operators
+func compoundShift() int {
+	x := 1
+	x <<= 4  // 1 << 4 = 16
+	x >>= 2  // 16 >> 2 = 4
+	return x
+}
+
+func testCompoundShift() {
+	r := compoundShift()
+	assert(r == 4, "compound shift")
+}
+
+// Test 14: Short-circuit in if condition
+func shortCircuitIf() int {
+	resetCounter()
+	if sideEffect(-1) && sideEffect(100) {
+		return -999  // Not reached
+	}
+	return sideEffectCounter
+}
+
+func testShortCircuitIf() {
+	r := shortCircuitIf()
+	assert(r == -1, "short circuit if")
+}
+
+func main() {
+	testShortCircuitAnd()
+	println("Test 1: PASSED - short circuit and")
+	
+	testShortCircuitOr()
+	println("Test 2: PASSED - short circuit or")
+	
+	testShortCircuitAndBoth()
+	println("Test 3: PASSED - short circuit and both")
+	
+	testShortCircuitOrBoth()
+	println("Test 4: PASSED - short circuit or both")
+	
+	testCompoundSlice()
+	println("Test 5: PASSED - compound slice")
+	
+	testCompoundMap()
+	println("Test 6: PASSED - compound map")
+	
+	testCompoundStruct()
+	println("Test 7: PASSED - compound struct")
+	
+	testCompoundPointerField()
+	println("Test 8: PASSED - compound pointer field")
+	
+	testShortCircuitFuncCall()
+	println("Test 9: PASSED - short circuit func call")
+	
+	testCompoundComplexLHS()
+	println("Test 10: PASSED - compound complex lhs")
+	
+	testNestedShortCircuit()
+	println("Test 11: PASSED - nested short circuit")
+	
+	testCompoundBitwise()
+	println("Test 12: PASSED - compound bitwise")
+	
+	testCompoundShift()
+	println("Test 13: PASSED - compound shift")
+	
+	testShortCircuitIf()
+	println("Test 14: PASSED - short circuit if")
+	
+	println("ALL PASSED")
+}

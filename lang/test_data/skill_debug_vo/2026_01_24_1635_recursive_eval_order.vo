@@ -1,0 +1,287 @@
+package main
+
+// Test recursive closures and evaluation order edge cases
+
+// Test 1: Recursive closure (factorial)
+func recursiveClosure() int {
+	var factorial func(int) int
+	factorial = func(n int) int {
+		if n <= 1 {
+			return 1
+		}
+		return n * factorial(n-1)
+	}
+	return factorial(5)
+}
+
+func testRecursiveClosure() {
+	r := recursiveClosure()
+	assert(r == 120, "recursive closure")
+}
+
+// Test 2: Mutually recursive closures
+func mutualRecursive() int {
+	var isEven, isOdd func(int) bool
+	
+	isEven = func(n int) bool {
+		if n == 0 {
+			return true
+		}
+		return isOdd(n - 1)
+	}
+	
+	isOdd = func(n int) bool {
+		if n == 0 {
+			return false
+		}
+		return isEven(n - 1)
+	}
+	
+	result := 0
+	if isEven(10) {
+		result += 1
+	}
+	if isOdd(7) {
+		result += 10
+	}
+	return result
+}
+
+func testMutualRecursive() {
+	r := mutualRecursive()
+	assert(r == 11, "mutual recursive")
+}
+
+// Test 3: Evaluation order - left to right
+var evalOrder []int
+
+func track(n int) int {
+	evalOrder = append(evalOrder, n)
+	return n
+}
+
+func resetEvalOrder() {
+	evalOrder = nil
+}
+
+func evalOrderTest() []int {
+	resetEvalOrder()
+	_ = track(1) + track(2) + track(3)
+	return evalOrder
+}
+
+func testEvalOrder() {
+	r := evalOrderTest()
+	assert(len(r) == 3, "eval order len")
+	assert(r[0] == 1, "eval order 0")
+	assert(r[1] == 2, "eval order 1")
+	assert(r[2] == 3, "eval order 2")
+}
+
+// Test 4: Function call argument evaluation order
+func threeArgs(a, b, c int) int {
+	return a*100 + b*10 + c
+}
+
+func argEvalOrder() (int, []int) {
+	resetEvalOrder()
+	result := threeArgs(track(1), track(2), track(3))
+	return result, evalOrder
+}
+
+func testArgEvalOrder() {
+	r, order := argEvalOrder()
+	assert(r == 123, "arg eval order result")
+	assert(len(order) == 3, "arg eval order len")
+	assert(order[0] == 1, "arg eval order 0")
+	assert(order[1] == 2, "arg eval order 1")
+	assert(order[2] == 3, "arg eval order 2")
+}
+
+// Test 5: Array element evaluation order
+func arrayEvalOrder() []int {
+	resetEvalOrder()
+	_ = [3]int{track(1), track(2), track(3)}
+	return evalOrder
+}
+
+func testArrayEvalOrder() {
+	r := arrayEvalOrder()
+	assert(len(r) == 3, "array eval order len")
+	assert(r[0] == 1, "array eval order 0")
+	assert(r[1] == 2, "array eval order 1")
+	assert(r[2] == 3, "array eval order 2")
+}
+
+// Test 6: Multi-assign evaluation order
+func multiAssignOrder() []int {
+	resetEvalOrder()
+	a, b, c := track(1), track(2), track(3)
+	_ = a + b + c
+	return evalOrder
+}
+
+func testMultiAssignOrder() {
+	r := multiAssignOrder()
+	assert(len(r) == 3, "multi assign order len")
+	assert(r[0] == 1, "multi assign order 0")
+	assert(r[1] == 2, "multi assign order 1")
+	assert(r[2] == 3, "multi assign order 2")
+}
+
+// Test 7: Index expression evaluation order
+func indexTrack(s []int, i int) int {
+	track(i)
+	return s[i]
+}
+
+func indexEvalOrder() []int {
+	resetEvalOrder()
+	s := []int{10, 20, 30}
+	_ = indexTrack(s, 0) + indexTrack(s, 1) + indexTrack(s, 2)
+	return evalOrder
+}
+
+func testIndexEvalOrder() {
+	r := indexEvalOrder()
+	assert(len(r) == 3, "index eval order len")
+	assert(r[0] == 0, "index eval order 0")
+	assert(r[1] == 1, "index eval order 1")
+	assert(r[2] == 2, "index eval order 2")
+}
+
+// Test 8: Closure capturing itself via variable
+func selfCapture() int {
+	var f func() int
+	counter := 0
+	f = func() int {
+		counter++
+		if counter < 5 {
+			return f()
+		}
+		return counter
+	}
+	return f()
+}
+
+func testSelfCapture() {
+	r := selfCapture()
+	assert(r == 5, "self capture")
+}
+
+// Test 9: Fibonacci with memoization closure
+func fibMemo() int {
+	memo := make(map[int]int)
+	var fib func(int) int
+	fib = func(n int) int {
+		if v, ok := memo[n]; ok {
+			return v
+		}
+		var result int
+		if n <= 1 {
+			result = n
+		} else {
+			result = fib(n-1) + fib(n-2)
+		}
+		memo[n] = result
+		return result
+	}
+	return fib(10)
+}
+
+func testFibMemo() {
+	r := fibMemo()
+	assert(r == 55, "fib memo")
+}
+
+// Test 10: Closure modifying outer variable in loop
+func closureLoopModify() int {
+	sum := 0
+	for i := 0; i < 5; i++ {
+		func() {
+			sum += i
+		}()
+	}
+	return sum
+}
+
+func testClosureLoopModify() {
+	r := closureLoopModify()
+	// 0 + 1 + 2 + 3 + 4 = 10
+	assert(r == 10, "closure loop modify")
+}
+
+// Test 11: Array comparison
+func arrayCompare() bool {
+	a := [3]int{1, 2, 3}
+	b := [3]int{1, 2, 3}
+	c := [3]int{1, 2, 4}
+	return a == b && a != c
+}
+
+func testArrayCompare() {
+	r := arrayCompare()
+	assert(r == true, "array compare")
+}
+
+// Test 12: Struct comparison with embedded
+type Inner struct {
+	x int
+}
+
+type Outer struct {
+	Inner
+	y int
+}
+
+func structCompare() bool {
+	a := Outer{Inner: Inner{x: 1}, y: 2}
+	b := Outer{Inner: Inner{x: 1}, y: 2}
+	c := Outer{Inner: Inner{x: 1}, y: 3}
+	return a == b && a != c
+}
+
+func testStructCompare() {
+	r := structCompare()
+	assert(r == true, "struct compare")
+}
+
+func main() {
+	testRecursiveClosure()
+	println("Test 1: PASSED - recursive closure")
+	
+	testMutualRecursive()
+	println("Test 2: PASSED - mutual recursive")
+	
+	testEvalOrder()
+	println("Test 3: PASSED - eval order")
+	
+	testArgEvalOrder()
+	println("Test 4: PASSED - arg eval order")
+	
+	testArrayEvalOrder()
+	println("Test 5: PASSED - array eval order")
+	
+	testMultiAssignOrder()
+	println("Test 6: PASSED - multi assign order")
+	
+	testIndexEvalOrder()
+	println("Test 7: PASSED - index eval order")
+	
+	testSelfCapture()
+	println("Test 8: PASSED - self capture")
+	
+	testFibMemo()
+	println("Test 9: PASSED - fib memo")
+	
+	testClosureLoopModify()
+	println("Test 10: PASSED - closure loop modify")
+	
+	testArrayCompare()
+	println("Test 11: PASSED - array compare")
+	
+	testStructCompare()
+	println("Test 12: PASSED - struct compare")
+	
+	println("ALL PASSED")
+}

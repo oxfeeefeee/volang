@@ -1,0 +1,251 @@
+package main
+
+// Test slice and string operation edge cases
+
+// Test 1: Three-index slice
+func threeIndexSlice() []int {
+	s := []int{1, 2, 3, 4, 5}
+	// s[1:3:4] means elements [1,3), cap limited to 4-1=3
+	sub := s[1:3:4]
+	return sub
+}
+
+func testThreeIndexSlice() {
+	r := threeIndexSlice()
+	assert(len(r) == 2, "three index slice len")
+	assert(cap(r) == 3, "three index slice cap")
+	assert(r[0] == 2, "three index slice 0")
+	assert(r[1] == 3, "three index slice 1")
+}
+
+// Test 2: Append grow capacity
+func appendGrow() int {
+	s := make([]int, 0, 2)
+	s = append(s, 1)
+	s = append(s, 2)
+	cap1 := cap(s)  // Should still be 2
+	s = append(s, 3)  // Should grow
+	cap2 := cap(s)
+	if cap1 == 2 && cap2 > 2 {
+		return 1
+	}
+	return 0
+}
+
+func testAppendGrow() {
+	r := appendGrow()
+	assert(r == 1, "append grow")
+}
+
+// Test 3: Append nil slice
+func appendNil() []int {
+	var s []int
+	s = append(s, 1, 2, 3)
+	return s
+}
+
+func testAppendNil() {
+	r := appendNil()
+	assert(len(r) == 3, "append nil len")
+	assert(r[0] == 1, "append nil 0")
+}
+
+// Test 4: Copy with overlap
+func copyOverlap() []int {
+	s := []int{1, 2, 3, 4, 5}
+	copy(s[1:], s[:4])  // Overlapping copy
+	return s
+}
+
+func testCopyOverlap() {
+	r := copyOverlap()
+	// [1, 2, 3, 4, 5] -> [1, 1, 2, 3, 4]
+	assert(r[0] == 1, "copy overlap 0")
+	assert(r[1] == 1, "copy overlap 1")
+	assert(r[2] == 2, "copy overlap 2")
+	assert(r[3] == 3, "copy overlap 3")
+	assert(r[4] == 4, "copy overlap 4")
+}
+
+// Test 5: Slice of string
+func sliceString() string {
+	s := "hello world"
+	return s[6:11]
+}
+
+func testSliceString() {
+	r := sliceString()
+	assert(r == "world", "slice string")
+}
+
+// Test 6: String to byte slice
+func stringToBytes() []byte {
+	s := "hello"
+	b := []byte(s)
+	b[0] = 'H'  // Modify copy, not original
+	return b
+}
+
+func testStringToBytes() {
+	r := stringToBytes()
+	assert(len(r) == 5, "string to bytes len")
+	assert(r[0] == 'H', "string to bytes 0")
+	assert(r[1] == 'e', "string to bytes 1")
+}
+
+// Test 7: Byte slice to string
+func bytesToString() string {
+	b := []byte{'w', 'o', 'r', 'l', 'd'}
+	return string(b)
+}
+
+func testBytesToString() {
+	r := bytesToString()
+	assert(r == "world", "bytes to string")
+}
+
+// Test 8: Append byte slice with string spread
+func appendByteString() []byte {
+	b := []byte("hello")
+	b = append(b, " world"...)
+	return b
+}
+
+func testAppendByteString() {
+	r := appendByteString()
+	assert(string(r) == "hello world", "append byte string")
+}
+
+// Test 9: Slice bounds at edges
+func sliceBoundsEdge() (int, int) {
+	s := []int{1, 2, 3}
+	a := s[0:0]  // Empty slice at start
+	b := s[3:3]  // Empty slice at end
+	return len(a), len(b)
+}
+
+func testSliceBoundsEdge() {
+	a, b := sliceBoundsEdge()
+	assert(a == 0, "slice bounds edge a")
+	assert(b == 0, "slice bounds edge b")
+}
+
+// Test 10: String index returns byte
+func stringIndex() byte {
+	s := "hello"
+	return s[1]
+}
+
+func testStringIndex() {
+	r := stringIndex()
+	assert(r == 'e', "string index")
+}
+
+// Test 11: Range over string returns runes
+func rangeStringRunes() (int, int) {
+	s := "héllo"  // é is multi-byte
+	count := 0
+	var firstRune rune
+	for i, r := range s {
+		if count == 0 {
+			firstRune = r
+			_ = i
+		}
+		count++
+	}
+	return count, int(firstRune)
+}
+
+func testRangeStringRunes() {
+	count, first := rangeStringRunes()
+	assert(count == 5, "range string runes count")  // 5 runes, not bytes
+	assert(first == 'h', "range string runes first")
+}
+
+// Test 12: Make slice with len and cap
+func makeSliceLenCap() (int, int) {
+	s := make([]int, 3, 10)
+	return len(s), cap(s)
+}
+
+func testMakeSliceLenCap() {
+	l, c := makeSliceLenCap()
+	assert(l == 3, "make slice len")
+	assert(c == 10, "make slice cap")
+}
+
+// Test 13: Copy returns min length
+func copyMinLen() int {
+	src := []int{1, 2, 3, 4, 5}
+	dst := make([]int, 3)
+	n := copy(dst, src)
+	return n
+}
+
+func testCopyMinLen() {
+	r := copyMinLen()
+	assert(r == 3, "copy min len")
+}
+
+// Test 14: Append multiple slices (variadic)
+func appendMultiple() []int {
+	a := []int{1, 2}
+	b := []int{3, 4}
+	c := []int{5}
+	result := append(a, b...)
+	result = append(result, c...)
+	return result
+}
+
+func testAppendMultiple() {
+	r := appendMultiple()
+	assert(len(r) == 5, "append multiple len")
+	assert(r[0] == 1, "append multiple 0")
+	assert(r[4] == 5, "append multiple 4")
+}
+
+func main() {
+	testThreeIndexSlice()
+	println("Test 1: PASSED - three index slice")
+	
+	testAppendGrow()
+	println("Test 2: PASSED - append grow")
+	
+	testAppendNil()
+	println("Test 3: PASSED - append nil")
+	
+	testCopyOverlap()
+	println("Test 4: PASSED - copy overlap")
+	
+	testSliceString()
+	println("Test 5: PASSED - slice string")
+	
+	testStringToBytes()
+	println("Test 6: PASSED - string to bytes")
+	
+	testBytesToString()
+	println("Test 7: PASSED - bytes to string")
+	
+	testAppendByteString()
+	println("Test 8: PASSED - append byte string")
+	
+	testSliceBoundsEdge()
+	println("Test 9: PASSED - slice bounds edge")
+	
+	testStringIndex()
+	println("Test 10: PASSED - string index")
+	
+	testRangeStringRunes()
+	println("Test 11: PASSED - range string runes")
+	
+	testMakeSliceLenCap()
+	println("Test 12: PASSED - make slice len cap")
+	
+	testCopyMinLen()
+	println("Test 13: PASSED - copy min len")
+	
+	testAppendMultiple()
+	println("Test 14: PASSED - append multiple")
+	
+	println("ALL PASSED")
+}

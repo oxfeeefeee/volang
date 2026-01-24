@@ -1,0 +1,277 @@
+package main
+
+// Test for-range with complex control flow, defer, and closures
+
+// Test 1: for-range with break in inner switch
+func testRangeBreakSwitch() {
+	sum := 0
+	for _, v := range []int{1, 2, 3, 4, 5} {
+		switch {
+		case v == 3:
+			break  // breaks switch, not for
+		default:
+			sum += v
+		}
+		sum += 10
+	}
+	// All iterations run, switch break only breaks switch
+	// v=1: 1+10=11, v=2: 2+10=12, v=3: 0+10=10, v=4: 4+10=14, v=5: 5+10=15
+	assert(sum == 62, "range break switch: expected 62")
+}
+
+// Test 2: for-range with labeled break
+func testRangeLabeledBreak() {
+	sum := 0
+outer:
+	for _, v := range []int{1, 2, 3, 4, 5} {
+		switch {
+		case v == 3:
+			break outer
+		default:
+			sum += v
+		}
+	}
+	assert(sum == 3, "range labeled break: expected 3")  // 1+2
+}
+
+// Test 3: for-range with continue in inner for
+func testRangeContinueInner() {
+	sum := 0
+	for i := range 3 {
+		for j := range 5 {
+			if j == 2 {
+				continue  // continues inner for
+			}
+			sum += i * 10 + j
+		}
+	}
+	// i=0: 0+1+3+4 = 8
+	// i=1: 10+11+13+14 = 48
+	// i=2: 20+21+23+24 = 88
+	assert(sum == 144, "range continue inner")
+}
+
+// Test 4: for-range with labeled continue
+func testRangeLabeledContinue() {
+	sum := 0
+outer:
+	for i := range 3 {
+		for j := range 5 {
+			if j == 2 {
+				continue outer
+			}
+			sum += i * 10 + j
+		}
+	}
+	// i=0: 0+1 = 1
+	// i=1: 10+11 = 21
+	// i=2: 20+21 = 41
+	assert(sum == 63, "range labeled continue")
+}
+
+// Test 5: for-range slice with defer (simpler than map)
+func testRangeSliceDefer() (result int) {
+	for _, v := range []int{1, 2, 3} {
+		v := v  // capture
+		defer func() {
+			result = result*10 + v
+		}()
+	}
+	return
+}
+
+func testRangeSliceDeferCall() {
+	r := testRangeSliceDefer()
+	// defer runs: v=3 first, then v=2, then v=1
+	// result: 0 -> 3 -> 32 -> 321
+	assert(r == 321, "range slice defer")
+}
+
+// Test 6: for-range with closure capturing index and value
+func testRangeClosureCapture() {
+	funcs := make([]func() int, 3)
+	for i, v := range []int{10, 20, 30} {
+		i, v := i, v  // capture by new variable
+		funcs[i] = func() int {
+			return i * 100 + v
+		}
+	}
+	assert(funcs[0]() == 10, "closure 0")
+	assert(funcs[1]() == 120, "closure 1")
+	assert(funcs[2]() == 230, "closure 2")
+}
+
+// Test 7: for-range string with break
+func testRangeStringBreak() {
+	count := 0
+	for _, r := range "hello" {
+		if r == 'l' {
+			break
+		}
+		count++
+	}
+	assert(count == 2, "range string break: h, e")
+}
+
+// Test 8: for-range with panic in loop body, recover
+func testRangePanicRecover() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = 999
+		}
+	}()
+	
+	for _, v := range []int{1, 2, 3} {
+		if v == 2 {
+			panic("stop")
+		}
+		result += v
+	}
+	return
+}
+
+func testRangePanicRecoverCall() {
+	r := testRangePanicRecover()
+	assert(r == 999, "range panic recover")
+}
+
+// Test 9: nested for-range with break to outer
+func testNestedRangeBreak() {
+	sum := 0
+outer:
+	for _, a := range []int{1, 2, 3} {
+		for _, b := range []int{10, 20, 30} {
+			if a == 2 && b == 20 {
+				break outer
+			}
+			sum += a * b
+		}
+	}
+	// a=1: 1*10 + 1*20 + 1*30 = 60
+	// a=2: 2*10 = 20, then break
+	assert(sum == 80, "nested range break")
+}
+
+// Test 10: for-range with return in middle
+func rangeReturn() int {
+	for i := range 10 {
+		if i == 5 {
+			return i * 10
+		}
+	}
+	return -1
+}
+
+func testRangeReturn() {
+	r := rangeReturn()
+	assert(r == 50, "range return")
+}
+
+// Test 11: for-range over nil slice
+func testRangeNilSlice() {
+	var s []int
+	count := 0
+	for range s {
+		count++
+	}
+	assert(count == 0, "range nil slice")
+}
+
+// Test 12: for-range over nil map
+func testRangeNilMap() {
+	var m map[string]int
+	count := 0
+	for range m {
+		count++
+	}
+	assert(count == 0, "range nil map")
+}
+
+// Test 13: for-range with modify slice during iteration (via append)
+func testRangeModifySlice() {
+	s := []int{1, 2, 3}
+	sum := 0
+	for _, v := range s {
+		sum += v
+		if v == 1 {
+			s = append(s, 4, 5)  // doesn't affect iteration
+		}
+	}
+	assert(sum == 6, "range modify slice")  // original 1+2+3
+}
+
+// Test 14: for-range int with defer per iteration
+func testRangeIntDefer() (result int) {
+	for i := range 3 {
+		i := i
+		defer func() {
+			result = result * 10 + i
+		}()
+	}
+	return
+}
+
+func testRangeIntDeferCall() {
+	r := testRangeIntDefer()
+	// defer runs: i=2, then i=1, then i=0
+	// result: 0 -> 2 -> 21 -> 210
+	assert(r == 210, "range int defer")
+}
+
+// Test 15: for-range with blank identifier
+func testRangeBlank() {
+	count := 0
+	for range []int{1, 2, 3, 4, 5} {
+		count++
+	}
+	assert(count == 5, "range blank")
+}
+
+func main() {
+	testRangeBreakSwitch()
+	println("Test 1: PASSED")
+	
+	testRangeLabeledBreak()
+	println("Test 2: PASSED")
+	
+	testRangeContinueInner()
+	println("Test 3: PASSED")
+	
+	testRangeLabeledContinue()
+	println("Test 4: PASSED")
+	
+	testRangeSliceDeferCall()
+	println("Test 5: PASSED")
+	
+	testRangeClosureCapture()
+	println("Test 6: PASSED")
+	
+	testRangeStringBreak()
+	println("Test 7: PASSED")
+	
+	testRangePanicRecoverCall()
+	println("Test 8: PASSED")
+	
+	testNestedRangeBreak()
+	println("Test 9: PASSED")
+	
+	testRangeReturn()
+	println("Test 10: PASSED")
+	
+	testRangeNilSlice()
+	println("Test 11: PASSED")
+	
+	testRangeNilMap()
+	println("Test 12: PASSED")
+	
+	testRangeModifySlice()
+	println("Test 13: PASSED")
+	
+	testRangeIntDeferCall()
+	println("Test 14: PASSED")
+	
+	testRangeBlank()
+	println("Test 15: PASSED")
+	
+	println("ALL PASSED")
+}
