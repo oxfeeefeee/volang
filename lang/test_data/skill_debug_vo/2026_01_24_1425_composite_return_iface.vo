@@ -1,0 +1,154 @@
+package main
+
+// Test: Composite literal in return with interface conversion
+
+type Stringer interface {
+	String() string
+}
+
+type Named struct {
+	name string
+}
+
+func (n Named) String() string {
+	return n.name
+}
+
+type Pair struct {
+	first  int
+	second int
+}
+
+// Test 1: Return composite literal as interface
+func getStringer() Stringer {
+	return Named{name: "test"}
+}
+
+func testReturnCompositeAsInterface() {
+	s := getStringer()
+	assert(s.String() == "test", "composite return as interface")
+}
+
+// Test 2: Return pointer composite literal as interface
+func getStringerPtr() Stringer {
+	return &Named{name: "ptr"}
+}
+
+func testReturnPtrCompositeAsInterface() {
+	s := getStringerPtr()
+	assert(s.String() == "ptr", "ptr composite return as interface")
+}
+
+// Test 3: Return composite literal as any
+func getAny() any {
+	return Pair{first: 1, second: 2}
+}
+
+func testReturnCompositeAsAny() {
+	a := getAny()
+	p := a.(Pair)
+	assert(p.first == 1, "composite return as any first")
+	assert(p.second == 2, "composite return as any second")
+}
+
+// Test 4: Return slice composite literal
+func getSlice() []int {
+	return []int{1, 2, 3}
+}
+
+func testReturnSliceComposite() {
+	s := getSlice()
+	assert(len(s) == 3, "slice composite len")
+	assert(s[0] == 1, "slice composite [0]")
+}
+
+// Test 5: Return map composite literal
+func getMapLit() map[string]int {
+	return map[string]int{"a": 1, "b": 2}
+}
+
+func testReturnMapComposite() {
+	m := getMapLit()
+	assert(m["a"] == 1, "map composite a")
+	assert(m["b"] == 2, "map composite b")
+}
+
+// Test 6: Composite literal with nested struct
+type Outer struct {
+	inner Named
+	value int
+}
+
+func getOuter() Stringer {
+	return Outer{inner: Named{name: "nested"}, value: 42}.inner
+}
+
+func testNestedCompositeReturn() {
+	s := getOuter()
+	assert(s.String() == "nested", "nested composite return")
+}
+
+// Test 7: Composite literal method call in return
+func getStringerMethod() string {
+	return Named{name: "direct"}.String()
+}
+
+func testCompositeMethodReturn() {
+	s := getStringerMethod()
+	assert(s == "direct", "composite method return")
+}
+
+// Test 8: Composite literal in conditional return
+func getConditional(useFirst bool) Stringer {
+	if useFirst {
+		return Named{name: "first"}
+	}
+	return Named{name: "second"}
+}
+
+func testConditionalCompositeReturn() {
+	s1 := getConditional(true)
+	s2 := getConditional(false)
+	assert(s1.String() == "first", "conditional first")
+	assert(s2.String() == "second", "conditional second")
+}
+
+// Test 9: Composite literal in multi-return
+func getMulti() (Stringer, int) {
+	return Named{name: "multi"}, 42
+}
+
+func testMultiReturnComposite() {
+	s, n := getMulti()
+	assert(s.String() == "multi", "multi return stringer")
+	assert(n == 42, "multi return int")
+}
+
+// Test 10: Composite literal as interface in slice
+func getIfaceSlice() []Stringer {
+	return []Stringer{
+		Named{name: "one"},
+		Named{name: "two"},
+	}
+}
+
+func testIfaceSliceComposite() {
+	s := getIfaceSlice()
+	assert(len(s) == 2, "iface slice len")
+	assert(s[0].String() == "one", "iface slice [0]")
+	assert(s[1].String() == "two", "iface slice [1]")
+}
+
+func main() {
+	testReturnCompositeAsInterface()
+	testReturnPtrCompositeAsInterface()
+	testReturnCompositeAsAny()
+	testReturnSliceComposite()
+	testReturnMapComposite()
+	testNestedCompositeReturn()
+	testCompositeMethodReturn()
+	testConditionalCompositeReturn()
+	testMultiReturnComposite()
+	testIfaceSliceComposite()
+	println("PASS")
+}

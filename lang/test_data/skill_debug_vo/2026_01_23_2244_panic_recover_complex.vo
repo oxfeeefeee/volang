@@ -95,30 +95,34 @@ func testMultipleDeferOneRecover() {
 	assert(order == "2R1", "multiple defer one recover order")
 }
 
-// Test 6: Recover in nested defer - should NOT recover, panic propagates
+// Test 6: Recover in nested defer - SHOULD recover (Go semantics)
 func testRecoverNestedDefer() {
-	// In Go, recover in nested defer doesn't work - panic propagates
-	// Wrap in outer recover to test this without crashing
-	var caughtPanic any
+	// In Go, recover in nested defer DOES work.
+	// When outer defer runs and schedules inner defer, and outer defer completes,
+	// the inner defer runs and can recover the still-propagating panic.
+	var outerCaughtPanic any
+	var nestedRecovered bool
 	
 	func() {
 		defer func() {
-			caughtPanic = recover()
+			outerCaughtPanic = recover()
 		}()
 		
 		func() {
 			defer func() {
 				defer func() {
-					recover() // This should NOT work - nested defer
+					if recover() != nil {
+						nestedRecovered = true
+					}
 				}()
 			}()
 			panic("nested defer test")
 		}()
 	}()
 	
-	// The panic should have propagated past the nested defer and been caught by outer defer
-	assert(caughtPanic != nil, "nested defer recover should not work, panic should propagate")
-	assert(caughtPanic.(string) == "nested defer test", "nested defer panic value")
+	// The nested defer's recover() should have caught the panic
+	assert(nestedRecovered, "nested defer recover should work")
+	assert(outerCaughtPanic == nil, "outer defer should not catch anything")
 }
 
 // Test 7: Panic after partial work

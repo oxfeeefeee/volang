@@ -1274,11 +1274,15 @@ impl Vm {
 
                 // Defer and error handling
                 Opcode::DeferPush => {
-                    exec::exec_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc, fiber.panic_generation);
+                    // When registering a defer during panic unwinding, inherit the parent defer's generation
+                    // so nested defers can recover the same panic as their parent.
+                    let generation = fiber.effective_defer_generation();
+                    exec::exec_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc, generation);
                     ExecResult::Continue
                 }
                 Opcode::ErrDeferPush => {
-                    exec::exec_err_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc, fiber.panic_generation);
+                    let generation = fiber.effective_defer_generation();
+                    exec::exec_err_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc, generation);
                     ExecResult::Continue
                 }
                 Opcode::Panic => {

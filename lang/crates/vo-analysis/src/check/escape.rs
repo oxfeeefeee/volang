@@ -46,6 +46,12 @@ struct ClosureEntry {
     scope: Option<ScopeKey>,
 }
 
+/// Context for tracking named returns in the current function.
+/// When a defer is encountered, all named returns must escape.
+struct FuncContext {
+    named_returns: Vec<ObjKey>,
+}
+
 /// The escape analyzer.
 struct EscapeAnalyzer<'a> {
     type_info: &'a TypeInfo,
@@ -61,6 +67,8 @@ struct EscapeAnalyzer<'a> {
     closure_stack: Vec<ClosureEntry>,
     /// Loop nesting depth (>0 means inside a loop)
     loop_depth: u32,
+    /// Stack of function contexts for tracking named returns
+    func_context_stack: Vec<FuncContext>,
 }
 
 impl<'a> EscapeAnalyzer<'a> {
@@ -74,6 +82,17 @@ impl<'a> EscapeAnalyzer<'a> {
             func_scope: None,
             closure_stack: Vec::new(),
             loop_depth: 0,
+            func_context_stack: Vec::new(),
+        }
+    }
+    
+    /// Mark all named returns in the current function as escaped.
+    /// Called when a defer/errdefer is encountered.
+    fn mark_named_returns_escaped(&mut self) {
+        if let Some(ctx) = self.func_context_stack.last() {
+            for obj in &ctx.named_returns {
+                self.escaped.insert(*obj);
+            }
         }
     }
 
@@ -122,11 +141,20 @@ impl<'a> EscapeAnalyzer<'a> {
 
     fn visit_func_decl(&mut self, fdecl: &FuncDecl) {
         if let Some(body) = &fdecl.body {
-            // Get function scope from signature
             let func_scope = self.type_info.scopes.get(&fdecl.sig.span).copied();
             let saved = self.func_scope;
             self.func_scope = func_scope;
+            
+            // Collect named returns - they'll be marked as escaped when we encounter defer/errdefer
+            let named_returns: Vec<ObjKey> = fdecl.sig.results.iter()
+                .filter_map(|r| r.name.as_ref())
+                .filter_map(|name| self.type_info.defs.get(&name.id).and_then(|o| *o))
+                .collect();
+            self.func_context_stack.push(FuncContext { named_returns });
+            
             self.visit_block(body);
+            
+            self.func_context_stack.pop();
             self.func_scope = saved;
         }
     }
@@ -301,8 +329,15 @@ impl<'a> EscapeAnalyzer<'a> {
                 }
             }
             StmtKind::Go(g) => self.visit_expr(&g.call),
-            StmtKind::Defer(d) => self.visit_expr(&d.call),
-            StmtKind::ErrDefer(d) => self.visit_expr(&d.call),
+            StmtKind::Defer(d) => {
+                // Named returns must escape for correct panic/recover semantics
+                self.mark_named_returns_escaped();
+                self.visit_expr(&d.call);
+            }
+            StmtKind::ErrDefer(d) => {
+                self.mark_named_returns_escaped();
+                self.visit_expr(&d.call);
+            }
             StmtKind::Fail(f) => self.visit_expr(&f.error),
             StmtKind::Send(s) => {
                 self.visit_expr(&s.chan);
@@ -348,8 +383,16 @@ impl<'a> EscapeAnalyzer<'a> {
                 self.closure_stack.push(ClosureEntry { id: expr.id, scope: closure_scope });
                 self.closure_captures.insert(expr.id, Vec::new());
                 
+                // Collect named returns - they'll be marked as escaped when we encounter defer/errdefer
+                let named_returns: Vec<ObjKey> = func.sig.results.iter()
+                    .filter_map(|r| r.name.as_ref())
+                    .filter_map(|name| self.type_info.defs.get(&name.id).and_then(|o| *o))
+                    .collect();
+                self.func_context_stack.push(FuncContext { named_returns });
+                
                 self.visit_block(&func.body);
                 
+                self.func_context_stack.pop();
                 self.func_scope = saved_scope;
                 self.closure_stack.pop();
             }

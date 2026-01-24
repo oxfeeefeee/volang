@@ -1,0 +1,143 @@
+package main
+
+// Test: Method value extracted from type assertion result
+
+type Stringer interface {
+	String() string
+}
+
+type MyString struct {
+	val string
+}
+
+func (m MyString) String() string {
+	return m.val
+}
+
+func (m *MyString) SetVal(v string) {
+	m.val = v
+}
+
+// Test 1: Method value from type assertion - value receiver
+func testTypeAssertMethodValue() {
+	var s Stringer = MyString{val: "hello"}
+	
+	// Type assert then get method value
+	concrete := s.(MyString)
+	f := concrete.String
+	result := f()
+	assert(result == "hello", "method value from type assert")
+}
+
+// Test 2: Method value from type assertion - inline
+func testTypeAssertMethodValueInline() {
+	var s Stringer = MyString{val: "world"}
+	
+	// Inline: type assert then method value then call
+	result := s.(MyString).String()
+	assert(result == "world", "inline type assert method call")
+}
+
+// Test 3: Method value from type assertion with ok
+func testTypeAssertMethodValueOk() {
+	var s Stringer = MyString{val: "test"}
+	
+	if concrete, ok := s.(MyString); ok {
+		f := concrete.String
+		result := f()
+		assert(result == "test", "method value from type assert with ok")
+	} else {
+		panic("type assertion should succeed")
+	}
+}
+
+// Test 4: Pointer method on type assertion result
+func testTypeAssertPointerMethod() {
+	ms := &MyString{val: "original"}
+	var a any = ms
+	
+	// Type assert to pointer, call pointer method
+	concrete := a.(*MyString)
+	concrete.SetVal("modified")
+	assert(concrete.val == "modified", "pointer method on type assert")
+}
+
+// Test 5: Chained type assertion with method call
+type Container struct {
+	item Stringer
+}
+
+func testChainedTypeAssertMethod() {
+	c := Container{item: MyString{val: "nested"}}
+	var a any = c
+	
+	container := a.(Container)
+	result := container.item.(MyString).String()
+	assert(result == "nested", "chained type assert method")
+}
+
+// Test 6: Method value stored in variable, called later
+func testMethodValueDeferred() {
+	var s Stringer = MyString{val: "deferred"}
+	
+	concrete := s.(MyString)
+	f := concrete.String
+	
+	// Modify original - should not affect method value (value receiver)
+	// Actually in Go, method value captures the receiver value
+	result := f()
+	assert(result == "deferred", "method value captured receiver")
+}
+
+// Test 7: Method value from interface method
+func testInterfaceMethodValue() {
+	var s Stringer = MyString{val: "iface"}
+	
+	// Get method value from interface directly
+	f := s.String
+	result := f()
+	assert(result == "iface", "interface method value")
+}
+
+// Test 8: Type assertion in map value access
+func testTypeAssertMapValue() {
+	m := map[string]any{
+		"key": MyString{val: "mapval"},
+	}
+	
+	val := m["key"]
+	result := val.(MyString).String()
+	assert(result == "mapval", "type assert map value")
+}
+
+// Test 9: Type assertion in slice element access
+func testTypeAssertSliceElement() {
+	s := []any{MyString{val: "elem0"}, MyString{val: "elem1"}}
+	
+	result := s[1].(MyString).String()
+	assert(result == "elem1", "type assert slice element")
+}
+
+// Test 10: Multiple type assertions in expression
+func testMultipleTypeAsserts() {
+	var a any = []any{MyString{val: "deep"}}
+	
+	slice := a.([]any)
+	elem := slice[0]
+	result := elem.(MyString).String()
+	assert(result == "deep", "multiple type asserts")
+}
+
+func main() {
+	testTypeAssertMethodValue()
+	testTypeAssertMethodValueInline()
+	testTypeAssertMethodValueOk()
+	testTypeAssertPointerMethod()
+	testChainedTypeAssertMethod()
+	testMethodValueDeferred()
+	testInterfaceMethodValue()
+	testTypeAssertMapValue()
+	testTypeAssertSliceElement()
+	testMultipleTypeAsserts()
+	println("PASS")
+}

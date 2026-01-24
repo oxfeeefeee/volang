@@ -1,0 +1,58 @@
+package main
+
+// Test: Nested defer recover semantics
+// In Go, recover() in a nested defer SHOULD catch the propagating panic
+
+func recoverNestedDefer() (result int) {
+	defer func() {
+		defer func() {
+			if r := recover(); r != nil {
+				result = 777
+			}
+		}()
+	}()
+	
+	panic("test")
+}
+
+func testRecoverNestedDefer() {
+	r := recoverNestedDefer()
+	println("result:", r)
+	// In Go, the inner defer's recover() catches the panic
+	// So result should be 777 and function returns normally
+	assert(r == 777, "nested defer recover should work")
+}
+
+// Double panic test
+func doublePanicRecover() (result int) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = 2
+		}
+	}()
+	
+	defer func() {
+		if r := recover(); r != nil {
+			result = 1
+			panic("second panic")
+		}
+	}()
+	
+	panic("first panic")
+}
+
+func testDoublePanicRecover() {
+	r := doublePanicRecover()
+	println("result:", r)
+	// 1. panic("first panic")
+	// 2. Second defer catches it, result = 1, then panic("second panic")
+	// 3. First defer catches that, result = 2
+	// 4. Function returns normally with result = 2
+	assert(r == 2, "double panic recover")
+}
+
+func main() {
+	testRecoverNestedDefer()
+	testDoublePanicRecover()
+	println("PASS")
+}

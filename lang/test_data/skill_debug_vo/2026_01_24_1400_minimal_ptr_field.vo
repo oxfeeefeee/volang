@@ -1,0 +1,13 @@
+package main
+
+type MyString struct {
+	val string
+}
+
+func main() {
+	ms := &MyString{val: "test"}
+	// Access field through pointer
+	result := ms.val
+	println(result)
+	println("PASS")
+}

@@ -1,0 +1,21 @@
+package main
+
+type MyString struct {
+	val string
+}
+
+func (m *MyString) SetVal(v string) {
+	m.val = v
+}
+
+func main() {
+	ms := &MyString{val: "original"}
+	var a any = ms
+	
+	// Type assert to pointer, call pointer method, then access field
+	concrete := a.(*MyString)
+	concrete.SetVal("modified")
+	result := concrete.val
+	assert(result == "modified", "field should be modified")
+	println("PASS")
+}

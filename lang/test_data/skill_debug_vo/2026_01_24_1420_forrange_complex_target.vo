@@ -1,0 +1,158 @@
+package main
+
+// Test: for-range with complex expressions as range target
+
+func getSlice() []int {
+	return []int{1, 2, 3, 4, 5}
+}
+
+func getMap() map[string]int {
+	return map[string]int{"a": 1, "b": 2, "c": 3}
+}
+
+type Container struct {
+	items []int
+}
+
+func (c Container) GetItems() []int {
+	return c.items
+}
+
+// Test 1: for-range over function call result
+func testRangeFuncCall() {
+	sum := 0
+	for _, v := range getSlice() {
+		sum += v
+	}
+	assert(sum == 15, "range over func call")
+}
+
+// Test 2: for-range over method call result
+func testRangeMethodCall() {
+	c := Container{items: []int{10, 20, 30}}
+	sum := 0
+	for _, v := range c.GetItems() {
+		sum += v
+	}
+	assert(sum == 60, "range over method call")
+}
+
+// Test 3: for-range over map function call
+func testRangeMapFuncCall() {
+	sum := 0
+	for _, v := range getMap() {
+		sum += v
+	}
+	assert(sum == 6, "range over map func call")
+}
+
+// Test 4: for-range over slice expression
+func testRangeSliceExpr() {
+	arr := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	sum := 0
+	for _, v := range arr[2:7] {
+		sum += v
+	}
+	assert(sum == 3+4+5+6+7, "range over slice expr")
+}
+
+// Test 5: for-range over type assertion result
+func testRangeTypeAssert() {
+	var a any = []int{5, 10, 15}
+	sum := 0
+	for _, v := range a.([]int) {
+		sum += v
+	}
+	assert(sum == 30, "range over type assert")
+}
+
+// Test 6: for-range with index over string
+func testRangeString() {
+	s := "hello"
+	count := 0
+	for range s {
+		count++
+	}
+	assert(count == 5, "range over string count")
+}
+
+// Test 7: for-range over channel
+func testRangeChannel() {
+	ch := make(chan int, 3)
+	ch <- 1
+	ch <- 2
+	ch <- 3
+	close(ch)
+	
+	sum := 0
+	for v := range ch {
+		sum += v
+	}
+	assert(sum == 6, "range over channel")
+}
+
+// Test 8: Nested for-range
+func testNestedRange() {
+	matrix := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+	}
+	
+	sum := 0
+	for _, row := range matrix {
+		for _, val := range row {
+			sum += val
+		}
+	}
+	assert(sum == 45, "nested range")
+}
+
+// Test 9: for-range with break and labeled continue
+func testRangeBreakContinue() {
+	sum := 0
+outer:
+	for i := range 5 {
+		for j := range 5 {
+			if j == 3 {
+				continue outer
+			}
+			sum += i + j
+		}
+	}
+	// For each i (0-4), j goes 0,1,2 then continues outer
+	// i=0: 0+0 + 0+1 + 0+2 = 3
+	// i=1: 1+0 + 1+1 + 1+2 = 6
+	// i=2: 2+0 + 2+1 + 2+2 = 9
+	// i=3: 3+0 + 3+1 + 3+2 = 12
+	// i=4: 4+0 + 4+1 + 4+2 = 15
+	// Total = 45
+	assert(sum == 45, "range with labeled continue")
+}
+
+// Test 10: for-range modifying slice during iteration
+func testRangeModifySlice() {
+	s := []int{1, 2, 3}
+	
+	for i := range s {
+		s[i] *= 2
+	}
+	
+	assert(s[0] == 2, "modified s[0]")
+	assert(s[1] == 4, "modified s[1]")
+	assert(s[2] == 6, "modified s[2]")
+}
+
+func main() {
+	testRangeFuncCall()
+	testRangeMethodCall()
+	testRangeMapFuncCall()
+	testRangeSliceExpr()
+	testRangeTypeAssert()
+	testRangeString()
+	testRangeChannel()
+	testNestedRange()
+	testRangeBreakContinue()
+	testRangeModifySlice()
+	println("PASS")
+}

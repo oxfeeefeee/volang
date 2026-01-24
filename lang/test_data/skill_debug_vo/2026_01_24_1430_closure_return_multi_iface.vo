@@ -1,0 +1,162 @@
+package main
+
+// Test: Closure returning multiple values with interface conversion
+
+type Stringer interface {
+	String() string
+}
+
+type Named struct {
+	name string
+}
+
+func (n Named) String() string {
+	return n.name
+}
+
+// Test 1: Closure returning (any, error)
+func testClosureReturnAnyError() {
+	f := func() (any, error) {
+		return Named{name: "test"}, nil
+	}
+	
+	val, err := f()
+	assert(err == nil, "no error")
+	assert(val.(Named).name == "test", "any value correct")
+}
+
+// Test 2: Closure returning interface
+func testClosureReturnIface() {
+	f := func() Stringer {
+		return Named{name: "iface"}
+	}
+	
+	s := f()
+	assert(s.String() == "iface", "interface return")
+}
+
+// Test 3: Closure capturing and returning interface
+func testClosureCaptureReturnIface() {
+	n := Named{name: "captured"}
+	
+	f := func() Stringer {
+		return n
+	}
+	
+	s := f()
+	assert(s.String() == "captured", "captured interface return")
+	
+	n.name = "modified"
+	s = f()
+	assert(s.String() == "modified", "modified capture")
+}
+
+// Test 4: Nested closure returning interface
+func testNestedClosureReturnIface() {
+	outer := func() func() Stringer {
+		n := Named{name: "nested"}
+		return func() Stringer {
+			return n
+		}
+	}
+	
+	inner := outer()
+	s := inner()
+	assert(s.String() == "nested", "nested closure interface")
+}
+
+// Test 5: Closure in slice returning interface
+func testClosureSliceReturnIface() {
+	funcs := []func() Stringer{
+		func() Stringer { return Named{name: "first"} },
+		func() Stringer { return Named{name: "second"} },
+	}
+	
+	assert(funcs[0]().String() == "first", "slice func 0")
+	assert(funcs[1]().String() == "second", "slice func 1")
+}
+
+// Test 6: Closure returning (Stringer, int)
+func testClosureReturnIfaceInt() {
+	f := func() (Stringer, int) {
+		return Named{name: "multi"}, 42
+	}
+	
+	s, n := f()
+	assert(s.String() == "multi", "multi return stringer")
+	assert(n == 42, "multi return int")
+}
+
+// Test 7: Higher-order function with interface return
+func makeGetter(name string) func() Stringer {
+	n := Named{name: name}
+	return func() Stringer {
+		return n
+	}
+}
+
+func testHigherOrderIfaceReturn() {
+	f := makeGetter("higher")
+	s := f()
+	assert(s.String() == "higher", "higher order iface")
+}
+
+// Test 8: Closure with conditional interface return
+func testClosureConditionalIfaceReturn() {
+	f := func(useFirst bool) Stringer {
+		if useFirst {
+			return Named{name: "first"}
+		}
+		return Named{name: "second"}
+	}
+	
+	assert(f(true).String() == "first", "conditional true")
+	assert(f(false).String() == "second", "conditional false")
+}
+
+// Test 9: Closure returning nil interface
+func testClosureReturnNilIface() {
+	f := func(returnNil bool) Stringer {
+		if returnNil {
+			return nil
+		}
+		return Named{name: "not-nil"}
+	}
+	
+	s := f(true)
+	assert(s == nil, "nil interface")
+	
+	s = f(false)
+	assert(s != nil, "not nil interface")
+	assert(s.String() == "not-nil", "not nil value")
+}
+
+// Test 10: Closure with error return using question operator
+func testClosureErrorQuestion() (Stringer, error) {
+	f := func() (Named, error) {
+		return Named{name: "question"}, nil
+	}
+	
+	n := f()?
+	return n, nil
+}
+
+func testClosureErrorQuestionCall() {
+	s, err := testClosureErrorQuestion()
+	assert(err == nil, "no error")
+	assert(s.String() == "question", "question op result")
+}
+
+func main() {
+	testClosureReturnAnyError()
+	testClosureReturnIface()
+	testClosureCaptureReturnIface()
+	testNestedClosureReturnIface()
+	testClosureSliceReturnIface()
+	testClosureReturnIfaceInt()
+	testHigherOrderIfaceReturn()
+	testClosureConditionalIfaceReturn()
+	testClosureReturnNilIface()
+	testClosureErrorQuestionCall()
+	println("PASS")
+}

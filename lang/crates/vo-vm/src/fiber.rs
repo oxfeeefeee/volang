@@ -261,6 +261,20 @@ impl Fiber {
             caller_ret_count: *caller_ret_count,
         };
     }
+    
+    /// Get the effective generation for registering a new defer.
+    /// During panic unwinding, returns the current_defer_generation so nested defers
+    /// can recover the same panic as their parent defer.
+    /// Outside panic unwinding, returns panic_generation (current value before any panic).
+    #[inline]
+    pub fn effective_defer_generation(&self) -> u64 {
+        match &self.unwinding {
+            Some(UnwindingState { kind: UnwindingKind::Panic { .. }, current_defer_generation, .. }) => {
+                *current_defer_generation
+            }
+            _ => self.panic_generation,
+        }
+    }
 
     pub fn push_frame(&mut self, func_id: u32, local_slots: u16, ret_reg: u16, ret_count: u16) {
         let bp = self.stack.len();

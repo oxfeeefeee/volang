@@ -1,0 +1,154 @@
+package main
+
+// Test: Index expressions with complex targets
+
+func getSlice() []int {
+	return []int{10, 20, 30, 40, 50}
+}
+
+func getMap() map[string]int {
+	return map[string]int{"a": 1, "b": 2, "c": 3}
+}
+
+type Container struct {
+	items []int
+	data  map[string]int
+}
+
+func (c Container) GetItems() []int {
+	return c.items
+}
+
+func (c Container) GetData() map[string]int {
+	return c.data
+}
+
+// Test 1: Index on function call result
+func testIndexFuncCall() {
+	val := getSlice()[2]
+	assert(val == 30, "index func call")
+}
+
+// Test 2: Index on method call result
+func testIndexMethodCall() {
+	c := Container{items: []int{5, 10, 15}}
+	val := c.GetItems()[1]
+	assert(val == 10, "index method call")
+}
+
+// Test 3: Map access on function call result
+func testMapFuncCall() {
+	val := getMap()["b"]
+	assert(val == 2, "map func call")
+}
+
+// Test 4: Map access on method call result
+func testMapMethodCall() {
+	c := Container{data: map[string]int{"x": 100}}
+	val := c.GetData()["x"]
+	assert(val == 100, "map method call")
+}
+
+// Test 5: Index on type assertion result
+func testIndexTypeAssert() {
+	var a any = []int{1, 2, 3, 4}
+	val := a.([]int)[2]
+	assert(val == 3, "index type assert")
+}
+
+// Test 6: Map access on type assertion result
+func testMapTypeAssert() {
+	var a any = map[string]int{"key": 42}
+	val := a.(map[string]int)["key"]
+	assert(val == 42, "map type assert")
+}
+
+// Test 7: Chained index access
+func testChainedIndex() {
+	matrix := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+	}
+	val := matrix[1][2]
+	assert(val == 6, "chained index")
+}
+
+// Test 8: Index on composite literal
+func testIndexCompositeLiteral() {
+	val := []int{100, 200, 300}[1]
+	assert(val == 200, "index composite literal")
+}
+
+// Test 9: Map access on composite literal
+func testMapCompositeLiteral() {
+	val := map[string]int{"foo": 999}["foo"]
+	assert(val == 999, "map composite literal")
+}
+
+// Test 10: Index with computed index
+func testComputedIndex() {
+	s := []int{1, 2, 3, 4, 5}
+	i := 1
+	j := 2
+	val := s[i+j]
+	assert(val == 4, "computed index")
+}
+
+// Test 11: Map with computed key
+func testComputedMapKey() {
+	m := map[string]int{"ab": 10, "cd": 20}
+	key := "a" + "b"
+	val := m[key]
+	assert(val == 10, "computed map key")
+}
+
+// Test 12: Index on parenthesized expression
+func testIndexParen() {
+	s := []int{1, 2, 3}
+	val := (s)[1]
+	assert(val == 2, "index paren")
+}
+
+// Test 13: Slice expression on function call
+func testSliceFuncCall() {
+	s := getSlice()[1:4]
+	assert(len(s) == 3, "slice func call len")
+	assert(s[0] == 20, "slice func call [0]")
+}
+
+// Test 14: Index after slice
+func testIndexAfterSlice() {
+	s := []int{1, 2, 3, 4, 5}
+	val := s[1:4][1]
+	assert(val == 3, "index after slice")
+}
+
+// Test 15: Map access with ok form on func call
+func testMapOkFuncCall() {
+	val, ok := getMap()["b"]
+	assert(ok, "map ok exists")
+	assert(val == 2, "map ok value")
+	
+	_, ok = getMap()["z"]
+	assert(!ok, "map ok not exists")
+}
+
+func main() {
+	testIndexFuncCall()
+	testIndexMethodCall()
+	testMapFuncCall()
+	testMapMethodCall()
+	testIndexTypeAssert()
+	testMapTypeAssert()
+	testChainedIndex()
+	testIndexCompositeLiteral()
+	testMapCompositeLiteral()
+	testComputedIndex()
+	testComputedMapKey()
+	testIndexParen()
+	testSliceFuncCall()
+	testIndexAfterSlice()
+	testMapOkFuncCall()
+	println("PASS")
+}

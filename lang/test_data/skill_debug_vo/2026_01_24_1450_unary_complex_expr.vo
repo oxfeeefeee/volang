@@ -1,0 +1,177 @@
+package main
+
+// Test: Unary operators on complex expressions
+
+func getInt() int {
+	return 42
+}
+
+func getBool() bool {
+	return true
+}
+
+type Number struct {
+	val int
+}
+
+func (n Number) Get() int {
+	return n.val
+}
+
+func (n Number) IsPositive() bool {
+	return n.val > 0
+}
+
+// Test 1: Negation on function call
+func testNegFuncCall() {
+	val := -getInt()
+	assert(val == -42, "neg func call")
+}
+
+// Test 2: Not on function call
+func testNotFuncCall() {
+	val := !getBool()
+	assert(!val, "not func call")
+}
+
+// Test 3: Negation on method call
+func testNegMethodCall() {
+	n := Number{val: 10}
+	val := -n.Get()
+	assert(val == -10, "neg method call")
+}
+
+// Test 4: Not on method call
+func testNotMethodCall() {
+	n := Number{val: 5}
+	val := !n.IsPositive()
+	assert(!val, "not method call")
+}
+
+// Test 5: Negation on type assertion
+func testNegTypeAssert() {
+	var a any = 25
+	val := -a.(int)
+	assert(val == -25, "neg type assert")
+}
+
+// Test 6: Not on type assertion
+func testNotTypeAssert() {
+	var a any = false
+	val := !a.(bool)
+	assert(val, "not type assert")
+}
+
+// Test 7: Negation on index expression
+func testNegIndex() {
+	s := []int{1, 2, 3}
+	val := -s[1]
+	assert(val == -2, "neg index")
+}
+
+// Test 8: Double negation
+func testDoubleNeg() {
+	x := 5
+	val := - -x
+	assert(val == 5, "double neg")
+}
+
+// Test 9: Double not
+func testDoubleNot() {
+	b := true
+	val := !!b
+	assert(val, "double not")
+}
+
+// Test 10: Negation in expression
+func testNegInExpr() {
+	x := 10
+	y := 3
+	val := -x + y
+	assert(val == -7, "neg in expr")
+}
+
+// Test 11: Not in logical expression
+func testNotInLogical() {
+	a := true
+	b := false
+	val := !a || b
+	assert(!val, "not in logical")
+}
+
+// Test 12: Bitwise not on int
+func testBitwiseNot() {
+	x := 0
+	val := ^x
+	assert(val == -1, "bitwise not zero")
+	
+	y := 1
+	val = ^y
+	assert(val == -2, "bitwise not one")
+}
+
+// Test 13: Bitwise not on function call
+func testBitwiseNotFuncCall() {
+	val := ^getInt()
+	assert(val == ^42, "bitwise not func call")
+}
+
+// Test 14: Unary plus (if supported)
+func testUnaryPlus() {
+	x := -5
+	val := +x
+	assert(val == -5, "unary plus")
+}
+
+// Test 15: Negation on parenthesized expression
+func testNegParen() {
+	x := 3
+	y := 2
+	val := -(x + y)
+	assert(val == -5, "neg paren")
+}
+
+// Test 16: Not on parenthesized expression
+func testNotParen() {
+	a := true
+	b := true
+	val := !(a && b)
+	assert(!val, "not paren")
+}
+
+// Test 17: Combined unary and binary
+func testCombinedUnaryBinary() {
+	x := 5
+	y := 3
+	val := -x * -y
+	assert(val == 15, "neg times neg")
+}
+
+// Test 18: Unary on map access
+func testUnaryMapAccess() {
+	m := map[string]int{"a": 10}
+	val := -m["a"]
+	assert(val == -10, "neg map access")
+}
+
+func main() {
+	testNegFuncCall()
+	testNotFuncCall()
+	testNegMethodCall()
+	testNotMethodCall()
+	testNegTypeAssert()
+	testNotTypeAssert()
+	testNegIndex()
+	testDoubleNeg()
+	testDoubleNot()
+	testNegInExpr()
+	testNotInLogical()
+	testBitwiseNot()
+	testBitwiseNotFuncCall()
+	testUnaryPlus()
+	testNegParen()
+	testNotParen()
+	testCombinedUnaryBinary()
+	testUnaryMapAccess()
+	println("PASS")
+}

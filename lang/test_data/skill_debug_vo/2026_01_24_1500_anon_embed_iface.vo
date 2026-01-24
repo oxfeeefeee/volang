@@ -1,0 +1,180 @@
+package main
+
+// Test: Anonymous embedded interface in struct
+
+type Stringer interface {
+	String() string
+}
+
+type Reader interface {
+	Read() int
+}
+
+type Named struct {
+	name string
+}
+
+func (n Named) String() string {
+	return n.name
+}
+
+type Data struct {
+	val int
+}
+
+func (d Data) Read() int {
+	return d.val
+}
+
+// Test 1: Struct with anonymous embedded interface
+type Container struct {
+	Stringer
+	extra int
+}
+
+func testAnonEmbedIface() {
+	c := Container{
+		Stringer: Named{name: "embedded"},
+		extra:    42,
+	}
+	
+	result := c.String()
+	assert(result == "embedded", "anon embed iface method")
+	assert(c.extra == 42, "anon embed extra field")
+}
+
+// Test 2: Nil interface in embedded field
+func testAnonEmbedNilIface() {
+	c := Container{
+		Stringer: nil,
+		extra:    10,
+	}
+	
+	assert(c.Stringer == nil, "nil embedded interface")
+	assert(c.extra == 10, "extra with nil embed")
+}
+
+// Test 3: Replace embedded interface
+func testReplaceEmbedIface() {
+	c := Container{
+		Stringer: Named{name: "first"},
+		extra:    1,
+	}
+	
+	assert(c.String() == "first", "initial embed")
+	
+	c.Stringer = Named{name: "second"}
+	assert(c.String() == "second", "replaced embed")
+}
+
+// Test 4: Multiple anonymous interfaces
+type MultiEmbed struct {
+	Stringer
+	Reader
+	val int
+}
+
+func testMultiAnonEmbed() {
+	m := MultiEmbed{
+		Stringer: Named{name: "str"},
+		Reader:   Data{val: 100},
+		val:      999,
+	}
+	
+	assert(m.String() == "str", "multi embed string")
+	assert(m.Read() == 100, "multi embed read")
+	assert(m.val == 999, "multi embed val")
+}
+
+// Test 5: Pass struct with embedded interface to function
+func useStringer(s Stringer) string {
+	return s.String()
+}
+
+func testPassEmbedToFunc() {
+	c := Container{
+		Stringer: Named{name: "pass"},
+		extra:    0,
+	}
+	
+	// Container implements Stringer through embedding
+	result := useStringer(c)
+	assert(result == "pass", "pass embed to func")
+}
+
+// Test 6: Type assertion on embedded interface field
+func testTypeAssertEmbedField() {
+	c := Container{
+		Stringer: Named{name: "assert"},
+		extra:    5,
+	}
+	
+	n, ok := c.Stringer.(Named)
+	assert(ok, "type assert ok")
+	assert(n.name == "assert", "type assert value")
+}
+
+// Test 7: Embedded interface with method value
+func testEmbedMethodValue() {
+	c := Container{
+		Stringer: Named{name: "method-value"},
+		extra:    0,
+	}
+	
+	f := c.String
+	result := f()
+	assert(result == "method-value", "embed method value")
+}
+
+// Test 8: Slice of structs with embedded interface
+func testSliceEmbedIface() {
+	cs := []Container{
+		{Stringer: Named{name: "a"}, extra: 1},
+		{Stringer: Named{name: "b"}, extra: 2},
+		{Stringer: Named{name: "c"}, extra: 3},
+	}
+	
+	result := ""
+	for _, c := range cs {
+		result += c.String()
+	}
+	assert(result == "abc", "slice embed iface")
+}
+
+// Test 9: Pointer to struct with embedded interface
+func testPtrEmbedIface() {
+	c := &Container{
+		Stringer: Named{name: "ptr"},
+		extra:    0,
+	}
+	
+	result := c.String()
+	assert(result == "ptr", "ptr embed iface")
+}
+
+// Test 10: Embedded interface in return value
+func getContainer() Container {
+	return Container{
+		Stringer: Named{name: "returned"},
+		extra:    7,
+	}
+}
+
+func testReturnEmbedIface() {
+	c := getContainer()
+	assert(c.String() == "returned", "return embed iface")
+}
+
+func main() {
+	testAnonEmbedIface()
+	testAnonEmbedNilIface()
+	testReplaceEmbedIface()
+	testMultiAnonEmbed()
+	testPassEmbedToFunc()
+	testTypeAssertEmbedField()
+	testEmbedMethodValue()
+	testSliceEmbedIface()
+	testPtrEmbedIface()
+	testReturnEmbedIface()
+	println("PASS")
+}
