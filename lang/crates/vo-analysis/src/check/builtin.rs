@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 
 use vo_common::span::Span;
-use vo_syntax::ast::{CallExpr, Expr};
+use vo_syntax::ast::{CallExpr, Expr, ExprId, ExprKind as AstExprKind};
 
 use crate::constant::Value;
 use crate::obj::Builtin;
@@ -25,13 +25,10 @@ impl Checker {
     /// Type-checks a call to the built-in function specified by id.
     /// Returns true if the call is valid, with *x holding the result.
     /// x.expr_id is not set. If the call is invalid, returns false and *x is undefined.
-    pub(crate) fn builtin(
-        &mut self,
-        x: &mut Operand,
-        call: &CallExpr,
-        call_span: Span,
-        id: Builtin,
-    ) -> bool {
+    pub(crate) fn builtin(&mut self, x: &mut Operand, e: &Expr, id: Builtin) -> bool {
+        let AstExprKind::Call(call) = &e.kind else { unreachable!() };
+        let call_span = e.span;
+        let call_expr_id = e.id;
         let binfo = self.universe().builtins()[&id];
 
         // append is the only built-in that permits the use of ... for the last argument
@@ -188,7 +185,7 @@ impl Checker {
                 ok
             }
             Builtin::Panic => {
-                let ok = self.builtin_panic(x, call, call_span);
+                let ok = self.builtin_panic(x, call, call_span, call_expr_id);
                 if ok {
                     // panic(x interface{})
                     let iempty = self.new_t_empty_interface();
@@ -546,6 +543,7 @@ impl Checker {
         x: &mut Operand,
         _call: &CallExpr,
         _call_span: Span,
+        call_expr_id: ExprId,
     ) -> bool {
         // Record panic call if inside a function with result parameters
         if let Some(sig) = self.octx.sig {
@@ -554,7 +552,7 @@ impl Checker {
                     if self.octx.panics.is_none() {
                         self.octx.panics = Some(std::collections::HashSet::new());
                     }
-                    // Record call expression id
+                    self.octx.panics.as_mut().unwrap().insert(call_expr_id);
                 }
             }
         }

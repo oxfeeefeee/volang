@@ -992,8 +992,8 @@ impl Checker {
             ExprKind::Binary(b) => {
                 self.binary(x, Some(e), &b.left, &b.right, b.op);
             }
-            ExprKind::Call(call) => {
-                self.call(x, call, e.span);
+            ExprKind::Call(_) => {
+                self.call(x, e);
             }
             ExprKind::Index(idx) => {
                 self.expr(x, &idx.expr);

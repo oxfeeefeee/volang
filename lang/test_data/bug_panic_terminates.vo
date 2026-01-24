@@ -1,0 +1,62 @@
+package main
+
+func panicWithReturn() int {
+	panic("unconditional panic")
+}
+
+func panicInBranch(x int) int {
+	if x > 0 {
+		return x
+	}
+	panic("negative")
+}
+
+func panicAfterDefer() int {
+	defer func() {
+		recover()
+	}()
+	panic("with defer")
+}
+
+func panicWithNamedReturn() (result int) {
+	result = 42
+	defer func() {
+		if e := recover(); e != nil {
+			result = 100
+		}
+	}()
+	panic("named return")
+}
+
+func testPanicTerminates() {
+	defer func() {
+		recover()
+	}()
+	panicWithReturn()
+}
+
+func testPanicInBranch() {
+	assert(panicInBranch(5) == 5, "positive branch")
+	
+	defer func() {
+		recover()
+	}()
+	panicInBranch(-1)
+}
+
+func testPanicAfterDefer() {
+	panicAfterDefer()
+}
+
+func testPanicWithNamedReturn() {
+	result := panicWithNamedReturn()
+	assert(result == 100, "named return modified by defer")
+}
+
+func main() {
+	testPanicTerminates()
+	testPanicInBranch()
+	testPanicAfterDefer()
+	testPanicWithNamedReturn()
+	println("PASS")
+}

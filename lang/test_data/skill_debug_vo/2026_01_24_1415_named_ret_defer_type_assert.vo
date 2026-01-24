@@ -1,0 +1,99 @@
+package main
+
+type Reader interface {
+	Read() int
+}
+
+type Writer interface {
+	Write(int)
+}
+
+type ReadWriter interface {
+	Reader
+	Writer
+}
+
+type Buffer struct {
+	data int
+}
+
+func (b *Buffer) Read() int   { return b.data }
+func (b *Buffer) Write(v int) { b.data = v }
+
+func getReaderWithDeferModify() (r Reader) {
+	b := &Buffer{data: 10}
+	r = b
+	defer func() {
+		if rw, ok := r.(ReadWriter); ok {
+			rw.Write(100)
+		}
+	}()
+	return
+}
+
+func testNamedReturnDeferTypeAssert() {
+	r := getReaderWithDeferModify()
+	val := r.Read()
+	assert(val == 100, "defer modified via type assert")
+}
+
+func getReaderConditional(modify bool) (r Reader) {
+	b := &Buffer{data: 20}
+	r = b
+	defer func() {
+		if modify {
+			if rw, ok := r.(ReadWriter); ok {
+				rw.Write(200)
+			}
+		}
+	}()
+	return
+}
+
+func testNamedReturnDeferConditional() {
+	r1 := getReaderConditional(true)
+	assert(r1.Read() == 200, "conditional modify true")
+	
+	r2 := getReaderConditional(false)
+	assert(r2.Read() == 20, "conditional modify false")
+}
+
+func getReaderChained() (r Reader) {
+	b := &Buffer{data: 5}
+	r = b
+	defer func() {
+		r.(ReadWriter).Write(r.Read() * 10)
+	}()
+	return
+}
+
+func testNamedReturnDeferChained() {
+	r := getReaderChained()
+	assert(r.Read() == 50, "chained read-modify")
+}
+
+func getReaderWithPanic() (r Reader) {
+	b := &Buffer{data: 30}
+	r = b
+	defer func() {
+		if e := recover(); e != nil {
+			if rw, ok := r.(ReadWriter); ok {
+				rw.Write(999)
+			}
+		}
+	}()
+	panic("test")
+}
+
+func testNamedReturnDeferPanicRecover() {
+	r := getReaderWithPanic()
+	assert(r.Read() == 999, "panic recovered and modified")
+}
+
+func main() {
+	testNamedReturnDeferTypeAssert()
+	testNamedReturnDeferConditional()
+	testNamedReturnDeferChained()
+	testNamedReturnDeferPanicRecover()
+	println("PASS")
+}

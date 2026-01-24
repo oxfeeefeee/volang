@@ -1,0 +1,63 @@
+package main
+
+func infiniteLoopTerminates() int {
+	for {
+		println("loop")
+	}
+}
+
+func infiniteLoopWithBreakNotTerminates() int {
+	for {
+		break
+	}
+	return 1
+}
+
+func switchAllCasesTerminate() int {
+	x := 1
+	switch x {
+	case 1:
+		return 10
+	case 2:
+		return 20
+	default:
+		return 30
+	}
+}
+
+func ifElseTerminates() int {
+	if true {
+		return 1
+	} else {
+		return 2
+	}
+}
+
+func panicInNestedCall() int {
+	func() {
+		panic("inner")
+	}()
+	return 0
+}
+
+func testInfiniteLoop() {
+	go func() {
+		infiniteLoopTerminates()
+	}()
+}
+
+func testSwitch() {
+	result := switchAllCasesTerminate()
+	assert(result == 10, "switch terminates")
+}
+
+func testIfElse() {
+	result := ifElseTerminates()
+	assert(result == 1, "if-else terminates")
+}
+
+func main() {
+	testSwitch()
+	testIfElse()
+	println("PASS")
+}

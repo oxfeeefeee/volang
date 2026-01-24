@@ -1,0 +1,91 @@
+package main
+
+var order []int
+
+func appendOrder(n int) {
+	order = append(order, n)
+}
+
+func testDeferOrderSimple() {
+	order = nil
+	func() {
+		defer appendOrder(1)
+		defer appendOrder(2)
+		defer appendOrder(3)
+	}()
+	assert(len(order) == 3, "three defers ran")
+	assert(order[0] == 3, "LIFO order 1")
+	assert(order[1] == 2, "LIFO order 2")
+	assert(order[2] == 1, "LIFO order 3")
+}
+
+func testDeferInLoop() {
+	order = nil
+	func() {
+		for i := range 3 {
+			defer appendOrder(i)
+		}
+	}()
+	assert(len(order) == 3, "loop defers ran")
+	assert(order[0] == 2, "loop LIFO 1")
+	assert(order[1] == 1, "loop LIFO 2")
+	assert(order[2] == 0, "loop LIFO 3")
+}
+
+func deferModifyNamedReturn() (result int) {
+	result = 10
+	defer func() {
+		result = result * 2
+	}()
+	return result + 5
+}
+
+func testDeferModifyNamedReturn() {
+	r := deferModifyNamedReturn()
+	assert(r == 30, "defer modifies named return after return expr")
+}
+
+func deferWithPanic() (result int) {
+	result = 1
+	defer func() {
+		if e := recover(); e != nil {
+			result = 999
+		}
+	}()
+	panic("test")
+	return
+}
+
+func testDeferWithPanic() {
+	r := deferWithPanic()
+	assert(r == 999, "defer recovers and modifies result")
+}
+
+func deferChainedPanic() (result int) {
+	result = 0
+	defer func() {
+		result += 1
+		if e := recover(); e != nil {
+			result += 10
+		}
+	}()
+	defer func() {
+		result += 100
+		panic("inner")
+	}()
+	return
+}
+
+func testDeferChainedPanic() {
+	r := deferChainedPanic()
+	assert(r == 111, "defer chain with panic")
+}
+
+func main() {
+	testDeferOrderSimple()
+	testDeferInLoop()
+	testDeferModifyNamedReturn()
+	testDeferWithPanic()
+	testDeferChainedPanic()
+	println("PASS")
+}

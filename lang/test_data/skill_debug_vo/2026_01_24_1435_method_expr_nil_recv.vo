@@ -1,0 +1,60 @@
+package main
+
+type Counter struct {
+	val int
+}
+
+func (c *Counter) Inc() {
+	if c != nil {
+		c.val++
+	}
+}
+
+func (c *Counter) Get() int {
+	if c == nil {
+		return -1
+	}
+	return c.val
+}
+
+func testNilReceiverMethodCall() {
+	var c *Counter
+	c.Inc()
+	assert(c.Get() == -1, "nil receiver returns -1")
+}
+
+func testNonNilReceiverMethodCall() {
+	c := &Counter{val: 5}
+	c.Inc()
+	assert(c.Get() == 6, "non-nil receiver incremented")
+}
+
+func testMethodExprWithNilReceiver() {
+	inc := (*Counter).Inc
+	get := (*Counter).Get
+	
+	var c *Counter
+	inc(c)
+	assert(get(c) == -1, "method expr with nil receiver")
+	
+	c2 := &Counter{val: 10}
+	inc(c2)
+	assert(get(c2) == 11, "method expr with non-nil receiver")
+}
+
+func testMethodValueWithNilReceiver() {
+	var c *Counter
+	inc := c.Inc
+	get := c.Get
+	
+	inc()
+	assert(get() == -1, "method value with nil receiver")
+}
+
+func main() {
+	testNilReceiverMethodCall()
+	testNonNilReceiverMethodCall()
+	testMethodExprWithNilReceiver()
+	testMethodValueWithNilReceiver()
+	println("PASS")
+}

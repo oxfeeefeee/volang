@@ -1,0 +1,9 @@
+package main
+
+func emptySelectTerminates() int {
+	select {}
+}
+
+func main() {
+	println("PASS")
+}

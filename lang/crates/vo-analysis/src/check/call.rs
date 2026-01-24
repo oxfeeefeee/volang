@@ -5,8 +5,7 @@
 //! Adapted from goscript with Vo-specific modifications.
 
 
-use vo_common::span::Span;
-use vo_syntax::ast::CallExpr;
+use vo_syntax::ast::{Expr, ExprKind as AstExprKind};
 
 use crate::objects::TypeKey;
 use crate::operand::{Operand, OperandMode};
@@ -20,12 +19,10 @@ use super::util::{UnpackResult, UnpackedResultLeftovers};
 impl Checker {
     /// Type-checks a call expression.
     /// Returns the expression kind (Statement, Conversion, or Expression).
-    pub(crate) fn call(
-        &mut self,
-        x: &mut Operand,
-        call: &CallExpr,
-        call_span: Span,
-    ) -> ExprKind {
+    pub(crate) fn call(&mut self, x: &mut Operand, e: &Expr) -> ExprKind {
+        let AstExprKind::Call(call) = &e.kind else { unreachable!() };
+        let call_span = e.span;
+
         // Evaluate the function expression
         self.raw_expr(x, &call.func, None);
 
@@ -60,7 +57,7 @@ impl Checker {
 
             OperandMode::Builtin(id) => {
                 let id = *id;
-                if !self.builtin(x, call, call_span, id) {
+                if !self.builtin(x, e, id) {
                     x.mode = OperandMode::Invalid;
                 }
                 // A non-constant result implies a function call
@@ -88,7 +85,7 @@ impl Checker {
                         _ => {
                             let (count, _) = result.rhs_count();
                             let re = UnpackedResultLeftovers::new(&result, None);
-                            self.arguments(x, call, call_span, sig_key, &re, count);
+                            self.arguments(x, e, sig_key, &re, count);
                         }
                     }
 
@@ -119,12 +116,13 @@ impl Checker {
     pub(crate) fn arguments(
         &mut self,
         x: &mut Operand,
-        call: &CallExpr,
-        call_span: Span,
+        e: &Expr,
         sig: TypeKey,
         re: &UnpackedResultLeftovers,
         n: usize,
     ) {
+        let AstExprKind::Call(call) = &e.kind else { unreachable!() };
+        let call_span = e.span;
         let sig_val = self.otype(sig).try_as_signature().unwrap();
         let variadic = sig_val.variadic();
         let params = self.otype(sig_val.params()).try_as_tuple().unwrap();
