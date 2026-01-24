@@ -666,25 +666,41 @@ class TestRunner:
         run_vm = mode in ('vm', 'both')
         run_jit = mode in ('jit', 'both') and self.arch != '32'
 
+        failed = False
+        
         if run_vm:
             print(f"Running [vm]: {path}")
             cmd = self._make_vo_cmd('run', str(path), '--mode=vm')
             if run_jit:
                 env['VO_JIT_CALL_THRESHOLD'] = '1'
-            code, stdout, stderr = run_cmd(cmd, env=env, capture=False)
-            if code != 0:
-                sys.exit(code)
+            code, stdout, stderr = run_cmd(cmd, env=env, capture=True)
+            output = stdout + stderr
+            print(output, end='')
+            
+            if '[VO:OK]' not in output:
+                print(f"{Colors.RED}FAIL: [vm] no [VO:OK] marker{Colors.NC}")
+                failed = True
+            elif code != 0:
+                print(f"{Colors.RED}FAIL: [vm] exit code {code}{Colors.NC}")
+                failed = True
 
         if run_jit:
             print(f"Running [jit]: {path}")
             jit_env = env.copy()
             jit_env['VO_JIT_CALL_THRESHOLD'] = '1'
             cmd = self._make_vo_cmd('run', str(path), '--mode=jit')
-            code, stdout, stderr = run_cmd(cmd, env=jit_env, capture=False)
-            if code != 0:
-                sys.exit(code)
+            code, stdout, stderr = run_cmd(cmd, env=jit_env, capture=True)
+            output = stdout + stderr
+            print(output, end='')
+            
+            if '[VO:OK]' not in output:
+                print(f"{Colors.RED}FAIL: [jit] no [VO:OK] marker{Colors.NC}")
+                failed = True
+            elif code != 0:
+                print(f"{Colors.RED}FAIL: [jit] exit code {code}{Colors.NC}")
+                failed = True
 
-        sys.exit(0)
+        sys.exit(1 if failed else 0)
 
     def _run_single_file_direct(self, path: Path, mode: str, env: dict):
         """Run single file directly with launcher (bypass CLI).

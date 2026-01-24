@@ -51,7 +51,7 @@ fn scan_globals(gc: &mut Gc, globals: &[u64], global_defs: &[GlobalDef]) {
     }
 }
 
-fn scan_fibers(gc: &mut Gc, fibers: &[Fiber], functions: &[FunctionDef]) {
+fn scan_fibers(gc: &mut Gc, fibers: &[Box<Fiber>], functions: &[FunctionDef]) {
     for fiber in fibers {
         // Scan stack frames
         for frame in &fiber.frames {

@@ -57,55 +57,45 @@ pub fn is_trampoline_fiber(id: u32) -> bool {
 #[derive(Debug)]
 pub struct Scheduler {
     /// Fibers indexed by id (id == index).
-    pub fibers: Vec<Fiber>,
+    /// Box<Fiber> ensures stable addresses - Vec reallocation won't invalidate fiber pointers.
+    pub fibers: Vec<Box<Fiber>>,
     /// Free slots from dead fibers, available for reuse.
     free_slots: Vec<u32>,
     pub ready_queue: VecDeque<u32>,
     pub current: Option<u32>,
     
     /// Trampoline fibers for JIT->VM calls (separate ID space with high bit set).
-    pub trampoline_fibers: Vec<Fiber>,
+    /// Box<Fiber> ensures stable addresses.
+    pub trampoline_fibers: Vec<Box<Fiber>>,
     /// Free slots in trampoline_fibers pool.
     trampoline_free_slots: Vec<u32>,
 }
 
 impl Scheduler {
-    /// Initial capacity for trampoline fibers.
-    const INITIAL_TRAMPOLINE_CAPACITY: usize = 8;
-    
     pub fn new() -> Self {
         Scheduler {
             fibers: Vec::new(),
             free_slots: Vec::new(),
             ready_queue: VecDeque::new(),
             current: None,
-            trampoline_fibers: Vec::with_capacity(Self::INITIAL_TRAMPOLINE_CAPACITY),
+            trampoline_fibers: Vec::new(),
             trampoline_free_slots: Vec::new(),
         }
     }
     
     /// Acquire a trampoline fiber for JIT->VM calls.
     /// Returns fiber ID with high bit set.
-    /// 
-    /// IMPORTANT: This function must NOT cause Vec reallocation because run_fiber
-    /// caches raw pointers to fibers. We ensure this by reserving capacity before push.
     pub fn acquire_trampoline_fiber(&mut self) -> u32 {
         let index = if let Some(slot) = self.trampoline_free_slots.pop() {
             // Reuse existing fiber
-            let fiber = &mut self.trampoline_fibers[slot as usize];
-            fiber.reset();
+            self.trampoline_fibers[slot as usize].reset();
             slot
         } else {
-            // Create new fiber - MUST reserve before push to prevent reallocation
+            // Create new fiber
             let index = self.trampoline_fibers.len() as u32;
-            if self.trampoline_fibers.len() >= self.trampoline_fibers.capacity() {
-                // Double capacity or add 16, whichever is larger
-                let additional = self.trampoline_fibers.capacity().max(16);
-                self.trampoline_fibers.reserve(additional);
-            }
             let mut fiber = Fiber::new(TRAMPOLINE_FIBER_FLAG | index);
             fiber.status = FiberStatus::Running;
-            self.trampoline_fibers.push(fiber);
+            self.trampoline_fibers.push(Box::new(fiber));
             index
         };
         TRAMPOLINE_FIBER_FLAG | index
@@ -123,7 +113,7 @@ impl Scheduler {
     pub fn trampoline_fiber(&self, id: u32) -> &Fiber {
         debug_assert!(is_trampoline_fiber(id));
         let index = (id & !TRAMPOLINE_FIBER_FLAG) as usize;
-        &self.trampoline_fibers[index]
+        &*self.trampoline_fibers[index]
     }
     
     /// Get mutable trampoline fiber by ID.
@@ -131,7 +121,7 @@ impl Scheduler {
     pub fn trampoline_fiber_mut(&mut self, id: u32) -> &mut Fiber {
         debug_assert!(is_trampoline_fiber(id));
         let index = (id & !TRAMPOLINE_FIBER_FLAG) as usize;
-        &mut self.trampoline_fibers[index]
+        &mut *self.trampoline_fibers[index]
     }
 
     /// Spawn a new fiber, returns its id.
@@ -140,13 +130,13 @@ impl Scheduler {
         let id = if let Some(slot) = self.free_slots.pop() {
             // Reuse dead fiber slot
             fiber.id = slot;
-            self.fibers[slot as usize] = fiber;
+            *self.fibers[slot as usize] = fiber;
             slot
         } else {
             // Allocate new slot
             let id = self.fibers.len() as u32;
             fiber.id = id;
-            self.fibers.push(fiber);
+            self.fibers.push(Box::new(fiber));
             id
         };
         self.ready_queue.push_back(id);
@@ -157,14 +147,14 @@ impl Scheduler {
     /// Note: Does NOT handle trampoline fibers. Use `get_fiber_by_id` for unified access.
     #[inline]
     pub fn fiber(&self, id: u32) -> &Fiber {
-        &self.fibers[id as usize]
+        &*self.fibers[id as usize]
     }
 
     /// Get mutable fiber by id (O(1) index access).
     /// Note: Does NOT handle trampoline fibers. Use `get_fiber_mut_by_id` for unified access.
     #[inline]
     pub fn fiber_mut(&mut self, id: u32) -> &mut Fiber {
-        &mut self.fibers[id as usize]
+        &mut *self.fibers[id as usize]
     }
     
     /// Get fiber by id, handling both regular and trampoline fibers.
@@ -173,7 +163,7 @@ impl Scheduler {
         if is_trampoline_fiber(id) {
             self.trampoline_fiber(id)
         } else {
-            &self.fibers[id as usize]
+            &*self.fibers[id as usize]
         }
     }
     
@@ -183,7 +173,7 @@ impl Scheduler {
         if is_trampoline_fiber(id) {
             self.trampoline_fiber_mut(id)
         } else {
-            &mut self.fibers[id as usize]
+            &mut *self.fibers[id as usize]
         }
     }
     
@@ -191,8 +181,8 @@ impl Scheduler {
     #[inline]
     pub fn get_fiber(&self, id: FiberId) -> &Fiber {
         match id {
-            FiberId::Regular(idx) => &self.fibers[idx as usize],
-            FiberId::Trampoline(idx) => &self.trampoline_fibers[idx as usize],
+            FiberId::Regular(idx) => &*self.fibers[idx as usize],
+            FiberId::Trampoline(idx) => &*self.trampoline_fibers[idx as usize],
         }
     }
     
@@ -200,8 +190,8 @@ impl Scheduler {
     #[inline]
     pub fn get_fiber_mut(&mut self, id: FiberId) -> &mut Fiber {
         match id {
-            FiberId::Regular(idx) => &mut self.fibers[idx as usize],
-            FiberId::Trampoline(idx) => &mut self.trampoline_fibers[idx as usize],
+            FiberId::Regular(idx) => &mut *self.fibers[idx as usize],
+            FiberId::Trampoline(idx) => &mut *self.trampoline_fibers[idx as usize],
         }
     }
     
@@ -228,13 +218,13 @@ impl Scheduler {
     /// Get current fiber reference.
     #[inline]
     pub fn current_fiber(&self) -> Option<&Fiber> {
-        self.current.map(|id| &self.fibers[id as usize])
+        self.current.map(|id| &*self.fibers[id as usize])
     }
 
     /// Get current fiber mutable reference.
     #[inline]
     pub fn current_fiber_mut(&mut self) -> Option<&mut Fiber> {
-        self.current.map(|id| &mut self.fibers[id as usize])
+        self.current.map(|id| &mut *self.fibers[id as usize])
     }
 
     pub fn wake(&mut self, id: u32) {

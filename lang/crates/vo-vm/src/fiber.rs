@@ -26,6 +26,9 @@ pub struct DeferEntry {
     pub arg_slots: u16,
     pub is_closure: bool,
     pub is_errdefer: bool,
+    /// The panic generation when this defer was registered.
+    /// A defer can recover a panic only if registered_at < current panic_generation.
+    pub registered_at_generation: u64,
 }
 
 /// How return values are stored while defers execute.
@@ -88,6 +91,9 @@ pub struct UnwindingState {
     pub target_depth: usize,
     /// What kind of unwinding is in progress.
     pub kind: UnwindingKind,
+    /// The generation of the currently executing defer.
+    /// Used with Fiber.panic_generation to check if recover() should work.
+    pub current_defer_generation: u64,
 }
 
 
@@ -157,6 +163,9 @@ pub struct Fiber {
     pub unwinding: Option<UnwindingState>,
     pub select_state: Option<SelectState>,
     pub panic_state: Option<PanicState>,
+    /// Incremented each time a new panic starts. Used to determine which defers can recover.
+    /// A defer registered at generation N can only recover panics with generation > N.
+    pub panic_generation: u64,
 }
 
 impl Fiber {
@@ -170,6 +179,7 @@ impl Fiber {
             unwinding: None,
             select_state: None,
             panic_state: None,
+            panic_generation: 0,
         }
     }
     
@@ -182,6 +192,7 @@ impl Fiber {
         self.unwinding = None;
         self.select_state = None;
         self.panic_state = None;
+        self.panic_generation = 0;
     }
     
     /// Check if current panic is recoverable and return the interface{} value if so.
@@ -202,7 +213,9 @@ impl Fiber {
     }
     
     /// Set a recoverable panic with full interface{} value (InterfaceSlot).
+    /// Also increments panic_generation so we can track which defers can recover.
     pub fn set_recoverable_panic(&mut self, msg: InterfaceSlot) {
+        self.panic_generation += 1;
         self.panic_state = Some(PanicState::Recoverable(msg));
     }
     
@@ -215,11 +228,23 @@ impl Fiber {
     /// (not in a nested call from the defer function).
     /// Per Go semantics, recover() only works when called directly from defer.
     /// Defer functions run at depth = target_depth + 1.
+    /// Additionally, the defer must have been registered before the current panic started.
     #[inline]
     pub fn is_direct_defer_context(&self) -> bool {
         match &self.unwinding {
-            Some(UnwindingState { kind: UnwindingKind::Panic { .. }, target_depth, .. }) => {
-                self.frames.len() == *target_depth + 1
+            Some(UnwindingState { 
+                kind: UnwindingKind::Panic { .. }, 
+                target_depth, 
+                current_defer_generation,
+                ..
+            }) => {
+                // Must be at defer execution depth
+                if self.frames.len() != *target_depth + 1 {
+                    return false;
+                }
+                // Defer must have been registered before the current panic
+                // (registered_at < panic_generation means it was registered before this panic)
+                *current_defer_generation < self.panic_generation
             }
             _ => false,
         }
@@ -229,7 +254,7 @@ impl Fiber {
     /// This prevents nested calls within the defer function from triggering panic_unwind.
     pub fn switch_panic_to_return_mode(&mut self) {
         let Some(ref mut state) = self.unwinding else { return };
-        let UnwindingKind::Panic { heap_gcrefs, slots_per_ref, caller_ret_reg, caller_ret_count } = &mut state.kind else { return };
+        let UnwindingKind::Panic { heap_gcrefs, slots_per_ref, caller_ret_reg, caller_ret_count, .. } = &mut state.kind else { return };
         
         let return_kind = match heap_gcrefs.take() {
             Some(gcrefs) => PendingReturnKind::Heap { gcrefs, slots_per_ref: core::mem::take(slots_per_ref) },

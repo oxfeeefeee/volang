@@ -299,8 +299,8 @@ impl Vm {
         let module = unsafe { &*module_ptr };
 
         // Cache fiber pointer outside the loop
-        // SAFETY: fiber_ptr is valid as long as we don't reallocate fibers vec (only GoStart does)
-        let mut fiber_ptr = self.scheduler.get_fiber_mut(fiber_id) as *mut Fiber;
+        // SAFETY: Box<Fiber> ensures stable addresses - fiber_ptr remains valid across Vec operations
+        let fiber_ptr = self.scheduler.get_fiber_mut(fiber_id) as *mut Fiber;
         let fiber = unsafe { &mut *fiber_ptr };
 
         // SAFETY: We manually manage borrows via raw pointers to avoid borrow checker conflicts.
@@ -825,10 +825,10 @@ impl Vm {
                         // Defer returned in Panic mode - use panic unwind path
                         exec::handle_panic_unwind(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &fiber.panic_state, module)
                     } else {
-                        // Normal return or defer returned in Return mode
+                        // Normal return or defer returned
                         let func = &module.functions[func_id as usize];
                         let is_error_return = (inst.flags & 1) != 0;
-                        exec::handle_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &inst, func, module, is_error_return)
+                        exec::handle_return(stack, &mut fiber.frames, &mut fiber.defer_stack, &mut fiber.unwinding, &fiber.panic_state, &inst, func, module, is_error_return)
                     }
                 }
 
@@ -1257,29 +1257,23 @@ impl Vm {
                     ExecResult::Continue
                 }
 
-                // Goroutine - needs scheduler
-                // NOTE: spawn may reallocate fibers vec, must reload all pointers after
+                // Goroutine - spawn new fiber
                 Opcode::GoStart => {
                     let next_id = self.scheduler.fibers.len() as u32;
                     let go_result = exec::exec_go_start(&stack, bp, &inst, &module.functions, next_id);
                     self.scheduler.spawn(go_result.new_fiber);
-                    // Reload fiber pointer after potential reallocation
-                    // Trampoline fibers are in separate array, don't need reload
-                    if let crate::scheduler::FiberId::Regular(idx) = fiber_id {
-                        fiber_ptr = &mut self.scheduler.fibers[idx as usize] as *mut Fiber;
-                        let _ = unsafe { &mut *fiber_ptr };
-                    }
-                    // Return Yield to restart loop with fresh stack/frames pointers
+                    // With Box<Fiber>, fiber addresses are stable across Vec reallocation.
+                    // But we still return to refresh stack/frames pointers for consistency.
                     return ExecResult::Continue;
                 }
 
                 // Defer and error handling
                 Opcode::DeferPush => {
-                    exec::exec_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc);
+                    exec::exec_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc, fiber.panic_generation);
                     ExecResult::Continue
                 }
                 Opcode::ErrDeferPush => {
-                    exec::exec_err_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc);
+                    exec::exec_err_defer_push(&stack, bp, &fiber.frames, &mut fiber.defer_stack, &inst, &mut self.state.gc, fiber.panic_generation);
                     ExecResult::Continue
                 }
                 Opcode::Panic => {

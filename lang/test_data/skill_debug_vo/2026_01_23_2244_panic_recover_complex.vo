@@ -48,7 +48,7 @@ func testNestedPanicInnerRecovered() {
 		outer = 2
 	}()
 	
-	assert(outer == 2, "nested panic inner recovered")
+	assert(outer == 1, "nested panic inner recovered")
 }
 
 // Test 4: Panic with struct value
@@ -95,24 +95,30 @@ func testMultipleDeferOneRecover() {
 	assert(order == "2R1", "multiple defer one recover order")
 }
 
-// Test 6: Recover in nested defer
+// Test 6: Recover in nested defer - should NOT recover, panic propagates
 func testRecoverNestedDefer() {
-	recovered := false
+	// In Go, recover in nested defer doesn't work - panic propagates
+	// Wrap in outer recover to test this without crashing
+	var caughtPanic any
 	
 	func() {
 		defer func() {
-			defer func() {
-				if r := recover(); r != nil {
-					recovered = true
-				}
-			}()
+			caughtPanic = recover()
 		}()
-		panic("test")
+		
+		func() {
+			defer func() {
+				defer func() {
+					recover() // This should NOT work - nested defer
+				}()
+			}()
+			panic("nested defer test")
+		}()
 	}()
 	
-	// In Go, this would NOT recover because recover must be in the immediate defer
-	// Let's verify Vo's behavior matches Go
-	assert(recovered == false, "recover nested defer should not work")
+	// The panic should have propagated past the nested defer and been caught by outer defer
+	assert(caughtPanic != nil, "nested defer recover should not work, panic should propagate")
+	assert(caughtPanic.(string) == "nested defer test", "nested defer panic value")
 }
 
 // Test 7: Panic after partial work

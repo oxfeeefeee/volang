@@ -297,11 +297,13 @@ impl Vm {
                 }
             }
         } else if result == JitResult::Panic && !caller_fiber_ptr.is_null() {
-            // VM execution panicked - propagate panic_state to caller fiber
+            // VM execution panicked - propagate panic_state and panic_generation to caller fiber
             let trampoline_fiber = self.scheduler.trampoline_fiber_mut(trampoline_id);
             if let Some(panic_state) = trampoline_fiber.panic_state.take() {
                 let caller_fiber = unsafe { &mut *(caller_fiber_ptr as *mut Fiber) };
                 caller_fiber.panic_state = Some(panic_state);
+                // Also propagate panic_generation so caller's defers can recover
+                caller_fiber.panic_generation = trampoline_fiber.panic_generation;
             }
         }
         

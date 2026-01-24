@@ -803,8 +803,7 @@ tests:
   - file: skill_debug_vo/2026_01_23_2235_bare_return_iface.vo
   - file: skill_debug_vo/2026_01_23_2243_multi_ret_as_arg.vo
   - file: skill_debug_vo/2026_01_23_2244_panic_recover_complex.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
+    # Bug fixed: nested defer recover now correctly matches Go semantics
   - file: skill_debug_vo/2026_01_23_closure_loop_iface.vo
     skip: [vm, jit]
     reason: "pending bug fix"

@@ -22,8 +22,9 @@ pub fn exec_defer_push(
     defer_stack: &mut Vec<DeferEntry>,
     inst: &Instruction,
     gc: &mut Gc,
+    panic_generation: u64,
 ) {
-    push_defer_entry(stack, bp, frames, defer_stack, inst, gc, false);
+    push_defer_entry(stack, bp, frames, defer_stack, inst, gc, false, panic_generation);
 }
 
 #[inline]
@@ -34,8 +35,9 @@ pub fn exec_err_defer_push(
     defer_stack: &mut Vec<DeferEntry>,
     inst: &Instruction,
     gc: &mut Gc,
+    panic_generation: u64,
 ) {
-    push_defer_entry(stack, bp, frames, defer_stack, inst, gc, true);
+    push_defer_entry(stack, bp, frames, defer_stack, inst, gc, true, panic_generation);
 }
 
 fn push_defer_entry(
@@ -46,6 +48,7 @@ fn push_defer_entry(
     inst: &Instruction,
     gc: &mut Gc,
     is_errdefer: bool,
+    panic_generation: u64,
 ) {
     let is_closure = (inst.flags & 1) != 0;
     let arg_start = inst.b;
@@ -79,6 +82,7 @@ fn push_defer_entry(
         arg_slots,
         is_closure,
         is_errdefer,
+        registered_at_generation: panic_generation,
     });
 }
 
