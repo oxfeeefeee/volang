@@ -14,7 +14,6 @@ use alloc::format;
 use vo_common_core::types::ValueKind;
 
 use crate::ffi::{ExternCallContext, ExternResult};
-use crate::objects::string;
 use super::fmt::format_interface_with_ctx;
 
 /// Format all interface{} args starting from `start_slot` into a space-separated string.

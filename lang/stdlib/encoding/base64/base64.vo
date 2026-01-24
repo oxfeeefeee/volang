@@ -3,7 +3,7 @@ package base64
 import "errors"
 
 // ErrCorruptInput indicates corrupt base64 input.
-var ErrCorruptInput = errors.NewCode(errors.CodeBase64CorruptInput, "base64: corrupt input")
+var ErrCorruptInput = errors.New("base64: corrupt input")
 
 // Standard encoding alphabet
 const encodeStd = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

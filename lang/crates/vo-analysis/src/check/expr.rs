@@ -1515,8 +1515,8 @@ impl Checker {
             base_type
         };
         
-        // If base is interface, use dynamic dispatch
-        if self.otype(actual_base_type).try_as_interface().is_some() {
+        // If base is interface, use dynamic dispatch (check underlying for Named types like error)
+        if crate::typ::is_interface(actual_base_type, self.objs()) {
             return Ok(None);
         }
         
@@ -1603,8 +1603,8 @@ impl Checker {
             base_type
         };
         
-        // If base is interface, use dynamic dispatch
-        if self.otype(actual_base_type).try_as_interface().is_some() {
+        // If base is interface, use dynamic dispatch (check underlying for Named types like error)
+        if crate::typ::is_interface(actual_base_type, self.objs()) {
             return Ok(None);
         }
         

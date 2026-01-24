@@ -14,7 +14,6 @@ use vo_syntax::ast::File;
 use crate::printer::AstPrinter;
 use crate::format::format_text;
 
-const CODE_IO: isize = 2000;
 
 // ============ Module Storage ============
 
@@ -124,7 +123,7 @@ fn runner_compile_file(ctx: &mut ExternCallContext) -> ExternResult {
         }
         Err(e) => {
             ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-            write_error_to(ctx, slots::RET_1, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_1, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -142,7 +141,7 @@ fn runner_compile_dir(ctx: &mut ExternCallContext) -> ExternResult {
         }
         Err(e) => {
             ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-            write_error_to(ctx, slots::RET_1, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_1, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -160,7 +159,7 @@ fn runner_compile_string(ctx: &mut ExternCallContext) -> ExternResult {
         }
         Err(e) => {
             ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-            write_error_to(ctx, slots::RET_1, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_1, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -175,7 +174,7 @@ fn runner_run(ctx: &mut ExternCallContext) -> ExternResult {
     let stored = match get_module(module_id) {
         Some(m) => m,
         None => {
-            write_error_to(ctx, slots::RET_0, 0, "invalid module handle");
+            write_error_to(ctx, slots::RET_0, "invalid module handle");
             return ExternResult::Ok;
         }
     };
@@ -189,7 +188,7 @@ fn runner_run(ctx: &mut ExternCallContext) -> ExternResult {
     match run_module_with_extensions(output, RunMode::Vm, Vec::new()) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
-            write_error_to(ctx, slots::RET_0, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_0, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -202,7 +201,7 @@ fn runner_run_jit(ctx: &mut ExternCallContext) -> ExternResult {
     let stored = match get_module(module_id) {
         Some(m) => m,
         None => {
-            write_error_to(ctx, slots::RET_0, 0, "invalid module handle");
+            write_error_to(ctx, slots::RET_0, "invalid module handle");
             return ExternResult::Ok;
         }
     };
@@ -216,7 +215,7 @@ fn runner_run_jit(ctx: &mut ExternCallContext) -> ExternResult {
     match run_module_with_extensions(output, RunMode::Jit, Vec::new()) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
-            write_error_to(ctx, slots::RET_0, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_0, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -229,7 +228,7 @@ fn runner_run_file(ctx: &mut ExternCallContext) -> ExternResult {
     match run_file_with_mode(&path, RunMode::Vm) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
-            write_error_to(ctx, slots::RET_0, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_0, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -242,7 +241,7 @@ fn runner_run_file_jit(ctx: &mut ExternCallContext) -> ExternResult {
     match run_file_with_mode(&path, RunMode::Jit) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
-            write_error_to(ctx, slots::RET_0, 0, &e.to_string());
+            write_error_to(ctx, slots::RET_0, &e.to_string());
         }
     }
     ExternResult::Ok
@@ -297,7 +296,7 @@ fn runner_parse_file(ctx: &mut ExternCallContext) -> ExternResult {
         Ok(c) => c,
         Err(e) => {
             ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-            write_error_to(ctx, slots::RET_1, CODE_IO, &e.to_string());
+            write_error_to(ctx, slots::RET_1, &e.to_string());
             return ExternResult::Ok;
         }
     };
@@ -307,7 +306,7 @@ fn runner_parse_file(ctx: &mut ExternCallContext) -> ExternResult {
     if diag.has_errors() {
         let msg = diag.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("; ");
         ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-        write_error_to(ctx, slots::RET_1, CODE_IO, &msg);
+        write_error_to(ctx, slots::RET_1, &msg);
         return ExternResult::Ok;
     }
     
@@ -326,7 +325,7 @@ fn runner_parse_string(ctx: &mut ExternCallContext) -> ExternResult {
     if diag.has_errors() {
         let msg = diag.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("; ");
         ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-        write_error_to(ctx, slots::RET_1, CODE_IO, &msg);
+        write_error_to(ctx, slots::RET_1, &msg);
         return ExternResult::Ok;
     }
     
@@ -379,7 +378,7 @@ fn runner_save_bytecode_text(ctx: &mut ExternCallContext) -> ExternResult {
     let module = match get_module(module_id) {
         Some(m) => m,
         None => {
-            write_error_to(ctx, slots::RET_0, CODE_IO, "invalid module handle");
+            write_error_to(ctx, slots::RET_0, "invalid module handle");
             return ExternResult::Ok;
         }
     };
@@ -387,7 +386,7 @@ fn runner_save_bytecode_text(ctx: &mut ExternCallContext) -> ExternResult {
     let text = format_text(&module.module);
     match std::fs::write(&path, text) {
         Ok(()) => write_nil_error(ctx, slots::RET_0),
-        Err(e) => write_error_to(ctx, slots::RET_0, CODE_IO, &e.to_string()),
+        Err(e) => write_error_to(ctx, slots::RET_0, &e.to_string()),
     }
     ExternResult::Ok
 }
@@ -398,7 +397,7 @@ fn runner_load_bytecode_text(ctx: &mut ExternCallContext) -> ExternResult {
     
     // Text parsing not yet implemented
     ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-    write_error_to(ctx, slots::RET_1, CODE_IO, "bytecode text parsing not yet implemented");
+    write_error_to(ctx, slots::RET_1, "bytecode text parsing not yet implemented");
     ExternResult::Ok
 }
 
@@ -410,7 +409,7 @@ fn runner_save_bytecode_binary(ctx: &mut ExternCallContext) -> ExternResult {
     let module = match get_module(module_id) {
         Some(m) => m,
         None => {
-            write_error_to(ctx, slots::RET_0, CODE_IO, "invalid module handle");
+            write_error_to(ctx, slots::RET_0, "invalid module handle");
             return ExternResult::Ok;
         }
     };
@@ -418,7 +417,7 @@ fn runner_save_bytecode_binary(ctx: &mut ExternCallContext) -> ExternResult {
     let bytes = module.module.serialize();
     match std::fs::write(&path, bytes) {
         Ok(()) => write_nil_error(ctx, slots::RET_0),
-        Err(e) => write_error_to(ctx, slots::RET_0, CODE_IO, &e.to_string()),
+        Err(e) => write_error_to(ctx, slots::RET_0, &e.to_string()),
     }
     ExternResult::Ok
 }
@@ -431,7 +430,7 @@ fn runner_load_bytecode_binary(ctx: &mut ExternCallContext) -> ExternResult {
         Ok(b) => b,
         Err(e) => {
             ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-            write_error_to(ctx, slots::RET_1, CODE_IO, &e.to_string());
+            write_error_to(ctx, slots::RET_1, &e.to_string());
             return ExternResult::Ok;
         }
     };
@@ -449,7 +448,7 @@ fn runner_load_bytecode_binary(ctx: &mut ExternCallContext) -> ExternResult {
         }
         Err(e) => {
             ctx.ret_any(slots::RET_0, InterfaceSlot::nil());
-            write_error_to(ctx, slots::RET_1, CODE_IO, &format!("{:?}", e));
+            write_error_to(ctx, slots::RET_1, &format!("{:?}", e));
         }
     }
     ExternResult::Ok

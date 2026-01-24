@@ -79,12 +79,12 @@ pub fn format_interface_with_ctx(slot0: u64, slot1: u64, call: Option<&crate::ff
 }
 
 /// Format error chain recursively: "msg: cause_msg: cause_cause_msg..."
-/// field_offsets: [code, msg, cause, data]
-fn format_error_chain(ptr: GcRef, field_offsets: [u16; 4], ctx: &ExternCallContext) -> String {
+/// field_offsets: [msg, cause]
+fn format_error_chain(ptr: GcRef, field_offsets: [u16; 2], ctx: &ExternCallContext) -> String {
     use crate::gc::Gc;
     
     // Read msg field
-    let msg_ref = unsafe { Gc::read_slot(ptr, field_offsets[1] as usize) } as GcRef;
+    let msg_ref = unsafe { Gc::read_slot(ptr, field_offsets[0] as usize) } as GcRef;
     let msg = if !msg_ref.is_null() {
         string::as_str(msg_ref).to_string()
     } else {
@@ -92,8 +92,8 @@ fn format_error_chain(ptr: GcRef, field_offsets: [u16; 4], ctx: &ExternCallConte
     };
     
     // Read cause field (interface: 2 slots)
-    let cause_slot0 = unsafe { Gc::read_slot(ptr, field_offsets[2] as usize) };
-    let cause_slot1 = unsafe { Gc::read_slot(ptr, field_offsets[2] as usize + 1) };
+    let cause_slot0 = unsafe { Gc::read_slot(ptr, field_offsets[1] as usize) };
+    let cause_slot1 = unsafe { Gc::read_slot(ptr, field_offsets[1] as usize + 1) };
     
     // Check if cause is nil (slot0 == 0 means nil interface)
     if cause_slot0 == 0 {

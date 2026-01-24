@@ -49,7 +49,7 @@ fn marshal_impl(call: &mut ExternCallContext) -> ExternResult {
         }
         Err(msg) => {
             call.ret_nil(0);
-            write_error_to(call, 1, call.dyn_err().type_mismatch, msg);
+            write_error_to(call, 1, msg);
             ExternResult::Ok
         }
     }
@@ -65,13 +65,13 @@ fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     let json_str = {
         let data = call.arg_bytes(0);
         if data.is_empty() {
-            write_error_to(call, 0, call.dyn_err().type_mismatch, "empty JSON");
+            write_error_to(call, 0, "empty JSON");
             return ExternResult::Ok;
         }
         match core::str::from_utf8(data) {
             Ok(s) => s.to_string(),
             Err(_) => {
-                write_error_to(call, 0, call.dyn_err().type_mismatch, "invalid UTF-8");
+                write_error_to(call, 0, "invalid UTF-8");
                 return ExternResult::Ok;
             }
         }
@@ -84,13 +84,13 @@ fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     let rttid = interface::unpack_rttid(v_slot0);
     
     if vk != ValueKind::Pointer {
-        write_error_to(call, 0, call.dyn_err().type_mismatch, "target must be pointer");
+        write_error_to(call, 0, "target must be pointer");
         return ExternResult::Ok;
     }
     
     let ptr = v_slot1 as GcRef;
     if ptr.is_null() {
-        write_error_to(call, 0, call.dyn_err().nil_base, "nil pointer");
+        write_error_to(call, 0, "nil pointer");
         return ExternResult::Ok;
     }
     
@@ -98,7 +98,7 @@ fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     
     match unmarshal_struct::<JsonReader>(call, ptr, pointed_rttid, json_str.trim()) {
         Ok(()) => { call.ret_nil(0); call.ret_nil(1); }
-        Err(msg) => write_error_to(call, 0, call.dyn_err().type_mismatch, msg),
+        Err(msg) => write_error_to(call, 0, msg),
     }
     ExternResult::Ok
 }
@@ -141,7 +141,7 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
     if pos >= data.len() || data[pos] != b'"' {
         call.ret_str(0, "");
         call.ret_i64(1, pos as i64);
-        write_error_to(call, 2, call.dyn_err().type_mismatch, "expected string");
+        write_error_to(call, 2, "expected string");
         return ExternResult::Ok;
     }
     
@@ -153,7 +153,7 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
         if pos >= data.len() {
             call.ret_str(0, "");
             call.ret_i64(1, pos as i64);
-            write_error_to(call, 2, call.dyn_err().type_mismatch, "unterminated string");
+            write_error_to(call, 2, "unterminated string");
             return ExternResult::Ok;
         }
         
@@ -180,7 +180,7 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
             if pos >= data.len() {
                 call.ret_str(0, "");
                 call.ret_i64(1, pos as i64);
-                write_error_to(call, 2, call.dyn_err().type_mismatch, "unterminated escape");
+                write_error_to(call, 2, "unterminated escape");
                 return ExternResult::Ok;
             }
             let esc = data[pos];
@@ -196,7 +196,7 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
                     if pos + 4 >= data.len() {
                         call.ret_str(0, "");
                         call.ret_i64(1, pos as i64);
-                        write_error_to(call, 2, call.dyn_err().type_mismatch, "invalid unicode escape");
+                        write_error_to(call, 2, "invalid unicode escape");
                         return ExternResult::Ok;
                     }
                     let hex = &data[pos+1..pos+5];
@@ -213,7 +213,7 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
                 _ => {
                     call.ret_str(0, "");
                     call.ret_i64(1, pos as i64);
-                    write_error_to(call, 2, call.dyn_err().type_mismatch, "invalid escape");
+                    write_error_to(call, 2, "invalid escape");
                     return ExternResult::Ok;
                 }
             }
@@ -221,7 +221,7 @@ fn parse_json_string_extern(call: &mut ExternCallContext) -> ExternResult {
         } else if c < 0x20 {
             call.ret_str(0, "");
             call.ret_i64(1, pos as i64);
-            write_error_to(call, 2, call.dyn_err().type_mismatch, "control char in string");
+            write_error_to(call, 2, "control char in string");
             return ExternResult::Ok;
         } else {
             if let Some(b) = buf.as_mut() {

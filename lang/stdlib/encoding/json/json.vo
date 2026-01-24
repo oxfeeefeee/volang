@@ -20,12 +20,12 @@ func parseJsonString(data []byte, pos int) (string, int, error)
 
 // Errors
 var (
-	ErrSyntax        = errors.NewCode(errors.CodeJsonSyntax, "json syntax error")
-	ErrUnexpectedEOF = errors.NewCode(errors.CodeJsonUnexpectedEOF, "unexpected end of JSON input")
-	ErrInvalidValue  = errors.NewCode(errors.CodeJsonInvalidValue, "invalid JSON value")
-	ErrTypeMismatch  = errors.NewCode(errors.CodeJsonTypeMismatch, "JSON type mismatch")
-	ErrMarshal       = errors.NewCode(errors.CodeJsonMarshal, "JSON marshal error")
-	ErrUnmarshal     = errors.NewCode(errors.CodeJsonUnmarshal, "JSON unmarshal error")
+	ErrSyntax        = errors.New("json syntax error")
+	ErrUnexpectedEOF = errors.New("unexpected end of JSON input")
+	ErrInvalidValue  = errors.New("invalid JSON value")
+	ErrTypeMismatch  = errors.New("JSON type mismatch")
+	ErrMarshal       = errors.New("JSON marshal error")
+	ErrUnmarshal     = errors.New("JSON unmarshal error")
 )
 
 // Number preserves the original string representation of a JSON number.

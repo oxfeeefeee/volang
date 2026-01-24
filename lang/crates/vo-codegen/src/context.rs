@@ -348,9 +348,9 @@ impl CodegenContext {
         }
     }
 
-    /// Fill WellKnownTypes with pre-computed IDs for errors.Error and dyn error codes.
+    /// Fill WellKnownTypes with pre-computed IDs for errors.Error.
     /// Should be called after all types are registered.
-    pub fn fill_well_known_types(&mut self, project: &vo_analysis::Project) {
+    pub fn fill_well_known_types(&mut self) {
         use vo_runtime::RuntimeType;
         
         
@@ -393,18 +393,13 @@ impl CodegenContext {
             None
         };
         
-        // Get field offsets for errors.Error: [code, msg, cause, data]
+        // Get field offsets for errors.Error: [msg, cause]
         let error_field_offsets = error_struct_meta_id.and_then(|meta_id| {
             let meta = self.module.struct_metas.get(meta_id as usize)?;
-            let code_offset = meta.get_field("code").map(|f| f.offset)?;
             let msg_offset = meta.get_field("msg").map(|f| f.offset)?;
             let cause_offset = meta.get_field("cause").map(|f| f.offset)?;
-            let data_offset = meta.get_field("data").map(|f| f.offset)?;
-            Some([code_offset, msg_offset, cause_offset, data_offset])
+            Some([msg_offset, cause_offset])
         });
-        
-        // Read dyn error codes from errors package constants
-        let dyn_error_codes = self.read_dyn_error_codes(project);
         
         self.module.well_known = vo_vm::bytecode::WellKnownTypes {
             error_named_type_id,
@@ -412,48 +407,7 @@ impl CodegenContext {
             error_ptr_rttid,
             error_struct_meta_id,
             error_field_offsets,
-            dyn_error_codes,
         };
-    }
-    
-    /// Read dyn error codes from the errors package constants.
-    fn read_dyn_error_codes(&self, project: &vo_analysis::Project) -> vo_vm::bytecode::DynErrorCodes {
-        use vo_analysis::obj::EntityType;
-        use vo_analysis::constant::Value;
-        
-        // Helper to read an int constant from errors package
-        let read_const = |name: &str| -> isize {
-            // Find errors package in imported_type_infos
-            if let Some(errors_info) = project.imported_type_infos.get("errors") {
-                // Look through definitions to find the constant
-                for (_, obj_key_opt) in &errors_info.defs {
-                    if let Some(obj_key) = obj_key_opt {
-                        let obj = &project.tc_objs.lobjs[*obj_key];
-                        if obj.name() == name {
-                            if let EntityType::Const { val } = obj.entity_type() {
-                                match val {
-                                    Value::Int64(i) => return *i as isize,
-                                    Value::IntBig(b) => return b.try_into().unwrap_or(0),
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            0 // Default if not found
-        };
-        
-        vo_vm::bytecode::DynErrorCodes {
-            unknown: read_const("CodeDynUnknown"),
-            nil_base: read_const("CodeDynNilBase"),
-            bad_field: read_const("CodeDynBadField"),
-            bad_index: read_const("CodeDynBadIndex"),
-            out_of_bounds: read_const("CodeDynOutOfBounds"),
-            bad_call: read_const("CodeDynBadCall"),
-            sig_mismatch: read_const("CodeDynSigMismatch"),
-            type_mismatch: read_const("CodeDynTypeMismatch"),
-        }
     }
 
     /// Get the interned RuntimeTypes (in rttid order)

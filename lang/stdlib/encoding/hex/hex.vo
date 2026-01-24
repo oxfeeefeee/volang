@@ -3,10 +3,10 @@ package hex
 import "errors"
 
 // ErrLength indicates an odd length hex string.
-var ErrLength = errors.NewCode(errors.CodeHexLength, "hex: odd length hex string")
+var ErrLength = errors.New("hex: odd length hex string")
 
 // ErrInvalidByte indicates an invalid byte in hex string.
-var ErrInvalidByte = errors.NewCode(errors.CodeHexInvalidByte, "hex: invalid byte")
+var ErrInvalidByte = errors.New("hex: invalid byte")
 
 const hextable = "0123456789abcdef"
 

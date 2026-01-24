@@ -1,11 +1,9 @@
 package errors
 
-// Error is the canonical structured error implementation.
+// Error is the standard error implementation.
 type Error struct {
-    code  int
     msg   string
     cause error
-    data  any
 }
 
 func (e *Error) Error() string {
@@ -15,65 +13,55 @@ func (e *Error) Error() string {
     return e.msg + ": " + e.cause.Error()
 }
 
-func (e *Error) Code() int {
-    return e.code
-}
-
 func (e *Error) Unwrap() error {
     return e.cause
 }
 
-func (e *Error) Data() any {
-    return e.data
-}
-
-// New returns a new error with default code CodeUnknown.
+// New returns a new error with the given message.
 func New(msg string) error {
-    return &Error{code: CodeUnknown, msg: msg}
+    return &Error{msg: msg}
 }
 
-// NewCode returns a new error with the given code.
-func NewCode(code int, msg string) error {
-    return &Error{code: code, msg: msg}
-}
-
-// Wrap returns a new error that wraps cause, inheriting its code.
+// Wrap returns a new error that wraps cause with a message.
+// Returns nil if cause is nil.
 func Wrap(cause error, msg string) error {
-    return &Error{code: cause.Code(), msg: msg, cause: cause}
+    if cause == nil {
+        return nil
+    }
+    return &Error{msg: msg, cause: cause}
 }
 
-// WrapCode returns a new error with a cause and the given code.
-func WrapCode(cause error, code int, msg string) error {
-    return &Error{code: code, msg: msg, cause: cause}
+// Unwrap returns the result of calling the Unwrap method on err,
+// if err's type contains an Unwrap method returning error.
+// Otherwise, Unwrap returns nil.
+func Unwrap(err error) error {
+    if err == nil {
+        return nil
+    }
+    // Try to unwrap using type assertion to *Error
+    if e, ok := err.(*Error); ok {
+        return e.cause
+    }
+    return nil
 }
 
-// WithData returns a new error that wraps cause and attaches data.
-func WithData(cause error, data any) error {
-    return &Error{code: cause.Code(), msg: cause.Error(), cause: cause, data: data}
-}
-
-// Is reports whether any error in err's unwrap chain matches target by code.
+// Is reports whether any error in err's unwrap chain matches target.
+// If err implements Is(error) bool, that method is called.
 func Is(err error, target error) bool {
     if target == nil {
         return err == nil
     }
-    targetCode := target.Code()
     for err != nil {
-        if err.Code() == targetCode {
+        if err == target {
             return true
         }
-        err = err.Unwrap()
-    }
-    return false
-}
-
-// IsCode checks whether any error in the unwrap chain matches code.
-func IsCode(err error, code int) bool {
-    for err != nil {
-        if err.Code() == code {
-            return true
+        // Try calling custom Is method via dynamic access
+        if result, e := err~>Is(target); e == nil {
+            if ok, valid := result.(bool); valid && ok {
+                return true
+            }
         }
-        err = err.Unwrap()
+        err = Unwrap(err)
     }
     return false
 }

@@ -6,16 +6,29 @@ import (
 )
 
 // Common errors returned by os functions.
+// These are initialized from native to enable errors.Is matching.
 var (
-	ErrInvalid    = errors.NewCode(errors.CodeOsInvalid, "invalid argument")
-	ErrPermission = errors.NewCode(errors.CodeOsPermission, "permission denied")
-	ErrExist      = errors.NewCode(errors.CodeOsExist, "file already exists")
-	ErrNotExist   = errors.NewCode(errors.CodeOsNotExist, "file does not exist")
-	ErrClosed     = errors.NewCode(errors.CodeOsClosed, "file already closed")
-	ErrTimeout    = errors.NewCode(errors.CodeOsTimeout, "operation timed out")
-	ErrNotDir     = errors.NewCode(errors.CodeOsNotDir, "not a directory")
-	ErrIsDir      = errors.NewCode(errors.CodeOsIsDir, "is a directory")
+	ErrNotExist   error
+	ErrExist      error
+	ErrPermission error
+	ErrInvalid    error
+	ErrTimeout    error
+	ErrClosed     error
+	ErrNotDir     error
+	ErrIsDir      error
 )
+
+func init() {
+	ErrNotExist, ErrExist, ErrPermission, ErrInvalid,
+		ErrTimeout, ErrClosed, ErrNotDir, ErrIsDir = getOsErrors()
+	O_RDONLY, O_WRONLY, O_RDWR, O_APPEND,
+		O_CREATE, O_EXCL, O_SYNC, O_TRUNC = getOsConsts()
+}
+
+// Native functions to get pre-created values from runtime.
+// Order must match vo_errors!/vo_consts! definitions in os.rs.
+func getOsErrors() (error, error, error, error, error, error, error, error)
+func getOsConsts() (int, int, int, int, int, int, int, int)
 
 // ==================== File Mode ====================
 
@@ -135,16 +148,16 @@ func (d *DirEntry) Type() FileMode { return d.mode & ModeType }
 // ==================== Open Flags ====================
 
 // Flags to OpenFile controlling behavior.
-// These are abstract values mapped to platform-native flags in runtime.
-const (
-	O_RDONLY int = 0      // open for reading only
-	O_WRONLY int = 1      // open for writing only
-	O_RDWR   int = 2      // open for reading and writing
-	O_APPEND int = 1 << 3 // append data to the file when writing
-	O_CREATE int = 1 << 4 // create a new file if none exists
-	O_EXCL   int = 1 << 5 // used with O_CREATE, file must not exist
-	O_SYNC   int = 1 << 6 // open for synchronous I/O
-	O_TRUNC  int = 1 << 7 // truncate regular writable file when opened
+// Initialized from native via init().
+var (
+	O_RDONLY int // open for reading only
+	O_WRONLY int // open for writing only
+	O_RDWR   int // open for reading and writing
+	O_APPEND int // append data to the file when writing
+	O_CREATE int // create a new file if none exists
+	O_EXCL   int // used with O_CREATE, file must not exist
+	O_SYNC   int // open for synchronous I/O
+	O_TRUNC  int // truncate regular writable file when opened
 )
 
 // ==================== Seek Whence ====================

@@ -137,20 +137,6 @@ pub struct Itab {
     pub methods: Vec<u32>,
 }
 
-/// Dynamic access error codes from errors package.
-/// Read from errors.Dyn* constants at codegen time.
-#[derive(Debug, Clone, Default)]
-pub struct DynErrorCodes {
-    pub unknown: isize,
-    pub nil_base: isize,
-    pub bad_field: isize,
-    pub bad_index: isize,
-    pub out_of_bounds: isize,
-    pub bad_call: isize,
-    pub sig_mismatch: isize,
-    pub type_mismatch: isize,
-}
-
 /// Pre-computed type IDs for well-known types (errors.Error, etc.)
 /// Filled at codegen time to avoid runtime lookups.
 #[derive(Debug, Clone, Default)]
@@ -163,10 +149,8 @@ pub struct WellKnownTypes {
     pub error_ptr_rttid: Option<u32>,
     /// errors.Error struct_meta_id
     pub error_struct_meta_id: Option<u32>,
-    /// Field offsets in errors.Error: [code, msg, cause, data]
-    pub error_field_offsets: Option<[u16; 4]>,
-    /// Dynamic access error codes
-    pub dyn_error_codes: DynErrorCodes,
+    /// Field offsets in errors.Error: [msg, cause]
+    pub error_field_offsets: Option<[u16; 2]>,
 }
 
 #[derive(Debug, Clone)]

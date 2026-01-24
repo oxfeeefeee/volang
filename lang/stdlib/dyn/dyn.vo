@@ -41,29 +41,26 @@ import "errors"
 // Error Values
 // =============================================================================
 
-// ErrUnknown indicates an unknown or unexpected error.
-var ErrUnknown = errors.NewDynUnknown("dynamic access: unknown error")
+// These are initialized from native to enable errors.Is matching.
+var (
+	ErrUnknown     error
+	ErrNilBase     error
+	ErrBadField    error
+	ErrBadIndex    error
+	ErrOutOfBounds error
+	ErrBadCall     error
+	ErrSigMismatch error
+	ErrTypeMismatch error
+)
 
-// ErrNilBase indicates the base value is nil.
-var ErrNilBase = errors.NewDynNilBase("dynamic access: base value is nil")
+func init() {
+	ErrUnknown, ErrNilBase, ErrBadField, ErrBadIndex,
+		ErrOutOfBounds, ErrBadCall, ErrSigMismatch, ErrTypeMismatch = getDynErrors()
+}
 
-// ErrBadField indicates the field does not exist on the type.
-var ErrBadField = errors.NewDynBadField("dynamic access: field does not exist")
-
-// ErrBadIndex indicates the index type is invalid for the container.
-var ErrBadIndex = errors.NewDynBadIndex("dynamic access: invalid index type")
-
-// ErrOutOfBounds indicates the index is outside valid range.
-var ErrOutOfBounds = errors.NewDynOutOfBounds("dynamic access: index out of bounds")
-
-// ErrBadCall indicates the value cannot be called as a function.
-var ErrBadCall = errors.NewDynBadCall("dynamic access: cannot call value")
-
-// ErrSigMismatch indicates function signature does not match arguments.
-var ErrSigMismatch = errors.NewDynSigMismatch("dynamic access: signature mismatch")
-
-// ErrTypeMismatch indicates type assertion or conversion failed.
-var ErrTypeMismatch = errors.NewDynTypeMismatch("dynamic access: type mismatch")
+// Native function to get pre-created sentinel errors.
+// Order must match vo_errors! definition in dynamic.rs.
+func getDynErrors() (error, error, error, error, error, error, error, error)
 
 // =============================================================================
 // Public API Functions

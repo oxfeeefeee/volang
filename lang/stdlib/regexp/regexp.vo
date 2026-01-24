@@ -3,7 +3,7 @@ package regexp
 import "errors"
 
 // ErrInvalidPattern indicates an invalid regular expression pattern.
-var ErrInvalidPattern = errors.NewCode(errors.CodeRegexpInvalidPattern, "invalid regexp pattern")
+var ErrInvalidPattern = errors.New("invalid regexp pattern")
 
 // Extern functions (implemented in Rust)
 func matchString(pattern, s string) (bool, bool)

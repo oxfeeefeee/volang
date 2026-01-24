@@ -43,7 +43,7 @@ use linkme::distributed_slice;
 
 use crate::gc::{Gc, GcRef};
 use crate::objects::{string, slice};
-use vo_common_core::bytecode::{DynErrorCodes, InterfaceMeta, Module, NamedTypeMeta, StructMeta, WellKnownTypes};
+use vo_common_core::bytecode::{InterfaceMeta, Module, NamedTypeMeta, StructMeta, WellKnownTypes};
 use vo_common_core::runtime_type::RuntimeType;
 use vo_common_core::types::{ValueKind, ValueMeta, ValueRttid};
 use crate::itab::ItabCache;
@@ -399,11 +399,6 @@ impl<'a> ExternCallContext<'a> {
     #[inline]
     pub fn well_known(&self) -> &'a WellKnownTypes {
         self.well_known
-    }
-
-    #[inline]
-    pub fn dyn_err(&self) -> &'a DynErrorCodes {
-        &self.well_known.dyn_error_codes
     }
 
     /// Get or create itab for a named type implementing an interface.

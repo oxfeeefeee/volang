@@ -4,10 +4,10 @@ import "errors"
 import "unicode/utf8"
 
 // ErrSyntax indicates that a value does not have the right syntax.
-var ErrSyntax = errors.NewCode(errors.CodeSyntax, "invalid syntax")
+var ErrSyntax = errors.New("invalid syntax")
 
 // ErrRange indicates that a value is out of range.
-var ErrRange = errors.NewCode(errors.CodeRange, "value out of range")
+var ErrRange = errors.New("value out of range")
 
 // Extern functions (implemented in Rust)
 func ParseFloat(s string, bitSize int) (float64, bool)

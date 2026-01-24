@@ -315,18 +315,15 @@ impl Universe {
         types: &HashMap<BasicType, TypeKey>,
         universe_scope: ScopeKey,
         objs: &mut TCObjects,
-        any_type: TypeKey,
+        _any_type: TypeKey,
     ) -> TypeKey {
         // Create: type error interface {
         //   Error() string
-        //   Code() int
-        //   Unwrap() error
-        //   Data() any
         // }
+        // Note: Unwrap() is optional, checked via dynamic call (~>Unwrap())
         let string_type = types[&BasicType::Str];
-        let int_type = types[&BasicType::Int];
 
-        // Create named type placeholder for "error" first so Unwrap() can return it.
+        // Create named type placeholder for "error"
         let error_type = objs.types.insert(Type::Named(crate::typ::NamedDetail::new(
             None,
             None,
@@ -348,54 +345,9 @@ impl Universe {
             .lobjs
             .insert(LangObj::new_func(Span::default(), None, "Error".to_string(), Some(err_sig), false));
 
-        // === Code() int ===
-        let code_res_var = objs
-            .lobjs
-            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(int_type)));
-        let code_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
-        let code_results = objs
-            .types
-            .insert(Type::Tuple(TupleDetail::new(vec![code_res_var])));
-        let code_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
-            None, None, code_params, code_results, false,
-        )));
-        let code_method = objs
-            .lobjs
-            .insert(LangObj::new_func(Span::default(), None, "Code".to_string(), Some(code_sig), false));
-
-        // === Unwrap() error ===
-        let unwrap_res_var = objs
-            .lobjs
-            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(error_type)));
-        let unwrap_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
-        let unwrap_results = objs
-            .types
-            .insert(Type::Tuple(TupleDetail::new(vec![unwrap_res_var])));
-        let unwrap_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
-            None, None, unwrap_params, unwrap_results, false,
-        )));
-        let unwrap_method = objs
-            .lobjs
-            .insert(LangObj::new_func(Span::default(), None, "Unwrap".to_string(), Some(unwrap_sig), false));
-
-        // === Data() any ===
-        let data_res_var = objs
-            .lobjs
-            .insert(LangObj::new_var(Span::default(), None, "".to_string(), Some(any_type)));
-        let data_params = objs.types.insert(Type::Tuple(TupleDetail::new(vec![])));
-        let data_results = objs
-            .types
-            .insert(Type::Tuple(TupleDetail::new(vec![data_res_var])));
-        let data_sig = objs.types.insert(Type::Signature(SignatureDetail::new(
-            None, None, data_params, data_results, false,
-        )));
-        let data_method = objs
-            .lobjs
-            .insert(LangObj::new_func(Span::default(), None, "Data".to_string(), Some(data_sig), false));
-
-        // Create underlying interface type
+        // Create underlying interface type (only Error method)
         let iface = InterfaceDetail::new_complete(
-            vec![err_method, code_method, unwrap_method, data_method],
+            vec![err_method],
             vec![],
         );
         let underlying = objs.types.insert(Type::Interface(iface));

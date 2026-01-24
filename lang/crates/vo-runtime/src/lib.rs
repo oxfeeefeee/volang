@@ -93,8 +93,8 @@ macro_rules! stdlib_register {
 }
 
 /// Register all stdlib extern functions into the registry.
-/// This is used in no_std mode where linkme distributed_slice is not available.
 pub fn register_all_stdlib_externs(registry: &mut ExternRegistry, externs: &[bytecode::ExternDef]) {
+    // Register from per-module tables (works in both std and no_std)
     stdlib::builtin::register_externs(registry, externs);
     stdlib::math::register_externs(registry, externs);
     stdlib::bits::register_externs(registry, externs);

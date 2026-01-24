@@ -1,41 +1,4 @@
 package errors
 
-// NewDynUnknown creates a dynamic access unknown error.
-func NewDynUnknown(msg string) error {
-    return &Error{code: CodeDynUnknown, msg: msg}
-}
-
-// NewDynNilBase creates a dynamic access nil base error.
-func NewDynNilBase(msg string) error {
-    return &Error{code: CodeDynNilBase, msg: msg}
-}
-
-// NewDynBadField creates a dynamic access bad field error.
-func NewDynBadField(msg string) error {
-    return &Error{code: CodeDynBadField, msg: msg}
-}
-
-// NewDynBadIndex creates a dynamic access bad index error.
-func NewDynBadIndex(msg string) error {
-    return &Error{code: CodeDynBadIndex, msg: msg}
-}
-
-// NewDynOutOfBounds creates a dynamic access out of bounds error.
-func NewDynOutOfBounds(msg string) error {
-    return &Error{code: CodeDynOutOfBounds, msg: msg}
-}
-
-// NewDynBadCall creates a dynamic access bad call error.
-func NewDynBadCall(msg string) error {
-    return &Error{code: CodeDynBadCall, msg: msg}
-}
-
-// NewDynSigMismatch creates a dynamic access signature mismatch error.
-func NewDynSigMismatch(msg string) error {
-    return &Error{code: CodeDynSigMismatch, msg: msg}
-}
-
-// NewDynTypeMismatch creates a dynamic access type mismatch error.
-func NewDynTypeMismatch(msg string) error {
-    return &Error{code: CodeDynTypeMismatch, msg: msg}
-}
+// This file is reserved for runtime-related error definitions.
+// Dynamic access errors are defined in the dyn package.

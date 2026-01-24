@@ -46,7 +46,7 @@ fn marshal_any(call: &mut ExternCallContext) -> ExternResult {
         }
         Err(msg) => {
             call.ret_nil(0);
-            write_error_to(call, 1, call.dyn_err().type_mismatch, msg);
+            write_error_to(call, 1, msg);
             ExternResult::Ok
         }
     }
@@ -57,13 +57,13 @@ fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     let toml_str = {
         let data = call.arg_bytes(0);
         if data.is_empty() {
-            write_error_to(call, 0, call.dyn_err().type_mismatch, "empty TOML");
+            write_error_to(call, 0, "empty TOML");
             return ExternResult::Ok;
         }
         match core::str::from_utf8(data) {
             Ok(s) => s.to_string(),
             Err(_) => {
-                write_error_to(call, 0, call.dyn_err().type_mismatch, "invalid UTF-8");
+                write_error_to(call, 0, "invalid UTF-8");
                 return ExternResult::Ok;
             }
         }
@@ -76,13 +76,13 @@ fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     let rttid = interface::unpack_rttid(v_slot0);
     
     if vk != ValueKind::Pointer {
-        write_error_to(call, 0, call.dyn_err().type_mismatch, "target must be pointer");
+        write_error_to(call, 0, "target must be pointer");
         return ExternResult::Ok;
     }
     
     let ptr = v_slot1 as GcRef;
     if ptr.is_null() {
-        write_error_to(call, 0, call.dyn_err().nil_base, "nil pointer");
+        write_error_to(call, 0, "nil pointer");
         return ExternResult::Ok;
     }
     
@@ -90,7 +90,7 @@ fn unmarshal_extern(call: &mut ExternCallContext) -> ExternResult {
     
     match unmarshal_struct::<TomlReader>(call, ptr, pointed_rttid, toml_str.trim()) {
         Ok(()) => { call.ret_nil(0); call.ret_nil(1); }
-        Err(msg) => write_error_to(call, 0, call.dyn_err().type_mismatch, msg),
+        Err(msg) => write_error_to(call, 0, msg),
     }
     ExternResult::Ok
 }

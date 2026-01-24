@@ -1,7 +1,7 @@
 //! Fiber scheduler for cooperative multitasking.
 
 #[cfg(not(feature = "std"))]
-use alloc::{collections::VecDeque, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::VecDeque, string::String, vec::Vec};
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 

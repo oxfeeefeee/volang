@@ -14,11 +14,11 @@ func marshalAny(v any) ([]byte, error)
 
 // Errors
 var (
-	ErrSyntax        = errors.NewCode(errors.CodeTomlSyntax, "toml syntax error")
-	ErrUnexpectedEOF = errors.NewCode(errors.CodeTomlUnexpectedEOF, "unexpected end of TOML input")
-	ErrInvalidValue  = errors.NewCode(errors.CodeTomlInvalidValue, "invalid TOML value")
-	ErrTypeMismatch  = errors.NewCode(errors.CodeTomlTypeMismatch, "TOML type mismatch")
-	ErrDuplicateKey  = errors.NewCode(errors.CodeTomlDuplicateKey, "duplicate TOML key")
-	ErrMarshal       = errors.NewCode(errors.CodeTomlMarshal, "TOML marshal error")
-	ErrUnmarshal     = errors.NewCode(errors.CodeTomlUnmarshal, "TOML unmarshal error")
+	ErrSyntax        = errors.New("toml syntax error")
+	ErrUnexpectedEOF = errors.New("unexpected end of TOML input")
+	ErrInvalidValue  = errors.New("invalid TOML value")
+	ErrTypeMismatch  = errors.New("TOML type mismatch")
+	ErrDuplicateKey  = errors.New("duplicate TOML key")
+	ErrMarshal       = errors.New("TOML marshal error")
+	ErrUnmarshal     = errors.New("TOML unmarshal error")
 )

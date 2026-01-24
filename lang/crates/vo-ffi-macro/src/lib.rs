@@ -25,7 +25,6 @@ use quote::{quote, format_ident};
 use syn::{
     parse_macro_input, ItemFn, FnArg, ReturnType, Type, Pat,
     punctuated::Punctuated, Token, Expr, Lit,
-    spanned::Spanned,
 };
 
 use std::collections::HashMap;
@@ -218,125 +217,16 @@ pub fn vostd_extern_ctx_nostd(attr: TokenStream, item: TokenStream) -> TokenStre
     }
 }
 
-/// Procedural macro to import constants from Vo source files.
-///
-/// This macro reads constant values directly from .vo files at compile time,
-/// generating Rust `const` declarations with the same values.
-///
-/// # Example
-///
-/// ```ignore
-/// vo_consts! {
-///     "os" => {
-///         codeErrInvalid,
-///         codeErrPermission,
-///         O_RDONLY,
-///         O_APPEND,
-///     }
-/// }
-///
-/// // Expands to:
-/// // pub const CODE_ERR_INVALID: i64 = 3000;
-/// // pub const CODE_ERR_PERMISSION: i64 = 3001;
-/// // pub const O_RDONLY: i64 = 0;
-/// // pub const O_APPEND: i64 = 8;
-/// ```
-///
-/// The constant names are converted from camelCase to SCREAMING_SNAKE_CASE.
-#[proc_macro]
-pub fn vo_consts(input: TokenStream) -> TokenStream {
-    match vo_consts_impl(input.into()) {
-        Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
-    }
-}
-
-fn vo_consts_impl(input: TokenStream2) -> syn::Result<TokenStream2> {
-    // Parse: "pkg" => { name1, name2, ... }
-    let input_span = input.span();
-    let parsed: VoConstsInput = syn::parse2(input)?;
-    
-    let pkg_path = &parsed.pkg_path;
-    
-    // Find stdlib directory
-    let stdlib_dir = find_stdlib_dir().ok_or_else(|| {
-        syn::Error::new(input_span, "stdlib directory not found")
-    })?;
-    
-    let pkg_dir = stdlib_dir.join(pkg_path);
-    if !pkg_dir.exists() {
-        return Err(syn::Error::new(
-            input_span,
-            format!("package directory not found: {:?}", pkg_dir),
-        ));
-    }
-    
-    // Generate const declarations
-    let mut consts = Vec::new();
-    for const_name in &parsed.const_names {
-        let vo_name = const_name.to_string();
-        let rust_name = to_screaming_snake_case(&vo_name);
-        let rust_ident = format_ident!("{}", rust_name);
-        
-        let value = vo_parser::find_const(&pkg_dir, &vo_name).map_err(|e| {
-            syn::Error::new(const_name.span(), e)
-        })?;
-        
-        consts.push(quote! {
-            pub const #rust_ident: isize = #value as isize;
-        });
-    }
-    
-    Ok(quote! {
-        #(#consts)*
-    })
-}
-
-/// Input for vo_consts! macro: "pkg" => { name1, name2, ... }
-struct VoConstsInput {
-    pkg_path: String,
-    const_names: Vec<syn::Ident>,
-}
-
-impl syn::parse::Parse for VoConstsInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Parse package path string
-        let pkg_lit: syn::LitStr = input.parse()?;
-        let pkg_path = pkg_lit.value();
-        
-        // Parse =>
-        input.parse::<Token![=>]>()?;
-        
-        // Parse { name1, name2, ... }
-        let content;
-        syn::braced!(content in input);
-        
-        let names: Punctuated<syn::Ident, Token![,]> = 
-            content.parse_terminated(syn::Ident::parse, Token![,])?;
-        
-        Ok(VoConstsInput {
-            pkg_path,
-            const_names: names.into_iter().collect(),
-        })
-    }
-}
-
 /// Convert camelCase or PascalCase to SCREAMING_SNAKE_CASE.
-/// Also handles already-snake-case names like O_RDONLY.
 fn to_screaming_snake_case(s: &str) -> String {
     let mut result = String::new();
     let mut prev_lower = false;
-    
     for (i, c) in s.chars().enumerate() {
         if c == '_' {
             result.push('_');
             prev_lower = false;
         } else if c.is_uppercase() {
-            // Insert underscore before uppercase if previous was lowercase
-            // and we're not at the start
-            if prev_lower && i > 0 {
-                result.push('_');
-            }
+            if prev_lower && i > 0 { result.push('_'); }
             result.push(c);
             prev_lower = false;
         } else {
@@ -344,7 +234,6 @@ fn to_screaming_snake_case(s: &str) -> String {
             prev_lower = true;
         }
     }
-    
     result
 }
 
@@ -1976,4 +1865,375 @@ fn to_snake_case(s: &str) -> String {
         }
     }
     result
+}
+
+/// Procedural macro to define sentinel errors for a package.
+///
+/// This macro generates:
+/// 1. A static storage for error references
+/// 2. A `get_xxx_errors` native function that creates and returns errors
+/// 3. A helper function to retrieve specific errors by kind
+///
+/// # Example
+///
+/// ```ignore
+/// // For external crates (extensions):
+/// vo_errors! {
+///     "mypkg" => {
+///         NotFound => "not found",
+///         Invalid => "invalid",
+///     }
+/// }
+///
+/// // For vo-runtime internal use (adds `internal` flag):
+/// vo_errors! {
+///     internal "os" => {
+///         NotExist => "file does not exist",
+///         Permission => "permission denied",
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn vo_errors(input: TokenStream) -> TokenStream {
+    match vo_errors_impl(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn vo_errors_impl(input: TokenStream2) -> syn::Result<TokenStream2> {
+    let parsed: VoErrorsInput = syn::parse2(input)?;
+    
+    let pkg_name = &parsed.pkg_name;
+    let pkg_upper = pkg_name.to_uppercase();
+    let pkg_lower = pkg_name.to_lowercase();
+    let is_internal = parsed.is_internal;
+    
+    // Generate identifiers
+    let static_name = format_ident!("{}_ERRORS", pkg_upper);
+    let enum_name = format_ident!("{}ErrorKind", to_pascal_case(pkg_name));
+    let getter_fn = format_ident!("get_{}_errors", pkg_lower);
+    let helper_fn = format_ident!("{}_sentinel_error", pkg_lower);
+    let getter_vo_name = format!("get{}Errors", to_pascal_case(pkg_name));
+    let entry_name = format_ident!("__VO_CTX_ENTRY_{}_{}", pkg_lower, getter_vo_name);
+    let lookup_name = format!("{}_{}", pkg_lower, getter_vo_name);
+    
+    let error_count = parsed.errors.len();
+    
+    // Generate enum variants and match arms
+    let mut enum_variants = Vec::new();
+    let mut create_errors = Vec::new();
+    let mut match_arms = Vec::new();
+    
+    for (i, (name, msg)) in parsed.errors.iter().enumerate() {
+        let idx = i * 2;
+        enum_variants.push(quote! { #name });
+        if is_internal {
+            create_errors.push(quote! {
+                let err = crate::stdlib::error_helper::create_error(call, #msg);
+                errors[#i] = err;
+                call.ret_u64(#idx as u16, err.0);
+                call.ret_u64((#idx + 1) as u16, err.1);
+            });
+        } else {
+            create_errors.push(quote! {
+                let err = vo_runtime::stdlib::error_helper::create_error(call, #msg);
+                errors[#i] = err;
+                call.ret_u64(#idx as u16, err.0);
+                call.ret_u64((#idx + 1) as u16, err.1);
+            });
+        }
+        match_arms.push(quote! {
+            #enum_name::#name => unsafe { #static_name.as_ref().map(|e| e[#i]) }
+        });
+    }
+    
+    // Generate __STDLIB_ constant name for stdlib_register! macro (no_std compatible)
+    let stdlib_const_name = format_ident!("__STDLIB_{}_{}", pkg_lower, getter_vo_name);
+    
+    let generated = if is_internal {
+        quote! {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum #enum_name {
+                #(#enum_variants),*
+            }
+            
+            static mut #static_name: Option<[(u64, u64); #error_count]> = None;
+            
+            pub fn #helper_fn(kind: #enum_name) -> Option<(u64, u64)> {
+                match kind {
+                    #(#match_arms),*
+                }
+            }
+            
+            fn #getter_fn(call: &mut crate::ffi::ExternCallContext) -> crate::ffi::ExternResult {
+                let mut errors = [(0u64, 0u64); #error_count];
+                #(#create_errors)*
+                unsafe { #static_name = Some(errors); }
+                crate::ffi::ExternResult::Ok
+            }
+            
+            // For stdlib_register! macro (works in both std and no_std)
+            #[doc(hidden)]
+            pub const #stdlib_const_name: crate::ffi::StdlibEntry = 
+                crate::ffi::StdlibEntry::WithCtx(#lookup_name, #getter_fn);
+        }
+    } else {
+        quote! {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum #enum_name {
+                #(#enum_variants),*
+            }
+            
+            static mut #static_name: Option<[(u64, u64); #error_count]> = None;
+            
+            pub fn #helper_fn(kind: #enum_name) -> Option<(u64, u64)> {
+                match kind {
+                    #(#match_arms),*
+                }
+            }
+            
+            fn #getter_fn(call: &mut vo_runtime::ffi::ExternCallContext) -> vo_runtime::ffi::ExternResult {
+                let mut errors = [(0u64, 0u64); #error_count];
+                #(#create_errors)*
+                unsafe { #static_name = Some(errors); }
+                vo_runtime::ffi::ExternResult::Ok
+            }
+            
+            #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE_WITH_CONTEXT)]
+            #[doc(hidden)]
+            static #entry_name: vo_runtime::ffi::ExternEntryWithContext = vo_runtime::ffi::ExternEntryWithContext {
+                name: #lookup_name,
+                func: #getter_fn,
+            };
+        }
+    };
+    
+    Ok(generated)
+}
+
+/// Input for vo_errors! macro: [internal] "pkg" => { Name => "msg", ... }
+struct VoErrorsInput {
+    is_internal: bool,
+    pkg_name: String,
+    errors: Vec<(syn::Ident, String)>,
+}
+
+impl syn::parse::Parse for VoErrorsInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Check for optional `internal` keyword
+        let is_internal = if input.peek(syn::Ident) {
+            let ident: syn::Ident = input.parse()?;
+            if ident == "internal" {
+                true
+            } else {
+                return Err(syn::Error::new(ident.span(), "expected 'internal' or package name string"));
+            }
+        } else {
+            false
+        };
+        
+        // Parse package name string
+        let pkg_lit: syn::LitStr = input.parse()?;
+        let pkg_name = pkg_lit.value();
+        
+        // Parse =>
+        input.parse::<Token![=>]>()?;
+        
+        // Parse { Name => "msg", ... }
+        let content;
+        syn::braced!(content in input);
+        
+        let mut errors = Vec::new();
+        while !content.is_empty() {
+            let name: syn::Ident = content.parse()?;
+            content.parse::<Token![=>]>()?;
+            let msg: syn::LitStr = content.parse()?;
+            errors.push((name, msg.value()));
+            
+            if content.peek(Token![,]) {
+                content.parse::<Token![,]>()?;
+            }
+        }
+        
+        Ok(VoErrorsInput { is_internal, pkg_name, errors })
+    }
+}
+
+fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for c in s.chars() {
+        if c == '_' || c == '-' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(c.to_uppercase().next().unwrap());
+            capitalize_next = false;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+// =============================================================================
+// vo_consts! macro - Define constants in Rust and expose to Vo via native getter
+// =============================================================================
+
+/// Procedural macro to define constants and expose them to Vo via a native getter function.
+///
+/// Similar to vo_errors!, this generates a native function that returns all constants
+/// to Vo, where they can be initialized via `init()`.
+///
+/// # Example
+///
+/// ```ignore
+/// // In Rust (internal mode for vo-runtime):
+/// vo_consts! {
+///     internal "os" => {
+///         O_RDONLY => 0,
+///         O_WRONLY => 1,
+///         O_RDWR => 2,
+///         O_APPEND => 8,
+///     }
+/// }
+///
+/// // In Vo (os.vo):
+/// var (
+///     O_RDONLY int
+///     O_WRONLY int
+///     // ...
+/// )
+/// func init() {
+///     O_RDONLY, O_WRONLY, O_RDWR, O_APPEND = getOsConsts()
+/// }
+/// func getOsConsts() (int, int, int, int)
+/// ```
+#[proc_macro]
+pub fn vo_consts(input: TokenStream) -> TokenStream {
+    match vo_consts_impl(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn vo_consts_impl(input: TokenStream2) -> syn::Result<TokenStream2> {
+    let parsed: VoConstsInput = syn::parse2(input)?;
+    
+    let pkg_name = &parsed.pkg_name;
+    let pkg_lower = pkg_name.to_lowercase();
+    let is_internal = parsed.is_internal;
+    
+    // Generate identifiers
+    let getter_fn = format_ident!("get_{}_consts", pkg_lower);
+    let getter_vo_name = format!("get{}Consts", to_pascal_case(pkg_name));
+    let entry_name = format_ident!("__VO_CTX_ENTRY_{}_{}", pkg_lower, getter_vo_name);
+    let lookup_name = format!("{}_{}", pkg_lower, getter_vo_name);
+    let stdlib_const_name = format_ident!("__STDLIB_{}_{}", pkg_lower, getter_vo_name);
+    
+    // Generate const definitions and return statements
+    let mut const_defs = Vec::new();
+    let mut ret_stmts = Vec::new();
+    
+    for (i, (name, value)) in parsed.consts.iter().enumerate() {
+        let const_name = format_ident!("{}", name);
+        const_defs.push(quote! {
+            pub const #const_name: i64 = #value;
+        });
+        ret_stmts.push(quote! {
+            call.ret_i64(#i as u16, #const_name);
+        });
+    }
+    
+    let generated = if is_internal {
+        quote! {
+            #(#const_defs)*
+            
+            fn #getter_fn(call: &mut crate::ffi::ExternCallContext) -> crate::ffi::ExternResult {
+                #(#ret_stmts)*
+                crate::ffi::ExternResult::Ok
+            }
+            
+            // For stdlib_register! macro (works in both std and no_std)
+            #[doc(hidden)]
+            pub const #stdlib_const_name: crate::ffi::StdlibEntry = 
+                crate::ffi::StdlibEntry::WithCtx(#lookup_name, #getter_fn);
+            
+            // For distributed_slice (std only)
+            #[cfg(feature = "std")]
+            #[crate::distributed_slice(crate::EXTERN_TABLE_WITH_CONTEXT)]
+            #[doc(hidden)]
+            static #entry_name: crate::ffi::ExternEntryWithContext = crate::ffi::ExternEntryWithContext {
+                name: #lookup_name,
+                func: #getter_fn,
+            };
+        }
+    } else {
+        quote! {
+            #(#const_defs)*
+            
+            fn #getter_fn(call: &mut vo_runtime::ffi::ExternCallContext) -> vo_runtime::ffi::ExternResult {
+                #(#ret_stmts)*
+                vo_runtime::ffi::ExternResult::Ok
+            }
+            
+            #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE_WITH_CONTEXT)]
+            #[doc(hidden)]
+            static #entry_name: vo_runtime::ffi::ExternEntryWithContext = vo_runtime::ffi::ExternEntryWithContext {
+                name: #lookup_name,
+                func: #getter_fn,
+            };
+        }
+    };
+    
+    Ok(generated)
+}
+
+/// Input for vo_consts! macro: [internal] "pkg" => { NAME => value, ... }
+struct VoConstsInput {
+    is_internal: bool,
+    pkg_name: String,
+    consts: Vec<(syn::Ident, i64)>,
+}
+
+impl syn::parse::Parse for VoConstsInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Check for optional `internal` keyword
+        let is_internal = if input.peek(syn::Ident) {
+            let ident: syn::Ident = input.parse()?;
+            if ident == "internal" {
+                true
+            } else {
+                return Err(syn::Error::new(ident.span(), "expected 'internal' or package name string"));
+            }
+        } else {
+            false
+        };
+        
+        // Parse package name string
+        let pkg_lit: syn::LitStr = input.parse()?;
+        let pkg_name = pkg_lit.value();
+        
+        // Parse =>
+        input.parse::<Token![=>]>()?;
+        
+        // Parse { NAME => value, ... }
+        let content;
+        syn::braced!(content in input);
+        
+        let mut consts = Vec::new();
+        while !content.is_empty() {
+            let name: syn::Ident = content.parse()?;
+            content.parse::<Token![=>]>()?;
+            let value: syn::LitInt = content.parse()?;
+            let value_i64: i64 = value.base10_parse()?;
+            consts.push((name, value_i64));
+            
+            if content.peek(Token![,]) {
+                content.parse::<Token![,]>()?;
+            }
+        }
+        
+        Ok(VoConstsInput { is_internal, pkg_name, consts })
+    }
 }
