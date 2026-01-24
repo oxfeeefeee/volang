@@ -275,7 +275,7 @@ pub fn write_error_to(
 |------|--------|
 | `stdlib/errors/code.vo` | **DELETE entire file** |
 | `stdlib/errors/errors.vo` | Rewrite, remove Code-related |
-| `stdlib/errors/runtime.vo` | Rewrite, remove Code-related |
+| `stdlib/errors/runtime.vo` | **DELETE entire file** |
 
 ### Rust Code
 

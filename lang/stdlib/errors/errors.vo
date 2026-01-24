@@ -38,9 +38,11 @@ func Unwrap(err error) error {
     if err == nil {
         return nil
     }
-    // Try to unwrap using type assertion to *Error
-    if e, ok := err.(*Error); ok {
-        return e.cause
+    // Try calling Unwrap method via dynamic access
+    if result, e := err~>Unwrap(); e == nil {
+        if unwrapped, ok := result.(error); ok {
+            return unwrapped
+        }
     }
     return nil
 }

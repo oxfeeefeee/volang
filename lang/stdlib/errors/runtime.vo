@@ -1,4 +1,0 @@
-package errors
-
-// This file is reserved for runtime-related error definitions.
-// Dynamic access errors are defined in the dyn package.
