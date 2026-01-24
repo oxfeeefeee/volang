@@ -1337,7 +1337,12 @@ fn dyn_call_closure(call: &mut ExternCallContext) -> ExternResult {
         let is_any = call.arg_u64((is_any_start + i) as u16) != 0;
         let rttid = meta_raw >> 8;
         let vk = ValueKind::from_u8((meta_raw & 0xFF) as u8);
-        let width = call.get_type_slot_count(rttid) as usize;
+        // Determine width from ValueKind directly
+        let width = match vk {
+            ValueKind::Interface => 2,
+            ValueKind::Struct | ValueKind::Array => call.get_type_slot_count(rttid) as usize,
+            _ => 1,
+        };
         error_slot_offset += output_slots(is_any, vk, width);
     }
     
@@ -1384,7 +1389,14 @@ fn dyn_call_closure(call: &mut ExternCallContext) -> ExternResult {
         let is_any = call.arg_u64((is_any_start + i) as u16) != 0;
         let rttid = meta_raw >> 8;
         let vk = ValueKind::from_u8((meta_raw & 0xFF) as u8);
-        let width = call.get_type_slot_count(rttid) as usize;
+        // Determine width from ValueKind directly, not rttid
+        // This is more reliable because metas comes from closure's actual return type,
+        // and get_type_slot_count may misinterpret Named types
+        let width = match vk {
+            ValueKind::Interface => 2,
+            ValueKind::Struct | ValueKind::Array => call.get_type_slot_count(rttid) as usize,
+            _ => 1,
+        };
         
         let raw_slots = &ret_buffer[src_off..src_off + width];
         src_off += width;
