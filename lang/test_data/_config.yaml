@@ -809,8 +809,6 @@ tests:
   - file: skill_debug_vo/2026_01_23_defer_errdefer_combo.vo
     # Bug fixed: UnwindingKind::Panic now preserves PendingReturnKind for recover()
   - file: skill_debug_vo/2026_01_23_eval_order_edge.vo
-    skip: [vm, jit]
-    reason: "pending bug fix"
   - file: skill_debug_vo/2026_01_23_goroutine_closure.vo
     skip: [jit]
     reason: "pending bug fix (jit only)"

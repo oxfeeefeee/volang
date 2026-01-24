@@ -279,58 +279,10 @@ pub fn resolve_lvalue(
                 // Value receiver: resolve base then add offset
                 let (offset, slots) = info.selector_field_offset(expr.id, recv_type, field_name);
                 
-                // Special case: Index expression base (slice/array/map element field access)
+                // Special case: Index expression base (container[i].field)
                 if let ExprKind::Index(idx) = &sel.expr.kind {
-                    let container_type = info.expr_type(idx.expr.id);
-                    if info.is_slice(container_type) {
-                        // Slice: get element address then access field
-                        let elem_addr_reg = compile_index_addr_to_reg(&idx.expr, &idx.index, ctx, func, info)?;
-                        return Ok(LValue::Deref { ptr_reg: elem_addr_reg, offset, elem_slots: slots });
-                    } else if info.is_array(container_type) {
-                        // Array: check if stack or heap array
-                        let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
-                        match container_source {
-                            crate::func::ExprSource::Location(StorageKind::StackArray { base_slot, elem_slots: es, .. }) => {
-                                // Stack array element field: use StackArrayField for dynamic access
-                                let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
-                                return Ok(LValue::StackArrayField {
-                                    base_slot,
-                                    elem_slots: es,
-                                    index_reg,
-                                    field_offset: offset,
-                                    field_slots: slots,
-                                });
-                            }
-                            _ => {
-                                // Heap array: get element address then access field
-                                let elem_addr_reg = compile_index_addr_to_reg(&idx.expr, &idx.index, ctx, func, info)?;
-                                return Ok(LValue::Deref { ptr_reg: elem_addr_reg, offset, elem_slots: slots });
-                            }
-                        }
-                    } else if info.is_map(container_type) {
-                        // Map: get value to temp, then access field from temp
-                        // maps[k].field - map returns by value, so we get a copy
-                        let (_, val_type) = info.map_key_val_types(container_type);
-                        let val_slots = info.type_slot_count(val_type);
-                        let val_slot_types = info.type_slot_types(val_type);
-                        let tmp = func.alloc_temp_typed(&val_slot_types);
-                        
-                        // Compile map get to temp
-                        let (key_slots, _) = info.map_key_val_slots(container_type);
-                        let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-                        let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
-                        let meta = crate::type_info::encode_map_get_meta(key_slots, val_slots, false);
-                        let (key_type, _) = info.map_key_val_types(container_type);
-                        let mut map_get_slot_types = vec![SlotType::Value]; // meta
-                        map_get_slot_types.extend(info.type_slot_types(key_type)); // key
-                        let meta_reg = func.alloc_temp_typed(&map_get_slot_types);
-                        let meta_idx = ctx.const_int(meta as i64);
-                        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-                        func.emit_copy(meta_reg + 1, index_reg, key_slots);
-                        func.emit_op(Opcode::MapGet, tmp, container_reg, meta_reg);
-                        
-                        // Return stack location for the temp value with field offset
-                        return Ok(LValue::Variable(StorageKind::StackValue { slot: tmp + offset, slots }));
+                    if let Some(lv) = resolve_index_field_lvalue(idx, offset, slots, ctx, func, info)? {
+                        return Ok(lv);
                     }
                 }
                 
@@ -362,6 +314,7 @@ pub fn resolve_lvalue(
 }
 
 /// Resolve an Index expression to an LValue.
+/// IMPORTANT: Go evaluation order requires container to be evaluated before index.
 fn resolve_index_lvalue(
     expr: &Expr,
     idx: &vo_syntax::ast::IndexExpr,
@@ -373,6 +326,7 @@ fn resolve_index_lvalue(
     
     // Check for nested stack array FIRST (before compiling any index)
     // This handles a[i][j][k]... with arbitrary nesting depth
+    // Note: try_resolve_nested_stack_array correctly evaluates in left-to-right order
     if info.is_array(container_type) {
         if let Some(nested_info) = try_resolve_nested_stack_array(expr, ctx, func, info)? {
             let elem_type = info.array_elem_type(container_type);
@@ -391,52 +345,123 @@ fn resolve_index_lvalue(
         }
     }
     
-    // Compile index - for map with interface key, may need to box concrete type
-    let index_reg = if info.is_map(container_type) {
-        let (key_type, _) = info.map_key_val_types(container_type);
-        crate::expr::compile_map_key_expr(&idx.index, key_type, ctx, func, info)?
-    } else {
-        crate::expr::compile_expr(&idx.index, ctx, func, info)?
-    };
-    
-    if info.is_array(container_type) {
-        resolve_array_index_lvalue(idx, index_reg, container_type, ctx, func, info)
-    } else if info.is_slice(container_type) {
+    // For slice/map/string: compile container FIRST, then index (left-to-right order)
+    if info.is_slice(container_type) {
         let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
+        let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
         let elem_bytes = info.slice_elem_bytes(container_type) as u16;
         let elem_type = info.slice_elem_type(container_type);
         let elem_vk = info.type_value_kind(elem_type);
-        Ok(LValue::Index {
+        return Ok(LValue::Index {
             kind: ContainerKind::Slice { elem_bytes, elem_vk },
             container_reg,
             index_reg,
-        })
-    } else if info.is_map(container_type) {
+        });
+    }
+    
+    if info.is_map(container_type) {
         let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
+        let (key_type, _) = info.map_key_val_types(container_type);
+        let index_reg = crate::expr::compile_map_key_expr(&idx.index, key_type, ctx, func, info)?;
         let (key_slots, val_slots) = info.map_key_val_slots(container_type);
         let key_may_gc = info.map_key_value_kind(container_type).may_contain_gc_refs();
         let val_may_gc = info.map_val_value_kind(container_type).may_contain_gc_refs();
-        Ok(LValue::Index {
+        return Ok(LValue::Index {
             kind: ContainerKind::Map { key_slots, val_slots, key_may_gc, val_may_gc },
             container_reg,
             index_reg,
-        })
-    } else if info.is_string(container_type) {
+        });
+    }
+    
+    if info.is_string(container_type) {
         let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-        Ok(LValue::Index {
+        let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
+        return Ok(LValue::Index {
             kind: ContainerKind::String,
             container_reg,
             index_reg,
-        })
-    } else {
-        Err(CodegenError::InvalidLHS)
+        });
     }
+    
+    // Array case: use resolve_array_index_lvalue which handles evaluation order
+    if info.is_array(container_type) {
+        return resolve_array_index_lvalue(idx, container_type, ctx, func, info);
+    }
+    
+    Err(CodegenError::InvalidLHS)
+}
+
+/// Resolve `container[i].field` pattern to LValue.
+/// Returns Some(LValue) if the pattern matches, None if caller should use default handling.
+/// IMPORTANT: Ensures Go evaluation order (container before index).
+fn resolve_index_field_lvalue(
+    idx: &vo_syntax::ast::IndexExpr,
+    field_offset: u16,
+    field_slots: u16,
+    ctx: &mut CodegenContext,
+    func: &mut FuncBuilder,
+    info: &TypeInfoWrapper,
+) -> Result<Option<LValue>, CodegenError> {
+    let container_type = info.expr_type(idx.expr.id);
+    
+    if info.is_slice(container_type) {
+        let elem_addr_reg = compile_index_addr_to_reg(&idx.expr, &idx.index, ctx, func, info)?;
+        return Ok(Some(LValue::Deref { ptr_reg: elem_addr_reg, offset: field_offset, elem_slots: field_slots }));
+    }
+    
+    if info.is_array(container_type) {
+        let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
+        match container_source {
+            crate::func::ExprSource::Location(StorageKind::StackArray { base_slot, elem_slots, .. }) => {
+                let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
+                return Ok(Some(LValue::StackArrayField {
+                    base_slot,
+                    elem_slots,
+                    index_reg,
+                    field_offset,
+                    field_slots,
+                }));
+            }
+            _ => {
+                let elem_addr_reg = compile_index_addr_to_reg(&idx.expr, &idx.index, ctx, func, info)?;
+                return Ok(Some(LValue::Deref { ptr_reg: elem_addr_reg, offset: field_offset, elem_slots: field_slots }));
+            }
+        }
+    }
+    
+    if info.is_map(container_type) {
+        // Map returns by value, so we get a copy to temp then access field
+        let (key_slots, val_slots) = info.map_key_val_slots(container_type);
+        let (key_type, val_type) = info.map_key_val_types(container_type);
+        let val_slot_types = info.type_slot_types(val_type);
+        let tmp = func.alloc_temp_typed(&val_slot_types);
+        
+        // Compile map get: container first, then index (Go evaluation order)
+        let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
+        let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
+        
+        let meta = crate::type_info::encode_map_get_meta(key_slots, val_slots, false);
+        let mut meta_slot_types = vec![SlotType::Value];
+        meta_slot_types.extend(info.type_slot_types(key_type));
+        let meta_reg = func.alloc_temp_typed(&meta_slot_types);
+        let meta_idx = ctx.const_int(meta as i64);
+        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+        func.emit_copy(meta_reg + 1, index_reg, key_slots);
+        func.emit_op(Opcode::MapGet, tmp, container_reg, meta_reg);
+        
+        return Ok(Some(LValue::Variable(StorageKind::StackValue { 
+            slot: tmp + field_offset, 
+            slots: field_slots 
+        })));
+    }
+    
+    Ok(None)
 }
 
 /// Resolve array indexing to LValue (helper for resolve_index_lvalue).
+/// IMPORTANT: Ensures Go evaluation order (container before index).
 fn resolve_array_index_lvalue(
     idx: &vo_syntax::ast::IndexExpr,
-    index_reg: u16,
     container_type: vo_analysis::objects::TypeKey,
     ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
@@ -448,7 +473,9 @@ fn resolve_array_index_lvalue(
     
     let container_source = crate::expr::get_expr_source(&idx.expr, ctx, func, info);
     match container_source {
+        // Cases where container is already in a known location (no side effects to evaluate)
         crate::func::ExprSource::Location(StorageKind::StackArray { base_slot, elem_slots: es, len }) => {
+            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
             Ok(LValue::Index {
                 kind: ContainerKind::StackArray { base_slot, elem_slots: es, len },
                 container_reg: base_slot,
@@ -457,22 +484,15 @@ fn resolve_array_index_lvalue(
         }
         crate::func::ExprSource::Location(StorageKind::HeapBoxed { gcref_slot, .. })
         | crate::func::ExprSource::Location(StorageKind::HeapArray { gcref_slot, .. }) => {
+            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
             Ok(LValue::Index {
                 kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
                 container_reg: gcref_slot,
                 index_reg,
             })
         }
-        crate::func::ExprSource::Location(StorageKind::Global { .. })
-        | crate::func::ExprSource::Location(StorageKind::Reference { .. }) => {
-            let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
-            Ok(LValue::Index {
-                kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
-                container_reg,
-                index_reg,
-            })
-        }
         crate::func::ExprSource::Location(StorageKind::StackValue { slot: base_slot, .. }) => {
+            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
             let elem_slots = info.type_slot_count(elem_type);
             let len = info.array_len(container_type) as u16;
             Ok(LValue::Index {
@@ -481,12 +501,24 @@ fn resolve_array_index_lvalue(
                 index_reg,
             })
         }
+        // Cases where container needs compilation: compile container FIRST, then index
+        crate::func::ExprSource::Location(StorageKind::Global { .. })
+        | crate::func::ExprSource::Location(StorageKind::Reference { .. }) => {
+            let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
+            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
+            Ok(LValue::Index {
+                kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
+                container_reg,
+                index_reg,
+            })
+        }
         crate::func::ExprSource::NeedsCompile => {
-            // Check if this is a captured array
+            // Check if this is a captured array - capture access has no side effects
             if let ExprKind::Ident(ident) = &idx.expr.kind {
                 if let Some(cap_idx) = func.lookup_capture(ident.symbol).map(|c| c.index) {
                     let gcref_slot = func.alloc_temp_typed(&[SlotType::GcRef]);
                     func.emit_op(Opcode::ClosureGet, gcref_slot, cap_idx, 0);
+                    let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
                     return Ok(LValue::Index {
                         kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
                         container_reg: gcref_slot,
@@ -496,24 +528,27 @@ fn resolve_array_index_lvalue(
             }
             // Check if this is an inline array field of a struct (heap or pointer)
             if let Some(base) = try_get_struct_base(&idx.expr, func, info) {
-                return resolve_heap_struct_array_index(idx, index_reg, &base, elem_type, ctx, func, info);
+                return resolve_heap_struct_array_index(idx, &base, elem_type, ctx, func, info);
             }
             // Check if this is a composite literal array (possibly wrapped in Paren)
             // Composite literals are compiled to stack slots, not GcRef
+            // Container (literal) compiled first, then index
             if is_composite_literal(&idx.expr) {
                 let elem_slots = info.type_slot_count(elem_type);
                 let len = info.array_len(container_type) as u16;
                 let slot_types = info.type_slot_types(container_type);
                 let base_slot = func.alloc_temp_typed(&slot_types);
                 crate::expr::compile_expr_to(&idx.expr, base_slot, ctx, func, info)?;
+                let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
                 return Ok(LValue::Index {
                     kind: ContainerKind::StackArray { base_slot, elem_slots, len },
                     container_reg: base_slot,
                     index_reg,
                 });
             }
-            // Other cases: compile container expression (heap array)
+            // Other cases: compile container expression FIRST (heap array), then index
             let container_reg = crate::expr::compile_expr(&idx.expr, ctx, func, info)?;
+            let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
             Ok(LValue::Index {
                 kind: ContainerKind::HeapArray { elem_bytes, elem_vk },
                 container_reg,
@@ -524,12 +559,13 @@ fn resolve_array_index_lvalue(
 }
 
 /// Resolve array index on heap struct field (o.arr[i]).
+/// Note: base (FlattenedBase) is already resolved without side effects,
+/// so we can safely compile index after resolving the base pointer.
 fn resolve_heap_struct_array_index(
     idx: &vo_syntax::ast::IndexExpr,
-    index_reg: u16,
     base: &FlattenedBase,
     elem_type: vo_analysis::objects::TypeKey,
-    _ctx: &mut CodegenContext,
+    ctx: &mut CodegenContext,
     func: &mut FuncBuilder,
     info: &TypeInfoWrapper,
 ) -> Result<LValue, CodegenError> {
@@ -546,7 +582,7 @@ fn resolve_heap_struct_array_index(
         _ => unreachable!("try_get_struct_base only returns Capture, HeapBoxed, or Deref"),
     };
     
-    // Constant index: compute static offset
+    // Constant index: compute static offset (no side effects)
     if let Some(const_idx) = info.try_const_int(&idx.index) {
         let total_offset = base_offset + (const_idx as u16) * elem_slots;
         return Ok(LValue::Deref {
@@ -556,7 +592,9 @@ fn resolve_heap_struct_array_index(
         });
     }
     
-    // Dynamic index: compute element address
+    // Dynamic index: compile index expression, then compute element address
+    let index_reg = crate::expr::compile_expr(&idx.index, ctx, func, info)?;
+    
     let offset_reg = func.alloc_temp_typed(&[SlotType::Value]);
     if elem_slots == 1 {
         if base_offset == 0 {
