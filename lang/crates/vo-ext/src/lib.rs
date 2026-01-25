@@ -1,8 +1,12 @@
 //! SDK for creating Vo native extensions.
 //!
 //! This crate provides the API for implementing Vo functions in Rust.
-//! Extensions are compiled as dynamic libraries (.so/.dylib/.dll) and
-//! loaded by the Vo runtime at startup.
+//!
+//! # Platform Support
+//!
+//! - **Native** (default): Extensions are compiled as dynamic libraries (.so/.dylib/.dll)
+//!   and loaded by the Vo runtime at startup via dlopen.
+//! - **WASM**: Extensions are statically linked and registered at initialization.
 //!
 //! # Example
 //!
@@ -37,8 +41,8 @@ pub use vo_ffi_macro::vo_extern;
 pub use vo_ffi_macro::vo_extern_ctx;
 pub use vo_ffi_macro::vo_struct;
 pub use vo_runtime::ffi::{
-    ExternCall, ExternCallContext, ExternEntry, ExternEntryWithContext, ExternFn,
-    ExternFnWithContext, ExternResult, EXTERN_TABLE, EXTERN_TABLE_WITH_CONTEXT,
+    ExternCall, ExternCallContext, ExternFn, ExternFnWithContext, 
+    ExternResult, StdlibEntry, ExternRegistry,
     // Type-safe slot wrapper for interface types
     InterfaceSlot,
     // Container accessors
@@ -49,12 +53,18 @@ pub use vo_runtime::ffi::{
     VoPtr, VoClosure,
 };
 pub use vo_runtime::gc::GcRef;
+
+// Native platform: re-export linkme types for auto-registration
+#[cfg(feature = "native")]
+pub use vo_runtime::ffi::{ExternEntry, ExternEntryWithContext, EXTERN_TABLE, EXTERN_TABLE_WITH_CONTEXT};
+#[cfg(feature = "native")]
 pub use vo_runtime::distributed_slice;
 
 /// ABI version for extension compatibility checking.
 pub const ABI_VERSION: u32 = 1;
 
-/// Extension table returned by `vo_ext_get_entries`.
+/// Extension table returned by `vo_ext_get_entries` (native platform only).
+#[cfg(feature = "native")]
 #[repr(C)]
 pub struct ExtensionTable {
     /// ABI version - must match runtime's ABI_VERSION.
@@ -69,26 +79,27 @@ pub struct ExtensionTable {
     pub entries_with_context: *const ExternEntryWithContext,
 }
 
+#[cfg(feature = "native")]
 unsafe impl Send for ExtensionTable {}
+#[cfg(feature = "native")]
 unsafe impl Sync for ExtensionTable {}
 
 /// Export the extension entry point.
 ///
-/// This macro generates the `vo_ext_get_entries` function that the Vo runtime
-/// calls to discover the extension's extern functions.
-///
-/// # Example
-///
+/// # Native Platform (default)
+/// Call with no arguments. Generates `vo_ext_get_entries` function for dlopen.
 /// ```ignore
-/// use vo_ext::prelude::*;
-///
-/// #[vo_extern("mylib", "MyFunc")]
-/// fn my_func() { }
-///
 /// vo_ext::export_extensions!();
+/// ```
+///
+/// # WASM Platform
+/// Call with list of StdlibEntry constants. Generates `vo_ext_register` function.
+/// ```ignore
+/// vo_ext::export_extensions!(__STDLIB_gui_emitRender, __STDLIB_gui_navigate);
 /// ```
 #[macro_export]
 macro_rules! export_extensions {
+    // Native: no arguments, auto-collect from linkme tables
     () => {
         #[no_mangle]
         pub extern "C" fn vo_ext_get_entries() -> $crate::ExtensionTable {
@@ -100,6 +111,12 @@ macro_rules! export_extensions {
                 entries_with_context: $crate::EXTERN_TABLE_WITH_CONTEXT.as_ptr(),
             }
         }
+    };
+    
+    // WASM: explicit list of entries (caller must implement registration)
+    ($($entry:ident),+ $(,)?) => {
+        /// All extern entries for this extension.
+        pub static VO_EXT_ENTRIES: &[$crate::StdlibEntry] = &[$($entry),*];
     };
 }
 

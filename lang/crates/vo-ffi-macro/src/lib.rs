@@ -258,11 +258,12 @@ fn vo_extern_ctx_impl(
     
     // Generate entry name for the static
     let entry_name = format_ident!("__VO_CTX_ENTRY_{}", lookup_name.to_uppercase().replace('/', "_"));
+    let stdlib_entry_name = format_ident!("__STDLIB_{}", lookup_name);
     
     // Generate slot constants as inline mod (to be injected into function body)
     let slot_mod = generate_inline_slot_mod(&pkg_path, &func_name);
     
-    // For user extensions: register to linkme table
+    // Generate code for both native (linkme) and wasm (static entry) platforms
     Ok(quote! {
         #(#fn_attrs)*
         #fn_vis #fn_sig {
@@ -270,12 +271,20 @@ fn vo_extern_ctx_impl(
             #fn_body
         }
         
+        // Native: use linkme distributed_slice for auto-registration
+        #[cfg(not(target_arch = "wasm32"))]
         #[vo_runtime::distributed_slice(vo_runtime::EXTERN_TABLE_WITH_CONTEXT)]
         #[doc(hidden)]
         static #entry_name: vo_runtime::ffi::ExternEntryWithContext = vo_runtime::ffi::ExternEntryWithContext {
             name: #lookup_name,
             func: #fn_name,
         };
+        
+        // WASM: generate StdlibEntry constant for manual registration
+        #[cfg(target_arch = "wasm32")]
+        #[doc(hidden)]
+        pub const #stdlib_entry_name: vo_runtime::ffi::StdlibEntry = 
+            vo_runtime::ffi::StdlibEntry::WithCtx(#lookup_name, #fn_name);
     })
 }
 

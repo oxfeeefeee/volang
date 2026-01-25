@@ -8,7 +8,14 @@ description = "SDK for creating Vo native extensions"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+default = ["native"]
+# Native platform: use linkme for auto-registration via dlopen
+native = ["linkme", "vo-runtime/std"]
+# WASM platform: static registration, no linkme
+wasm = []
+
 [dependencies]
-vo-runtime = { path = "../vo-runtime" }
+vo-runtime = { path = "../vo-runtime", default-features = false }
 vo-ffi-macro = { path = "../vo-ffi-macro" }
-linkme = "0.3"
+linkme = { version = "0.3", optional = true }

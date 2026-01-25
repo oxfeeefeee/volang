@@ -10,14 +10,16 @@ use wasm_bindgen::prelude::*;
 
 use vo_runtime::gc::GcRef;
 use vo_runtime::objects::{closure, string};
-use vo_runtime::ffi::{ExternCall, ExternCallContext, ExternResult, ExternRegistry};
+use vo_runtime::ffi::ExternRegistry;
 use vo_vm::vm::Vm;
 use vo_vm::bytecode::{Module, ExternDef};
 
 use include_dir::{include_dir, Dir};
 
+mod externs;
+
 // Embed gui package source directory at compile time (only contains .vo files)
-static GUI_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../src");
+static GUI_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../gui");
 
 // Re-export for library users
 pub use vo_common::vfs::{MemoryFs, FileSystem};
@@ -242,103 +244,12 @@ pub fn handle_event(handler_id: i32, payload: &str) -> GuiResult {
 }
 
 // =============================================================================
-// Extern Functions
+// Extern Functions Registration
 // =============================================================================
 
 pub fn register_gui_externs(registry: &mut ExternRegistry, externs: &[ExternDef]) {
-    web_sys::console::log_1(&format!("[VoGUI-Rust] register_gui_externs called, {} externs", externs.len()).into());
-    for (id, def) in externs.iter().enumerate() {
-        web_sys::console::log_1(&format!("[VoGUI-Rust] Checking extern [{}]: '{}'", id, def.name).into());
-        match def.name.as_str() {
-            "gui_registerEventHandler" => {
-                web_sys::console::log_1(&"[VoGUI-Rust] Registering gui_registerEventHandler".into());
-                registry.register(id as u32, extern_register_event_handler);
-            }
-            "gui_emitRender" => registry.register(id as u32, extern_emit_render),
-            "gui_startTimeout" => registry.register(id as u32, extern_start_timeout),
-            "gui_clearTimeout" => registry.register(id as u32, extern_clear_timeout),
-            "gui_startInterval" => {
-                web_sys::console::log_1(&"[VoGUI-Rust] Registering gui_startInterval".into());
-                registry.register(id as u32, extern_start_interval);
-            }
-            "gui_clearInterval" => registry.register(id as u32, extern_clear_interval),
-            "gui_navigate" => registry.register(id as u32, extern_navigate),
-            "gui_getCurrentPath" => registry.register_with_context(id as u32, extern_get_current_path),
-            _ => {}
-        }
-    }
-}
-
-fn extern_register_event_handler(call: &mut ExternCall) -> ExternResult {
-    let handler = call.arg_ref(0);
-    PENDING_HANDLER.with(|s| *s.borrow_mut() = Some(handler));
-    ExternResult::Ok
-}
-
-fn extern_emit_render(call: &mut ExternCall) -> ExternResult {
-    let json_ref = call.arg_ref(0);
-    let json = if json_ref.is_null() { "" } else { string::as_str(json_ref) };
-    
-    vo_runtime::output::write("__VOGUI__");
-    vo_runtime::output::writeln(json);
-    
-    ExternResult::Ok
-}
-
-// =============================================================================
-// Timer Externs
-// =============================================================================
-
-fn extern_start_timeout(call: &mut ExternCall) -> ExternResult {
-    let id = call.arg_i64(0) as i32;
-    let ms = call.arg_i64(1) as i32;
-    start_js_timeout(id, ms);
-    ExternResult::Ok
-}
-
-fn extern_clear_timeout(call: &mut ExternCall) -> ExternResult {
-    let id = call.arg_i64(0) as i32;
-    clear_js_timeout(id);
-    ExternResult::Ok
-}
-
-fn extern_start_interval(call: &mut ExternCall) -> ExternResult {
-    let id = call.arg_i64(0) as i32;
-    let ms = call.arg_i64(1) as i32;
-    
-    web_sys::console::log_1(&format!("[VoGUI-Rust] extern_start_interval called: id={}, ms={}", id, ms).into());
-    
-    // Call JS to start interval
-    start_js_interval(id, ms);
-    
-    ExternResult::Ok
-}
-
-fn extern_clear_interval(call: &mut ExternCall) -> ExternResult {
-    let id = call.arg_i64(0) as i32;
-    
-    // Call JS to clear interval
-    clear_js_interval(id);
-    
-    ExternResult::Ok
-}
-
-// =============================================================================
-// Router Externs
-// =============================================================================
-
-fn extern_navigate(call: &mut ExternCall) -> ExternResult {
-    let path_ref = call.arg_ref(0);
-    let path = if path_ref.is_null() { "" } else { string::as_str(path_ref) };
-    js_navigate(path);
-    ExternResult::Ok
-}
-
-fn extern_get_current_path(call: &mut ExternCallContext) -> ExternResult {
-    let path = js_get_current_path();
-    let gc_ref = string::from_rust_str(call.gc(), &path);
-    call.ret_ref(0, gc_ref);
-    ExternResult::Ok
+    // Use vo-ext generated registration function
+    externs::vo_ext_register(registry, externs);
 }
 
 // =============================================================================
@@ -348,22 +259,22 @@ fn extern_get_current_path(call: &mut ExternCallContext) -> ExternResult {
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_name = startTimeout)]
-    fn start_js_timeout(id: i32, ms: i32);
+    pub fn start_js_timeout(id: i32, ms: i32);
 
     #[wasm_bindgen(js_name = clearTimeout)]
-    fn clear_js_timeout(id: i32);
+    pub fn clear_js_timeout(id: i32);
 
     #[wasm_bindgen(js_name = startInterval)]
-    fn start_js_interval(id: i32, ms: i32);
+    pub fn start_js_interval(id: i32, ms: i32);
 
     #[wasm_bindgen(js_name = clearInterval)]
-    fn clear_js_interval(id: i32);
+    pub fn clear_js_interval(id: i32);
 
     #[wasm_bindgen(js_name = navigate)]
-    fn js_navigate(path: &str);
+    pub fn js_navigate(path: &str);
 
     #[wasm_bindgen(js_name = getCurrentPath)]
-    fn js_get_current_path() -> String;
+    pub fn js_get_current_path() -> String;
 }
 
 
