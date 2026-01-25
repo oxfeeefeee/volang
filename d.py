@@ -26,9 +26,9 @@ TARGET_32 = 'armv7-unknown-linux-gnueabihf'
 QEMU_ARM = 'qemu-arm'
 QEMU_ARM_LD_PREFIX = '/usr/arm-linux-gnueabihf'
 
-# Check that we're running from the correct directory (repo root, not lang/)
+# Check that we're running from the correct directory (repo root)
 _script_dir = Path(__file__).resolve().parent
-_expected_cwd = _script_dir.parent  # repo root
+_expected_cwd = _script_dir  # repo root
 if Path.cwd().resolve() != _expected_cwd:
     print(f"Error: d.py must be run from repo root: {_expected_cwd}", file=sys.stderr)
     print(f"Current directory: {Path.cwd()}", file=sys.stderr)
@@ -108,14 +108,14 @@ if not sys.stdout.isatty():
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-PROJECT_ROOT = SCRIPT_DIR.parent
+PROJECT_ROOT = SCRIPT_DIR
 TEST_DIR = PROJECT_ROOT / 'lang' / 'test_data'
 TEST_CONFIG = TEST_DIR / '_config.yaml'
-BENCHMARK_DIR = PROJECT_ROOT / 'lang' / 'benchmark'
+BENCHMARK_DIR = PROJECT_ROOT / 'benchmarks'
 RESULTS_DIR = BENCHMARK_DIR / 'results'
 
 # Cache directories
-CLI_CACHE_DIR = PROJECT_ROOT / 'lang' / 'cli' / '.vo-cache'
+CLI_CACHE_DIR = PROJECT_ROOT / 'cmd' / 'vo' / '.vo-cache'
 VOX_EXT_DIR = PROJECT_ROOT / 'libs' / 'vox'
 VOX_EXT_RUST_DIR = VOX_EXT_DIR / 'rust' / 'src'
 
@@ -145,7 +145,7 @@ def invalidate_cli_cache_if_needed():
     cache_mtime = CLI_CACHE_DIR.stat().st_mtime
     
     # Check CLI source files
-    cli_src_mtime = get_newest_mtime(CLI_DIR, pattern='*.vo')
+    cli_src_mtime = get_newest_mtime(PROJECT_ROOT / 'cmd' / 'vo', pattern='*.vo')
     
     # Check vox library source files
     vox_vo_mtime = get_newest_mtime(VOX_EXT_DIR, pattern='*.vo')
@@ -178,13 +178,13 @@ def clean_caches(target: str = 'all'):
             cleaned.append(str(CLI_CACHE_DIR))
         
         # Clean 32-bit .vo-cache
-        cache_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'lang' / 'cli' / '.vo-cache'
+        cache_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'cmd' / 'vo'
         if cache_32.exists():
             shutil.rmtree(cache_32)
             cleaned.append(str(cache_32))
         
         # Clean 32-bit CLI marker
-        marker_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'lang' / 'cli' / '.32bit_cache_ready'
+        marker_32 = PROJECT_ROOT / 'target' / TARGET_32 / 'cmd' / 'vo' / '.32bit_cache_ready'
         if marker_32.exists():
             marker_32.unlink()
             cleaned.append(str(marker_32))
@@ -310,7 +310,7 @@ def get_vo_embed_bin() -> Path:
 VO_BIN_DEBUG = PROJECT_ROOT / 'target' / 'debug' / 'vo'
 VO_BIN_RELEASE = PROJECT_ROOT / 'target' / 'release' / 'vo'
 STDLIB_DIR = PROJECT_ROOT / 'lang' / 'stdlib'
-CLI_DIR = PROJECT_ROOT / 'lang' / 'cli'
+CLI_DIR = PROJECT_ROOT / 'cmd' / 'vo'
 
 
 def run_cmd(cmd: list[str], cwd: Path = None, env: dict = None, capture: bool = True) -> tuple[int, str, str]:
@@ -333,7 +333,7 @@ def command_exists(cmd: str) -> bool:
 
 
 def run_vo_file(file: str, mode: str = 'vm', codegen: bool = False):
-    """Run a .vo file using the Vo CLI (lang/cli)."""
+    """Run a .vo file using the Vo CLI (cmd/vo)."""
     vo_bin = get_vo_bin(release=False)
     
     # Build vo-launcher if needed
@@ -383,7 +383,7 @@ class TestRunner:
         self.failed_list: list[str] = []
         # CLI cache path (different structure for 32-bit due to extension paths)
         if arch == '32':
-            self.cli_cache = PROJECT_ROOT / 'target' / TARGET_32 / 'lang' / 'cli'
+            self.cli_cache = PROJECT_ROOT / 'target' / TARGET_32 / 'cmd' / 'vo'
         else:
             self.cli_cache = CLI_DIR
 

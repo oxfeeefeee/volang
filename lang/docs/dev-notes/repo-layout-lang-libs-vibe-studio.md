@@ -115,14 +115,13 @@ This is enforced by review/CI scripts (to be added later if needed).
    - `stdlib/` -> `lang/stdlib/`
    - `test_data/` -> `lang/test_data/`
    - `docs/` -> `lang/docs/`
-   - `d.py` -> `lang/d.py`
-   - `benchmark/` -> `lang/benchmark/` (recommended)
+   - `benchmark/` -> `benchmarks/`
 3. Update root `Cargo.toml` workspace members to the new paths.
-4. Update `lang/d.py` paths (`PROJECT_ROOT`, `TEST_DIR`, `CRATES_DIR`, etc.).
+4. Update `d.py` paths (`PROJECT_ROOT`, `TEST_DIR`, `CRATES_DIR`, etc.).
 5. Add library skeleton:
    - `libs/ui-egui/vo` with `vo.mod`
    - `libs/ui-egui/rust/vo-egui-runtime` (Cargo crate)
 6. Add `vibe-studio` crate skeleton.
 7. Verify language toolchain:
-   - `./lang/d.py test`
+   - `./d.py test`
 

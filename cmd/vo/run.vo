@@ -89,20 +89,20 @@ func isSelfCliTarget(file string) bool {
 		return false
 	}
 
-	if file == "lang/cli" || file == "lang/cli/" || file == "./lang/cli" || file == "./lang/cli/" {
+	if file == "cmd/vo" || file == "cmd/vo/" || file == "./cmd/vo" || file == "./cmd/vo/" {
 		return true
 	}
 
 	if file == "." || file == "./" {
 		wd, err := os.Getwd()
 		if err == nil {
-			if strings.HasSuffix(wd, "/lang/cli") || strings.HasSuffix(wd, "/lang/cli/") {
+			if strings.HasSuffix(wd, "/cmd/vo") || strings.HasSuffix(wd, "/cmd/vo/") {
 				return true
 			}
 		}
 	}
 
-	if strings.HasSuffix(file, "/lang/cli") || strings.HasSuffix(file, "/lang/cli/") {
+	if strings.HasSuffix(file, "/cmd/vo") || strings.HasSuffix(file, "/cmd/vo/") {
 		return true
 	}
 

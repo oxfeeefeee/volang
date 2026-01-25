@@ -105,12 +105,24 @@ func main() {
 ## Development
 
 ```bash
-./d.py test          # All tests (VM + JIT)
-./d.py test vm       # VM only
-./d.py test jit      # JIT only
-./d.py bench         # Benchmarks
-./d.py loc           # Code statistics
+./d.py test                               # VM + JIT
+./d.py test vm                            # VM only
+./d.py test jit                           # JIT only
+./d.py test gc                            # gc_*.vo only (VO_GC_DEBUG=1)
+./d.py test nostd                         # vo-embed no_std mode
+./d.py test wasm                          # WASM tests
+
+./d.py bench                              # all benchmarks
+./d.py bench vo                           # Vo-only scoring (Vo-VM = 100)
+./d.py bench <name>                       # single benchmark
+./d.py bench score                        # analyze existing results
+
+./d.py play                               # build WASM + start playground
+./d.py loc                                # code statistics
+./d.py clean                              # clean caches
 ```
+
+Full command reference: `lang/docs/dev/d-py-usage.md`.
 
 ## License
 
