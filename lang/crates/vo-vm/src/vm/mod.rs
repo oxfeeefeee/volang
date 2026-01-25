@@ -167,6 +167,8 @@ impl Vm {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-platform"))]
         {
             vo_web_runtime_wasm::time::register_externs(&mut self.state.extern_registry, &module.externs);
+            vo_web_runtime_wasm::regexp::register_externs(&mut self.state.extern_registry, &module.externs);
+            vo_web_runtime_wasm::os::register_externs(&mut self.state.extern_registry, &module.externs);
         }
 
         validate_externs_registered(&self.state.extern_registry, &module.externs);
@@ -190,6 +192,8 @@ impl Vm {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-platform"))]
         {
             vo_web_runtime_wasm::time::register_externs(&mut self.state.extern_registry, &module.externs);
+            vo_web_runtime_wasm::regexp::register_externs(&mut self.state.extern_registry, &module.externs);
+            vo_web_runtime_wasm::os::register_externs(&mut self.state.extern_registry, &module.externs);
         }
         
         // Register extern functions from extension loader (if provided)
