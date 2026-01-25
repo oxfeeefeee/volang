@@ -1,0 +1,21 @@
+[package]
+name = "vo-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Vo compilation and execution core - compile and run Vo programs"
+
+[features]
+default = ["jit"]
+jit = ["vo-vm/jit"]
+
+[dependencies]
+vo-stdlib = { path = "../vo-stdlib" }
+vo-vm = { path = "../vo-vm" }
+vo-runtime = { path = "../vo-runtime" }
+vo-common = { path = "../vo-common" }
+vo-common-core = { path = "../vo-common-core" }
+vo-analysis = { path = "../vo-analysis" }
+vo-codegen = { path = "../vo-codegen" }
+vo-module = { path = "../vo-module" }
+dirs = "5"

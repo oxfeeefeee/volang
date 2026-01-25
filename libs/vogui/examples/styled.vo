@@ -1,0 +1,116 @@
+// Styled Demo - demonstrates chainable style methods
+package main
+
+import "vogui"
+
+type State struct {
+	Theme   string
+	Slider  int
+	Checked bool
+}
+
+func view(state any) gui.Node {
+	s := state.(*State)
+
+	bgColor := "#f8f9fa"
+	textColor := "#212529"
+	if s.Theme == "dark" {
+		bgColor = "#1a1a2e"
+		textColor = "#e0e0e0"
+	}
+
+	return gui.Column(
+		// Header
+		gui.Row(
+			gui.H2("Styled Demo"),
+			gui.Spacer(),
+			gui.Switch(s.Theme == "dark", gui.OnChecked(toggleTheme)),
+			gui.Text("Dark Mode").Fg(textColor),
+		).P(16).Bg(bgColor).Gap(12),
+
+		gui.Divider(),
+
+		// Content
+		gui.Column(
+			// Cards row
+			gui.Row(
+				card("Primary", "#007bff", "#fff"),
+				card("Success", "#28a745", "#fff"),
+				card("Warning", "#ffc107", "#212529"),
+				card("Danger", "#dc3545", "#fff"),
+			).Gap(16),
+
+			// Slider demo
+			gui.Row(
+				gui.Text("Opacity:"),
+				gui.Slider(s.Slider, 0, 100, gui.OnSlider(setSlider)),
+				gui.Text(s.Slider, "%"),
+			).Gap(12),
+
+			// Opacity demo box
+			gui.Center(
+				gui.Text("Fading Box").
+					P(24).
+					Bg("#6c757d").
+					Fg("#fff").
+					Rounded(8).
+					Opacity(float64(s.Slider) / 100.0),
+			).H(100),
+
+			// Progress bar
+			gui.Progress(float64(s.Slider) / 100.0),
+
+			// Styled buttons
+			gui.Row(
+				gui.Button("Normal", gui.On(noop)),
+				gui.Button("Rounded", gui.On(noop)).Rounded(20),
+				gui.Button("Shadow", gui.On(noop)).Shadow("0 4px 12px rgba(0,0,0,0.2)"),
+				gui.Button("Custom", gui.On(noop)).
+					Bg("#9c27b0").
+					Rounded(8).
+					Shadow("0 2px 8px rgba(156,39,176,0.4)"),
+			).Gap(12),
+
+			// Alert examples
+			gui.Alert("info", "This is an info message"),
+			gui.Alert("success", "Operation completed successfully!"),
+
+			// Badge and tag row
+			gui.Row(
+				gui.Badge("New"),
+				gui.Badge("Hot"),
+				gui.Tag("Vo"),
+				gui.Tag("GUI"),
+				gui.Tag("Demo"),
+			).Gap(8),
+		).P(24).Gap(16).Bg(bgColor),
+	).Bg(bgColor)
+}
+
+func card(title string, bg string, fg string) gui.Node {
+	return gui.Column(
+		gui.Text(title).Bold().Font(16),
+		gui.Text("Card content here"),
+	).P(16).Bg(bg).Fg(fg).Rounded(8).W(150)
+}
+
+func toggleTheme(s *State, dark bool) {
+	if dark {
+		s.Theme = "dark"
+	} else {
+		s.Theme = "light"
+	}
+}
+
+func setSlider(s *State, value int) {
+	s.Slider = value
+}
+
+func noop(s *State) {}
+
+func main() {
+	gui.Run(gui.App{
+		Init: func() any { return &State{Theme: "light", Slider: 50} },
+		View: view,
+	})
+}

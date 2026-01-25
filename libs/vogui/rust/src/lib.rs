@@ -1,315 +1,86 @@
-//! VoGUI - GUI library for Vo, built on top of vo-web.
+//! VoGUI - Pure GUI extern library for Vo.
 //!
-//! This crate provides initGuiApp and handleGuiEvent APIs for browser integration.
-//!
-//! Design: Vo registers an event handler callback. Rust calls it directly via execute_closure_sync.
+//! This crate provides only extern function implementations for GUI operations.
+//! VM management and event loop are handled by the caller (e.g., vo-playground).
 
 use std::cell::RefCell;
-use std::path::PathBuf;
-use wasm_bindgen::prelude::*;
-
-use vo_runtime::gc::GcRef;
-use vo_runtime::objects::{closure, string};
 use vo_runtime::ffi::ExternRegistry;
-use vo_vm::vm::Vm;
-use vo_vm::bytecode::{Module, ExternDef};
-
-use include_dir::{include_dir, Dir};
+use vo_runtime::gc::GcRef;
+use vo_vm::bytecode::ExternDef;
 
 mod externs;
 
-// Embed gui package source directory at compile time (only contains .vo files)
-static GUI_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../gui");
-
-// Re-export for library users
-pub use vo_common::vfs::{MemoryFs, FileSystem};
-
 // =============================================================================
-// Global State
+// Global State (for extern functions)
 // =============================================================================
-
-use std::collections::HashMap;
-
-pub struct GuiAppState {
-    pub vm: Vm,
-    pub event_handler: GcRef,  // Closure registered by Vo
-}
-
-pub struct TimerState {
-    // Map from Vo timer ID (i32) to Browser interval ID (i32)
-    pub interval_ids: HashMap<i32, i32>,
-    // Map from Vo timer ID (i32) to Closure (to keep it alive)
-    pub closures: HashMap<i32, Closure<dyn FnMut()>>,
-}
 
 thread_local! {
-    pub static GUI_STATE: RefCell<Option<GuiAppState>> = RefCell::new(None);
+    /// Pending event handler closure (set by registerEventHandler, consumed by caller)
     pub static PENDING_HANDLER: RefCell<Option<GcRef>> = RefCell::new(None);
-    pub static TIMER_STATE: RefCell<TimerState> = RefCell::new(TimerState {
-        interval_ids: HashMap::new(),
-        closures: HashMap::new(),
-    });
 }
 
 // =============================================================================
-// Result Type
+// Public API
 // =============================================================================
 
-pub struct GuiResult {
-    pub status: String,
-    pub render_json: String,
-    pub error: String,
-}
-
-impl GuiResult {
-    pub fn ok(render_json: String) -> Self {
-        Self { status: "ok".into(), render_json, error: String::new() }
-    }
-    
-    pub fn error(msg: impl Into<String>) -> Self {
-        Self { status: "error".into(), render_json: String::new(), error: msg.into() }
-    }
-    
-    pub fn compile_error(msg: impl Into<String>) -> Self {
-        Self { status: "compile_error".into(), render_json: String::new(), error: msg.into() }
-    }
-}
-
-// =============================================================================
-// WASM API (exported to JS)
-// =============================================================================
-
-#[wasm_bindgen]
-pub struct WasmGuiResult {
-    status: String,
-    render_json: String,
-    error: String,
-}
-
-#[wasm_bindgen]
-impl WasmGuiResult {
-    #[wasm_bindgen(getter)]
-    pub fn status(&self) -> String { self.status.clone() }
-    
-    #[wasm_bindgen(getter, js_name = "renderJson")]
-    pub fn render_json(&self) -> String { self.render_json.clone() }
-    
-    #[wasm_bindgen(getter)]
-    pub fn error(&self) -> String { self.error.clone() }
-}
-
-impl From<GuiResult> for WasmGuiResult {
-    fn from(r: GuiResult) -> Self {
-        Self { status: r.status, render_json: r.render_json, error: r.error }
-    }
-}
-
-/// Initialize a GUI app from source code.
-#[wasm_bindgen(js_name = "initGuiApp")]
-pub fn init_gui_app(source: &str, filename: Option<String>) -> WasmGuiResult {
-    let filename = filename.unwrap_or_else(|| "main.vo".to_string());
-    
-    // Build combined filesystem: stdlib + gui package
-    let mut fs = vo_web::build_stdlib_fs();
-    add_vo_files_recursive(&GUI_DIR, "gui", &mut fs);
-    
-    // Compile with combined filesystem
-    let bytecode = match vo_web::compile_source_with_std_fs(source, &filename, fs) {
-        Ok(b) => b,
-        Err(e) => return GuiResult::compile_error(e).into(),
-    };
-    
-    let module = match Module::deserialize(&bytecode) {
-        Ok(m) => m,
-        Err(e) => return GuiResult::error(format!("Failed to load bytecode: {:?}", e)).into(),
-    };
-    
-    run_gui_module(module).into()
-}
-
-/// Handle a GUI event.
-#[wasm_bindgen(js_name = "handleGuiEvent")]
-pub fn handle_gui_event(handler_id: i32, payload: &str) -> WasmGuiResult {
-    handle_event(handler_id, payload).into()
-}
-
-// =============================================================================
-// Core API
-// =============================================================================
-
-/// Run a compiled GUI module and return initial render.
-/// VM runs until Run() returns (after registering event handler).
-fn run_gui_module(module: Module) -> GuiResult {
-    // Clear previous state
-    GUI_STATE.with(|s| *s.borrow_mut() = None);
-    PENDING_HANDLER.with(|s| *s.borrow_mut() = None);
-    
-    // Clear output buffer
-    vo_runtime::output::clear_output();
-    
-    // Create VM
-    let mut vm = Vm::new();
-    
-    // Register GUI extern functions BEFORE loading (load validates all externs are registered)
-    register_gui_externs(&mut vm.state.extern_registry, &module.externs);
-    
-    vm.load(module);
-    
-    // Run until completion (Run() returns after registering handler)
-    if let Err(e) = vm.run() {
-        return GuiResult::error(format!("{:?}", e));
-    }
-    
-    // Extract render output
-    let stdout = vo_runtime::output::take_output();
-    let render_json = extract_render_json(&stdout);
-    
-    // Fail fast
-    if render_json.is_empty() {
-        return GuiResult::error(format!("No render output. stdout: {}", stdout));
-    }
-    
-    // Get event handler from registerEventHandler
-    let event_handler = PENDING_HANDLER.with(|s| s.borrow_mut().take());
-    let event_handler = match event_handler {
-        Some(h) => h,
-        None => return GuiResult::error("registerEventHandler not called"),
-    };
-    
-    // Store state for subsequent events
-    GUI_STATE.with(|s| {
-        *s.borrow_mut() = Some(GuiAppState { vm, event_handler });
-    });
-    
-    GuiResult::ok(render_json)
-}
-
-/// Handle a GUI event and return new render.
-/// 1. Calls the registered Vo callback (sends event to channel)
-/// 2. Runs VM to let eventLoop goroutine process the event
-pub fn handle_event(handler_id: i32, payload: &str) -> GuiResult {
-    GUI_STATE.with(|s| {
-        let mut state_ref = s.borrow_mut();
-        let state = match state_ref.as_mut() {
-            Some(st) => st,
-            None => return GuiResult::error("GUI app not initialized"),
-        };
-        
-        web_sys::console::log_1(&format!("[VoGUI-Rust] handle_event: id={}, payload={}", handler_id, payload).into());
-        
-        vo_runtime::output::clear_output();
-        
-        // Allocate payload string
-        let payload_ref = string::from_rust_str(&mut state.vm.state.gc, payload);
-        
-        // Get func_id and build full args (like closure_call_trampoline does)
-        let closure_ref = state.event_handler;
-        let func_id = closure::func_id(closure_ref);
-        
-        let module = state.vm.module().expect("module not set");
-        let func_def = &module.functions[func_id as usize];
-        
-        // Build args: closure_ref (if needed) + handler_id + payload
-        let user_args = [handler_id as u64, payload_ref as u64];
-        let full_args = vo_vm::vm::helpers::build_closure_args(
-            closure_ref as u64,
-            closure_ref,
-            func_def,
-            user_args.as_ptr(),
-            user_args.len() as u32,
-        );
-        
-        let mut ret: [u64; 0] = [];
-        let success = state.vm.execute_closure_sync(func_id, &full_args, ret.as_mut_ptr(), 0);
-        web_sys::console::log_1(&format!("[VoGUI-Rust] execute_closure_sync success={}, ready_queue_len={}", 
-            success, state.vm.scheduler.ready_queue.len()).into());
-        if !success {
-            return GuiResult::error("Event handler panicked");
-        }
-        
-        // Run scheduled fibers (eventLoop will process the event)
-        if let Err(e) = state.vm.run_scheduled() {
-            web_sys::console::log_1(&format!("[VoGUI-Rust] run_scheduled error: {:?}", e).into());
-            return GuiResult::error(format!("{:?}", e));
-        }
-        web_sys::console::log_1(&format!("[VoGUI-Rust] after run_scheduled, ready_queue_len={}", 
-            state.vm.scheduler.ready_queue.len()).into());
-        
-        let stdout = vo_runtime::output::take_output();
-        let render_json = extract_render_json(&stdout);
-        web_sys::console::log_1(&format!("[VoGUI-Rust] render_json len={}", render_json.len()).into());
-        
-        GuiResult::ok(render_json)
-    })
-}
-
-// =============================================================================
-// Extern Functions Registration
-// =============================================================================
-
-pub fn register_gui_externs(registry: &mut ExternRegistry, externs: &[ExternDef]) {
-    // Use vo-ext generated registration function
+/// Register all vogui extern functions into the registry.
+pub fn register_externs(registry: &mut ExternRegistry, externs: &[ExternDef]) {
     externs::vo_ext_register(registry, externs);
 }
 
+/// Take the pending event handler (if registerEventHandler was called).
+pub fn take_pending_handler() -> Option<GcRef> {
+    PENDING_HANDLER.with(|s| s.borrow_mut().take())
+}
+
+/// Clear any pending handler.
+pub fn clear_pending_handler() {
+    PENDING_HANDLER.with(|s| *s.borrow_mut() = None);
+}
+
 // =============================================================================
-// JS Imports
+// JS Imports (for WASM builds)
 // =============================================================================
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_name = startTimeout)]
-    pub fn start_js_timeout(id: i32, ms: i32);
+#[cfg(target_arch = "wasm32")]
+mod js {
+    use wasm_bindgen::prelude::*;
+    
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_name = startTimeout)]
+        pub fn start_timeout(id: i32, ms: i32);
 
-    #[wasm_bindgen(js_name = clearTimeout)]
-    pub fn clear_js_timeout(id: i32);
+        #[wasm_bindgen(js_name = clearTimeout)]
+        pub fn clear_timeout(id: i32);
 
-    #[wasm_bindgen(js_name = startInterval)]
-    pub fn start_js_interval(id: i32, ms: i32);
+        #[wasm_bindgen(js_name = startInterval)]
+        pub fn start_interval(id: i32, ms: i32);
 
-    #[wasm_bindgen(js_name = clearInterval)]
-    pub fn clear_js_interval(id: i32);
+        #[wasm_bindgen(js_name = clearInterval)]
+        pub fn clear_interval(id: i32);
 
-    #[wasm_bindgen(js_name = navigate)]
-    pub fn js_navigate(path: &str);
+        #[wasm_bindgen(js_name = navigate)]
+        pub fn navigate(path: &str);
 
-    #[wasm_bindgen(js_name = getCurrentPath)]
-    pub fn js_get_current_path() -> String;
-}
-
-
-/// Recursively add all .vo files from a directory to the stdlib filesystem.
-fn add_vo_files_recursive(dir: &Dir, base_path: &str, fs: &mut MemoryFs) {
-    // Add files in current directory
-    for file in dir.files() {
-        if let Some(name) = file.path().to_str() {
-            if name.ends_with(".vo") {
-                if let Some(content) = file.contents_utf8() {
-                    fs.add_file(PathBuf::from(format!("{}/{}", base_path, name)), content.to_string());
-                }
-            }
-        }
-    }
-    // Recurse into subdirectories
-    for subdir in dir.dirs() {
-        if let Some(name) = subdir.path().file_name().and_then(|n| n.to_str()) {
-            // Skip examples, rust, etc.
-            if name != "examples" && name != "rust" && name != "pkg" {
-                add_vo_files_recursive(subdir, &format!("{}/{}", base_path, name), fs);
-            }
-        }
+        #[wasm_bindgen(js_name = getCurrentPath)]
+        pub fn get_current_path() -> String;
     }
 }
 
-fn extract_render_json(stdout: &str) -> String {
-    let mut render_json = String::new();
-    for line in stdout.lines() {
-        if let Some(json) = line.strip_prefix("__VOGUI__") {
-            render_json = json.to_string();
-        } else if !line.is_empty() {
-            // Print debug output from Vo to browser console
-            web_sys::console::log_1(&format!("[Vo] {}", line).into());
-        }
-    }
-    render_json
+#[cfg(target_arch = "wasm32")]
+pub use js::*;
+
+// Native stubs (no-op for non-WASM builds)
+#[cfg(not(target_arch = "wasm32"))]
+mod native_stubs {
+    pub fn start_timeout(_id: i32, _ms: i32) {}
+    pub fn clear_timeout(_id: i32) {}
+    pub fn start_interval(_id: i32, _ms: i32) {}
+    pub fn clear_interval(_id: i32) {}
+    pub fn navigate(_path: &str) {}
+    pub fn get_current_path() -> String { "/".to_string() }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_stubs::*;

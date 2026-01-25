@@ -1,9 +1,11 @@
-//! WebAssembly bindings for Vo Playground.
+//! Vo Web Runtime - WASM bindings and generic VM management.
 //!
-//! Provides compile and run APIs for executing Vo code in browsers.
+//! # Layers
+//! 1. **WASM API** (`compile`, `run`, `compileAndRun`) - for JS interop
+//! 2. **Generic VM API** (`create_vm`, `call_closure`) - for event-driven apps
 //!
 //! # Features
-//! - `compiler` (default): Full compiler chain, can compile Vo source code
+//! - `compiler` (default): Full compiler chain
 //! - No features: Bytecode execution only
 
 use wasm_bindgen::prelude::*;
@@ -92,19 +94,12 @@ impl RunResult {
 }
 
 /// Compile Vo source code to bytecode.
-///
-/// # Arguments
-/// * `source` - Vo source code
-/// * `filename` - Optional filename for error messages (defaults to "main.vo")
-///
-/// # Returns
-/// CompileResult with bytecode on success, or error details on failure.
 #[cfg(feature = "compiler")]
 #[wasm_bindgen]
 pub fn compile(source: &str, filename: Option<String>) -> CompileResult {
     let filename = filename.unwrap_or_else(|| "main.vo".to_string());
     
-    match compile_source(source, &filename) {
+    match compile_source_with_std_fs(source, &filename, build_stdlib_fs()) {
         Ok(bytecode) => CompileResult {
             success: true,
             bytecode: Some(bytecode),
@@ -112,59 +107,42 @@ pub fn compile(source: &str, filename: Option<String>) -> CompileResult {
             error_line: None,
             error_column: None,
         },
-        Err(err) => CompileResult {
+        Err(msg) => CompileResult {
             success: false,
             bytecode: None,
-            error_message: Some(err.message),
-            error_line: err.line,
-            error_column: err.column,
+            error_message: Some(msg),
+            error_line: None,
+            error_column: None,
         },
     }
 }
 
-#[cfg(feature = "compiler")]
-struct CompileError {
-    message: String,
-    line: Option<u32>,
-    column: Option<u32>,
-}
-
-#[cfg(feature = "compiler")]
-use include_dir::{include_dir, Dir};
-
-#[cfg(feature = "compiler")]
-static STDLIB_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../stdlib");
+// Re-export stdlib filesystem
+pub use vo_stdlib::EmbeddedStdlib;
 
 /// Build the standard library filesystem. Exported for libraries to extend.
 #[cfg(feature = "compiler")]
 pub fn build_stdlib_fs() -> MemoryFs {
+    let stdlib = vo_stdlib::EmbeddedStdlib::new();
     let mut fs = MemoryFs::new();
-    add_dir_to_fs(&STDLIB_DIR, &mut fs, "");
-    fs
-}
-
-#[cfg(feature = "compiler")]
-fn add_dir_to_fs(dir: &Dir<'_>, fs: &mut MemoryFs, _prefix: &str) {
-    for file in dir.files() {
-        if let Some(name) = file.path().to_str() {
-            if name.ends_with(".vo") {
-                if let Some(content) = file.contents_utf8() {
-                    fs.add_file(PathBuf::from(name), content.to_string());
+    
+    fn add_dir_recursive(stdlib: &vo_stdlib::EmbeddedStdlib, fs: &mut MemoryFs, path: &Path) {
+        use vo_common::vfs::FileSystem;
+        if let Ok(entries) = stdlib.read_dir(path) {
+            for entry in entries {
+                if stdlib.is_dir(&entry) {
+                    add_dir_recursive(stdlib, fs, &entry);
+                } else if entry.to_str().map(|s| s.ends_with(".vo")).unwrap_or(false) {
+                    if let Ok(content) = stdlib.read_file(&entry) {
+                        fs.add_file(entry, content);
+                    }
                 }
             }
         }
     }
-    for subdir in dir.dirs() {
-        if let Some(name) = subdir.path().to_str() {
-            add_dir_to_fs(subdir, fs, name);
-        }
-    }
-}
-
-#[cfg(feature = "compiler")]
-fn compile_source(source: &str, filename: &str) -> Result<Vec<u8>, CompileError> {
-    compile_source_with_std_fs(source, filename, build_stdlib_fs())
-        .map_err(|msg| CompileError { message: msg, line: None, column: None })
+    
+    add_dir_recursive(&stdlib, &mut fs, Path::new("."));
+    fs
 }
 
 /// Compile source with a custom stdlib filesystem.
@@ -204,18 +182,12 @@ pub fn compile_source_with_std_fs(source: &str, filename: &str, std_fs: MemoryFs
 }
 
 /// Run bytecode.
-///
-/// # Arguments
-/// * `bytecode` - Compiled bytecode from compile()
-///
-/// # Returns
-/// RunResult with stdout/stderr captured.
 #[wasm_bindgen]
 pub fn run(bytecode: &[u8]) -> RunResult {
-    match run_bytecode(bytecode) {
-        Ok(stdout) => RunResult {
+    match create_vm(bytecode, |_, _| {}) {
+        Ok(_) => RunResult {
             status: "ok".to_string(),
-            stdout,
+            stdout: vo_runtime::output::take_output(),
             stderr: String::new(),
         },
         Err(msg) => RunResult {
@@ -226,30 +198,7 @@ pub fn run(bytecode: &[u8]) -> RunResult {
     }
 }
 
-fn run_bytecode(bytecode: &[u8]) -> Result<String, String> {
-    use vo_vm::vm::Vm;
-    use vo_vm::bytecode::Module;
-    
-    // Clear any previous output
-    vo_runtime::output::clear_output();
-    
-    // Deserialize module
-    let module = Module::deserialize(bytecode)
-        .map_err(|e| format!("Failed to load bytecode: {:?}", e))?;
-    
-    // Create and run VM
-    let mut vm = Vm::new();
-    vm.load(module);
-    
-    vm.run().map_err(|e| format!("{:?}", e))?;
-    
-    // Capture output
-    Ok(vo_runtime::output::take_output())
-}
-
 /// Compile and run in one step.
-///
-/// Convenience function that combines compile() and run().
 #[cfg(feature = "compiler")]
 #[wasm_bindgen(js_name = "compileAndRun")]
 pub fn compile_and_run(source: &str, filename: Option<String>) -> RunResult {
@@ -263,4 +212,74 @@ pub fn compile_and_run(source: &str, filename: Option<String>) -> RunResult {
     }
     
     run(&result.bytecode.unwrap())
+}
+
+// =============================================================================
+// Generic VM Management API (for event-driven apps)
+// =============================================================================
+
+pub use vo_vm::vm::Vm;
+pub use vo_vm::bytecode::{Module, ExternDef};
+pub use vo_runtime::ffi::ExternRegistry;
+pub use vo_runtime::gc::GcRef;
+
+/// Type alias for extern registration function.
+pub type ExternRegistrar = fn(&mut ExternRegistry, &[ExternDef]);
+
+/// Create a VM from bytecode, register externs, and run initialization.
+pub fn create_vm(bytecode: &[u8], register_externs: ExternRegistrar) -> Result<Vm, String> {
+    let module = Module::deserialize(bytecode)
+        .map_err(|e| format!("Failed to load bytecode: {:?}", e))?;
+    
+    create_vm_from_module(module, register_externs)
+}
+
+/// Create a VM from a pre-deserialized module.
+pub fn create_vm_from_module(module: Module, register_externs: ExternRegistrar) -> Result<Vm, String> {
+    vo_runtime::output::clear_output();
+    
+    let mut vm = Vm::new();
+    register_externs(&mut vm.state.extern_registry, &module.externs);
+    vm.load(module);
+    
+    vm.run().map_err(|e| format!("{:?}", e))?;
+    
+    Ok(vm)
+}
+
+/// Call a closure in the VM (for handling external events).
+pub fn call_closure(vm: &mut Vm, closure: GcRef, args: &[u64]) -> Result<(), String> {
+    vo_runtime::output::clear_output();
+    
+    use vo_runtime::objects::closure;
+    let func_id = closure::func_id(closure);
+    let module = vm.module().expect("module not set");
+    let func_def = &module.functions[func_id as usize];
+    
+    let full_args = vo_vm::vm::helpers::build_closure_args(
+        closure as u64,
+        closure,
+        func_def,
+        args.as_ptr(),
+        args.len() as u32,
+    );
+    
+    let mut ret: [u64; 0] = [];
+    if !vm.execute_closure_sync(func_id, &full_args, ret.as_mut_ptr(), 0) {
+        return Err("Closure panicked".to_string());
+    }
+    
+    vm.run_scheduled().map_err(|e| format!("{:?}", e))?;
+    
+    Ok(())
+}
+
+/// Allocate a string in the VM's GC heap.
+pub fn alloc_string(vm: &mut Vm, s: &str) -> GcRef {
+    vo_runtime::objects::string::from_rust_str(&mut vm.state.gc, s)
+}
+
+/// Take captured output since last clear.
+pub fn take_output() -> String {
+    vo_runtime::output::take_output()
 }

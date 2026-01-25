@@ -1,0 +1,29 @@
+[package]
+name = "vo-stdlib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+description = "Vo standard library: Vo source files + platform extern implementations"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+vo-runtime = { path = "../vo-runtime", default-features = false }
+vo-common = { path = "../vo-common" }
+vo-common-core = { path = "../vo-common-core" }
+rust-embed = "8"
+
+# Native-only dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+vo-runtime = { path = "../vo-runtime", default-features = false, features = ["std"] }
+
+# WASM-only dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Performance", "Window"] }
+
+[build-dependencies]
+# For watching stdlib changes

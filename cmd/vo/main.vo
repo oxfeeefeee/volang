@@ -24,6 +24,8 @@ func main() {
 		code = cmdDump(rest)
 	case "compile":
 		code = cmdCompile(rest)
+	case "emit":
+		code = cmdEmit(rest)
 	case "init":
 		code = cmdInit(rest)
 	case "get":
@@ -53,6 +55,7 @@ func printUsage() {
 	println("  build [path]    Build a project")
 	println("  dump <file>     Dump bytecode to text")
 	println("  compile <file>  Compile bytecode text to binary")
+	println("  emit <file>     Compile source to bytecode binary")
 	println("  init <path>     Initialize a new module")
 	println("  get <module>    Download a dependency")
 	println("  check           Type-check current module")

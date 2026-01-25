@@ -4,7 +4,7 @@
 
 package main
 
-import "gui"
+import "vogui"
 import "fmt"
 
 // ============ Theme Colors ============
@@ -107,8 +107,8 @@ func loadCourses() []Course {
 // ============ App Entry ============
 
 func main() {
-	gui.SetGlobalKeyHandler(handleKey)
-	gui.Run(gui.App{
+	vogui.SetGlobalKeyHandler(handleKey)
+	vogui.Run(vogui.App{
 		Init: initApp,
 		View: view,
 	})
@@ -205,7 +205,7 @@ func getTotalChars(s *State) int {
 
 // ============ View ============
 
-func view(state any) gui.Node {
+func view(state any) vogui.Node {
 	s := state.(*State)
 	if s.Page == "home" {
 		return viewHome(s)
@@ -216,18 +216,18 @@ func view(state any) gui.Node {
 	return viewLesson(s)
 }
 
-func viewHome(s *State) gui.Node {
+func viewHome(s *State) vogui.Node {
 	total := getTotalChars(s)
 	progress := 0
 	if total > 0 {
 		progress = s.TotalLearned * 100 / total
 	}
 
-	var courseNodes []gui.Node
+	var courseNodes []vogui.Node
 	for i, c := range s.Courses {
 		idx := i
 		courseNodes = append(courseNodes,
-			gui.Button(fmt.Sprintf("%s %s (%d字)", c.Icon, c.Name, len(c.Chars)), gui.OnInt(actionSelectCourse, idx)).
+			vogui.Button(fmt.Sprintf("%s %s (%d字)", c.Icon, c.Name, len(c.Chars)), vogui.OnInt(actionSelectCourse, idx)).
 				Bg(ColorGreen).
 				Fg("#fff").
 				Rounded(10).
@@ -237,58 +237,58 @@ func viewHome(s *State) gui.Node {
 		)
 	}
 
-	return gui.Center(
-		gui.Column(
+	return vogui.Center(
+		vogui.Column(
 			// Title
-			gui.Row(
-				gui.Text("🎮 识字").Font(28).Bold().Fg(ColorGreen),
-				gui.Text("冒险").Font(28).Bold().Fg(ColorBrown),
+			vogui.Row(
+				vogui.Text("🎮 识字").Font(28).Bold().Fg(ColorGreen),
+				vogui.Text("冒险").Font(28).Bold().Fg(ColorBrown),
 			).M(15),
 
 			// Progress
-			gui.Column(
-				gui.Text(fmt.Sprintf("已学习: %d / %d 字", s.TotalLearned, total)).Font(14).Fg(ColorText),
-				gui.Row(
-					gui.Node{Type: "Block"}.W(progress*2).H(8).Bg(ColorGreen).Rounded(4),
-					gui.Node{Type: "Block"}.W((100-progress)*2).H(8).Bg("#ddd").Rounded(4),
+			vogui.Column(
+				vogui.Text(fmt.Sprintf("已学习: %d / %d 字", s.TotalLearned, total)).Font(14).Fg(ColorText),
+				vogui.Row(
+					vogui.Node{Type: "Block"}.W(progress*2).H(8).Bg(ColorGreen).Rounded(4),
+					vogui.Node{Type: "Block"}.W((100-progress)*2).H(8).Bg("#ddd").Rounded(4),
 				).Gap(0),
 			).M(10).P(10).Bg("#fff").Rounded(8).Border("2px solid "+ColorBorder),
 
 			// Course List
-			gui.Text("选择课程:").Font(16).Bold().Fg(ColorText).M(10),
-			gui.Column(courseNodes...).Gap(5),
+			vogui.Text("选择课程:").Font(16).Bold().Fg(ColorText).M(10),
+			vogui.Column(courseNodes...).Gap(5),
 
 			// Footer
-			gui.Text("← → 方向键导航 | Space 显示详情").Font(11).Fg("#999").M(15),
+			vogui.Text("← → 方向键导航 | Space 显示详情").Font(11).Fg("#999").M(15),
 		).Bg(ColorBg).P(15).Gap(5).W(300),
 	)
 }
 
-func viewLesson(s *State) gui.Node {
+func viewLesson(s *State) vogui.Node {
 	course := s.Courses[s.CurrentCourse]
 	char := course.Chars[s.CurrentChar]
 
-	return gui.Column(
+	return vogui.Column(
 		// Navbar
-		gui.Row(
-			gui.Button("← 返回", gui.On(actionGoHome)).
+		vogui.Row(
+			vogui.Button("← 返回", vogui.On(actionGoHome)).
 				Bg(ColorRed).Fg("#fff").Rounded(8).P(8),
-			gui.Spacer(),
-			gui.Text(fmt.Sprintf("%s %s  %d/%d", course.Icon, course.Name, s.CurrentChar+1, len(course.Chars))).
+			vogui.Spacer(),
+			vogui.Text(fmt.Sprintf("%s %s  %d/%d", course.Icon, course.Name, s.CurrentChar+1, len(course.Chars))).
 				Font(14).Fg(ColorText).Bold(),
-			gui.Spacer(),
+			vogui.Spacer(),
 		).P(8).Bg(ColorBg).Border("0 0 2px 0 solid "+ColorBorder),
 
 		// Main Content
-		gui.Center(
-			gui.Column(
+		vogui.Center(
+			vogui.Column(
 				// Pinyin (Conditional)
-				gui.Show(s.ShowDetail,
-					gui.Text(char.Pinyin).Font(32).Fg(ColorPurple).Bold().M(5),
+				vogui.Show(s.ShowDetail,
+					vogui.Text(char.Pinyin).Font(32).Fg(ColorPurple).Bold().M(5),
 				),
 
 				// Hanzi Card
-				gui.Button(char.Char, gui.On(actionToggleDetail)).
+				vogui.Button(char.Char, vogui.On(actionToggleDetail)).
 					Font(90).
 					Fg(ColorRed).
 					Bg("#fff").
@@ -297,58 +297,58 @@ func viewLesson(s *State) gui.Node {
 					Rounded(10),
 
 				// Hint
-				gui.Show(!s.ShowDetail,
-					gui.Text("👆 点击查看详情").Font(12).Fg("#999").M(8),
+				vogui.Show(!s.ShowDetail,
+					vogui.Text("👆 点击查看详情").Font(12).Fg("#999").M(8),
 				),
 
 				// Details
-				gui.Show(s.ShowDetail,
-					gui.Column(
-						gui.Row(
-							gui.Text("📖 释义: ").Bold().Fg(ColorBrown),
-							gui.Text(char.Meaning).Fg(ColorText),
+				vogui.Show(s.ShowDetail,
+					vogui.Column(
+						vogui.Row(
+							vogui.Text("📖 释义: ").Bold().Fg(ColorBrown),
+							vogui.Text(char.Meaning).Fg(ColorText),
 						),
-						gui.Row(
-							gui.Text("📝 组词: ").Bold().Fg(ColorBrown),
-							gui.Text(char.Words).Fg(ColorText),
+						vogui.Row(
+							vogui.Text("📝 组词: ").Bold().Fg(ColorBrown),
+							vogui.Text(char.Words).Fg(ColorText),
 						),
-						gui.Row(
-							gui.Text("💬 例句: ").Bold().Fg(ColorBrown),
-							gui.Text(char.Example).Fg(ColorText),
+						vogui.Row(
+							vogui.Text("💬 例句: ").Bold().Fg(ColorBrown),
+							vogui.Text(char.Example).Fg(ColorText),
 						),
 					).P(12).Bg("#fff").Rounded(8).Border("2px solid "+ColorBorder).M(8).Gap(8),
 				),
 
 				// Minecraft Sentence
-				gui.Column(
-					gui.Text("⛏️ Minecraft 造句").Bold().Fg(ColorYellow),
-					gui.Text(char.McSentence).Fg("#fff").Font(14),
+				vogui.Column(
+					vogui.Text("⛏️ Minecraft 造句").Bold().Fg(ColorYellow),
+					vogui.Text(char.McSentence).Fg("#fff").Font(14),
 				).P(12).M(5).Bg("#2d2d2d").Rounded(8).Border("3px solid "+ColorBrown),
 			).Gap(5),
 		).Flex(1),
 
 		// Navigation
-		gui.Row(
-			gui.If(s.CurrentChar > 0,
-				gui.Button("◀ 上一个", gui.On(actionPrevChar)).
+		vogui.Row(
+			vogui.If(s.CurrentChar > 0,
+				vogui.Button("◀ 上一个", vogui.On(actionPrevChar)).
 					Bg(ColorBlue).Fg("#fff").Rounded(20).P(10),
 			),
-			gui.Spacer(),
-			gui.Button("下一个 ▶", gui.On(actionNextChar)).
+			vogui.Spacer(),
+			vogui.Button("下一个 ▶", vogui.On(actionNextChar)).
 				Bg(ColorGreen).Fg("#fff").Rounded(20).P(10),
 		).P(15),
 	).Bg(ColorBg).W(300)
 }
 
-func viewComplete(s *State) gui.Node {
+func viewComplete(s *State) vogui.Node {
 	course := s.Courses[s.CurrentCourse]
-	return gui.Center(
-		gui.Column(
-			gui.Text("🎉").Font(60),
-			gui.Text("太棒了！").Font(28).Bold().Fg(ColorGreen),
-			gui.Text(fmt.Sprintf("你完成了 %s！", course.Name)).Font(16).Fg(ColorText),
-			gui.Text(fmt.Sprintf("学习了 %d 个汉字", len(course.Chars))).Font(14).Fg(ColorText).M(10),
-			gui.Button("继续学习", gui.On(actionContinue)).
+	return vogui.Center(
+		vogui.Column(
+			vogui.Text("🎉").Font(60),
+			vogui.Text("太棒了！").Font(28).Bold().Fg(ColorGreen),
+			vogui.Text(fmt.Sprintf("你完成了 %s！", course.Name)).Font(16).Fg(ColorText),
+			vogui.Text(fmt.Sprintf("学习了 %d 个汉字", len(course.Chars))).Font(14).Fg(ColorText).M(10),
+			vogui.Button("继续学习", vogui.On(actionContinue)).
 				Bg(ColorGreen).Fg("#fff").Rounded(10).P(15).M(20),
 		).Bg(ColorBg).P(30).Rounded(15).Border("4px solid "+ColorBorder).Gap(10).W(300),
 	)

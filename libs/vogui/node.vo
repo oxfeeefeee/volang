@@ -1,0 +1,124 @@
+// Node type and chainable style methods.
+package vogui
+
+// Node represents a UI element.
+type Node struct {
+	Type     string
+	Props    map[string]any
+	Children []Node
+}
+
+// ============ Chainable Style Methods ============
+
+func (n Node) setStyle(key string, value any) Node {
+	if n.Props == nil {
+		n.Props = make(map[string]any)
+	}
+	style, ok := n.Props["style"].(map[string]any)
+	if !ok {
+		style = make(map[string]any)
+		n.Props["style"] = style
+	}
+	style[key] = value
+	return n
+}
+
+// W sets width. Accepts int (px) or string ("50%").
+func (n Node) W(v any) Node { return n.setStyle("width", v) }
+
+// H sets height. Accepts int (px) or string.
+func (n Node) H(v any) Node { return n.setStyle("height", v) }
+
+// P sets padding (all sides).
+func (n Node) P(v int) Node { return n.setStyle("padding", v) }
+
+// Px sets horizontal padding.
+func (n Node) Px(v int) Node {
+	n = n.setStyle("paddingLeft", v)
+	return n.setStyle("paddingRight", v)
+}
+
+// Py sets vertical padding.
+func (n Node) Py(v int) Node {
+	n = n.setStyle("paddingTop", v)
+	return n.setStyle("paddingBottom", v)
+}
+
+// M sets margin (all sides).
+func (n Node) M(v int) Node { return n.setStyle("margin", v) }
+
+// Mx sets horizontal margin.
+func (n Node) Mx(v int) Node {
+	n = n.setStyle("marginLeft", v)
+	return n.setStyle("marginRight", v)
+}
+
+// My sets vertical margin.
+func (n Node) My(v int) Node {
+	n = n.setStyle("marginTop", v)
+	return n.setStyle("marginBottom", v)
+}
+
+// Bg sets background color.
+func (n Node) Bg(c string) Node { return n.setStyle("background", c) }
+
+// Fg sets text color.
+func (n Node) Fg(c string) Node { return n.setStyle("color", c) }
+
+// Flex sets flex grow.
+func (n Node) Flex(v int) Node { return n.setStyle("flex", v) }
+
+// Gap sets gap between children.
+func (n Node) Gap(v int) Node { return n.setStyle("gap", v) }
+
+// Rounded sets border-radius.
+func (n Node) Rounded(v int) Node { return n.setStyle("borderRadius", v) }
+
+// Border sets border.
+func (n Node) Border(v string) Node { return n.setStyle("border", v) }
+
+// Shadow sets box-shadow.
+func (n Node) Shadow(v string) Node { return n.setStyle("boxShadow", v) }
+
+// Opacity sets opacity (0.0 to 1.0).
+func (n Node) Opacity(v float64) Node { return n.setStyle("opacity", v) }
+
+// Font sets font-size.
+func (n Node) Font(v int) Node { return n.setStyle("fontSize", v) }
+
+// Bold sets font-weight to bold.
+func (n Node) Bold() Node { return n.setStyle("fontWeight", "bold") }
+
+// Italic sets font-style to italic.
+func (n Node) Italic() Node { return n.setStyle("fontStyle", "italic") }
+
+// Center sets text-align to center.
+func (n Node) Center() Node { return n.setStyle("textAlign", "center") }
+
+// Cursor sets cursor style.
+func (n Node) Cursor(v string) Node { return n.setStyle("cursor", v) }
+
+// Overflow sets overflow behavior.
+func (n Node) Overflow(v string) Node { return n.setStyle("overflow", v) }
+
+// Style sets a single style property (key, value).
+func (n Node) Style(key string, value any) Node {
+	return n.setStyle(key, value)
+}
+
+// Styles merges custom style properties from a map.
+func (n Node) Styles(props map[string]any) Node {
+	for k, v := range props {
+		n = n.setStyle(k, v)
+	}
+	return n
+}
+
+// AddHandler attaches a click handler to the node.
+func (n Node) AddHandler(h Handler) Node {
+	if n.Props == nil {
+		n.Props = make(map[string]any)
+	}
+	n.Props["onClick"] = h.ID
+	return n
+}

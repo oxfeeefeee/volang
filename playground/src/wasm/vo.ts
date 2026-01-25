@@ -14,42 +14,26 @@ export interface GuiResult {
   error: string;
 }
 
-// WASM module instances
-let voWebModule: any = null;
-let voguiModule: any = null;
+// Unified WASM module instance
+let wasmModule: any = null;
 
-async function loadVoWeb(): Promise<any> {
-  if (voWebModule) return voWebModule;
+async function loadWasm(): Promise<any> {
+  if (wasmModule) return wasmModule;
 
   try {
-    const { default: init, compileAndRun, version } = await import('@vo-web/vo_web.js');
+    const { default: init, compileAndRun, version, initGuiApp, handleGuiEvent } = await import('@vo-playground/vo_playground.js');
     await init();
-    voWebModule = { compileAndRun, version };
-    console.log('Vo WASM loaded:', version());
-    return voWebModule;
+    wasmModule = { compileAndRun, version, initGuiApp, handleGuiEvent };
+    console.log('Vo Playground WASM loaded:', version());
+    return wasmModule;
   } catch (e) {
     console.error('Failed to load Vo WASM:', e);
     throw new Error('Failed to load Vo runtime. Please refresh the page.');
   }
 }
 
-async function loadVogui(): Promise<any> {
-  if (voguiModule) return voguiModule;
-
-  try {
-    const { default: init, initGuiApp, handleGuiEvent } = await import('@vogui/vogui.js');
-    await init();
-    voguiModule = { initGuiApp, handleGuiEvent };
-    console.log('VoGUI WASM loaded');
-    return voguiModule;
-  } catch (e) {
-    console.error('Failed to load VoGUI WASM:', e);
-    throw new Error('Failed to load VoGUI runtime. Please refresh the page.');
-  }
-}
-
 export async function runCode(source: string): Promise<RunResult> {
-  const wasm = await loadVoWeb();
+  const wasm = await loadWasm();
 
   const result = wasm.compileAndRun(source, 'main.vo');
 
@@ -61,7 +45,7 @@ export async function runCode(source: string): Promise<RunResult> {
 }
 
 export async function getVersion(): Promise<string> {
-  const wasm = await loadVoWeb();
+  const wasm = await loadWasm();
   return wasm.version();
 }
 
@@ -168,7 +152,7 @@ window.addEventListener('popstate', async () => {
   // So we just need to trigger an event loop cycle.
   // Let's send a "navigation" event or just a dummy event to wake it up?
   // HandlerID -3 for navigation event?
-  if (voguiModule) {
+  if (wasmModule) {
       try {
         const result = await handleGuiEvent(-3, JSON.stringify({ path: window.location.pathname }));
         if (result.status === 'ok' && onRender) {
@@ -185,7 +169,7 @@ export async function initGuiApp(source: string): Promise<GuiResult> {
   activeTimers.forEach((jsIntervalId) => nativeClearInterval(jsIntervalId));
   activeTimers.clear();
 
-  const wasm = await loadVogui();
+  const wasm = await loadWasm();
   const result = wasm.initGuiApp(source, 'main.vo');
   return {
     status: result.status,
@@ -195,7 +179,7 @@ export async function initGuiApp(source: string): Promise<GuiResult> {
 }
 
 export async function handleGuiEvent(handlerId: number, payload: string): Promise<GuiResult> {
-  const wasm = await loadVogui();
+  const wasm = await loadWasm();
   const result = wasm.handleGuiEvent(handlerId, payload);
   return {
     status: result.status,

@@ -1,0 +1,69 @@
+// Navigation components.
+package vogui
+
+// Nav renders a navigation bar.
+func Nav(children ...Node) Node {
+	return Node{Type: "Nav", Children: children}
+}
+
+// NavItem renders a navigation item.
+func NavItem(text string, active bool, onClick Handler) Node {
+	return Node{
+		Type: "NavItem",
+		Props: map[string]any{
+			"text":    text,
+			"active":  active,
+			"onClick": onClick.ID,
+		},
+	}
+}
+
+// NavLink renders a navigation link (for router).
+func NavLink(to string, text string) Node {
+	return Node{
+		Type:  "NavLink",
+		Props: map[string]any{"to": to, "text": text},
+	}
+}
+
+// BreadcrumbItem represents a breadcrumb segment.
+type BreadcrumbItem struct {
+	Label string
+	Href  string
+}
+
+// Breadcrumb renders a breadcrumb navigation.
+func Breadcrumb(items []BreadcrumbItem) Node {
+	itemsAny := make([]any, len(items))
+	for i, item := range items {
+		itemsAny[i] = map[string]any{
+			"label": item.Label,
+			"href":  item.Href,
+		}
+	}
+	return Node{Type: "Breadcrumb", Props: map[string]any{"items": itemsAny}}
+}
+
+// Pagination renders pagination controls.
+// onChange receives the clicked page number (1-indexed). Use OnSlider(action) where action is func(s *State, page int).
+func Pagination(current int, total int, onChange Handler) Node {
+	return Node{
+		Type: "Pagination",
+		Props: map[string]any{
+			"current":  current,
+			"total":    total,
+			"onChange": onChange.ID,
+		},
+	}
+}
+
+// Steps renders a step indicator.
+func Steps(current int, items []string) Node {
+	return Node{
+		Type: "Steps",
+		Props: map[string]any{
+			"current": current,
+			"items":   items,
+		},
+	}
+}

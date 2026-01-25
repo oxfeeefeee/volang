@@ -8,13 +8,14 @@ description = "Vox - compile, run, and inspect Vo programs"
 [features]
 default = []
 ffi = []
+jit = ["vo-vm/jit"]
 gc-debug = ["vo-runtime/gc-debug"]
 
 [lib]
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-vo-launcher = { path = "../../../lang/crates/vo-launcher" }
+vo-engine = { path = "../../../lang/crates/vo-engine" }
 vo-vm = { path = "../../../lang/crates/vo-vm" }
 vo-runtime = { path = "../../../lang/crates/vo-runtime" }
 vo-ext = { path = "../../../lang/crates/vo-ext" }

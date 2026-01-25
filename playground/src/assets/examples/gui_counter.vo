@@ -1,18 +1,18 @@
 package main
 
-import "gui"
+import "vogui"
 
 type State struct {
     Count int
 }
 
-func view(state any) gui.Node {
+func view(state any) vogui.Node {
     s := state.(*State)
-    return gui.Column(
-        gui.Text("Count: ", s.Count),
-        gui.Row(
-            gui.Button("-1", gui.On(decrement)),
-            gui.Button("+1", gui.On(increment)),
+    return vogui.Column(
+        vogui.Text("Count: ", s.Count),
+        vogui.Row(
+            vogui.Button("-1", vogui.On(decrement)),
+            vogui.Button("+1", vogui.On(increment)),
         ),
     )
 }
@@ -26,7 +26,7 @@ func decrement(s *State) {
 }
 
 func main() {
-    gui.Run(gui.App{
+    vogui.Run(vogui.App{
         Init: func() any { return &State{} },
         View: view,
     })

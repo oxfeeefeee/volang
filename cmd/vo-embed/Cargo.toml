@@ -1,0 +1,16 @@
+[package]
+name = "vo-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Vo runtime for embedded/no_std targets - runs pre-compiled bytecode"
+
+[[bin]]
+name = "vo-embed"
+path = "src/main.rs"
+
+[dependencies]
+# Dependencies use no_std (default-features = false) to test no_std compatibility
+vo-vm = { path = "../../lang/crates/vo-vm", default-features = false }
+vo-runtime = { path = "../../lang/crates/vo-runtime", default-features = false }
+vo-common-core = { path = "../../lang/crates/vo-common-core" }

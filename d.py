@@ -207,35 +207,20 @@ def clean_caches(target: str = 'all'):
 
 
 def build_wasm():
-    """Build vo-web and vogui for WASM using wasm-pack."""
-    # Build vo-web
-    print(f"{Colors.BOLD}Building vo-web WASM...{Colors.NC}")
-    build_cmd = ['wasm-pack', 'build', 'lang/crates/vo-web', '--target', 'web', '--features', 'compiler']
+    """Build vo-playground WASM (includes vo-web and vogui)."""
+    print(f"{Colors.BOLD}Building vo-playground WASM...{Colors.NC}")
+    playground_rust_dir = PROJECT_ROOT / 'playground' / 'rust'
+    build_cmd = ['wasm-pack', 'build', str(playground_rust_dir), '--target', 'web', '--release']
     code, stdout, stderr = run_cmd(build_cmd, capture=False)
     if code != 0:
-        print(f"{Colors.RED}vo-web WASM build failed{Colors.NC}")
+        print(f"{Colors.RED}vo-playground WASM build failed{Colors.NC}")
         sys.exit(1)
     
-    pkg_dir = PROJECT_ROOT / 'lang' / 'crates' / 'vo-web' / 'pkg'
-    wasm_file = pkg_dir / 'vo_web_bg.wasm'
+    pkg_dir = playground_rust_dir / 'pkg'
+    wasm_file = pkg_dir / 'vo_playground_bg.wasm'
     if wasm_file.exists():
         size_kb = wasm_file.stat().st_size / 1024
-        print(f"{Colors.GREEN}✓ vo-web:{Colors.NC} {size_kb:.1f} KB")
-    
-    # Build vogui
-    print(f"\n{Colors.BOLD}Building vogui WASM...{Colors.NC}")
-    vogui_dir = PROJECT_ROOT / 'libs' / 'vogui' / 'rust'
-    build_cmd = ['wasm-pack', 'build', str(vogui_dir), '--target', 'web', '--out-dir', 'pkg']
-    code, stdout, stderr = run_cmd(build_cmd, capture=False)
-    if code != 0:
-        print(f"{Colors.RED}vogui WASM build failed{Colors.NC}")
-        sys.exit(1)
-    
-    vogui_pkg = vogui_dir / 'pkg'
-    vogui_wasm = vogui_pkg / 'vogui_bg.wasm'
-    if vogui_wasm.exists():
-        size_kb = vogui_wasm.stat().st_size / 1024
-        print(f"{Colors.GREEN}✓ vogui:{Colors.NC} {size_kb:.1f} KB")
+        print(f"{Colors.GREEN}✓ vo-playground:{Colors.NC} {size_kb:.1f} KB")
 
 
 def run_playground(build_only: bool = False):
@@ -336,15 +321,15 @@ def run_vo_file(file: str, mode: str = 'vm', codegen: bool = False):
     """Run a .vo file using the Vo CLI (cmd/vo)."""
     vo_bin = get_vo_bin(release=False)
     
-    # Build vo-launcher if needed
+    # Build vo CLI if needed
     result = subprocess.run(
-        ['cargo', 'build', '-p', 'vo-launcher'],
+        ['cargo', 'build', '-p', 'vo'],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True
     )
     if result.returncode != 0:
-        print(f"{Colors.RED}Failed to build vo-launcher:{Colors.NC}")
+        print(f"{Colors.RED}Failed to build vo CLI:{Colors.NC}")
         print(result.stderr)
         sys.exit(1)
     
@@ -503,10 +488,10 @@ class TestRunner:
             self._run_wasm_tests()
             return
         
-        # Build vo-launcher
+        # Build vo CLI
         target_info = f" (target: {TARGET_32})" if self.arch == '32' else ""
-        print(f"{Colors.DIM}Building vo-launcher{target_info}...{Colors.NC}")
-        build_cmd = ['cargo', 'build', '-q', '-p', 'vo-launcher']
+        print(f"{Colors.DIM}Building vo CLI{target_info}...{Colors.NC}")
+        build_cmd = ['cargo', 'build', '-q', '-p', 'vo']
         if self.arch == '32':
             build_cmd.extend(['--target', TARGET_32, '--no-default-features'])
         code, _, stderr = run_cmd(build_cmd)
@@ -858,12 +843,12 @@ class TestRunner:
             print(output)
 
     def _run_nostd_test(self, file: str):
-        """Run nostd test: compile with vo-launcher, run with vo-embed (no_std deps)."""
+        """Run nostd test: compile with vo CLI, run with vo-embed (no_std deps)."""
         path = TEST_DIR / file
         
-        # Step 1: Compile to bytecode using vo-launcher --compile-only (no --cache)
+        # Step 1: Compile to bytecode using vo emit
         bytecode_path = path.with_suffix('.vob')
-        compile_cmd = [str(self.vo_bin), f'--compile-only={bytecode_path}', str(path)]
+        compile_cmd = self._make_vo_cmd('emit', str(path), '-o', str(bytecode_path))
         
         if self.verbose:
             print(f"{Colors.DIM}Compiling: {' '.join(compile_cmd)}{Colors.NC}")
@@ -1065,7 +1050,7 @@ class BenchmarkRunner:
     def _build_vo(self):
         target_info = f" (target: {TARGET_32})" if self.arch == '32' else ""
         print(f"Building Vo (release){target_info}...")
-        build_cmd = ['cargo', 'build', '--release', '-p', 'vo-launcher']
+        build_cmd = ['cargo', 'build', '--release', '-p', 'vo']
         if self.arch == '32':
             build_cmd.extend(['--target', TARGET_32, '--no-default-features'])
         code, _, stderr = run_cmd(build_cmd, capture=True)
@@ -1315,7 +1300,7 @@ class LocStats:
         'Code Generation': ['vo-codegen'],
         'Runtime': ['vo-vm', 'vo-runtime'],
         'JIT': ['vo-jit'],
-        'Tools (CLI/Module)': ['vo-launcher', 'vo-module'],
+        'Tools (CLI/Module)': ['vo', 'vo-vox', 'vo-module'],
     }
 
     def __init__(self, with_tests: bool = False):

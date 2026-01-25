@@ -5,7 +5,7 @@
 use std::sync::Mutex;
 use vo_ext::prelude::*;
 use vo_vm::bytecode::Module;
-use vo_launcher::{compile_file, compile_source, compile_string, CompileOutput, run_module_with_extensions, run_file_with_mode, RunMode};
+use crate::{compile, compile_string, CompileOutput, run, RunMode};
 use vo_runtime::stdlib::error_helper::{write_error_to, write_nil_error};
 use vo_common::symbol::SymbolInterner;
 use vo_syntax::parser;
@@ -115,7 +115,7 @@ fn free_ast(id: i64) {
 fn runner_compile_file(ctx: &mut ExternCallContext) -> ExternResult {
     let path = ctx.arg_str(slots::ARG_PATH).to_string();
     
-    match compile_file(&path) {
+    match compile(&path) {
         Ok(output) => {
             let id = store_module(output);
             ctx.ret_any(slots::RET_0, InterfaceSlot::from_i64(id));
@@ -133,7 +133,7 @@ fn runner_compile_file(ctx: &mut ExternCallContext) -> ExternResult {
 fn runner_compile_dir(ctx: &mut ExternCallContext) -> ExternResult {
     let path = ctx.arg_str(slots::ARG_PATH).to_string();
     
-    match compile_source(&path) {
+    match compile(&path) {
         Ok(output) => {
             let id = store_module(output);
             ctx.ret_any(slots::RET_0, InterfaceSlot::from_i64(id));
@@ -185,7 +185,7 @@ fn runner_run(ctx: &mut ExternCallContext) -> ExternResult {
         extensions: stored.extensions,
     };
 
-    match run_module_with_extensions(output, RunMode::Vm, Vec::new()) {
+    match run(output, RunMode::Vm, Vec::new()) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
             write_error_to(ctx, slots::RET_0, &e.to_string());
@@ -212,7 +212,7 @@ fn runner_run_jit(ctx: &mut ExternCallContext) -> ExternResult {
         extensions: stored.extensions,
     };
 
-    match run_module_with_extensions(output, RunMode::Jit, Vec::new()) {
+    match run(output, RunMode::Jit, Vec::new()) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
             write_error_to(ctx, slots::RET_0, &e.to_string());
@@ -225,7 +225,7 @@ fn runner_run_jit(ctx: &mut ExternCallContext) -> ExternResult {
 fn runner_run_file(ctx: &mut ExternCallContext) -> ExternResult {
     let path = ctx.arg_str(slots::ARG_PATH).to_string();
     
-    match run_file_with_mode(&path, RunMode::Vm) {
+    match compile(&path).map_err(crate::RunError::from).and_then(|o| run(o, RunMode::Vm, Vec::new())) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
             write_error_to(ctx, slots::RET_0, &e.to_string());
@@ -238,7 +238,7 @@ fn runner_run_file(ctx: &mut ExternCallContext) -> ExternResult {
 fn runner_run_file_jit(ctx: &mut ExternCallContext) -> ExternResult {
     let path = ctx.arg_str(slots::ARG_PATH).to_string();
     
-    match run_file_with_mode(&path, RunMode::Jit) {
+    match compile(&path).map_err(crate::RunError::from).and_then(|o| run(o, RunMode::Jit, Vec::new())) {
         Ok(()) => ctx.ret_nil_error(slots::RET_0),
         Err(e) => {
             write_error_to(ctx, slots::RET_0, &e.to_string());

@@ -1,8 +1,0 @@
-// Internal utility functions.
-package gui
-
-import "fmt"
-
-func toString(v any) string {
-	return fmt.Sprint(v)
-}

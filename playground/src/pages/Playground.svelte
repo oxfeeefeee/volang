@@ -42,8 +42,8 @@
     consoleCollapsed = false;
     activePanel = 'console';
 
-    // Detect GUI code by checking for gui.Run
-    const isGuiCode = code.includes('gui.Run') && code.includes('import "gui"');
+    // Detect GUI code by checking for import "vogui"
+    const isGuiCode = code.includes('import "vogui"');
 
     try {
       if (isGuiCode) {

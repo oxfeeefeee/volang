@@ -153,13 +153,13 @@ func startPomodoro(s *State) {
 		return
 	}
 	s.PomodoroRunning = true
-	s.TimerID = vogui.SetInterval(1000, pomodoroTick)
+	s.TimerID = gui.SetInterval(1000, pomodoroTick)
 }
 
 func pausePomodoro(s *State) {
 	s.PomodoroRunning = false
 	if s.TimerID > 0 {
-		vogui.ClearInterval(s.TimerID)
+		gui.ClearInterval(s.TimerID)
 		s.TimerID = 0
 	}
 }
@@ -331,35 +331,35 @@ func setAccentColor(s *State, color string) {
 
 // ============ Views ============
 
-func view(state any) vogui.Node {
+func view(state any) gui.Node {
 	s := state.(*State)
-	return vogui.Column(
+	return gui.Column(
 		viewNav(s),
-		vogui.Divider(),
+		gui.Divider(),
 		viewContent(s),
 		viewModals(s),
 	).Style("height", "100vh")
 }
 
-func viewNav(s *State) vogui.Node {
-	return vogui.Row(
-		vogui.H2("🏠 Workspace").Style("margin", "0"),
-		vogui.Spacer(),
-		vogui.Nav(
-			vogui.NavItem("Dashboard", s.ActiveTab == "dashboard", vogui.On(func(s *State) { setTab(s, "dashboard") })),
-			vogui.NavItem("Tasks", s.ActiveTab == "tasks", vogui.On(func(s *State) { setTab(s, "tasks") })),
-			vogui.NavItem("Pomodoro", s.ActiveTab == "pomodoro", vogui.On(func(s *State) { setTab(s, "pomodoro") })),
-			vogui.NavItem("Finance", s.ActiveTab == "finance", vogui.On(func(s *State) { setTab(s, "finance") })),
-			vogui.NavItem("Notes", s.ActiveTab == "notes", vogui.On(func(s *State) { setTab(s, "notes") })),
+func viewNav(s *State) gui.Node {
+	return gui.Row(
+		gui.H2("🏠 Workspace").Style("margin", "0"),
+		gui.Spacer(),
+		gui.Nav(
+			gui.NavItem("Dashboard", s.ActiveTab == "dashboard", gui.On(func(s *State) { setTab(s, "dashboard") })),
+			gui.NavItem("Tasks", s.ActiveTab == "tasks", gui.On(func(s *State) { setTab(s, "tasks") })),
+			gui.NavItem("Pomodoro", s.ActiveTab == "pomodoro", gui.On(func(s *State) { setTab(s, "pomodoro") })),
+			gui.NavItem("Finance", s.ActiveTab == "finance", gui.On(func(s *State) { setTab(s, "finance") })),
+			gui.NavItem("Notes", s.ActiveTab == "notes", gui.On(func(s *State) { setTab(s, "notes") })),
 		),
-		vogui.Spacer(),
-		vogui.Tooltip("Settings", 
-			vogui.IconButton("settings", vogui.On(openSettings)),
+		gui.Spacer(),
+		gui.Tooltip("Settings", 
+			gui.IconButton("settings", gui.On(openSettings)),
 		),
 	).Style("padding", "12px 24px").Style("align-items", "center")
 }
 
-func viewContent(s *State) vogui.Node {
+func viewContent(s *State) gui.Node {
 	switch s.ActiveTab {
 	case "tasks":
 		return viewTasks(s)
@@ -376,7 +376,7 @@ func viewContent(s *State) vogui.Node {
 
 // ============ Dashboard ============
 
-func viewDashboard(s *State) vogui.Node {
+func viewDashboard(s *State) gui.Node {
 	activeTasks := 0
 	for _, t := range s.Tasks {
 		if !t.Completed {
@@ -394,63 +394,63 @@ func viewDashboard(s *State) vogui.Node {
 		}
 	}
 	
-	return vogui.Scroll(vogui.Column(
-		vogui.H1("Dashboard"),
+	return gui.Scroll(gui.Column(
+		gui.H1("Dashboard"),
 		
-		vogui.Grid(3,
-			vogui.Card(
-				vogui.CardHeader("📋 Tasks"),
-				vogui.CardBody(
-					vogui.H2(fmt.Sprint(activeTasks) + " active"),
-					vogui.Progress(float64(len(s.Tasks)-activeTasks) / float64(max(len(s.Tasks), 1))),
-					vogui.Text("Completed: ", len(s.Tasks)-activeTasks, "/", len(s.Tasks)),
+		gui.Grid(3,
+			gui.Card(
+				gui.CardHeader("📋 Tasks"),
+				gui.CardBody(
+					gui.H2(fmt.Sprint(activeTasks) + " active"),
+					gui.Progress(float64(len(s.Tasks)-activeTasks) / float64(max(len(s.Tasks), 1))),
+					gui.Text("Completed: ", len(s.Tasks)-activeTasks, "/", len(s.Tasks)),
 				),
 			),
-			vogui.Card(
-				vogui.CardHeader("🍅 Pomodoro"),
-				vogui.CardBody(
-					vogui.H2(fmt.Sprint(s.PomodoroCount) + " today"),
-					vogui.Text(formatTime(s.PomodoroTime)),
-					vogui.IfElse(s.PomodoroRunning,
-						vogui.Badge("Running"),
-						vogui.Badge("Paused"),
+			gui.Card(
+				gui.CardHeader("🍅 Pomodoro"),
+				gui.CardBody(
+					gui.H2(fmt.Sprint(s.PomodoroCount) + " today"),
+					gui.Text(formatTime(s.PomodoroTime)),
+					gui.IfElse(s.PomodoroRunning,
+						gui.Badge("Running"),
+						gui.Badge("Paused"),
 					),
 				),
 			),
-			vogui.Card(
-				vogui.CardHeader("💰 Balance"),
-				vogui.CardBody(
-					vogui.H2("¥" + fmt.Sprint(totalIncome-totalExpense)),
-					vogui.Row(
-						vogui.Tag("↑ ¥" + fmt.Sprint(totalIncome)),
-						vogui.Tag("↓ ¥" + fmt.Sprint(totalExpense)),
+			gui.Card(
+				gui.CardHeader("💰 Balance"),
+				gui.CardBody(
+					gui.H2("¥" + fmt.Sprint(totalIncome-totalExpense)),
+					gui.Row(
+						gui.Tag("↑ ¥" + fmt.Sprint(totalIncome)),
+						gui.Tag("↓ ¥" + fmt.Sprint(totalExpense)),
 					).Style("gap", "8px"),
 				),
 			),
 		).Style("gap", "16px"),
 		
-		vogui.Panel("Recent Tasks",
-			vogui.IfElse(len(s.Tasks) == 0,
-				vogui.Text("No tasks yet"),
-				vogui.List(viewRecentTasks(s)...),
+		gui.Panel("Recent Tasks",
+			gui.IfElse(len(s.Tasks) == 0,
+				gui.Text("No tasks yet"),
+				gui.List(viewRecentTasks(s)...),
 			),
 		),
 		
-		vogui.Panel("Quick Actions",
-			vogui.Row(
-				vogui.Button("+ New Task", vogui.On(openTaskModal)),
-				vogui.Button("Start Focus", vogui.On(func(s *State) {
+		gui.Panel("Quick Actions",
+			gui.Row(
+				gui.Button("+ New Task", gui.On(openTaskModal)),
+				gui.Button("Start Focus", gui.On(func(s *State) {
 					setTab(s, "pomodoro")
 					startPomodoro(s)
 				})),
-				vogui.Button("+ Add Expense", vogui.On(openAddTxModal)),
+				gui.Button("+ Add Expense", gui.On(openAddTxModal)),
 			).Style("gap", "12px"),
 		),
 	).Style("padding", "24px").Style("gap", "24px"))
 }
 
-func viewRecentTasks(s *State) []vogui.Node {
-	var items []vogui.Node
+func viewRecentTasks(s *State) []gui.Node {
+	var items []gui.Node
 	count := 0
 	for i, task := range s.Tasks {
 		if count >= 5 {
@@ -466,29 +466,29 @@ func viewRecentTasks(s *State) []vogui.Node {
 
 // ============ Tasks ============
 
-func viewTasks(s *State) vogui.Node {
-	return vogui.Column(
-		vogui.Row(
-			vogui.H1("Tasks"),
-			vogui.Spacer(),
-			vogui.SearchInput(s.TaskSearch, vogui.OnValue(setTaskSearch), vogui.On(func(s *State) {})),
-			vogui.Button("+ Add Task", vogui.On(openTaskModal)),
+func viewTasks(s *State) gui.Node {
+	return gui.Column(
+		gui.Row(
+			gui.H1("Tasks"),
+			gui.Spacer(),
+			gui.SearchInput(s.TaskSearch, gui.OnValue(setTaskSearch), gui.On(func(s *State) {})),
+			gui.Button("+ Add Task", gui.On(openTaskModal)),
 		).Style("align-items", "center").Style("gap", "12px"),
 		
-		vogui.Tabs(
+		gui.Tabs(
 			tabIndex(s.TaskFilter),
-			[]vogui.TabItem{
-				{Label: "All", Content: vogui.Empty()},
-				{Label: "Active", Content: vogui.Empty()},
-				{Label: "Completed", Content: vogui.Empty()},
+			[]gui.TabItem{
+				{Label: "All", Content: gui.Empty()},
+				{Label: "Active", Content: gui.Empty()},
+				{Label: "Completed", Content: gui.Empty()},
 			},
-			vogui.OnSlider(func(s *State, idx int) {
+			gui.OnSlider(func(s *State, idx int) {
 				filters := []string{"all", "active", "completed"}
 				s.TaskFilter = filters[idx]
 			}),
 		),
 		
-		vogui.Scroll(vogui.Column(
+		gui.Scroll(gui.Column(
 			viewFilteredTasks(s)...,
 		).Style("gap", "8px")),
 	).Style("padding", "24px").Style("gap", "16px").Style("height", "calc(100vh - 60px)")
@@ -505,8 +505,8 @@ func tabIndex(filter string) int {
 	}
 }
 
-func viewFilteredTasks(s *State) []vogui.Node {
-	var items []vogui.Node
+func viewFilteredTasks(s *State) []gui.Node {
+	var items []gui.Node
 	for i, task := range s.Tasks {
 		if s.TaskSearch != "" && !contains(task.Title, s.TaskSearch) {
 			continue
@@ -520,12 +520,12 @@ func viewFilteredTasks(s *State) []vogui.Node {
 		items = append(items, viewTaskItem(s, task, i))
 	}
 	if len(items) == 0 {
-		items = append(items, vogui.Center(vogui.Text("No tasks found")))
+		items = append(items, gui.Center(gui.Text("No tasks found")))
 	}
 	return items
 }
 
-func viewTaskItem(s *State, task Task, idx int) vogui.Node {
+func viewTaskItem(s *State, task Task, idx int) gui.Node {
 	color := "#f59e0b"
 	if task.Priority == "high" {
 		color = "#ef4444"
@@ -533,24 +533,24 @@ func viewTaskItem(s *State, task Task, idx int) vogui.Node {
 		color = "#22c55e"
 	}
 	
-	return vogui.Card(
-		vogui.Row(
-			vogui.Checkbox(task.Completed, vogui.OnIntChecked(toggleTaskChecked, idx)),
-			vogui.Column(
-				vogui.IfElse(task.Completed,
-					vogui.Text(task.Title).Style("text-decoration", "line-through").Style("color", "#888"),
-					vogui.Strong(task.Title),
+	return gui.Card(
+		gui.Row(
+			gui.Checkbox(task.Completed, gui.OnIntChecked(toggleTaskChecked, idx)),
+			gui.Column(
+				gui.IfElse(task.Completed,
+					gui.Text(task.Title).Style("text-decoration", "line-through").Style("color", "#888"),
+					gui.Strong(task.Title),
 				),
-				vogui.Row(
-					vogui.If(task.DueDate != "", vogui.Tag("📅 "+task.DueDate)),
-					vogui.Badge(task.Priority).Style("background", color),
+				gui.Row(
+					gui.If(task.DueDate != "", gui.Tag("📅 "+task.DueDate)),
+					gui.Badge(task.Priority).Style("background", color),
 				).Style("gap", "8px"),
 			).Style("flex", "1"),
-			vogui.Dropdown(
-				[]vogui.DropdownItem{
-					{Label: "Delete", OnClick: vogui.OnInt(deleteTask, idx), Icon: "trash"},
+			gui.Dropdown(
+				[]gui.DropdownItem{
+					{Label: "Delete", OnClick: gui.OnInt(deleteTask, idx), Icon: "trash"},
 				},
-				vogui.IconButton("more-vertical", vogui.On(func(s *State) {})),
+				gui.IconButton("more-vertical", gui.On(func(s *State) {})),
 			),
 		).Style("align-items", "center").Style("gap", "12px"),
 	)
@@ -562,56 +562,56 @@ func toggleTaskChecked(s *State, idx int, checked bool) {
 
 // ============ Pomodoro ============
 
-func viewPomodoro(s *State) vogui.Node {
+func viewPomodoro(s *State) gui.Node {
 	progress := 1.0 - float64(s.PomodoroTime)/float64(s.PomodoroWorkMin*60)
 	if s.PomodoroMode == "break" {
 		progress = 1.0 - float64(s.PomodoroTime)/float64(s.PomodoroBreakMin*60)
 	}
 	
-	return vogui.Center(vogui.Column(
-		vogui.H1("🍅 Pomodoro Timer"),
+	return gui.Center(gui.Column(
+		gui.H1("🍅 Pomodoro Timer"),
 		
-		vogui.Card(
-			vogui.CardBody(
-				vogui.Center(vogui.Column(
-					vogui.IfElse(s.PomodoroMode == "work",
-						vogui.Badge("FOCUS TIME"),
-						vogui.Badge("BREAK TIME").Style("background", "#22c55e"),
+		gui.Card(
+			gui.CardBody(
+				gui.Center(gui.Column(
+					gui.IfElse(s.PomodoroMode == "work",
+						gui.Badge("FOCUS TIME"),
+						gui.Badge("BREAK TIME").Style("background", "#22c55e"),
 					),
-					vogui.H1(formatTime(s.PomodoroTime)).Style("font-size", "72px").Style("margin", "24px 0"),
-					vogui.Progress(progress).Style("width", "300px").Style("height", "8px"),
-					vogui.Row(
-						vogui.IfElse(s.PomodoroRunning,
-							vogui.Button("⏸ Pause", vogui.On(pausePomodoro)),
-							vogui.Button("▶ Start", vogui.On(startPomodoro)),
+					gui.H1(formatTime(s.PomodoroTime)).Style("font-size", "72px").Style("margin", "24px 0"),
+					gui.Progress(progress).Style("width", "300px").Style("height", "8px"),
+					gui.Row(
+						gui.IfElse(s.PomodoroRunning,
+							gui.Button("⏸ Pause", gui.On(pausePomodoro)),
+							gui.Button("▶ Start", gui.On(startPomodoro)),
 						),
-						vogui.Button("↺ Reset", vogui.On(resetPomodoro)),
+						gui.Button("↺ Reset", gui.On(resetPomodoro)),
 					).Style("gap", "12px").Style("margin-top", "24px"),
 				).Style("gap", "16px")),
 			),
 		).Style("width", "400px"),
 		
-		vogui.Row(
-			vogui.Text("Today's Pomodoros: "),
-			vogui.Badge(fmt.Sprint(s.PomodoroCount)),
+		gui.Row(
+			gui.Text("Today's Pomodoros: "),
+			gui.Badge(fmt.Sprint(s.PomodoroCount)),
 		).Style("margin-top", "24px"),
 		
-		vogui.Accordion(
-			[]vogui.AccordionItem{
+		gui.Accordion(
+			[]gui.AccordionItem{
 				{
 					Title: "⚙️ Timer Settings",
-					Content: vogui.Column(
-						vogui.FormField("Work Duration (min)",
-							vogui.Slider(s.PomodoroWorkMin, 5, 60, vogui.OnSlider(setPomodoroWorkMin)),
+					Content: gui.Column(
+						gui.FormField("Work Duration (min)",
+							gui.Slider(s.PomodoroWorkMin, 5, 60, gui.OnSlider(setPomodoroWorkMin)),
 						),
-						vogui.FormField("Break Duration (min)",
-							vogui.Slider(s.PomodoroBreakMin, 1, 30, vogui.OnSlider(setPomodoroBreakMin)),
+						gui.FormField("Break Duration (min)",
+							gui.Slider(s.PomodoroBreakMin, 1, 30, gui.OnSlider(setPomodoroBreakMin)),
 						),
 					).Style("gap", "16px"),
 					Open: false,
 				},
 			},
-			vogui.OnSlider(func(s *State, idx int) {}),
+			gui.OnSlider(func(s *State, idx int) {}),
 		).Style("width", "400px").Style("margin-top", "24px"),
 	).Style("gap", "16px"))
 }
@@ -632,7 +632,7 @@ func formatTime(seconds int) string {
 
 // ============ Finance ============
 
-func viewFinance(s *State) vogui.Node {
+func viewFinance(s *State) gui.Node {
 	totalExpense := 0
 	totalIncome := 0
 	for _, tx := range s.Transactions {
@@ -643,57 +643,57 @@ func viewFinance(s *State) vogui.Node {
 		}
 	}
 	
-	return vogui.Column(
-		vogui.Row(
-			vogui.H1("💰 Finance"),
-			vogui.Spacer(),
-			vogui.Button("+ Add Transaction", vogui.On(openAddTxModal)),
+	return gui.Column(
+		gui.Row(
+			gui.H1("💰 Finance"),
+			gui.Spacer(),
+			gui.Button("+ Add Transaction", gui.On(openAddTxModal)),
 		).Style("align-items", "center"),
 		
-		vogui.Grid(3,
-			vogui.Card(
-				vogui.CardBody(
-					vogui.Text("Income"),
-					vogui.H2("¥" + fmt.Sprint(totalIncome)).Style("color", "#22c55e"),
+		gui.Grid(3,
+			gui.Card(
+				gui.CardBody(
+					gui.Text("Income"),
+					gui.H2("¥" + fmt.Sprint(totalIncome)).Style("color", "#22c55e"),
 				),
 			),
-			vogui.Card(
-				vogui.CardBody(
-					vogui.Text("Expense"),
-					vogui.H2("¥" + fmt.Sprint(totalExpense)).Style("color", "#ef4444"),
+			gui.Card(
+				gui.CardBody(
+					gui.Text("Expense"),
+					gui.H2("¥" + fmt.Sprint(totalExpense)).Style("color", "#ef4444"),
 				),
 			),
-			vogui.Card(
-				vogui.CardBody(
-					vogui.Text("Balance"),
-					vogui.H2("¥" + fmt.Sprint(totalIncome-totalExpense)),
+			gui.Card(
+				gui.CardBody(
+					gui.Text("Balance"),
+					gui.H2("¥" + fmt.Sprint(totalIncome-totalExpense)),
 				),
 			),
 		).Style("gap", "16px"),
 		
-		vogui.Panel("Transaction History",
-			vogui.IfElse(len(s.Transactions) == 0,
-				vogui.Center(vogui.Text("No transactions yet")),
-				vogui.Table(
-					vogui.TableHead(
-						vogui.TableRow(
-							vogui.TableHeaderCell("Type"),
-							vogui.TableHeaderCell("Category"),
-							vogui.TableHeaderCell("Amount"),
-							vogui.TableHeaderCell("Note"),
-							vogui.TableHeaderCell("Date"),
-							vogui.TableHeaderCell(""),
+		gui.Panel("Transaction History",
+			gui.IfElse(len(s.Transactions) == 0,
+				gui.Center(gui.Text("No transactions yet")),
+				gui.Table(
+					gui.TableHead(
+						gui.TableRow(
+							gui.TableHeaderCell("Type"),
+							gui.TableHeaderCell("Category"),
+							gui.TableHeaderCell("Amount"),
+							gui.TableHeaderCell("Note"),
+							gui.TableHeaderCell("Date"),
+							gui.TableHeaderCell(""),
 						),
 					),
-					vogui.TableBody(viewTxRows(s)...),
+					gui.TableBody(viewTxRows(s)...),
 				),
 			),
 		),
 	).Style("padding", "24px").Style("gap", "24px")
 }
 
-func viewTxRows(s *State) []vogui.Node {
-	var rows []vogui.Node
+func viewTxRows(s *State) []gui.Node {
+	var rows []gui.Node
 	for i, tx := range s.Transactions {
 		typeIcon := "↑"
 		typeColor := "#22c55e"
@@ -701,13 +701,13 @@ func viewTxRows(s *State) []vogui.Node {
 			typeIcon = "↓"
 			typeColor = "#ef4444"
 		}
-		rows = append(rows, vogui.TableRow(
-			vogui.TableCell(vogui.Text(typeIcon).Style("color", typeColor)),
-			vogui.TableCell(vogui.Text(tx.Category)),
-			vogui.TableCell(vogui.Text("¥" + fmt.Sprint(tx.Amount)).Style("color", typeColor)),
-			vogui.TableCell(vogui.Text(tx.Note)),
-			vogui.TableCell(vogui.Text(tx.Date)),
-			vogui.TableCell(vogui.IconButton("trash", vogui.OnInt(deleteTx, i))),
+		rows = append(rows, gui.TableRow(
+			gui.TableCell(gui.Text(typeIcon).Style("color", typeColor)),
+			gui.TableCell(gui.Text(tx.Category)),
+			gui.TableCell(gui.Text("¥" + fmt.Sprint(tx.Amount)).Style("color", typeColor)),
+			gui.TableCell(gui.Text(tx.Note)),
+			gui.TableCell(gui.Text(tx.Date)),
+			gui.TableCell(gui.IconButton("trash", gui.OnInt(deleteTx, i))),
 		))
 	}
 	return rows
@@ -715,27 +715,27 @@ func viewTxRows(s *State) []vogui.Node {
 
 // ============ Notes ============
 
-func viewNotes(s *State) vogui.Node {
-	return vogui.Row(
-		vogui.Column(
-			vogui.Row(
-				vogui.H3("Notes"),
-				vogui.Spacer(),
-				vogui.IconButton("plus", vogui.On(openNoteModal)),
+func viewNotes(s *State) gui.Node {
+	return gui.Row(
+		gui.Column(
+			gui.Row(
+				gui.H3("Notes"),
+				gui.Spacer(),
+				gui.IconButton("plus", gui.On(openNoteModal)),
 			).Style("align-items", "center"),
-			vogui.SearchInput(s.NoteSearch, vogui.OnValue(setNoteSearch), vogui.On(func(s *State) {})),
-			vogui.Scroll(vogui.List(viewNoteList(s)...)),
+			gui.SearchInput(s.NoteSearch, gui.OnValue(setNoteSearch), gui.On(func(s *State) {})),
+			gui.Scroll(gui.List(viewNoteList(s)...)),
 		).Style("width", "250px").Style("padding", "16px").Style("gap", "12px").Style("border-right", "1px solid #eee"),
 		
-		vogui.IfElse(s.ActiveNoteIdx >= 0 && s.ActiveNoteIdx < len(s.Notes),
+		gui.IfElse(s.ActiveNoteIdx >= 0 && s.ActiveNoteIdx < len(s.Notes),
 			viewNoteEditor(s),
-			vogui.Center(vogui.Text("Select a note or create new one")),
+			gui.Center(gui.Text("Select a note or create new one")),
 		),
 	).Style("height", "calc(100vh - 60px)")
 }
 
-func viewNoteList(s *State) []vogui.Node {
-	var items []vogui.Node
+func viewNoteList(s *State) []gui.Node {
+	var items []gui.Node
 	for i, note := range s.Notes {
 		if s.NoteSearch != "" && !contains(note.Title, s.NoteSearch) {
 			continue
@@ -745,39 +745,39 @@ func viewNoteList(s *State) []vogui.Node {
 		if s.ActiveNoteIdx == i {
 			bg = "#f0f0f0"
 		}
-		items = append(items, vogui.ListItem(
-			vogui.Row(
-				vogui.Column(
-					vogui.Strong(note.Title),
-					vogui.Text(note.Updated).Style("font-size", "12px").Style("color", "#888"),
+		items = append(items, gui.ListItem(
+			gui.Row(
+				gui.Column(
+					gui.Strong(note.Title),
+					gui.Text(note.Updated).Style("font-size", "12px").Style("color", "#888"),
 				).Style("flex", "1"),
-				vogui.If(s.ActiveNoteIdx == i, vogui.Badge("●")),
-			).Style("cursor", "pointer").AddHandler(vogui.On(func(s *State) { selectNote(s, idx) })),
+				gui.If(s.ActiveNoteIdx == i, gui.Badge("●")),
+			).Style("cursor", "pointer").AddHandler(gui.On(func(s *State) { selectNote(s, idx) })),
 		).Style("padding", "8px").Style("background", bg))
 	}
 	return items
 }
 
-func viewNoteEditor(s *State) vogui.Node {
+func viewNoteEditor(s *State) gui.Node {
 	if s.ActiveNoteIdx < 0 || s.ActiveNoteIdx >= len(s.Notes) {
-		return vogui.Empty()
+		return gui.Empty()
 	}
 	note := s.Notes[s.ActiveNoteIdx]
-	return vogui.Column(
-		vogui.Row(
-			vogui.H2(note.Title),
-			vogui.Spacer(),
-			vogui.IconButton("trash", vogui.OnInt(deleteNote, s.ActiveNoteIdx)),
+	return gui.Column(
+		gui.Row(
+			gui.H2(note.Title),
+			gui.Spacer(),
+			gui.IconButton("trash", gui.OnInt(deleteNote, s.ActiveNoteIdx)),
 		).Style("align-items", "center"),
-		vogui.TextArea(note.Content, vogui.OnValue(updateNoteContent)).
+		gui.TextArea(note.Content, gui.OnValue(updateNoteContent)).
 			Style("flex", "1").Style("resize", "none").Style("font-family", "monospace"),
 	).Style("flex", "1").Style("padding", "24px").Style("gap", "16px")
 }
 
 // ============ Modals ============
 
-func viewModals(s *State) vogui.Node {
-	return vogui.Fragment(
+func viewModals(s *State) gui.Node {
+	return gui.Fragment(
 		viewTaskModal(s),
 		viewAddTxModal(s),
 		viewNoteModal(s),
@@ -785,98 +785,98 @@ func viewModals(s *State) vogui.Node {
 	)
 }
 
-func viewTaskModal(s *State) vogui.Node {
-	return vogui.Modal(s.ShowTaskModal, vogui.On(closeTaskModal),
-		vogui.ModalHeader("Add New Task"),
-		vogui.ModalBody(
-			vogui.Form(vogui.On(addTask),
-				vogui.FormField("Title",
-					vogui.Input(s.NewTaskTitle, vogui.OnValue(setNewTaskTitle)),
+func viewTaskModal(s *State) gui.Node {
+	return gui.Modal(s.ShowTaskModal, gui.On(closeTaskModal),
+		gui.ModalHeader("Add New Task"),
+		gui.ModalBody(
+			gui.Form(gui.On(addTask),
+				gui.FormField("Title",
+					gui.Input(s.NewTaskTitle, gui.OnValue(setNewTaskTitle)),
 				),
-				vogui.FormField("Due Date",
-					vogui.DateInput(s.NewTaskDueDate, vogui.OnValue(setNewTaskDueDate)),
+				gui.FormField("Due Date",
+					gui.DateInput(s.NewTaskDueDate, gui.OnValue(setNewTaskDueDate)),
 				),
-				vogui.FormField("Priority",
-					vogui.Select(s.NewTaskPriority, []string{"low", "medium", "high"}, vogui.OnValue(setNewTaskPriority)),
+				gui.FormField("Priority",
+					gui.Select(s.NewTaskPriority, []string{"low", "medium", "high"}, gui.OnValue(setNewTaskPriority)),
 				),
 			),
 		),
-		vogui.ModalFooter(
-			vogui.Row(
-				vogui.Button("Cancel", vogui.On(closeTaskModal)),
-				vogui.Button("Add Task", vogui.On(addTask)),
+		gui.ModalFooter(
+			gui.Row(
+				gui.Button("Cancel", gui.On(closeTaskModal)),
+				gui.Button("Add Task", gui.On(addTask)),
 			).Style("gap", "12px"),
 		),
 	)
 }
 
-func viewAddTxModal(s *State) vogui.Node {
-	return vogui.Modal(s.ShowAddTxModal, vogui.On(closeAddTxModal),
-		vogui.ModalHeader("Add Transaction"),
-		vogui.ModalBody(
-			vogui.Form(vogui.On(addTransaction),
-				vogui.FormField("Type",
-					vogui.Row(
-						vogui.CheckboxLabel("Expense", s.NewTxIsExpense, vogui.OnChecked(setTxIsExpense)),
+func viewAddTxModal(s *State) gui.Node {
+	return gui.Modal(s.ShowAddTxModal, gui.On(closeAddTxModal),
+		gui.ModalHeader("Add Transaction"),
+		gui.ModalBody(
+			gui.Form(gui.On(addTransaction),
+				gui.FormField("Type",
+					gui.Row(
+						gui.CheckboxLabel("Expense", s.NewTxIsExpense, gui.OnChecked(setTxIsExpense)),
 					),
 				),
-				vogui.FormField("Amount",
-					vogui.NumberInput(s.NewTxAmount, vogui.OnSlider(setTxAmount)),
+				gui.FormField("Amount",
+					gui.NumberInput(s.NewTxAmount, gui.OnSlider(setTxAmount)),
 				),
-				vogui.FormField("Category",
-					vogui.Select(s.NewTxCategory, []string{"food", "transport", "shopping", "entertainment", "bills", "salary", "other"}, vogui.OnValue(setTxCategory)),
+				gui.FormField("Category",
+					gui.Select(s.NewTxCategory, []string{"food", "transport", "shopping", "entertainment", "bills", "salary", "other"}, gui.OnValue(setTxCategory)),
 				),
-				vogui.FormField("Note",
-					vogui.Input(s.NewTxNote, vogui.OnValue(setTxNote)),
+				gui.FormField("Note",
+					gui.Input(s.NewTxNote, gui.OnValue(setTxNote)),
 				),
 			),
 		),
-		vogui.ModalFooter(
-			vogui.Row(
-				vogui.Button("Cancel", vogui.On(closeAddTxModal)),
-				vogui.Button("Add", vogui.On(addTransaction)),
+		gui.ModalFooter(
+			gui.Row(
+				gui.Button("Cancel", gui.On(closeAddTxModal)),
+				gui.Button("Add", gui.On(addTransaction)),
 			).Style("gap", "12px"),
 		),
 	)
 }
 
-func viewNoteModal(s *State) vogui.Node {
-	return vogui.Modal(s.ShowNoteModal, vogui.On(closeNoteModal),
-		vogui.ModalHeader("New Note"),
-		vogui.ModalBody(
-			vogui.FormField("Title",
-				vogui.Input(s.NewNoteTitle, vogui.OnValue(setNewNoteTitle)),
+func viewNoteModal(s *State) gui.Node {
+	return gui.Modal(s.ShowNoteModal, gui.On(closeNoteModal),
+		gui.ModalHeader("New Note"),
+		gui.ModalBody(
+			gui.FormField("Title",
+				gui.Input(s.NewNoteTitle, gui.OnValue(setNewNoteTitle)),
 			),
 		),
-		vogui.ModalFooter(
-			vogui.Row(
-				vogui.Button("Cancel", vogui.On(closeNoteModal)),
-				vogui.Button("Create", vogui.On(addNote)),
+		gui.ModalFooter(
+			gui.Row(
+				gui.Button("Cancel", gui.On(closeNoteModal)),
+				gui.Button("Create", gui.On(addNote)),
 			).Style("gap", "12px"),
 		),
 	)
 }
 
-func viewSettingsDrawer(s *State) vogui.Node {
-	return vogui.Drawer(s.ShowSettings, "right", vogui.On(closeSettings),
-		vogui.Column(
-			vogui.H2("⚙️ Settings"),
-			vogui.Divider(),
-			vogui.FormSection("Appearance",
-				vogui.FormField("Dark Mode",
-					vogui.Switch(s.DarkMode, vogui.OnChecked(toggleDarkMode)),
+func viewSettingsDrawer(s *State) gui.Node {
+	return gui.Drawer(s.ShowSettings, "right", gui.On(closeSettings),
+		gui.Column(
+			gui.H2("⚙️ Settings"),
+			gui.Divider(),
+			gui.FormSection("Appearance",
+				gui.FormField("Dark Mode",
+					gui.Switch(s.DarkMode, gui.OnChecked(toggleDarkMode)),
 				),
-				vogui.FormField("Accent Color",
-					vogui.ColorInput(s.AccentColor, vogui.OnValue(setAccentColor)),
-				),
-			),
-			vogui.FormSection("Notifications",
-				vogui.FormField("Sound",
-					vogui.Switch(s.NotifySound, vogui.OnChecked(toggleNotifySound)),
+				gui.FormField("Accent Color",
+					gui.ColorInput(s.AccentColor, gui.OnValue(setAccentColor)),
 				),
 			),
-			vogui.Spacer(),
-			vogui.Button("Close", vogui.On(closeSettings)),
+			gui.FormSection("Notifications",
+				gui.FormField("Sound",
+					gui.Switch(s.NotifySound, gui.OnChecked(toggleNotifySound)),
+				),
+			),
+			gui.Spacer(),
+			gui.Button("Close", gui.On(closeSettings)),
 		).Style("padding", "24px").Style("gap", "16px").Style("height", "100%"),
 	)
 }
@@ -902,7 +902,7 @@ func max(a int, b int) int {
 // ============ Main ============
 
 func main() {
-	vogui.Run(vogui.App{
+	gui.Run(gui.App{
 		Init: func() any {
 			return &State{
 				ActiveTab:        "dashboard",
