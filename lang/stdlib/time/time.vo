@@ -1,6 +1,9 @@
 package time
 
-import "time/internal/timesys"
+// Native externs
+func nowUnixNano() int64
+func nowMonoNano() int64
+func sleepNano(d int64)
 
 type Duration int64
 
@@ -19,18 +22,18 @@ type Time struct {
 }
 
 func Now() Time {
-	return Time{unixNano: timesys.NowUnixNano(), monoNano: timesys.NowMonoNano()}
+	return Time{unixNano: nowUnixNano(), monoNano: nowMonoNano()}
 }
 
 func (t Time) UnixNano() int64 { return t.unixNano }
 func (t Time) MonoNano() int64 { return t.monoNano }
 
 func Since(t Time) Duration {
-	return Duration(timesys.NowMonoNano() - t.monoNano)
+	return Duration(nowMonoNano() - t.monoNano)
 }
 
 func Sleep(d Duration) {
-	timesys.SleepNano(int64(d))
+	sleepNano(int64(d))
 }
 
 func (d Duration) Nanoseconds() int64 { return int64(d) }

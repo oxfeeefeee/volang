@@ -52,10 +52,9 @@ fn timesys_sleep_nano(call: &mut ExternCall) -> ExternResult {
 pub fn register_externs(registry: &mut vo_runtime::ffi::ExternRegistry, externs: &[vo_runtime::bytecode::ExternDef]) {
     for (id, def) in externs.iter().enumerate() {
         match def.name.as_str() {
-            // Full path: time/internal/timesys -> time_internal_timesys
-            "time_internal_timesys_NowUnixNano" => registry.register(id as u32, timesys_now_unix_nano),
-            "time_internal_timesys_NowMonoNano" => registry.register(id as u32, timesys_now_mono_nano),
-            "time_internal_timesys_SleepNano" => registry.register(id as u32, timesys_sleep_nano),
+            "time_nowUnixNano" => registry.register(id as u32, timesys_now_unix_nano),
+            "time_nowMonoNano" => registry.register(id as u32, timesys_now_mono_nano),
+            "time_sleepNano" => registry.register(id as u32, timesys_sleep_nano),
             _ => {}
         }
     }

@@ -30,9 +30,9 @@ fn timesys_SleepNano(_call: &mut ExternCall) -> ExternResult {
 pub fn register_externs(registry: &mut ExternRegistry, externs: &[ExternDef]) {
     for (id, def) in externs.iter().enumerate() {
         match def.name.as_str() {
-            "timesys_NowUnixNano" => registry.register(id as u32, timesys_NowUnixNano),
-            "timesys_NowMonoNano" => registry.register(id as u32, timesys_NowMonoNano),
-            "timesys_SleepNano" => registry.register(id as u32, timesys_SleepNano),
+            "time_nowUnixNano" => registry.register(id as u32, timesys_NowUnixNano),
+            "time_nowMonoNano" => registry.register(id as u32, timesys_NowMonoNano),
+            "time_sleepNano" => registry.register(id as u32, timesys_SleepNano),
             _ => {}
         }
     }
