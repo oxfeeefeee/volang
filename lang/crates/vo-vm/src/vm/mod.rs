@@ -164,14 +164,6 @@ impl Vm {
     pub fn load(&mut self, module: Module) {
         vo_stdlib::register_externs(&mut self.state.extern_registry, &module.externs);
 
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-platform"))]
-        {
-            vo_web_runtime_wasm::time::register_externs(&mut self.state.extern_registry, &module.externs);
-            vo_web_runtime_wasm::regexp::register_externs(&mut self.state.extern_registry, &module.externs);
-            vo_web_runtime_wasm::os::register_externs(&mut self.state.extern_registry, &module.externs);
-        }
-
-        validate_externs_registered(&self.state.extern_registry, &module.externs);
         self.finish_load(module);
     }
 
@@ -187,13 +179,6 @@ impl Vm {
             vo_stdlib::register_externs(&mut self.state.extern_registry, &module.externs);
         }
 
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-platform"))]
-        {
-            vo_web_runtime_wasm::time::register_externs(&mut self.state.extern_registry, &module.externs);
-            vo_web_runtime_wasm::regexp::register_externs(&mut self.state.extern_registry, &module.externs);
-            vo_web_runtime_wasm::os::register_externs(&mut self.state.extern_registry, &module.externs);
-        }
-        
         // Register extern functions from extension loader (if provided)
         if let Some(loader) = ext_loader {
             self.state.extern_registry.register_from_extension_loader(loader, &module.externs);

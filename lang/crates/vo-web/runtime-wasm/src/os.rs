@@ -7,24 +7,12 @@ use vo_runtime::bytecode::ExternDef;
 use vo_runtime::ffi::{ExternCallContext, ExternRegistry, ExternResult};
 use vo_runtime::objects::{array, slice, string};
 use vo_runtime::core_types::{ValueKind, ValueMeta};
+use vo_runtime::builtins::error_helper::{write_error_to, write_nil_error};
 
 const ERR_NOT_SUPPORTED: &str = "operation not supported on wasm";
 
-fn write_error(call: &mut ExternCallContext, slot: u16, msg: &str) {
-    let gc = call.gc();
-    let str_ref = string::from_rust_str(gc, msg);
-    // Error is interface{} - 2 slots: [meta, data]
-    call.ret_u64(slot, ValueKind::String as u64);
-    call.ret_ref(slot + 1, str_ref);
-}
-
-fn write_nil_error(call: &mut ExternCallContext, slot: u16) {
-    call.ret_u64(slot, 0);
-    call.ret_u64(slot + 1, 0);
-}
-
 fn write_not_supported_error(call: &mut ExternCallContext, slot: u16) {
-    write_error(call, slot, ERR_NOT_SUPPORTED);
+    write_error_to(call, slot, ERR_NOT_SUPPORTED);
 }
 
 // OS errors - return pre-created error values
@@ -48,16 +36,16 @@ fn os_get_errors(call: &mut ExternCallContext) -> ExternResult {
     ExternResult::Ok
 }
 
-// OS constants
+// OS constants - must match native values in vo-stdlib/src/os/native.rs
 fn os_get_consts(call: &mut ExternCallContext) -> ExternResult {
-    call.ret_i64(0, 0);    // O_RDONLY
-    call.ret_i64(1, 1);    // O_WRONLY
-    call.ret_i64(2, 2);    // O_RDWR
-    call.ret_i64(3, 1024); // O_APPEND
-    call.ret_i64(4, 64);   // O_CREATE
-    call.ret_i64(5, 128);  // O_EXCL
-    call.ret_i64(6, 4096); // O_SYNC
-    call.ret_i64(7, 512);  // O_TRUNC
+    call.ret_i64(0, 0);   // O_RDONLY
+    call.ret_i64(1, 1);   // O_WRONLY
+    call.ret_i64(2, 2);   // O_RDWR
+    call.ret_i64(3, 8);   // O_APPEND
+    call.ret_i64(4, 16);  // O_CREATE
+    call.ret_i64(5, 32);  // O_EXCL
+    call.ret_i64(6, 64);  // O_SYNC
+    call.ret_i64(7, 128); // O_TRUNC
     ExternResult::Ok
 }
 

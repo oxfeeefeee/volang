@@ -774,6 +774,7 @@ fn os_mkdir_temp(call: &mut ExternCallContext) -> ExternResult {
     ExternResult::Ok
 }
 
+#[cfg(feature = "std")]
 vo_runtime::stdlib_register!(os:
     getOsErrors, getOsConsts,
     fileRead, fileWrite, fileReadAt, fileWriteAt, fileSeek, fileClose, fileSync, fileStat, fileTruncate,
@@ -785,3 +786,11 @@ vo_runtime::stdlib_register!(os:
     nativeGetpid, nativeGetppid, nativeGetuid, nativeGeteuid, nativeGetgid, nativeGetegid,
     nativeExit, nativeGetArgs, nativeIsTerminal, nativeHostname, nativeExecutable, nativeCreateTemp, nativeMkdirTemp,
 );
+
+#[cfg(not(feature = "std"))]
+pub fn register_externs(
+    _registry: &mut vo_runtime::ffi::ExternRegistry,
+    _externs: &[vo_runtime::bytecode::ExternDef],
+) {
+    // No-op: WASM platform externs are registered by vo-web-runtime-wasm
+}

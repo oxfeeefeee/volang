@@ -1387,7 +1387,6 @@ dependencies = [
  "vo-jit",
  "vo-runtime",
  "vo-stdlib",
- "vo-web-runtime-wasm",
 ]
 
 [[package]]
@@ -1420,6 +1419,7 @@ dependencies = [
  "vo-stdlib",
  "vo-syntax",
  "vo-vm",
+ "vo-web-runtime-wasm",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
