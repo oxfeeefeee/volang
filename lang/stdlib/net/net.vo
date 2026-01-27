@@ -344,16 +344,16 @@ func ParseCIDR(s string) (IP, *IPNet, error) {
 // ==================== Host:Port Functions ====================
 
 // SplitHostPort splits a network address of the form "host:port" or "[host]:port" into host and port.
-func SplitHostPort(hostport string) (host, port string, err error) {
+func SplitHostPort(hostport string) (host, portStr string, err error) {
 	return splitHostPort(hostport)
 }
 
 // JoinHostPort combines host and port into a network address.
-func JoinHostPort(host, port string) string {
+func JoinHostPort(host, portStr string) string {
 	if indexByte(host, ':') >= 0 {
-		return "[" + host + "]:" + port
+		return "[" + host + "]:" + portStr
 	}
-	return host + ":" + port
+	return host + ":" + portStr
 }
 
 // ==================== TCP Address ====================
@@ -931,7 +931,7 @@ func parseCIDR(s string) (IP, *IPNet, error) {
 	return ip, &IPNet{IP: ip.Mask(m), Mask: m}, nil
 }
 
-func splitHostPort(hostport string) (host, port string, err error) {
+func splitHostPort(hostport string) (host, portStr string, err error) {
 	i := lastIndexByte(hostport, ':')
 	if i < 0 {
 		return "", "", errors.New("missing port in address")
@@ -959,8 +959,8 @@ func splitHostPort(hostport string) (host, port string, err error) {
 		}
 	}
 
-	port = hostport[i+1:]
-	return host, port, nil
+	portStr = hostport[i+1:]
+	return host, portStr, nil
 }
 
 // ==================== Native Extern Stubs ====================

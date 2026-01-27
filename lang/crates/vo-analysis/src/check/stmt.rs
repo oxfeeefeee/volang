@@ -480,13 +480,18 @@ impl Checker {
                 }
                 let chtype = ch.typ.unwrap();
                 let under_chtype = typ::underlying_type(chtype, self.objs());
-                if let Some(chan) = self.otype(under_chtype).try_as_chan() {
+                let underlying = self.otype(under_chtype);
+                if let Some(chan) = underlying.try_as_chan() {
                     if chan.dir() == ChanDir::RecvOnly {
                         self.error_code(TypeError::SendToRecvOnly, ss.chan.span);
                     } else {
                         let elem_ty = Some(chan.elem());
                         self.assignment(x, elem_ty, "send");
                     }
+                } else if let Some(port) = underlying.try_as_port() {
+                    // Port send: p <- v
+                    let elem_ty = Some(port.elem());
+                    self.assignment(x, elem_ty, "send");
                 } else {
                     self.error_code(TypeError::SendToNonChan, ss.chan.span);
                 }

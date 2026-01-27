@@ -1,0 +1,34 @@
+package main
+
+import "time"
+
+func main() {
+	// Test basic island creation
+	i := make(island)
+	println("island created:", i)
+	
+	// Test basic port creation
+	p := make(port int, 10)
+	println("port created:", p)
+	
+	// Test port send/recv on main island
+	p <- 42
+	println("sent 42 to port")
+	v := <-p
+	println("received from port:", v)
+	
+	// Test go @(island) - run goroutine on island
+	go @(i) func() {
+		println("running on island!")
+	}()
+	
+	// Wait for island to execute
+	time.Sleep(50 * time.Millisecond)
+	
+	// Test close port
+	close(p)
+	println("port closed")
+	
+	// VM Drop will wait for island threads to finish
+	println("PASS")
+}

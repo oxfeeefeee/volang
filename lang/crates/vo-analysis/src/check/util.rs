@@ -432,6 +432,16 @@ impl Checker {
     }
     
     #[inline]
+    pub(crate) fn new_t_port(&mut self, elem: TypeKey) -> TypeKey {
+        self.tc_objs.new_t_port(elem)
+    }
+    
+    #[inline]
+    pub(crate) fn new_t_island(&mut self) -> TypeKey {
+        self.tc_objs.new_t_island()
+    }
+    
+    #[inline]
     pub(crate) fn new_t_pointer(&mut self, base: TypeKey) -> TypeKey {
         self.tc_objs.new_t_pointer(base)
     }

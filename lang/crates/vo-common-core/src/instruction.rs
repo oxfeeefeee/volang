@@ -268,12 +268,35 @@ pub enum Opcode {
     /// a = index_reg, b = len_reg
     IndexCheck,
 
+    // === ISLAND: Island operations ===
+    /// Create a new island (VM instance)
+    /// a = dst
+    IslandNew,
+
+    // === PORT: Cross-island channel operations ===
+    /// Create a new port
+    /// a = dst, b = elem_meta (const idx), c = capacity, flags = elem_slots
+    PortNew,
+    /// Send value through port (blocks until sent)
+    /// a = port, b = src, flags = elem_slots
+    PortSend,
+    /// Receive value from port (blocks until received)
+    /// a = dst, b = port, flags = (elem_slots << 1) | has_ok
+    PortRecv,
+    /// Close port
+    /// a = port
+    PortClose,
+
+    /// Start goroutine on specific island
+    /// a = island, b = closure, flags = capture_slots
+    GoIsland,
+
     // Sentinel for invalid/unknown opcodes
     Invalid = 255,
 }
 
 impl Opcode {
-    const MAX_VALID: u8 = Self::IndexCheck as u8;
+    const MAX_VALID: u8 = Self::GoIsland as u8;
 
     #[inline]
     pub fn from_u8(v: u8) -> Self {

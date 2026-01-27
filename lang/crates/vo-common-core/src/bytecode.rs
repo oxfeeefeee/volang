@@ -52,6 +52,14 @@ pub struct FunctionDef {
     pub error_ret_slot: i16,
     pub code: Vec<Instruction>,
     pub slot_types: Vec<SlotType>,
+    /// Capture types for cross-island transfer (closures only).
+    /// Each entry: (ValueMeta raw, slot_count) for the captured variable's inner type.
+    /// Empty for non-closure functions.
+    pub capture_types: Vec<(u32, u16)>,
+    /// Parameter types for cross-island transfer.
+    /// Each entry: (ValueMeta raw, slot_count) for one parameter.
+    /// Empty if function has no parameters or types not needed.
+    pub param_types: Vec<(u32, u16)>,
 }
 
 #[derive(Debug, Clone)]

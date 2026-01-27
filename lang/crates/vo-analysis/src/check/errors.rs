@@ -387,7 +387,7 @@ impl TypeError {
             TypeError::CopyTypeMismatch => "arguments to copy have different element types",
             TypeError::DeleteNotMap => "first argument to delete must be a map",
             TypeError::DeleteKeyMismatch => "key is not assignable to map key type",
-            TypeError::MakeInvalidType => "cannot make; type must be slice, map, or channel",
+            TypeError::MakeInvalidType => "cannot make; type must be slice, map, channel, port, or island",
             TypeError::MakeArgCount => "make expects wrong number of arguments",
             TypeError::MakeLenGtCap => "length larger than capacity",
             TypeError::AssertNotBool => "argument to assert is not a boolean",

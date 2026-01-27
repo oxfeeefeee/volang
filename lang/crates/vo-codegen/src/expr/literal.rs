@@ -422,23 +422,37 @@ pub fn compile_func_lit(
     let mut closure_builder = FuncBuilder::new_closure(&closure_name);
     
     // Register captures in closure builder so it can access them via ClosureGet
+    // Also collect capture types for cross-island serialization
     for (i, obj_key) in captures.iter().enumerate() {
         let var_name = info.obj_name(*obj_key);
         if let Some(sym) = info.project.interner.get(var_name) {
             closure_builder.define_capture(sym, i as u16);
         }
+        // Get the captured variable's type for cross-island serialization
+        let type_key = info.obj_type(*obj_key, "capture must have type");
+        let slots = info.type_slot_count(type_key);
+        // Compute raw ValueMeta directly (not constant pool index)
+        let meta_raw = ctx.compute_value_meta_raw(type_key, info);
+        closure_builder.add_capture_type(meta_raw, slots);
     }
     
     // Define parameters and collect escaped ones for boxing
+    // Also collect param types for cross-island serialization
     let mut escaped_params = Vec::new();
     let params = &func_lit.sig.params;
     for (i, param) in params.iter().enumerate() {
         let variadic_last = func_lit.sig.variadic && i == params.len() - 1;
         let (slots, slot_types) = if variadic_last { (1, vec![SlotType::GcRef]) } else { info.type_expr_layout(param.ty.id) };
+        // Get param type for cross-island serialization (per parameter, not per name)
+        let param_type_key = info.type_expr_type(param.ty.id);
+        // Compute raw ValueMeta directly (not constant pool index)
+        let meta_raw = ctx.compute_value_meta_raw(param_type_key, info);
         for name in &param.names {
             let obj_key = info.get_def(name);
             let type_key = info.obj_type(obj_key, "param must have type");
             closure_builder.define_param(Some(name.symbol), slots, &slot_types);
+            // Add param type for each named parameter
+            closure_builder.add_param_type(meta_raw, slots);
             if info.needs_boxing(obj_key, type_key) {
                 escaped_params.push((name.symbol, type_key, slots, slot_types.clone()));
             }

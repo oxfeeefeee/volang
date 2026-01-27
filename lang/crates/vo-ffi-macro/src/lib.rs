@@ -868,6 +868,8 @@ fn format_vo_type(ty: &vo_parser::VoType) -> String {
         vo_parser::VoType::Named(name) => name.clone(),
         vo_parser::VoType::Variadic(inner) => format!("...{}", format_vo_type(inner)),
         vo_parser::VoType::Struct(fields) => format!("struct{{{} fields}}", fields.len()),
+        vo_parser::VoType::Port(elem) => format!("port {}", format_vo_type(elem)),
+        vo_parser::VoType::Island => "island".to_string(),
     }
 }
 

@@ -231,6 +231,28 @@ fn compile_builtin_call_impl(
                         tmp
                     };
                     func.emit_with_flags(Opcode::ChanNew, elem_slots as u8, dst, elem_meta_reg, cap_reg);
+            } else if info.is_port(type_key) {
+                    // make(port T) or make(port T, cap)
+                    // PortNew: a=dst, b=elem_meta, c=cap, flags=elem_slots
+                    let elem_type_key = info.port_elem_type(type_key);
+                    let elem_slots = info.type_slot_count(elem_type_key);
+                    let elem_meta_idx = ctx.get_or_create_value_meta(elem_type_key, info);
+                    
+                    let elem_meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
+                    func.emit_op(Opcode::LoadConst, elem_meta_reg, elem_meta_idx, 0);
+                    
+                    let cap_reg = if call.args.len() > 1 {
+                        compile_expr(&call.args[1], ctx, func, info)?
+                    } else {
+                        let tmp = func.alloc_temp_typed(&[SlotType::Value]);
+                        func.emit_op(Opcode::LoadInt, tmp, 0, 0);
+                        tmp
+                    };
+                    func.emit_with_flags(Opcode::PortNew, elem_slots as u8, dst, elem_meta_reg, cap_reg);
+            } else if info.is_island(type_key) {
+                    // make(island)
+                    // IslandNew: a=dst
+                    func.emit_op(Opcode::IslandNew, dst, 0, 0);
             } else {
                 return Err(CodegenError::UnsupportedExpr("make with unsupported type".to_string()));
             }
@@ -338,12 +360,17 @@ fn compile_builtin_call_impl(
             func.emit_op(Opcode::MapDelete, map_reg, meta_and_key_reg, 0);
         }
         "close" => {
-            // close(chan)
+            // close(chan) or close(port)
             if call.args.len() != 1 {
                 return Err(CodegenError::Internal("close requires 1 arg".to_string()));
             }
-            let chan_reg = compile_expr(&call.args[0], ctx, func, info)?;
-            func.emit_op(Opcode::ChanClose, chan_reg, 0, 0);
+            let arg_type = info.expr_type(call.args[0].id);
+            let arg_reg = compile_expr(&call.args[0], ctx, func, info)?;
+            if info.is_port(arg_type) {
+                func.emit_op(Opcode::PortClose, arg_reg, 0, 0);
+            } else {
+                func.emit_op(Opcode::ChanClose, arg_reg, 0, 0);
+            }
         }
         "recover" => {
             // recover() - returns interface{}

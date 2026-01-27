@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 
 use crate::gc::{scan_slots_by_types, Gc, GcRef};
-use crate::objects::{array, channel, closure, interface, map, slice};
+use crate::objects::{array, channel, closure, interface, map, port, slice};
 use crate::slot::{byte_offset_for_slots, slot_to_ptr, Slot, SLOT_BYTES};
 use vo_common_core::bytecode::StructMeta;
 use vo_common_core::types::{SlotType, ValueKind};
@@ -199,6 +199,8 @@ pub fn finalize_object(obj: GcRef) {
     match header.kind() {
         ValueKind::Channel => unsafe { channel::drop_inner(obj); }
         ValueKind::Map => unsafe { map::drop_inner(obj); }
+        ValueKind::Port => unsafe { port::drop_inner(obj); }
+        // Island has no native resources to finalize (channels managed by VM)
         _ => {}
     }
 }

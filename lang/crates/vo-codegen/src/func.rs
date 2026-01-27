@@ -146,6 +146,12 @@ pub struct FuncBuilder {
     // Slot offset of error return value within return slots, or -1 if function doesn't return error.
     // Used for errdefer runtime check.
     error_ret_slot: i16,
+    // Capture types for cross-island transfer (closures only).
+    // Each entry: (ValueMeta raw, slot_count) for the captured variable's inner type.
+    capture_types: Vec<(u32, u16)>,
+    // Parameter types for cross-island transfer.
+    // Each entry: (ValueMeta raw, slot_count) for one parameter.
+    param_types: Vec<(u32, u16)>,
 }
 
 impl FuncBuilder {
@@ -169,6 +175,8 @@ impl FuncBuilder {
             scope_stack: Vec::new(),
             is_closure: false,
             error_ret_slot: -1,
+            capture_types: Vec::new(),
+            param_types: Vec::new(),
         }
     }
 
@@ -1042,7 +1050,19 @@ impl FuncBuilder {
             error_ret_slot: self.error_ret_slot,
             code: self.code,
             slot_types: self.slot_types,
+            capture_types: self.capture_types,
+            param_types: self.param_types,
         }
+    }
+    
+    /// Add a capture type for cross-island serialization.
+    pub fn add_capture_type(&mut self, meta_raw: u32, slots: u16) {
+        self.capture_types.push((meta_raw, slots));
+    }
+    
+    /// Add a parameter type for cross-island serialization.
+    pub fn add_param_type(&mut self, meta_raw: u32, slots: u16) {
+        self.param_types.push((meta_raw, slots));
     }
     
     /// Set error return slot offset. Called after set_return_types with type info.

@@ -66,6 +66,15 @@ impl<'a> Parser<'a> {
                 let elem = self.parse_type()?;
                 TypeExprKind::Chan(Box::new(ChanType { dir, elem }))
             }
+            TokenKind::Port => {
+                self.advance();
+                let elem = self.parse_type()?;
+                TypeExprKind::Port(Box::new(elem))
+            }
+            TokenKind::Island => {
+                self.advance();
+                TypeExprKind::Island
+            }
             TokenKind::Arrow => {
                 // Receive-only channel: <-chan
                 self.advance();
@@ -289,6 +298,8 @@ impl<'a> Parser<'a> {
                 | TokenKind::LBracket
                 | TokenKind::Map
                 | TokenKind::Chan
+                | TokenKind::Port
+                | TokenKind::Island
                 | TokenKind::Arrow
                 | TokenKind::Func
                 | TokenKind::Struct
@@ -304,6 +315,8 @@ impl<'a> Parser<'a> {
                 | TokenKind::LBracket
                 | TokenKind::Map
                 | TokenKind::Chan
+                | TokenKind::Port
+                | TokenKind::Island
                 | TokenKind::Arrow
                 | TokenKind::Func
                 | TokenKind::Struct

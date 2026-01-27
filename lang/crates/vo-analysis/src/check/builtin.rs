@@ -360,7 +360,7 @@ impl Checker {
         true
     }
 
-    /// close(c)
+    /// close(c) - close a channel or port
     fn builtin_close(&mut self, x: &mut Operand) -> bool {
         let tkey = typ::underlying_type(x.typ.unwrap(), self.objs());
         match &self.otype(tkey) {
@@ -369,6 +369,11 @@ impl Checker {
                     self.error_code(TypeError::CloseRecvOnly, x.pos());
                     return false;
                 }
+                x.mode = OperandMode::NoValue;
+                true
+            }
+            Type::Port(_) => {
+                // Ports can also be closed
                 x.mode = OperandMode::NoValue;
                 true
             }
@@ -480,7 +485,8 @@ impl Checker {
 
         let min = match self.otype(arg0t).underlying_val(self.objs()) {
             Type::Slice(_) => 2,
-            Type::Map(_) | Type::Chan(_) => 1,
+            Type::Map(_) | Type::Chan(_) | Type::Port(_) => 1,
+            Type::Island => 0,  // make(island) takes no extra args
             _ => {
                 self.error_code(TypeError::MakeInvalidType, call.args[0].span);
                 return false;

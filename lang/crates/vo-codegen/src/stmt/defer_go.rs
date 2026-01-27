@@ -311,7 +311,7 @@ fn emit_go_closure(closure_reg: u16, args_start: u16, arg_slots: u16, func: &mut
 
 /// Compile go statement
 /// GoStart: a=func_id/closure, b=args_start, c=arg_slots, flags bit0=is_closure
-/// TODO (3.2): GoIsland opcode for target_island case
+/// GoIsland: a=island, b=closure, c=args_start, flags=arg_slots
 pub(crate) fn compile_go(
     target_island: Option<&vo_syntax::ast::Expr>,
     call: &vo_syntax::ast::Expr,
@@ -321,15 +321,30 @@ pub(crate) fn compile_go(
 ) -> Result<(), CodegenError> {
     use vo_syntax::ast::ExprKind;
     
-    // TODO (3.2): implement go @(island) with GoIsland opcode
-    if target_island.is_some() {
-        return Err(CodegenError::UnsupportedStmt("go @(island) not yet implemented".to_string()));
-    }
-    
     let ExprKind::Call(call_expr) = &call.kind else {
         return Err(CodegenError::UnsupportedStmt("go requires a call expression".to_string()));
     };
     
+    // go @(island) - cross-island goroutine
+    if let Some(island_expr) = target_island {
+        // Compile island expression
+        let island_reg = crate::expr::compile_expr(island_expr, ctx, func, info)?;
+        
+        // The call must be a closure literal for go @(island)
+        // go @(i) func(args...) { ... }(values...)
+        let closure_reg = crate::expr::compile_expr(&call_expr.func, ctx, func, info)?;
+        
+        // Compile call arguments
+        let sig = CallSigInfo::from_call(call_expr, info);
+        let (args_start, total_arg_slots) = compile_call_args(call_expr, &sig, ctx, func, info)?;
+        
+        // GoIsland: a=island, b=closure, c=args_start, flags=arg_slots (max 255)
+        assert!(total_arg_slots <= 255, "go @(island) call has too many argument slots (max 255)");
+        func.emit_with_flags(Opcode::GoIsland, total_arg_slots as u8, island_reg, closure_reg, args_start);
+        return Ok(());
+    }
+    
+    // Regular go (same island)
     let sig = CallSigInfo::from_call(call_expr, info);
     
     // Regular function call

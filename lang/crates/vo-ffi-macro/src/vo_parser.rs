@@ -127,6 +127,8 @@ pub enum VoType {
     Array(usize, Box<VoType>),
     Map(Box<VoType>, Box<VoType>),
     Chan(ChanDir, Box<VoType>),
+    Port(Box<VoType>),
+    Island,
     Func(Vec<VoType>, Vec<VoType>),
     /// Variadic parameter: ...T (e.g., ...interface{})
     Variadic(Box<VoType>),
@@ -198,6 +200,8 @@ impl std::fmt::Display for VoType {
             }
             VoType::Variadic(inner) => write!(f, "...{}", inner),
             VoType::Struct(fields) => write!(f, "struct{{{} fields}}", fields.len()),
+            VoType::Port(elem) => write!(f, "port {}", elem),
+            VoType::Island => write!(f, "island"),
         }
     }
 }
@@ -216,7 +220,7 @@ impl VoType {
             
             // Reference types: 1 slot (GcRef)
             VoType::Pointer(_) | VoType::Slice(_) | VoType::Map(_, _) | 
-            VoType::Chan(_, _) | VoType::Func(_, _) => 1,
+            VoType::Chan(_, _) | VoType::Port(_) | VoType::Island | VoType::Func(_, _) => 1,
             
             // Array: elem_slots * length
             VoType::Array(len, elem) => {
@@ -276,6 +280,8 @@ impl VoType {
             VoType::Array(_, _) => "GcRef",
             VoType::Map(_, _) => "GcRef",
             VoType::Chan(_, _) => "GcRef",
+            VoType::Port(_) => "GcRef",
+            VoType::Island => "GcRef",
             VoType::Func(_, _) => "GcRef",
             VoType::Named(_) => "GcRef",
             VoType::Variadic(_) => "variadic",
@@ -492,6 +498,8 @@ fn type_expr_to_vo_type(type_expr: &ast::TypeExpr, interner: &SymbolInterner) ->
             VoType::Pointer(Box::new(inner_type))
         }
         TypeExprKind::Interface(_) => VoType::Any, // interface is 2 slots like any
+        TypeExprKind::Port(elem) => VoType::Port(Box::new(type_expr_to_vo_type(elem, interner))),
+        TypeExprKind::Island => VoType::Island,
     }
 }
 

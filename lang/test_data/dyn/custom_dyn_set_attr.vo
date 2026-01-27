@@ -39,12 +39,12 @@ func main() error {
     
     // Set via ~> operator
     obj~>host = "localhost"
-    obj~>port = 8080
+    obj~>portNum = 8080
     obj~>debug = true
     
     // Verify via direct access
     assert(cfg.Get("host").(string) == "localhost", "host should be localhost")
-    assert(cfg.Get("port").(int) == 8080, "port should be 8080")
+    assert(cfg.Get("portNum").(int) == 8080, "port should be 8080")
     assert(cfg.Get("debug").(bool) == true, "debug should be true")
     
     // Read back via ~>
@@ -52,8 +52,8 @@ func main() error {
     assert(host.(string) == "localhost", "read host should be localhost")
     
     // Overwrite
-    obj~>port = 9090
-    assert(cfg.Get("port").(int) == 9090, "port should be updated to 9090")
+    obj~>portNum = 9090
+    assert(cfg.Get("portNum").(int) == 9090, "port should be updated to 9090")
     
     fmt.Println("custom_dyn_set_attr: ok")
     return nil

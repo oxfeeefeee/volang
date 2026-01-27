@@ -315,6 +315,14 @@ impl TCObjects {
         self.types.insert(Type::Chan(crate::typ::ChanDetail::new(dir, elem)))
     }
 
+    pub fn new_t_port(&mut self, elem: TypeKey) -> TypeKey {
+        self.types.insert(Type::Port(crate::typ::PortDetail::new(elem)))
+    }
+
+    pub fn new_t_island(&mut self) -> TypeKey {
+        self.types.insert(Type::Island)
+    }
+
     pub fn new_t_named(
         &mut self,
         obj: Option<ObjKey>,

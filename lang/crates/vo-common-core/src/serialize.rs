@@ -540,6 +540,15 @@ impl Module {
                 w.write_u16(inst.b);
                 w.write_u16(inst.c);
             }
+            // Cross-island transfer types
+            w.write_vec(&f.capture_types, |w, (meta, slots)| {
+                w.write_u32(*meta);
+                w.write_u16(*slots);
+            });
+            w.write_vec(&f.param_types, |w, (meta, slots)| {
+                w.write_u32(*meta);
+                w.write_u16(*slots);
+            });
         });
 
         w.write_vec(&self.externs, |w, e| {
@@ -702,6 +711,17 @@ impl Module {
                 let c = r.read_u16()?;
                 code.push(Instruction { op, flags, a, b, c });
             }
+            // Cross-island transfer types
+            let capture_types = r.read_vec(|r| {
+                let meta = r.read_u32()?;
+                let slots = r.read_u16()?;
+                Ok((meta, slots))
+            })?;
+            let param_types = r.read_vec(|r| {
+                let meta = r.read_u32()?;
+                let slots = r.read_u16()?;
+                Ok((meta, slots))
+            })?;
             Ok(FunctionDef {
                 name,
                 param_count,
@@ -716,6 +736,8 @@ impl Module {
                 error_ret_slot,
                 slot_types,
                 code,
+                capture_types,
+                param_types,
             })
         })?;
 
@@ -827,6 +849,8 @@ mod tests {
                 Instruction::new(Opcode::AddI, 0, 0, 1),
                 Instruction::new(Opcode::Return, 0, 0, 0),
             ],
+            capture_types: vec![],
+            param_types: vec![],
         });
 
         let bytes = module.serialize();

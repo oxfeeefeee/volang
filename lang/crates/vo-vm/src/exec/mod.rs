@@ -17,6 +17,8 @@ mod select;
 mod goroutine;
 mod extern_call;
 mod unwind;
+mod port;
+mod island;
 
 pub use load::*;
 pub use copy::*;
@@ -35,3 +37,5 @@ pub use select::*;
 pub use goroutine::*;
 pub use extern_call::*;
 pub use unwind::*;
+pub use port::*;
+pub use island::*;

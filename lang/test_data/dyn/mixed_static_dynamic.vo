@@ -6,7 +6,7 @@ package main
 import "fmt"
 type Config struct {
     host string
-    port int
+    portNum int
 }
 
 type Server struct {
@@ -23,7 +23,7 @@ func main() {
         name: "main-server",
         config: Config{
             host: "localhost",
-            port: 8080,
+            portNum: 8080,
         },
     }
     
@@ -40,7 +40,7 @@ func main() {
     cfg := obj~>config?
     config := cfg.(Config)
     assert(config.host == "localhost", "config.host via dynamic then static")
-    assert(config.port == 8080, "config.port via dynamic then static")
+    assert(config.portNum == 8080, "config.port via dynamic then static")
     
     // Dynamic access to nested
     configAny := obj~>config?
@@ -54,8 +54,8 @@ func main() {
     assert(cfgVal.host == "localhost", "method result static access")
     
     // Verify port value
-    port := configAny~>port?
-    assert(port.(int) == 8080, "dynamic read of port")
+    portVal := configAny~>portNum?
+    assert(portVal.(int) == 8080, "dynamic read of port")
     
     fmt.Println("mixed_static_dynamic: ok")
 }

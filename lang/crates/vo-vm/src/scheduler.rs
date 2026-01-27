@@ -292,6 +292,13 @@ impl Scheduler {
     pub fn has_runnable(&self) -> bool {
         !self.ready_queue.is_empty() || self.current.is_some()
     }
+    
+    /// Check if there are blocked/suspended fibers waiting to be woken.
+    pub fn has_blocked(&self) -> bool {
+        // If we have fibers but none runnable, some must be blocked/suspended
+        !self.fibers.is_empty() && !self.has_runnable() && 
+            self.fibers.iter().any(|f| f.status == FiberStatus::Suspended)
+    }
 
 }
 

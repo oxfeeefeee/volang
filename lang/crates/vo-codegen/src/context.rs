@@ -671,6 +671,8 @@ impl CodegenContext {
             error_ret_slot: -1,
             code: Vec::new(),
             slot_types: Vec::new(),
+            capture_types: Vec::new(),
+            param_types: Vec::new(),
         });
         // Methods: register to func_indices for embed.rs method lookup (TypeKey is unique)
         // Plain functions: skip func_indices (Symbol can collide across packages)
@@ -789,42 +791,35 @@ impl CodegenContext {
         idx
     }
 
-    /// Get or create ValueMeta constant for element/field types.
-    /// 
-    /// ValueMeta format: [meta_id:24 | value_kind:8]
+    /// Compute raw ValueMeta value for a type.
+    /// Format: [meta_id:24 | value_kind:8]
     /// - Struct/Pointer: meta_id = struct_meta_id (index into struct_metas[])
     /// - Interface: meta_id = iface_meta_id (index into interface_metas[])
-    /// - Others: meta_id = 0 (not used, never confuse with rttid)
+    /// - Others: meta_id = 0
+    pub fn compute_value_meta_raw(
+        &mut self,
+        type_key: TypeKey,
+        info: &crate::type_info::TypeInfoWrapper,
+    ) -> u32 {
+        use vo_runtime::ValueKind;
+        
+        let vk = info.type_value_kind(type_key);
+        let meta_id: u32 = match vk {
+            ValueKind::Struct | ValueKind::Pointer => self.get_struct_meta_id(type_key).unwrap_or(0),
+            ValueKind::Interface => self.get_interface_meta_id(type_key).unwrap_or(0),
+            _ => 0,
+        };
+        (meta_id << 8) | (vk as u32)
+    }
+    
+    /// Get or create ValueMeta constant in constant pool.
+    /// Returns constant pool index.
     pub fn get_or_create_value_meta(
         &mut self,
         type_key: TypeKey,
         info: &crate::type_info::TypeInfoWrapper,
     ) -> u16 {
-        use vo_runtime::ValueKind;
-        
-        let vk = info.type_value_kind(type_key);
-        
-        // Get the correct meta_id based on value_kind
-        let meta_id: u32 = match vk {
-            ValueKind::Struct | ValueKind::Pointer => {
-                // For struct/pointer, use struct_meta_id
-                self.get_struct_meta_id(type_key).unwrap_or(0)
-            }
-            ValueKind::Interface => {
-                // For interface, use iface_meta_id
-                self.get_interface_meta_id(type_key).unwrap_or(0)
-            }
-            _ => {
-                // For other types (basic types, slice, map, etc.), meta_id = 0
-                // Never store rttid here to avoid confusion
-                0
-            }
-        };
-        
-        // ValueMeta format: [meta_id:24 | value_kind:8]
-        let value_meta = ((meta_id as u64) << 8) | (vk as u64);
-        
-        // Add as Int constant (VM will interpret as ValueMeta)
+        let value_meta = self.compute_value_meta_raw(type_key, info);
         self.add_const(Constant::Int(value_meta as i64))
     }
 
@@ -920,6 +915,8 @@ impl CodegenContext {
             error_ret_slot: -1,
             code,
             slot_types: Vec::new(),
+            capture_types: Vec::new(),
+            param_types: Vec::new(),
         };
         let wrapper_id = self.module.functions.len() as u32;
         self.module.functions.push(wrapper_func);

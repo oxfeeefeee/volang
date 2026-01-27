@@ -36,15 +36,15 @@ func main() {
 	}
 
 	// Test SplitHostPort
-	host, port, err := net.SplitHostPort("localhost:8080")
+	host, portStr, err := net.SplitHostPort("localhost:8080")
 	if err != nil {
 		panic("SplitHostPort failed: " + err.Error())
 	}
 	if host != "localhost" {
 		panic("host mismatch: " + host)
 	}
-	if port != "8080" {
-		panic("port mismatch: " + port)
+	if portStr != "8080" {
+		panic("port mismatch: " + portStr)
 	}
 
 	// Test JoinHostPort

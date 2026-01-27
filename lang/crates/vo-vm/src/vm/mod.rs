@@ -20,9 +20,13 @@ use vo_runtime::objects::{array, string};
 
 pub mod helpers;
 mod types;
+#[cfg(feature = "std")]
+pub mod island_thread;
 
 pub use helpers::{stack_get, stack_set};
 pub use types::{ExecResult, VmError, VmState, ErrorLocation, TIME_SLICE};
+#[cfg(feature = "std")]
+pub use types::IslandThread;
 
 use helpers::{slice_data_ptr, slice_len, slice_cap, string_len, string_index, runtime_panic, user_panic,
     ERR_NIL_POINTER, ERR_NIL_MAP_WRITE, ERR_UNHASHABLE_TYPE, ERR_UNCOMPARABLE_TYPE, ERR_NEGATIVE_SHIFT, ERR_NIL_FUNC_CALL, ERR_TYPE_ASSERTION,
@@ -233,10 +237,44 @@ impl Vm {
     fn run_scheduling_loop(&mut self, max_iterations: Option<usize>) -> Result<(), VmError> {
         let mut iterations = 0;
         
-        while self.scheduler.has_runnable() {
+        loop {
             if let Some(max) = max_iterations {
                 iterations += 1;
                 if iterations > max { break; }
+            }
+            
+            // Process any wake commands from other islands
+            #[cfg(feature = "std")]
+            if let Some(ref rx) = self.state.main_cmd_rx {
+                while let Ok(cmd) = rx.try_recv() {
+                    match cmd {
+                        vo_runtime::island::IslandCommand::WakeFiber { fiber_id } => {
+                            self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(fiber_id));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            
+            // Check if we have runnable fibers
+            if !self.scheduler.has_runnable() {
+                // No runnable fibers - check if we have blocked fibers waiting for island wakes
+                #[cfg(feature = "std")]
+                if self.scheduler.has_blocked() && self.state.main_cmd_rx.is_some() {
+                    // Wait for wake command from other islands
+                    if let Some(ref rx) = self.state.main_cmd_rx {
+                        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                            Ok(vo_runtime::island::IslandCommand::WakeFiber { fiber_id }) => {
+                                self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(fiber_id));
+                                continue;
+                            }
+                            Ok(_) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                }
+                break;
             }
             
             let fiber_id = match self.scheduler.schedule_next() {
@@ -1405,6 +1443,195 @@ impl Vm {
                     }
                 }
 
+                // === ISLAND/PORT: Cross-island operations (Phase 3) ===
+                #[cfg(feature = "std")]
+                Opcode::IslandNew => {
+                    let next_id = self.state.next_island_id;
+                    self.state.next_island_id += 1;
+                    let result = exec::exec_island_new(stack, bp, &inst, &mut self.state.gc, next_id);
+                    
+                    // Create shared registry if first island, including main island's channel
+                    if self.state.island_registry.is_none() {
+                        let (main_tx, main_rx) = std::sync::mpsc::channel::<vo_runtime::island::IslandCommand>();
+                        let mut registry = std::collections::HashMap::new();
+                        registry.insert(0u32, main_tx); // Main island
+                        self.state.island_registry = Some(std::sync::Arc::new(
+                            std::sync::Mutex::new(registry)
+                        ));
+                        self.state.main_cmd_rx = Some(main_rx);
+                    }
+                    
+                    // Register the new island's sender in the shared registry
+                    let registry = self.state.island_registry.as_ref().unwrap().clone();
+                    {
+                        let mut guard = registry.lock().unwrap();
+                        guard.insert(next_id, result.command_tx.clone());
+                    }
+                    
+                    // Start island thread with the command receiver and registry
+                    let cmd_rx = result.command_rx;
+                    let module_arc = std::sync::Arc::new(module.clone());
+                    let registry_clone = registry.clone();
+                    let join_handle = std::thread::spawn(move || {
+                        island_thread::run_island_thread(next_id, module_arc, cmd_rx, registry_clone);
+                    });
+                    
+                    // Store island info with command sender
+                    self.state.island_threads.push(IslandThread {
+                        handle: result.handle,
+                        command_tx: result.command_tx,
+                        join_handle: Some(join_handle),
+                    });
+                    
+                    ExecResult::Continue
+                }
+                #[cfg(not(feature = "std"))]
+                Opcode::IslandNew => {
+                    let _ = exec::exec_island_new(stack, bp, &inst, &mut self.state.gc, 0);
+                    ExecResult::Continue
+                }
+                Opcode::PortNew => {
+                    match exec::exec_port_new(stack, bp, &inst, &mut self.state.gc) {
+                        Ok(()) => ExecResult::Continue,
+                        Err(msg) => runtime_panic(&mut self.state.gc, fiber, stack, module, msg),
+                    }
+                }
+                #[cfg(feature = "std")]
+                Opcode::PortSend => {
+                    let island_id = self.state.current_island_id;
+                    let fiber_id = fiber_id.to_raw() as u64;
+                    match exec::exec_port_send(stack, bp, island_id, fiber_id, &inst, &self.state.gc, &module.struct_metas) {
+                        exec::PortResult::Continue => ExecResult::Continue,
+                        exec::PortResult::Yield => {
+                            // Block fiber, will be woken by receiver
+                            ExecResult::Block
+                        }
+                        exec::PortResult::WakeRemote(waiter) => {
+                            // Wake fiber on another island (or same island)
+                            if waiter.island_id == island_id {
+                                // Same island - wake directly
+                                self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
+                            } else {
+                                self.state.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
+                            }
+                            ExecResult::Continue
+                        }
+                        exec::PortResult::SendOnClosed => {
+                            runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_SEND_ON_CLOSED.to_string())
+                        }
+                        exec::PortResult::CloseNil => ExecResult::Continue, // shouldn't happen for send
+                        exec::PortResult::Closed(_) => ExecResult::Continue, // shouldn't happen for send
+                    }
+                }
+                #[cfg(not(feature = "std"))]
+                Opcode::PortSend => {
+                    runtime_panic(&mut self.state.gc, fiber, stack, module, "Port not supported in no_std".to_string())
+                }
+                #[cfg(feature = "std")]
+                Opcode::PortRecv => {
+                    let island_id = self.state.current_island_id;
+                    let fiber_id = fiber_id.to_raw() as u64;
+                    match exec::exec_port_recv(stack, bp, island_id, fiber_id, &inst, &mut self.state.gc, &module.struct_metas) {
+                        exec::PortResult::Continue => ExecResult::Continue,
+                        exec::PortResult::Yield => {
+                            // Block fiber, will be woken by sender
+                            ExecResult::Block
+                        }
+                        exec::PortResult::WakeRemote(waiter) => {
+                            // Wake fiber on another island (or same island)
+                            if waiter.island_id == island_id {
+                                // Same island - wake directly
+                                self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
+                            } else {
+                                self.state.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
+                            }
+                            ExecResult::Continue
+                        }
+                        exec::PortResult::SendOnClosed => ExecResult::Continue, // shouldn't happen for recv
+                        exec::PortResult::CloseNil => ExecResult::Continue,
+                        exec::PortResult::Closed(_) => ExecResult::Continue, // shouldn't happen for recv
+                    }
+                }
+                #[cfg(not(feature = "std"))]
+                Opcode::PortRecv => {
+                    runtime_panic(&mut self.state.gc, fiber, stack, module, "Port not supported in no_std".to_string())
+                }
+                #[cfg(feature = "std")]
+                Opcode::PortClose => {
+                    let island_id = self.state.current_island_id;
+                    match exec::exec_port_close(stack, bp, &inst) {
+                        exec::PortResult::Continue => ExecResult::Continue,
+                        exec::PortResult::CloseNil => {
+                            runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_CLOSE_NIL_CHANNEL.to_string())
+                        }
+                        exec::PortResult::Closed(waiters) => {
+                            // Wake all waiters
+                            for waiter in waiters {
+                                if waiter.island_id == island_id {
+                                    self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
+                                } else {
+                                    self.state.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
+                                }
+                            }
+                            ExecResult::Continue
+                        }
+                        _ => ExecResult::Continue,
+                    }
+                }
+                #[cfg(not(feature = "std"))]
+                Opcode::PortClose => {
+                    match exec::exec_port_close(stack, bp, &inst) {
+                        exec::PortResult::Continue => ExecResult::Continue,
+                        exec::PortResult::CloseNil => {
+                            runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_CLOSE_NIL_CHANNEL.to_string())
+                        }
+                        _ => ExecResult::Continue,
+                    }
+                }
+                Opcode::GoIsland => {
+                    let result = exec::exec_go_island(stack, bp, &inst);
+                    let island_id = vo_runtime::island::id(result.island);
+                    
+                    if island_id == 0 {
+                        // Spawn on main island - use regular GoStart logic
+                        // The closure is already on the stack, just spawn a new fiber
+                        let closure_ref = stack[bp + inst.b as usize] as vo_runtime::gc::GcRef;
+                        let func_id = vo_runtime::objects::closure::func_id(closure_ref);
+                        let local_slots = module.functions[func_id as usize].local_slots;
+                        
+                        let mut new_fiber = crate::fiber::Fiber::new(0);
+                        new_fiber.push_frame(func_id, local_slots, 0, 0);
+                        new_fiber.stack[0] = closure_ref as u64;
+                        self.scheduler.spawn(new_fiber);
+                        ExecResult::Continue
+                    } else {
+                        let capture_count = result.capture_data.len() as u16;
+                        // Get type info from closure's FunctionDef for proper serialization
+                        let func_def = &module.functions[result.func_id as usize];
+                        let data = exec::pack_closure_for_island(
+                            &self.state.gc,
+                            &result,
+                            &func_def.capture_types,
+                            &func_def.param_types,
+                            &module.struct_metas,
+                        );
+                        let closure_data = vo_runtime::pack::PackedValue::from_data(data);
+                        let cmd = vo_runtime::island::IslandCommand::SpawnFiber {
+                            closure_data,
+                            capture_slots: capture_count,
+                        };
+                        // Send via shared registry
+                        if let Some(ref registry) = self.state.island_registry {
+                            if let Ok(guard) = registry.lock() {
+                                if let Some(tx) = guard.get(&island_id) {
+                                    let _ = tx.send(cmd);
+                                }
+                            }
+                        }
+                        ExecResult::Continue
+                    }
+                }
+
                 Opcode::Invalid => ExecResult::Panic,
             };
 
@@ -1549,3 +1776,4 @@ pub extern "C" fn closure_call_trampoline(
         }
     }
 }
+

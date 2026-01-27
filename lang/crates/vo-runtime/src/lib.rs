@@ -13,6 +13,9 @@ pub mod gc;
 pub mod gc_types;
 pub mod objects;
 pub mod itab;
+pub mod pack;
+pub mod island;
+pub mod island_msg;
 
 // FFI core types (no_std compatible), registration requires std
 pub mod ffi;

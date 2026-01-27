@@ -1,0 +1,97 @@
+// Test cross-island transfer of various sendable types
+// This verifies that captures and arguments are properly deep-copied
+
+package main
+
+import "fmt"
+import "time"
+
+func main() {
+	testStringCapture()
+	testSliceCapture()
+	testStructArg()
+	testMixedCaptures()
+	fmt.Println("all island sendable tests passed")
+}
+
+func testStringCapture() {
+	i := make(island)
+	p := make(port string, 1)
+	
+	msg := "hello from main"
+	go @(i) func(ch port string) {
+		// msg is captured and should be deep-copied
+		ch <- msg
+	}(p)
+	
+	time.Sleep(50 * time.Millisecond)
+	result := <-p
+	assert(result == "hello from main", "string capture failed")
+	fmt.Println("testStringCapture passed")
+}
+
+func testSliceCapture() {
+	i := make(island)
+	p := make(port int, 1)
+	
+	nums := []int{1, 2, 3, 4, 5}
+	go @(i) func(ch port int) {
+		// nums is captured and should be deep-copied
+		sum := 0
+		for _, n := range nums {
+			sum += n
+		}
+		ch <- sum
+	}(p)
+	
+	time.Sleep(50 * time.Millisecond)
+	result := <-p
+	assert(result == 15, "slice capture failed")
+	fmt.Println("testSliceCapture passed")
+}
+
+type Point struct {
+	X int
+	Y int
+}
+
+func testStructArg() {
+	i := make(island)
+	p := make(port int, 1)
+	
+	pt := Point{X: 10, Y: 20}
+	go @(i) func(ch port int, point Point) {
+		// point is passed as argument and should be deep-copied
+		ch <- point.X + point.Y
+	}(p, pt)
+	
+	time.Sleep(50 * time.Millisecond)
+	result := <-p
+	assert(result == 30, "struct arg failed")
+	fmt.Println("testStructArg passed")
+}
+
+func testMixedCaptures() {
+	i := make(island)
+	p := make(port string, 1)
+	
+	prefix := "result: "
+	value := 42
+	suffix := " done"
+	
+	go @(i) func(ch port string) {
+		// Multiple captures of different types
+		ch <- prefix + fmt.Sprint(value) + suffix
+	}(p)
+	
+	time.Sleep(50 * time.Millisecond)
+	result := <-p
+	assert(result == "result: 42 done", "mixed captures failed")
+	fmt.Println("testMixedCaptures passed")
+}
+
+func assert(cond bool, msg string) {
+	if !cond {
+		panic(msg)
+	}
+}

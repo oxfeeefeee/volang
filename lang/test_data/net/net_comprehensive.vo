@@ -194,22 +194,22 @@ func testParseCIDR() {
 
 func testSplitHostPort() {
 	// Basic
-	host, port, err := net.SplitHostPort("localhost:8080")
+	host, portStr, err := net.SplitHostPort("localhost:8080")
 	assert(err == nil, "SplitHostPort error")
 	assert(host == "localhost", "SplitHostPort host: "+host)
-	assert(port == "8080", "SplitHostPort port: "+port)
+	assert(portStr == "8080", "SplitHostPort port: "+portStr)
 
 	// IPv4
-	host2, port2, err2 := net.SplitHostPort("192.168.1.1:80")
+	host2, portStr2, err2 := net.SplitHostPort("192.168.1.1:80")
 	assert(err2 == nil, "SplitHostPort IPv4 error")
 	assert(host2 == "192.168.1.1", "SplitHostPort IPv4 host: "+host2)
-	assert(port2 == "80", "SplitHostPort IPv4 port: "+port2)
+	assert(portStr2 == "80", "SplitHostPort IPv4 port: "+portStr2)
 
 	// IPv6 with brackets
-	host3, port3, err3 := net.SplitHostPort("[::1]:443")
+	host3, portStr3, err3 := net.SplitHostPort("[::1]:443")
 	assert(err3 == nil, "SplitHostPort IPv6 error")
 	assert(host3 == "::1", "SplitHostPort IPv6 host: "+host3)
-	assert(port3 == "443", "SplitHostPort IPv6 port: "+port3)
+	assert(portStr3 == "443", "SplitHostPort IPv6 port: "+portStr3)
 
 	// Invalid - no port
 	_, _, err4 := net.SplitHostPort("localhost")
