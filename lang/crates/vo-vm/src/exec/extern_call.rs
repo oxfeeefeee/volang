@@ -79,6 +79,7 @@ pub fn exec_call_extern(
     match result {
         ExternResult::Ok => ExecResult::Continue,
         ExternResult::Yield => ExecResult::Yield,
+        ExternResult::Block => ExecResult::Block,
         ExternResult::Panic(msg) => {
             *fiber_panic_msg = Some(msg);
             ExecResult::Panic

@@ -100,6 +100,11 @@ pub extern "C" fn call_extern_trampoline(
             fiber.set_fatal_panic();
             JitResult::Panic
         }
+        ExternResult::Block => {
+            // Blocking I/O: return Block to let JIT exit back to VM scheduler.
+            // The fiber will be parked and woken later by the runtime.
+            JitResult::Block
+        }
         ExternResult::Panic(msg) => {
             // Extern panics are recoverable - convert to Recoverable panic
             // Pack as interface{} with string value
@@ -339,16 +344,23 @@ impl Vm {
         let mut ret_buf = vec![0u64; func_ret_slots.max(1)];
         let result = self.call_jit_direct(jit_func, fiber_ptr, args.as_mut_ptr(), ret_buf.as_mut_ptr());
         
-        if result == JitResult::Ok {
-            // Write returns back to fiber stack
-            let fiber = self.scheduler.get_fiber_mut(fiber_id);
-            for i in 0..call_ret_slots.min(ret_buf.len()) {
-                fiber.write_reg(arg_start + i as u16, ret_buf[i]);
+        match result {
+            JitResult::Ok => {
+                // Write returns back to fiber stack
+                let fiber = self.scheduler.get_fiber_mut(fiber_id);
+                for i in 0..call_ret_slots.min(ret_buf.len()) {
+                    fiber.write_reg(arg_start + i as u16, ret_buf[i]);
+                }
+                ExecResult::Continue
             }
-            ExecResult::Continue
-        } else {
-            // panic_state already set by call_jit_direct
-            ExecResult::Panic
+            JitResult::Block => {
+                // Blocking I/O: return Block to VM scheduler
+                ExecResult::Block
+            }
+            JitResult::Panic => {
+                // panic_state already set by call_jit_direct
+                ExecResult::Panic
+            }
         }
     }
 

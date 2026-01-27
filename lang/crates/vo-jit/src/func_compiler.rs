@@ -494,17 +494,18 @@ impl<'a> FunctionCompiler<'a> {
     }
 
     fn check_call_result(&mut self, result: Value) {
-        let panic_block = self.builder.create_block();
+        let not_ok_block = self.builder.create_block();
         let ok_block = self.builder.create_block();
         
+        // JitResult: Ok=0, Panic=1, Block=2
+        // If not Ok, return result as-is; VM scheduler handles Panic vs Block
         let zero = self.builder.ins().iconst(types::I32, 0);
-        let is_panic = self.builder.ins().icmp(IntCC::NotEqual, result, zero);
-        self.builder.ins().brif(is_panic, panic_block, &[], ok_block, &[]);
+        let is_ok = self.builder.ins().icmp(IntCC::Equal, result, zero);
+        self.builder.ins().brif(is_ok, ok_block, &[], not_ok_block, &[]);
         
-        self.builder.switch_to_block(panic_block);
-        self.builder.seal_block(panic_block);
-        let panic_val = self.builder.ins().iconst(types::I32, 1);
-        self.builder.ins().return_(&[panic_val]);
+        self.builder.switch_to_block(not_ok_block);
+        self.builder.seal_block(not_ok_block);
+        self.builder.ins().return_(&[result]);
         
         self.builder.switch_to_block(ok_block);
         self.builder.seal_block(ok_block);

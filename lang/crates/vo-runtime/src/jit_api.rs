@@ -124,6 +124,8 @@ pub enum JitResult {
     Ok = 0,
     /// Function panicked.
     Panic = 1,
+    /// Function blocked on I/O, need to return to VM scheduler.
+    Block = 2,
 }
 
 // =============================================================================

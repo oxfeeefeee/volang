@@ -95,6 +95,9 @@ pub enum ExternResult {
     Ok,
     /// Yield to scheduler (for async operations).
     Yield,
+    /// Block current fiber (for blocking I/O operations).
+    /// The fiber will be parked and must be explicitly woken by runtime.
+    Block,
     /// Panic with error message.
     Panic(String),
 }
