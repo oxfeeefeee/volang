@@ -161,7 +161,12 @@ impl CodegenContext {
         Self {
             module: Module {
                 name: name.to_string(),
-                struct_metas: Vec::new(),
+                // Index 0 is reserved for ref box (single GcRef slot for boxing reference types)
+                struct_metas: vec![vo_vm::bytecode::StructMeta {
+                    slot_types: vec![vo_runtime::SlotType::GcRef],
+                    fields: Vec::new(),
+                    field_index: HashMap::new(),
+                }],
                 // Index 0 is reserved for empty interface{}
                 interface_metas: vec![vo_vm::bytecode::InterfaceMeta {
                     name: String::new(),
@@ -821,6 +826,25 @@ impl CodegenContext {
     ) -> u16 {
         let value_meta = self.compute_value_meta_raw(type_key, info);
         self.add_const(Constant::Int(value_meta as i64))
+    }
+    
+    /// Get ValueMeta for boxing a variable.
+    /// For reference types (port, channel, slice, etc.), returns ref box meta (Struct)
+    /// to avoid creating invalid GC objects with wrong ValueKind.
+    /// For value types, returns the actual type's ValueMeta.
+    pub fn get_boxing_meta(
+        &mut self,
+        type_key: TypeKey,
+        info: &crate::type_info::TypeInfoWrapper,
+    ) -> u16 {
+        if info.is_reference_type(type_key) {
+            use vo_runtime::ValueKind;
+            // meta_id=0 (ref box struct), value_kind=Struct
+            let value_meta = (0u32 << 8) | (ValueKind::Struct as u32);
+            self.add_const(Constant::Int(value_meta as i64))
+        } else {
+            self.get_or_create_value_meta(type_key, info)
+        }
     }
 
     /// Get or create element ValueMeta for ArrayNew

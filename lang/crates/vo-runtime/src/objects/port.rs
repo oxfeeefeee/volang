@@ -170,6 +170,20 @@ pub fn get_state_ptr(_port: GcRef) -> u64 {
     panic!("Port not supported in no_std mode")
 }
 
+/// Clone the Arc state and return new raw pointer for cross-island transfer.
+/// This MUST be used when encoding ports for transfer to ensure the Arc
+/// refcount is incremented before the data is sent, preventing use-after-free
+/// if GC runs before the receiving island processes the message.
+#[cfg(feature = "std")]
+pub fn clone_state_ptr_for_transfer(port: GcRef) -> u64 {
+    clone_arc_state(QueueData::as_ref(port).state)
+}
+
+#[cfg(not(feature = "std"))]
+pub fn clone_state_ptr_for_transfer(_port: GcRef) -> u64 {
+    panic!("Port not supported in no_std mode")
+}
+
 /// Get port metadata for cross-island transfer.
 #[cfg(feature = "std")]
 pub fn get_metadata(port: GcRef) -> (u64, ValueMeta, u16) {
@@ -183,11 +197,15 @@ pub fn get_metadata(_port: GcRef) -> (u64, ValueMeta, u16) {
 }
 
 /// Create a port from raw state pointer (for cross-island transfer).
+/// IMPORTANT: The state_ptr must already have its Arc refcount incremented
+/// (via clone_state_ptr_for_transfer) before calling this function.
+/// This function takes ownership of that reference.
 #[cfg(feature = "std")]
 pub fn create_from_raw(gc: &mut Gc, state_ptr: u64, cap: u64, elem_meta: ValueMeta, elem_slots: u16) -> GcRef {
     let port = gc.alloc(ValueMeta::new(0, ValueKind::Port), DATA_SLOTS);
     let data = QueueData::as_mut(port);
-    data.state = clone_arc_state(state_ptr);
+    // Use state_ptr directly - refcount was already incremented during encoding
+    data.state = state_ptr;
     data.cap = cap;
     data.elem_meta = elem_meta;
     data.elem_slots = elem_slots;

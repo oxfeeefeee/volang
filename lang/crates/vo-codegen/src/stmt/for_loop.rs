@@ -75,7 +75,7 @@ fn define_loop_var(
         let storage = StorageKind::StackValue { slot: ctrl_slot, slots: value_slots };
         sc.func.define_local(name.symbol, storage);
         
-        let meta_idx = sc.ctx.get_or_create_value_meta(type_key, sc.info);
+        let meta_idx = sc.ctx.get_boxing_meta(type_key, sc.info);
         loop_var_info.push(LoopVarInfo {
             symbol: name.symbol,
             ctrl_slot,

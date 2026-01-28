@@ -637,7 +637,7 @@ impl<'a> TypeInfoWrapper<'a> {
         type_layout::is_value_type(type_key, self.tc_objs())
     }
 
-    /// Reference types (pointer, slice, map, channel, closure, string) are already GcRefs.
+    /// Reference types (pointer, slice, map, channel, closure, string, port, island) are already GcRefs.
     /// They only need boxing when captured by closure (to share storage location).
     /// Other escape reasons (e.g. assigned to interface) don't require boxing.
     pub fn is_reference_type(&self, type_key: TypeKey) -> bool {
@@ -649,7 +649,9 @@ impl<'a> TypeInfoWrapper<'a> {
             | ValueKind::Map 
             | ValueKind::Channel 
             | ValueKind::Closure 
-            | ValueKind::String)
+            | ValueKind::String
+            | ValueKind::Port
+            | ValueKind::Island)
     }
 
     pub fn is_named_type(&self, type_key: TypeKey) -> bool {

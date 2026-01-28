@@ -8,6 +8,7 @@ use vo_vm::instruction::Opcode;
 use crate::context::CodegenContext;
 use crate::error::CodegenError;
 use crate::func::FuncBuilder;
+use crate::stmt::var_def::DeferredHeapAlloc;
 use crate::type_info::TypeInfoWrapper;
 
 /// Compute IfaceAssert parameters for a target type.
@@ -80,11 +81,8 @@ fn emit_type_switch_binding(
     if needs_boxing {
         let stores_pointer = info.is_pointer(type_key);
         let gcref_slot = func.define_local_heap_boxed(name, slots, stores_pointer);
-        let meta_idx = ctx.get_or_create_value_meta(type_key, info);
-        let meta_reg = func.alloc_temp_typed(&[SlotType::Value]);
-        func.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-        func.emit_with_flags(Opcode::PtrNew, slots as u8, gcref_slot, meta_reg, 0);
-        func.emit_ptr_set(gcref_slot, 0, value_slot, slots);
+        let meta_idx = ctx.get_boxing_meta(type_key, info);
+        DeferredHeapAlloc { gcref_slot, value_slots: slots, meta_idx }.emit_with_copy(func, value_slot);
     }
 }
 

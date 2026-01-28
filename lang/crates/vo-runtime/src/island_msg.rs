@@ -146,38 +146,41 @@ pub fn encode_spawn_payload(
 
     // Pack captures (each capture is a GcRef to a boxed variable)
     for (i, &slot) in captures.iter().enumerate() {
-        if slot == 0 {
-            // Null capture - write empty packed value
-            buf.extend_from_slice(&0u32.to_le_bytes()); // length = 0
-            continue;
-        }
-        
-        let gcref = slot as GcRef;
-        let header = Gc::header(gcref);
-        
-        // Check if this is a port (handled separately)
-        if header.value_kind() == ValueKind::Port {
-            buf.extend_from_slice(&0u32.to_le_bytes());
-            continue;
-        }
-        
-        // Get the type info for this capture
-        if i < capture_types.len() {
-            let (meta_raw, _expected_slots) = capture_types[i];
-            let value_meta = ValueMeta::from_raw(meta_raw);
-            let actual_slots = header.slots as usize;
-            
-            // Read the boxed value content
-            let mut value_slots = vec![0u64; actual_slots];
-            for j in 0..actual_slots {
-                value_slots[j] = unsafe { Gc::read_slot(gcref, j) };
+        let type_info = capture_types.get(i);
+
+        match (slot, type_info) {
+            // Null capture
+            (0, _) => {
+                buf.extend_from_slice(&0u32.to_le_bytes());
             }
-            
-            // Pack the value
-            let packed = pack_slots(gc, &value_slots, value_meta, struct_metas, runtime_types);
-            let packed_data = packed.data();
-            buf.extend_from_slice(&(packed_data.len() as u32).to_le_bytes());
-            buf.extend_from_slice(packed_data);
+            // Has type info - dispatch by value kind
+            (_, Some(&(meta_raw, _))) => {
+                let value_meta = ValueMeta::from_raw(meta_raw);
+                if value_meta.value_kind() == ValueKind::Port {
+                    // Port handled separately via port_wires
+                    buf.extend_from_slice(&0u32.to_le_bytes());
+                } else {
+                    // Normal value: read and serialize
+                    let gcref = slot as GcRef;
+                    let header = Gc::header(gcref);
+                    let actual_slots = header.slots as usize;
+
+                    let mut value_slots = vec![0u64; actual_slots];
+                    for j in 0..actual_slots {
+                        value_slots[j] = unsafe { Gc::read_slot(gcref, j) };
+                    }
+
+                    let packed =
+                        pack_slots(gc, &value_slots, value_meta, struct_metas, runtime_types);
+                    let packed_data = packed.data();
+                    buf.extend_from_slice(&(packed_data.len() as u32).to_le_bytes());
+                    buf.extend_from_slice(packed_data);
+                }
+            }
+            // No type info (shouldn't happen)
+            (_, None) => {
+                buf.extend_from_slice(&0u32.to_le_bytes());
+            }
         }
     }
 
@@ -212,6 +215,8 @@ pub fn encode_spawn_payload(
 }
 
 /// Type-aware port detection. Uses known ValueKind to safely detect ports.
+/// IMPORTANT: This clones the Arc state to increment refcount, preventing
+/// use-after-free if GC runs before the receiving island processes the message.
 fn detect_port_typed(slot: Slot, idx: u16, is_arg: bool, value_kind: ValueKind) -> Option<PortWire> {
     if slot == 0 || value_kind != ValueKind::Port {
         return None;
@@ -232,7 +237,8 @@ fn detect_port_typed(slot: Slot, idx: u16, is_arg: bool, value_kind: ValueKind) 
     };
 
     let (cap, elem_meta, elem_slots) = port::get_metadata(port_ref);
-    let state_ptr = port::get_state_ptr(port_ref);
+    // Clone Arc state to increment refcount - prevents use-after-free during transfer
+    let state_ptr = port::clone_state_ptr_for_transfer(port_ref);
     Some(PortWire {
         idx, is_boxed, is_arg, state_ptr, cap,
         meta_raw: elem_meta.to_raw(),

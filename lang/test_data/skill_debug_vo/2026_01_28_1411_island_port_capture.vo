@@ -4,7 +4,6 @@ package main
 import "time"
 
 func main() {
-	/*
 	i := make(island)
 	p := make(port int, 1)
 	
@@ -19,5 +18,4 @@ func main() {
 	
 	close(p)
 	println("PASS")
-	*/
 }

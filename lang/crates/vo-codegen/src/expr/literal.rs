@@ -461,13 +461,8 @@ pub fn compile_func_lit(
     
     // Box escaped parameters: allocate heap storage and copy param values
     for (sym, type_key, slots, _slot_types) in escaped_params {
-        if let Some((gcref_slot, param_slot)) = closure_builder.box_escaped_param(sym, slots, info.is_pointer(type_key)) {
-            let meta_idx = ctx.get_or_create_value_meta(type_key, info);
-            let meta_reg = closure_builder.alloc_temp_typed(&[SlotType::Value]);
-            closure_builder.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
-            closure_builder.emit_with_flags(Opcode::PtrNew, slots as u8, gcref_slot, meta_reg, 0);
-            closure_builder.emit_ptr_set(gcref_slot, 0, param_slot, slots);
-        }
+        let meta_idx = ctx.get_boxing_meta(type_key, info);
+        closure_builder.emit_box_escaped_param(sym, slots, info.is_pointer(type_key), meta_idx);
     }
     
     // Set return slots and types

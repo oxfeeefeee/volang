@@ -205,7 +205,7 @@ impl<'a, 'b> LocalDefiner<'a, 'b> {
     ) -> Result<(StorageKind, Option<DeferredHeapAlloc>), CodegenError> {
         let stores_pointer = self.info.is_pointer(type_key);
         let gcref_slot = self.func.define_local_heap_boxed(sym, slots, stores_pointer);
-        let meta_idx = self.ctx.get_or_create_value_meta(type_key, self.info);
+        let meta_idx = self.ctx.get_boxing_meta(type_key, self.info);
         
         let storage = StorageKind::HeapBoxed { gcref_slot, value_slots: slots, stores_pointer };
         let deferred = DeferredHeapAlloc { gcref_slot, value_slots: slots, meta_idx };

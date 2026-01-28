@@ -1018,13 +1018,8 @@ fn compile_func_body(
     
     // Box escaped parameters: allocate heap storage and copy param values
     for (sym, type_key, slots, _slot_types) in escaped_params {
-        if let Some((gcref_slot, param_slot)) = builder.box_escaped_param(sym, slots, info.is_pointer(type_key)) {
-            let meta_idx = ctx.get_or_create_value_meta(type_key, info);
-            let meta_reg = builder.alloc_temp_typed(&[vo_runtime::SlotType::Value]);
-            builder.emit_op(vo_vm::instruction::Opcode::LoadConst, meta_reg, meta_idx, 0);
-            builder.emit_with_flags(vo_vm::instruction::Opcode::PtrNew, slots as u8, gcref_slot, meta_reg, 0);
-            builder.emit_ptr_set(gcref_slot, 0, param_slot, slots);
-        }
+        let meta_idx = ctx.get_boxing_meta(type_key, info);
+        builder.emit_box_escaped_param(sym, slots, info.is_pointer(type_key), meta_idx);
     }
     
     // Set return slots and types

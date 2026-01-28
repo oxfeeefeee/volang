@@ -227,13 +227,15 @@ impl FuncBuilder {
     }
 
     /// Box an escaped parameter: allocate heap storage and copy the stack param value into it.
-    /// Returns (gcref_slot, param_slot) for the caller to emit PtrNew + PtrSet.
-    /// The local storage is updated to HeapBoxed.
-    pub fn box_escaped_param(&mut self, sym: Symbol, value_slots: u16, stores_pointer: bool) -> Option<(u16, u16)> {
-        let local = self.locals.get(&sym)?;
+    /// Emits PtrNew + PtrSet instructions. The local storage is updated to HeapBoxed.
+    pub fn emit_box_escaped_param(&mut self, sym: Symbol, value_slots: u16, stores_pointer: bool, meta_idx: u16) {
+        let local = match self.locals.get(&sym) {
+            Some(l) => l,
+            None => return,
+        };
         let param_slot = match local.storage {
             StorageKind::StackValue { slot, .. } => slot,
-            _ => return None,
+            _ => return,
         };
         
         let gcref_slot = self.next_slot;
@@ -247,7 +249,12 @@ impl FuncBuilder {
         self.slot_types.push(SlotType::GcRef);
         self.next_slot += 1;
         
-        Some((gcref_slot, param_slot))
+        // Emit PtrNew + PtrSet
+        use vo_vm::instruction::Opcode;
+        let meta_reg = self.alloc_temp_typed(&[SlotType::Value]);
+        self.emit_op(Opcode::LoadConst, meta_reg, meta_idx, 0);
+        self.emit_with_flags(Opcode::PtrNew, value_slots as u8, gcref_slot, meta_reg, 0);
+        self.emit_ptr_set(gcref_slot, 0, param_slot, value_slots);
     }
 
     // === Local variable definition ===
