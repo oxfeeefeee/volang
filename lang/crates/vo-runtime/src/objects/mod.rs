@@ -22,6 +22,7 @@ pub(crate) use impl_gc_object;
 
 pub mod array;
 pub mod channel;
+pub mod queue_state;
 pub mod closure;
 pub mod compare;
 pub mod interface;

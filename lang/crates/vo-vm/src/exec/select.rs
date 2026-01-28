@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use vo_runtime::gc::GcRef;
-use vo_runtime::objects::channel;
+use vo_runtime::objects::{channel, queue_state};
 
 use crate::fiber::{SelectCase, SelectCaseKind, SelectState};
 use crate::instruction::Instruction;
@@ -81,7 +81,7 @@ fn check_ready_case(stack: &[u64], bp: usize, state: &SelectState) -> SelectChec
         if ch.is_null() {
             continue;
         }
-        let cap = channel::capacity(ch);
+        let cap = queue_state::capacity(ch);
         let chan_state = channel::get_state(ch);
         
         match case.kind {

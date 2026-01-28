@@ -117,6 +117,8 @@ fn compile_builtin_call_impl(
                 func.emit_op(Opcode::MapLen, dst, arg_reg, 0);
             } else if info.is_chan(arg_type) {
                 func.emit_op(Opcode::ChanLen, dst, arg_reg, 0);
+            } else if info.is_port(arg_type) {
+                func.emit_op(Opcode::PortLen, dst, arg_reg, 0);
             } else if info.is_slice(arg_type) {
                 func.emit_op(Opcode::SliceLen, dst, arg_reg, 0);
             } else {
@@ -133,6 +135,8 @@ fn compile_builtin_call_impl(
             
             if info.is_chan(arg_type) {
                 func.emit_op(Opcode::ChanCap, dst, arg_reg, 0);
+            } else if info.is_port(arg_type) {
+                func.emit_op(Opcode::PortCap, dst, arg_reg, 0);
             } else {
                 func.emit_op(Opcode::SliceCap, dst, arg_reg, 0);
             }

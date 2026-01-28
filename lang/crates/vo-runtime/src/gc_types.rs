@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 
 use crate::gc::{scan_slots_by_types, Gc, GcRef};
-use crate::objects::{array, channel, closure, interface, map, port, slice};
+use crate::objects::{array, channel, closure, interface, map, port, queue_state, slice};
 use crate::slot::{byte_offset_for_slots, slot_to_ptr, Slot, SLOT_BYTES};
 use vo_common_core::bytecode::StructMeta;
 use vo_common_core::types::{SlotType, ValueKind};
@@ -108,7 +108,7 @@ fn scan_array_struct_elem(gc: &mut Gc, obj: GcRef, idx: usize, elem_bytes: usize
 }
 
 fn scan_channel(gc: &mut Gc, obj: GcRef, struct_metas: &[StructMeta]) {
-    let elem_meta = channel::elem_meta(obj);
+    let elem_meta = queue_state::elem_meta(obj);
     let elem_kind = elem_meta.value_kind();
     if !elem_kind.may_contain_gc_refs() { return; }
     

@@ -688,10 +688,10 @@ pub extern "C" fn vo_chan_len(ch: u64) -> u64 {
 /// Get channel capacity.
 #[no_mangle]
 pub extern "C" fn vo_chan_cap(ch: u64) -> u64 {
-    use crate::objects::channel;
+    use crate::objects::queue_state;
     use crate::gc::GcRef;
     let ch = ch as GcRef;
-    if ch.is_null() { 0 } else { channel::capacity(ch) as u64 }
+    if ch.is_null() { 0 } else { queue_state::capacity(ch) as u64 }
 }
 
 // =============================================================================

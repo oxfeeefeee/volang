@@ -5,6 +5,7 @@ use alloc::{format, string::String};
 
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::port::{self, RecvResult, SendResult, WaiterInfo};
+use vo_runtime::objects::queue_state;
 use vo_runtime::pack::{pack_slots, unpack_slots};
 use vo_runtime::ValueMeta;
 use vo_common_core::bytecode::StructMeta;
@@ -62,7 +63,7 @@ pub fn exec_port_send(
     let elem_slots = inst.flags as usize;
     let src_start = bp + inst.b as usize;
 
-    let elem_meta = port::elem_meta(p);
+    let elem_meta = queue_state::elem_meta(p);
     let src = &stack[src_start..src_start + elem_slots];
 
     // Pack the value for cross-island transfer

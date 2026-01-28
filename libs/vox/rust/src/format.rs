@@ -415,6 +415,8 @@ fn format_instruction(instr: &Instruction) -> String {
         Opcode::PortSend => format!("PortSend      r{}, r{}, elem_slots={}", a, b, flags),
         Opcode::PortRecv => format!("PortRecv      r{}, r{}, elem_slots={}, has_ok={}", a, b, flags >> 1, flags & 1),
         Opcode::PortClose => format!("PortClose     r{}", a),
+        Opcode::PortLen => format!("PortLen       r{}, r{}", a, b),
+        Opcode::PortCap => format!("PortCap       r{}, r{}", a, b),
         Opcode::GoIsland => format!("GoIsland      r{}, r{}, capture_slots={}", a, b, flags),
 
         Opcode::Invalid => format!("Invalid       op={}, flags={}, a={}, b={}, c={}", instr.op, flags, a, b, c),

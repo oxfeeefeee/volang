@@ -8,6 +8,7 @@ use std::{boxed::Box, vec::Vec};
 use vo_runtime::ValueMeta;
 use vo_runtime::gc::{Gc, GcRef};
 use vo_runtime::objects::channel::{self, RecvResult, SendResult};
+use vo_runtime::objects::queue_state;
 
 use crate::instruction::Instruction;
 
@@ -53,13 +54,13 @@ pub fn exec_chan_send(stack: &[u64], bp: usize, fiber_id: u32, inst: &Instructio
     let src_start = bp + inst.b as usize;
 
     let value: Box<[u64]> = stack[src_start..src_start + elem_slots].into();
-    let cap = channel::capacity(ch);
+    let cap = queue_state::capacity(ch);
     let state = channel::get_state(ch);
 
-    match state.try_send(value.clone(), cap) {
+    match state.try_send(value, cap) {
         SendResult::DirectSend(receiver_id) => ChanResult::Wake(receiver_id as u32),
         SendResult::Buffered => ChanResult::Continue,
-        SendResult::WouldBlock => {
+        SendResult::WouldBlock(value) => {
             state.register_sender(fiber_id as u64, value);
             ChanResult::Yield
         }
@@ -111,17 +112,11 @@ pub fn exec_chan_recv(stack: &mut [u64], bp: usize, fiber_id: u32, inst: &Instru
 }
 
 #[inline]
-pub fn exec_chan_len(stack: &mut [u64], bp: usize, inst: &Instruction) {
-    let ch = stack[bp + inst.b as usize] as GcRef;
-    let len = if ch.is_null() { 0 } else { channel::len(ch) };
-    stack[bp + inst.a as usize] = len as u64;
-}
-
-#[inline]
-pub fn exec_chan_cap(stack: &mut [u64], bp: usize, inst: &Instruction) {
-    let ch = stack[bp + inst.b as usize] as GcRef;
-    let cap = if ch.is_null() { 0 } else { channel::capacity(ch) };
-    stack[bp + inst.a as usize] = cap as u64;
+pub fn exec_queue_get<F>(stack: &mut [u64], bp: usize, inst: &Instruction, get: F)
+where F: FnOnce(GcRef) -> usize {
+    let obj = stack[bp + inst.b as usize] as GcRef;
+    let val = if obj.is_null() { 0 } else { get(obj) };
+    stack[bp + inst.a as usize] = val as u64;
 }
 
 #[inline]

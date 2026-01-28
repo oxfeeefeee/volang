@@ -118,7 +118,6 @@ impl VmState {
     }
     
     /// Send wake command to an island via shared registry.
-    /// All islands (including main) are registered in the registry.
     #[cfg(feature = "std")]
     pub fn send_wake_to_island(&self, island_id: u32, fiber_id: u32) -> bool {
         if let Some(ref registry) = self.island_registry {
@@ -130,6 +129,23 @@ impl VmState {
             }
         }
         false
+    }
+
+    /// Check if waiter is on current island.
+    #[cfg(feature = "std")]
+    #[inline]
+    pub fn is_local_waiter(&self, waiter: &vo_runtime::objects::port::WaiterInfo) -> bool {
+        waiter.island_id == self.current_island_id
+    }
+
+    /// Wake a waiter (local or remote).
+    #[cfg(feature = "std")]
+    pub fn wake_waiter(&self, waiter: &vo_runtime::objects::port::WaiterInfo, scheduler: &mut crate::scheduler::Scheduler) {
+        if waiter.island_id == self.current_island_id {
+            scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
+        } else {
+            self.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
+        }
     }
 }
 

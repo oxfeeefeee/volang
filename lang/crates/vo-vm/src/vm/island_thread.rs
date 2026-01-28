@@ -31,27 +31,20 @@ pub fn run_island_thread(
     vm.state.current_island_id = island_id;
     
     loop {
+        // Process pending commands
         match cmd_rx.try_recv() {
-            Ok(IslandCommand::SpawnFiber { closure_data, capture_slots }) => {
-                handle_spawn_fiber(&mut vm, island_id, closure_data.data(), capture_slots);
+            Ok(cmd) => {
+                if handle_command(&mut vm, cmd) { break; }
             }
-            Ok(IslandCommand::WakeFiber { fiber_id }) => {
-                vm.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(fiber_id));
-                let _ = vm.run_scheduled();
-            }
-            Ok(IslandCommand::Shutdown) => break,
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                if !vm.scheduler.has_runnable() {
+                if vm.scheduler.has_runnable() {
+                    let _ = vm.run_scheduled();
+                } else {
+                    // Block waiting for command
                     match cmd_rx.recv() {
-                        Ok(cmd) => {
-                            if handle_command(&mut vm, island_id, cmd) {
-                                break;
-                            }
-                        }
+                        Ok(cmd) => { if handle_command(&mut vm, cmd) { break; } }
                         Err(_) => break,
                     }
-                } else {
-                    let _ = vm.run_scheduled();
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
@@ -60,12 +53,12 @@ pub fn run_island_thread(
     
 }
 
-/// Returns true if should exit loop
-fn handle_command(vm: &mut Vm, island_id: u32, cmd: IslandCommand) -> bool {
+/// Returns true if should exit loop.
+fn handle_command(vm: &mut Vm, cmd: IslandCommand) -> bool {
     match cmd {
         IslandCommand::Shutdown => true,
-        IslandCommand::SpawnFiber { closure_data, capture_slots } => {
-            handle_spawn_fiber(vm, island_id, closure_data.data(), capture_slots);
+        IslandCommand::SpawnFiber { closure_data, .. } => {
+            handle_spawn_fiber(vm, closure_data.data());
             false
         }
         IslandCommand::WakeFiber { fiber_id } => {
@@ -76,7 +69,7 @@ fn handle_command(vm: &mut Vm, island_id: u32, cmd: IslandCommand) -> bool {
     }
 }
 
-fn handle_spawn_fiber(vm: &mut Vm, _island_id: u32, data: &[u8], _capture_slots: u16) {
+fn handle_spawn_fiber(vm: &mut Vm, data: &[u8]) {
     // Decode spawn payload
     let payload = island_msg::decode_spawn_header(data);
     

@@ -1289,11 +1289,11 @@ impl Vm {
                     )
                 }
                 Opcode::ChanLen => {
-                    exec::exec_chan_len(stack, bp, &inst);
+                    exec::exec_queue_get(stack, bp, &inst, vo_runtime::objects::channel::len);
                     ExecResult::Continue
                 }
                 Opcode::ChanCap => {
-                    exec::exec_chan_cap(stack, bp, &inst);
+                    exec::exec_queue_get(stack, bp, &inst, vo_runtime::objects::queue_state::capacity);
                     ExecResult::Continue
                 }
 
@@ -1502,25 +1502,15 @@ impl Vm {
                     let fiber_id = fiber_id.to_raw() as u64;
                     match exec::exec_port_send(stack, bp, island_id, fiber_id, &inst, &self.state.gc, &module.struct_metas) {
                         exec::PortResult::Continue => ExecResult::Continue,
-                        exec::PortResult::Yield => {
-                            // Block fiber, will be woken by receiver
-                            ExecResult::Block
-                        }
+                        exec::PortResult::Yield => ExecResult::Block,
                         exec::PortResult::WakeRemote(waiter) => {
-                            // Wake fiber on another island (or same island)
-                            if waiter.island_id == island_id {
-                                // Same island - wake directly
-                                self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
-                            } else {
-                                self.state.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
-                            }
+                            self.state.wake_waiter(&waiter, &mut self.scheduler);
                             ExecResult::Continue
                         }
                         exec::PortResult::SendOnClosed => {
                             runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_SEND_ON_CLOSED.to_string())
                         }
-                        exec::PortResult::CloseNil => ExecResult::Continue, // shouldn't happen for send
-                        exec::PortResult::Closed(_) => ExecResult::Continue, // shouldn't happen for send
+                        _ => ExecResult::Continue,
                     }
                 }
                 #[cfg(not(feature = "std"))]
@@ -1533,23 +1523,12 @@ impl Vm {
                     let fiber_id = fiber_id.to_raw() as u64;
                     match exec::exec_port_recv(stack, bp, island_id, fiber_id, &inst, &mut self.state.gc, &module.struct_metas) {
                         exec::PortResult::Continue => ExecResult::Continue,
-                        exec::PortResult::Yield => {
-                            // Block fiber, will be woken by sender
-                            ExecResult::Block
-                        }
+                        exec::PortResult::Yield => ExecResult::Block,
                         exec::PortResult::WakeRemote(waiter) => {
-                            // Wake fiber on another island (or same island)
-                            if waiter.island_id == island_id {
-                                // Same island - wake directly
-                                self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
-                            } else {
-                                self.state.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
-                            }
+                            self.state.wake_waiter(&waiter, &mut self.scheduler);
                             ExecResult::Continue
                         }
-                        exec::PortResult::SendOnClosed => ExecResult::Continue, // shouldn't happen for recv
-                        exec::PortResult::CloseNil => ExecResult::Continue,
-                        exec::PortResult::Closed(_) => ExecResult::Continue, // shouldn't happen for recv
+                        _ => ExecResult::Continue,
                     }
                 }
                 #[cfg(not(feature = "std"))]
@@ -1558,20 +1537,14 @@ impl Vm {
                 }
                 #[cfg(feature = "std")]
                 Opcode::PortClose => {
-                    let island_id = self.state.current_island_id;
                     match exec::exec_port_close(stack, bp, &inst) {
                         exec::PortResult::Continue => ExecResult::Continue,
                         exec::PortResult::CloseNil => {
                             runtime_panic(&mut self.state.gc, fiber, stack, module, ERR_CLOSE_NIL_CHANNEL.to_string())
                         }
                         exec::PortResult::Closed(waiters) => {
-                            // Wake all waiters
-                            for waiter in waiters {
-                                if waiter.island_id == island_id {
-                                    self.scheduler.wake_fiber(crate::scheduler::FiberId::from_raw(waiter.fiber_id as u32));
-                                } else {
-                                    self.state.send_wake_to_island(waiter.island_id, waiter.fiber_id as u32);
-                                }
+                            for waiter in &waiters {
+                                self.state.wake_waiter(waiter, &mut self.scheduler);
                             }
                             ExecResult::Continue
                         }
@@ -1587,6 +1560,14 @@ impl Vm {
                         }
                         _ => ExecResult::Continue,
                     }
+                }
+                Opcode::PortLen => {
+                    exec::exec_queue_get(stack, bp, &inst, vo_runtime::objects::port::len);
+                    ExecResult::Continue
+                }
+                Opcode::PortCap => {
+                    exec::exec_queue_get(stack, bp, &inst, vo_runtime::objects::queue_state::capacity);
+                    ExecResult::Continue
                 }
                 Opcode::GoIsland => {
                     let result = exec::exec_go_island(stack, bp, &inst);

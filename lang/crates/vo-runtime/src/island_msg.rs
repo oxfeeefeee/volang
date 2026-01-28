@@ -14,25 +14,20 @@ use crate::ValueKind;
 use crate::ValueMeta;
 use vo_common_core::bytecode::StructMeta;
 
-/// Read u32 from byte slice at offset.
-#[inline]
-fn read_u32(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-}
-
-/// Read u16 from byte slice at offset.
+/// Read little-endian integers from byte slice at offset.
 #[inline]
 fn read_u16(data: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([data[offset], data[offset + 1]])
+    u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap())
 }
 
-/// Read u64 from byte slice at offset.
+#[inline]
+fn read_u32(data: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
+}
+
 #[inline]
 fn read_u64(data: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes([
-        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
-    ])
+    u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
 }
 
 /// Port wire format for cross-island transfer.

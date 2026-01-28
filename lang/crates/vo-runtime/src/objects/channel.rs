@@ -1,125 +1,23 @@
-//! Channel object operations.
+//! Channel-specific operations.
 //!
-//! Layout: GcHeader + ChannelData
-//!
-//! Supports multi-slot elements. Buffer stores elements consecutively,
-//! each element occupies `elem_slots` slots.
+//! Shared: QueueData, QueueState, capacity/elem_meta/elem_slots (in queue_state.rs)
+//! Channel-specific: create, get_state, len/close/is_closed, GC helpers, drop_inner
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
+use alloc::boxed::Box;
 
 #[cfg(feature = "std")]
-use std::{boxed::Box, collections::VecDeque, vec::Vec};
+use std::boxed::Box;
 
 use crate::gc::{Gc, GcRef};
-use crate::slot::{ptr_to_slot, slot_to_ptr, slot_to_usize, Slot, SLOT_BYTES};
+use crate::slot::{ptr_to_slot, slot_to_ptr, Slot};
 use vo_common_core::types::{ValueKind, ValueMeta};
 
+use super::queue_state::{QueueData, ChannelState, DATA_SLOTS};
 
-#[repr(C)]
-pub struct ChannelData {
-    pub state: Slot,
-    pub cap: Slot,
-    pub elem_meta: ValueMeta,
-    pub elem_slots: u16,
-    _pad: u16,
-}
-
-pub const DATA_SLOTS: u16 = 3;
-const _: () = assert!(core::mem::size_of::<ChannelData>() == DATA_SLOTS as usize * SLOT_BYTES);
-
-impl_gc_object!(ChannelData);
-
-pub type GoId = u64;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SendResult {
-    DirectSend(GoId),
-    Buffered,
-    WouldBlock,
-    Closed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecvResult {
-    Success(Option<GoId>),
-    WouldBlock,
-    Closed,
-}
-
-pub struct ChannelState {
-    pub buffer: VecDeque<Box<[u64]>>,
-    pub closed: bool,
-    pub waiting_senders: VecDeque<(GoId, Box<[u64]>)>,
-    pub waiting_receivers: VecDeque<GoId>,
-}
+pub use super::queue_state::{SendResult, RecvResult, GoId, ChannelMessage};
 
 impl ChannelState {
-    pub fn new(cap: usize) -> Self {
-        Self {
-            buffer: VecDeque::with_capacity(cap),
-            closed: false,
-            waiting_senders: VecDeque::new(),
-            waiting_receivers: VecDeque::new(),
-        }
-    }
-
-    pub fn try_send(&mut self, value: Box<[u64]>, cap: usize) -> SendResult {
-        if self.closed {
-            return SendResult::Closed;
-        }
-        if let Some(receiver_id) = self.waiting_receivers.pop_front() {
-            self.buffer.push_back(value);
-            return SendResult::DirectSend(receiver_id);
-        }
-        if self.buffer.len() < cap {
-            self.buffer.push_back(value);
-            return SendResult::Buffered;
-        }
-        SendResult::WouldBlock
-    }
-
-    pub fn try_recv(&mut self) -> (RecvResult, Option<Box<[u64]>>) {
-        if let Some(value) = self.buffer.pop_front() {
-            let woke_sender = if let Some((sender_id, sender_value)) = self.waiting_senders.pop_front() {
-                self.buffer.push_back(sender_value);
-                Some(sender_id)
-            } else {
-                None
-            };
-            return (RecvResult::Success(woke_sender), Some(value));
-        }
-        if let Some((sender_id, value)) = self.waiting_senders.pop_front() {
-            return (RecvResult::Success(Some(sender_id)), Some(value));
-        }
-        if self.closed {
-            (RecvResult::Closed, None)
-        } else {
-            (RecvResult::WouldBlock, None)
-        }
-    }
-
-    pub fn register_sender(&mut self, go_id: GoId, value: Box<[u64]>) {
-        self.waiting_senders.push_back((go_id, value));
-    }
-
-    pub fn register_receiver(&mut self, go_id: GoId) {
-        self.waiting_receivers.push_back(go_id);
-    }
-
-    pub fn close(&mut self) { self.closed = true; }
-    pub fn is_closed(&self) -> bool { self.closed }
-    pub fn len(&self) -> usize { self.buffer.len() }
-    pub fn is_empty(&self) -> bool { self.buffer.is_empty() }
-
-    pub fn take_waiting_receivers(&mut self) -> Vec<GoId> {
-        self.waiting_receivers.drain(..).collect()
-    }
-
-    pub fn take_waiting_senders(&mut self) -> Vec<(GoId, Box<[u64]>)> {
-        self.waiting_senders.drain(..).collect()
-    }
-
     pub fn iter_buffer(&self) -> impl Iterator<Item = &[u64]> {
         self.buffer.iter().map(|b| b.as_ref())
     }
@@ -132,7 +30,7 @@ impl ChannelState {
 pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: u16, cap: usize) -> GcRef {
     let chan = gc.alloc(ValueMeta::new(0, ValueKind::Channel), DATA_SLOTS);
     let state = Box::new(ChannelState::new(cap));
-    let data = ChannelData::as_mut(chan);
+    let data = QueueData::as_mut(chan);
     data.state = ptr_to_slot(Box::into_raw(state));
     data.cap = cap as Slot;
     data.elem_meta = elem_meta;
@@ -141,26 +39,21 @@ pub fn create(gc: &mut Gc, elem_meta: ValueMeta, elem_slots: u16, cap: usize) ->
 }
 
 #[inline]
-pub fn elem_meta(chan: GcRef) -> ValueMeta { ChannelData::as_ref(chan).elem_meta }
-#[inline]
-pub fn elem_kind(chan: GcRef) -> ValueKind { elem_meta(chan).value_kind() }
-#[inline]
-pub fn elem_slots(chan: GcRef) -> u16 { ChannelData::as_ref(chan).elem_slots }
-#[inline]
-pub fn capacity(chan: GcRef) -> usize { slot_to_usize(ChannelData::as_ref(chan).cap) }
-#[inline]
 pub fn get_state(chan: GcRef) -> &'static mut ChannelState {
-    unsafe { &mut *slot_to_ptr(ChannelData::as_ref(chan).state) }
+    unsafe { &mut *slot_to_ptr(QueueData::as_ref(chan).state) }
 }
 
+#[inline]
 pub fn len(chan: GcRef) -> usize { get_state(chan).len() }
+#[inline]
 pub fn is_closed(chan: GcRef) -> bool { get_state(chan).is_closed() }
+#[inline]
 pub fn close(chan: GcRef) { get_state(chan).close(); }
 
 /// # Safety
 /// chan must be a valid Channel GcRef.
 pub unsafe fn drop_inner(chan: GcRef) {
-    let data = ChannelData::as_mut(chan);
+    let data = QueueData::as_mut(chan);
     if data.state != 0 {
         drop(Box::from_raw(slot_to_ptr::<ChannelState>(data.state)));
         data.state = 0;

@@ -337,7 +337,7 @@ impl Checker {
                     })
                 }
             }
-            Type::Slice(_) | Type::Chan(_) => OperandMode::Value,
+            Type::Slice(_) | Type::Chan(_) | Type::Port(_) => OperandMode::Value,
             Type::Map(_) => {
                 if id == Builtin::Len {
                     OperandMode::Value

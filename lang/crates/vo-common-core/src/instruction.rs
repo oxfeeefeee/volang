@@ -286,6 +286,12 @@ pub enum Opcode {
     /// Close port
     /// a = port
     PortClose,
+    /// Get port buffer length
+    /// a = dst, b = port
+    PortLen,
+    /// Get port capacity
+    /// a = dst, b = port
+    PortCap,
 
     /// Start goroutine on specific island
     /// a = island, b = closure, flags = capture_slots
